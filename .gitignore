@@ -1,0 +1,19 @@
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local experiment output
+bench-results/
+pcap/
+logs/
+*.pcap
+*.pcapng
+
+# Secrets / local config
+.env
+.env.*
+*.key
+*.pem
+!*.example.pem
