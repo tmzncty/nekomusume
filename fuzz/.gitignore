@@ -1,0 +1,6 @@
+# cargo-fuzz generated binaries and run artifacts
+bin/
+artifacts/
+
+# cargo-fuzz build output
+target/
