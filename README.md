@@ -101,3 +101,10 @@ Hysteria2 仍然是重要 benchmark competitor，但“超过 HY2”不是项目
 ## Research and M0 planning
 
 The standards, threat model and recovery studies are indexed in [`docs/m0-spec-plan.md`](docs/m0-spec-plan.md), with the provisional normative-source entry point at [`docs/specs/nekomusume-session-v0.md`](docs/specs/nekomusume-session-v0.md), and [`docs/research/`](docs/research/). They are research/planning documents, not implemented features. [`docs/design-handoff.md`](docs/design-handoff.md) is historical and non-normative.
+
+## Local verification
+
+本地验证是当前主路径：`scripts/check.sh` 运行 Rust 格式、检查、测试和
+Clippy；`scripts/fuzz-smoke.sh` 运行 nightly `cargo-fuzz` decode smoke，可用
+`FUZZ_TIME` 与 `FUZZ_MAX_LEN` 覆盖默认的 30 秒与 8192 bytes。GitHub Actions
+仅作为复核门禁，不替代本地验证。脚本只执行本地构建与测试，不修改网络服务。
