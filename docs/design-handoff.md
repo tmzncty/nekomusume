@@ -1,5 +1,7 @@
 # 自研网络传输协议：跨机器开发交接文档
 
+> **Historical / non-normative:** retained as a design handoff and research input. It is not the current protocol specification; follow `docs/m0-spec-plan.md` and future versioned `docs/spec/` documents.
+
 > 文档用途：把当前 Session 能恢复出的讨论结论、已知事实和下一步可执行设计交给另一台机器上的开发代理。
 >
 > **重要诚实说明**：当前记忆和旧工作区中，没有找到此前那份自研协议的完整设计稿，也没有找到可确认的协议名称、字段编号或已写代码。因此，下面分成“已确认的历史事实”和“为继续开发而整理的基线方案”。不要把基线方案误认为已经由用户最终拍板的旧结论；遇到冲突时以用户当前要求为准。

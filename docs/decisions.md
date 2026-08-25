@@ -142,3 +142,11 @@ Raw IP 实验号必须显式配置，默认不开启；不得把实验值当成�
 - Carrier scoring 与 hysteresis。
 - ICMP / Raw-IP probe 的 payload 与安全边界。
 - 第一批真实测试节点和矩阵规模。
+
+---
+
+## 2026-08-26 — Research integration index
+
+**Status: Accepted as documentation governance; implementation decisions remain gated**
+
+The standards, security and transport research are indexed by [`docs/m0-spec-plan.md`](m0-spec-plan.md). The versioned document [`docs/specs/nekomusume-session-v0.md`](specs/nekomusume-session-v0.md) is the sole normative-source entry point; it remains provisional until its gates are reviewed. Research files are non-normative; this log records status and links rather than duplicating wire rules. `docs/design-handoff.md` is historical/non-normative.

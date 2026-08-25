@@ -172,3 +172,7 @@ fail: 喵呜呜呜呜…
 5. UDP -> TCP failover 如何定义“确认收到 / uncertain / 可安全重发”？
 6. Carrier score 如何避免因为瞬时 loss/RTT 变化不断切换？
 7. ICMP 与 Raw-IP 在真实 VPS/运营商网络的持续双向可用程度到底如何？
+
+## M0 research record
+
+The executable pre-implementation plan is [`docs/m0-spec-plan.md`](docs/m0-spec-plan.md). The research files under [`docs/research/`](docs/research/) do not mark implementation work complete; all existing unchecked M0 items remain unchecked until code and tests exist.

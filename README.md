@@ -97,3 +97,7 @@ Hysteria2 仍然是重要 benchmark competitor，但“超过 HY2”不是项目
 ## 许可证
 
 尚未决定。公开研究不等于自动选定开源许可证；在第一批代码进入仓库前明确。
+
+## Research and M0 planning
+
+The standards, threat model and recovery studies are indexed in [`docs/m0-spec-plan.md`](docs/m0-spec-plan.md), with the provisional normative-source entry point at [`docs/specs/nekomusume-session-v0.md`](docs/specs/nekomusume-session-v0.md), and [`docs/research/`](docs/research/). They are research/planning documents, not implemented features. [`docs/design-handoff.md`](docs/design-handoff.md) is historical and non-normative.

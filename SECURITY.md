@@ -21,3 +21,7 @@
 ## Reporting
 
 如果未来仓库开放外部协作，再补充正式漏洞报告渠道。在此之前，安全问题先通过仓库 issue/maintainer 私下渠道处理，避免在协议仍快速变化时形成错误的稳定性预期。
+
+## Research references
+
+The pre-M0 threat model and security gates are recorded in [`docs/research/security-threat-model.md`](docs/research/security-threat-model.md). This does not constitute an audit or a selected handshake/library.
