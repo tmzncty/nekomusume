@@ -514,15 +514,15 @@ pub enum MemoryPairError {
 
 #[derive(Debug)]
 struct MemoryState {
-    queue: std::collections::VecDeque<Vec<u8>>,
-    queue_bytes: usize,
-    closed: bool,
+    queues: [std::collections::VecDeque<Vec<u8>>; 2],
+    queue_bytes: [usize; 2],
+    closed: [bool; 2],
 }
 
 #[derive(Debug)]
 struct MemoryShared {
     limits: MemoryLimits,
-    directions: [std::sync::Mutex<MemoryState>; 2],
+    state: std::sync::Mutex<MemoryState>,
 }
 
 /// In-process bounded pair. No runtime, socket, route, tunnel, or service effects.
@@ -546,12 +546,10 @@ impl MemoryPair {
         }
         let shared = std::sync::Arc::new(MemoryShared {
             limits,
-            directions: std::array::from_fn(|_| {
-                std::sync::Mutex::new(MemoryState {
-                    queue: std::collections::VecDeque::new(),
-                    queue_bytes: 0,
-                    closed: false,
-                })
+            state: std::sync::Mutex::new(MemoryState {
+                queues: std::array::from_fn(|_| std::collections::VecDeque::new()),
+                queue_bytes: [0; 2],
+                closed: [false; 2],
             }),
         });
         Ok((
@@ -565,8 +563,9 @@ impl MemoryPair {
 }
 
 impl MemoryEndpoint {
-    fn lock(&self, side: usize) -> Result<std::sync::MutexGuard<'_, MemoryState>, MemoryPairError> {
-        self.shared.directions[side]
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, MemoryState>, MemoryPairError> {
+        self.shared
+            .state
             .lock()
             .map_err(|_| MemoryPairError::StatePoisoned)
     }
@@ -591,39 +590,39 @@ impl Carrier for MemoryEndpoint {
         if message.len() > limits.max_message_bytes {
             return Err(MemoryPairError::MessageTooLarge);
         }
-        if self.lock(self.side)?.closed {
+        // One pair mutex linearizes local close, peer close, capacity, and enqueue.
+        let mut state = self.lock()?;
+        if state.closed[self.side] {
             return Err(MemoryPairError::Closed);
         }
         let peer = 1 - self.side;
-        let mut peer_state = self.lock(peer)?;
-        if peer_state.closed {
+        if state.closed[peer] {
             return Err(MemoryPairError::PeerClosed);
         }
-        let total = peer_state
-            .queue_bytes
+        let total = state.queue_bytes[peer]
             .checked_add(message.len())
             .ok_or(MemoryPairError::ArithmeticOverflow)?;
         if total > limits.max_queue_bytes {
             return Err(MemoryPairError::QueueFull);
         }
-        peer_state.queue.push_back(message.to_vec());
-        peer_state.queue_bytes = total;
+        state.queues[peer].push_back(message.to_vec());
+        state.queue_bytes[peer] = total;
         Ok(())
     }
     fn recv(&self) -> Result<Option<Vec<u8>>, MemoryPairError> {
-        let mut state = self.lock(self.side)?;
-        let message = state.queue.pop_front();
+        let mut state = self.lock()?;
+        let message = state.queues[self.side].pop_front();
         if let Some(ref bytes) = message {
-            state.queue_bytes = state
-                .queue_bytes
+            state.queue_bytes[self.side] = state.queue_bytes[self.side]
                 .checked_sub(bytes.len())
                 .ok_or(MemoryPairError::ArithmeticOverflow)?;
         }
         Ok(message)
     }
     fn close(&self) -> Result<(), MemoryPairError> {
-        let mut state = self.lock(self.side)?;
-        state.closed = true;
+        let mut state = self.lock()?;
+        // Close is idempotent; queued data remains available to the peer.
+        state.closed[self.side] = true;
         Ok(())
     }
 }
@@ -632,6 +631,8 @@ impl Carrier for MemoryEndpoint {
 mod memory_pair_tests {
     use super::*;
     use crate::Carrier;
+    use std::sync::{Arc, Barrier, mpsc};
+    use std::time::Duration;
 
     fn pair() -> (MemoryEndpoint, MemoryEndpoint) {
         MemoryPair::new(MemoryLimits {
@@ -693,15 +694,55 @@ mod memory_pair_tests {
     #[test]
     fn close_is_idempotent_and_preserves_queued_data() {
         let (a, b) = pair();
-        a.send(b"queued").unwrap_err();
         a.send(b"data").unwrap();
         a.close().unwrap();
         a.close().unwrap();
         assert_eq!(a.send(b"x"), Err(MemoryPairError::Closed));
+        // The peer drains data queued before close, then observes an empty queue.
         assert_eq!(b.recv().unwrap(), Some(b"data".to_vec()));
         assert_eq!(b.recv().unwrap(), None);
-        b.send(b"x").unwrap_err();
-        assert_eq!(a.recv().unwrap(), None);
+
+        b.close().unwrap();
+        b.close().unwrap();
+        assert_eq!(b.send(b"x"), Err(MemoryPairError::Closed));
+        let (open, closed_peer) = pair();
+        closed_peer.close().unwrap();
+        assert_eq!(open.send(b"x"), Err(MemoryPairError::PeerClosed));
+        assert_eq!(open.recv().unwrap(), None);
+    }
+
+    #[test]
+    fn concurrent_bidirectional_send_completes_without_deadlock() {
+        let (a, b) = pair();
+        let barrier = Arc::new(Barrier::new(2));
+        let (done_tx, done_rx) = mpsc::channel();
+        let a_barrier = Arc::clone(&barrier);
+        let a_done = done_tx.clone();
+        let a_thread = std::thread::spawn(move || {
+            a_barrier.wait();
+            let result = a.send(b"a");
+            a_done.send(result).unwrap();
+        });
+        let b_barrier = Arc::clone(&barrier);
+        let b_done = done_tx;
+        let b_thread = std::thread::spawn(move || {
+            b_barrier.wait();
+            let result = b.send(b"b");
+            b_done.send(result).unwrap();
+        });
+
+        // A timeout makes the regression bounded if a future implementation
+        // reintroduces lock-order inversion.
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Ok(())
+        );
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Ok(())
+        );
+        a_thread.join().unwrap();
+        b_thread.join().unwrap();
     }
 
     #[test]
