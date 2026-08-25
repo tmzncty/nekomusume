@@ -13,12 +13,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - run: cargo fmt --all -- --check
-      - run: cargo check --workspace
-      - run: cargo test --workspace
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: test -f docs/specs/nekomusume-session-v0.md
-      - run: cargo metadata --format-version 1 --no-deps | grep -q "MIT OR Apache-2.0"
+      - run: bash scripts/check.sh
 
   fuzz-smoke:
     name: nightly decode fuzz smoke
@@ -32,6 +27,7 @@ jobs:
       - name: Install pinned cargo-fuzz
         run: cargo install cargo-fuzz --version 0.12.0 --locked
       - run: test -f docs/specs/nekomusume-session-v0.md
+      - run: test -f LICENSE-MIT && test -f LICENSE-APACHE
       - run: grep -q 'license = "MIT OR Apache-2.0"' fuzz/Cargo.toml
       - run: cargo fuzz build decode
       - run: cargo fuzz run decode -- -max_total_time=30 -max_len=8192

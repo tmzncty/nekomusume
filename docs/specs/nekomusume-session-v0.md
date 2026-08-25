@@ -16,3 +16,19 @@ validation, and Session delivery remain separate evidence domains.
 The remaining wire, identity, replay, cryptographic, and live-carrier gates
 must be frozen by reviewed ADRs and deterministic vectors before conformance
 may be claimed.
+
+
+## Delivery segment overlap invariant
+
+An inserted fragment may merge overlapping or contiguous existing segments only
+when their union covers every byte in the resulting range. If a proposed merge
+would bridge an uncovered gap, the insertion is rejected with `Conflict`; the
+ledger never zero-fills or otherwise synthesizes missing bytes. Exact duplicates
+and byte-identical overlaps are idempotent.
+
+## Context commit invariant
+
+`insert` validates all bounds, stream, offset, reorder, overlap, and byte-limit
+conditions before committing `SessionContext`. A rejected insertion leaves the
+ledger context and delivery state unchanged. This remains a bounded state-model
+invariant, not a claim of complete protocol validation.

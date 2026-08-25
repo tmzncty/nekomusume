@@ -184,11 +184,11 @@ impl CarrierState {
                 carrier,
                 generation,
             } => {
-                if self.paths.len() >= self.limits.max_paths {
-                    return Err(CarrierError::ResourceLimit);
-                }
                 if self.paths.contains_key(&path) {
                     return Err(CarrierError::PathExists);
+                }
+                if self.paths.len() >= self.limits.max_paths {
+                    return Err(CarrierError::ResourceLimit);
                 }
                 self.paths.insert(
                     path,

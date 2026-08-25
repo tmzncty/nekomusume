@@ -12,3 +12,9 @@ cargo fmt --all -- --check
 cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+
+# Keep repository policy checks in one place for local and CI parity.
+test -f docs/specs/nekomusume-session-v0.md
+test -f LICENSE-MIT
+test -f LICENSE-APACHE
+cargo metadata --format-version 1 --no-deps | grep -q 'MIT OR Apache-2.0'

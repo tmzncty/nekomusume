@@ -117,7 +117,6 @@ impl DeliveryLedger {
         if data.is_empty() {
             return Err(LedgerError::EmptyRange);
         }
-        self.context_ok(context)?;
         let len = data.len() as u64;
         let end = offset.checked_add(len).ok_or(LedgerError::OffsetOverflow)?;
         if !self.streams.contains_key(&stream) && self.streams.len() >= self.limits.max_streams {
@@ -159,6 +158,7 @@ impl DeliveryLedger {
         if overlaps.is_empty() {
             let new_bytes =
                 checked_total(self.bytes, data.len(), self.limits.max_connection_bytes)?;
+            self.context_ok(context)?;
             self.bytes = new_bytes;
             self.streams.entry(stream).or_insert(0);
             self.segments.insert(
@@ -190,6 +190,27 @@ impl DeliveryLedger {
                 .checked_add(s.data.len())
                 .ok_or(LedgerError::ByteCountOverflow)?;
         }
+        // Never synthesize bytes across a hole. A new fragment may merge only
+        // when the existing ranges plus the new range cover the whole result.
+        let mut ranges: Vec<(u64, u64)> = overlaps
+            .iter()
+            .map(|key| {
+                let s = &self.segments[key];
+                (s.offset, s.offset + s.data.len() as u64)
+            })
+            .chain(std::iter::once((offset, end)))
+            .collect();
+        ranges.sort_unstable();
+        let mut covered = start;
+        for (range_start, range_end) in ranges {
+            if range_start > covered {
+                return Err(LedgerError::Conflict);
+            }
+            covered = covered.max(range_end);
+        }
+        if covered < finish {
+            return Err(LedgerError::Conflict);
+        }
         let merged_len = finish
             .checked_sub(start)
             .ok_or(LedgerError::OffsetOverflow)? as usize;
@@ -206,6 +227,7 @@ impl DeliveryLedger {
         }
         merged[(offset - start) as usize..(offset - start) as usize + data.len()]
             .copy_from_slice(data);
+        self.context_ok(context)?;
         for key in overlaps {
             self.segments.remove(&key);
         }
@@ -330,6 +352,84 @@ mod tests {
         );
         assert_eq!(x.watermark(1), 0)
     }
+    #[test]
+    fn rejected_limits_do_not_commit_context() {
+        for (limits, stream, offset, data) in [
+            (
+                Limits {
+                    max_streams: 0,
+                    ..l().limits
+                },
+                1,
+                0,
+                b"a".as_slice(),
+            ),
+            (
+                Limits {
+                    max_offset_jump: 0,
+                    ..l().limits
+                },
+                1,
+                1,
+                b"a".as_slice(),
+            ),
+            (
+                Limits {
+                    max_reorder: 0,
+                    ..l().limits
+                },
+                1,
+                1,
+                b"a".as_slice(),
+            ),
+            (
+                Limits {
+                    max_connection_bytes: 0,
+                    ..l().limits
+                },
+                1,
+                0,
+                b"a".as_slice(),
+            ),
+        ] {
+            let mut ledger = DeliveryLedger::new(limits);
+            assert!(ledger.insert(stream, offset, data, c(1, 0, 1)).is_err());
+            assert_eq!(ledger.context, None);
+        }
+    }
+
+    #[test]
+    fn overlap_never_zero_fills_a_gap() {
+        let mut x = l();
+        x.insert(1, 0, b"ab", c(1, 0, 1)).unwrap();
+        x.insert(1, 4, b"ef", c(1, 0, 1)).unwrap();
+        x.insert(1, 1, b"bcde", c(1, 0, 1)).unwrap();
+        let segments: Vec<_> = x.segments().collect();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].data, b"abcdef");
+    }
+
+    #[test]
+    fn duplicate_and_contiguous_bytes_merge() {
+        let mut x = l();
+        x.insert(1, 0, b"ab", c(1, 0, 1)).unwrap();
+        x.insert(1, 2, b"cd", c(1, 0, 1)).unwrap();
+        x.insert(1, 1, b"bc", c(1, 0, 1)).unwrap();
+        assert_eq!(x.segments().next().unwrap().data, b"abcd");
+        assert_eq!(x.bytes, 4);
+    }
+
+    #[test]
+    fn overlap_preserves_delivered_bytes() {
+        let mut x = l();
+        x.insert(1, 0, b"ab", c(1, 0, 1)).unwrap();
+        x.mark_in_flight(1, 0).unwrap();
+        x.confirm_received(1, 0, c(1, 0, 1)).unwrap();
+        x.insert(1, 1, b"bc", c(1, 0, 1)).unwrap();
+        assert_eq!(x.segments().next().unwrap().data, b"abc");
+        assert_eq!(x.segments().next().unwrap().state, DeliveryState::Confirmed);
+    }
+
     #[test]
     fn overflow_and_bounds_are_deterministic() {
         let mut x = l();
