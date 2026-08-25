@@ -1,7 +1,4 @@
 //! Pure synchronous candidate delivery ledger and state machine.
-//!
-//! This models logical delivery evidence only. It opens no connection, uses no
-//! runtime or cryptography, and does not implement carrier failover.
 use std::collections::BTreeMap;
 
 pub const DEFAULT_MAX_REORDER: u64 = 64;
@@ -15,7 +12,12 @@ pub struct DeliveryEpoch(pub u64);
 pub struct KeyPhase(pub u8);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PathGeneration(pub u64);
-
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionContext {
+    pub delivery_epoch: DeliveryEpoch,
+    pub key_phase: KeyPhase,
+    pub path_generation: PathGeneration,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryState {
     Unsent,
@@ -23,14 +25,6 @@ pub enum DeliveryState {
     Uncertain,
     Confirmed,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SessionContext {
-    pub delivery_epoch: DeliveryEpoch,
-    pub key_phase: KeyPhase,
-    pub path_generation: PathGeneration,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeliverySegment {
     pub stream_id: u64,
@@ -39,7 +33,6 @@ pub struct DeliverySegment {
     pub state: DeliveryState,
     pub context: SessionContext,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     pub max_reorder: u64,
@@ -57,21 +50,21 @@ impl Default for Limits {
         }
     }
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LedgerError {
     EmptyRange,
     TooManyStreams,
     ConnectionLimit,
+    ByteCountOverflow,
     OffsetJump,
     ReorderLimit,
     OffsetOverflow,
     Conflict,
     OldEpoch,
+    ContextMismatch,
     InvalidTransition,
     RangeNotFound,
 }
-
 #[derive(Debug, Default)]
 pub struct DeliveryLedger {
     limits: Limits,
@@ -93,6 +86,16 @@ impl DeliveryLedger {
     pub fn watermark(&self, stream: u64) -> u64 {
         self.streams.get(&stream).copied().unwrap_or(0)
     }
+    fn context_ok(&mut self, context: SessionContext) -> Result<(), LedgerError> {
+        match self.context {
+            Some(old) if old != context => Err(LedgerError::ContextMismatch),
+            None => {
+                self.context = Some(context);
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
     pub fn insert(
         &mut self,
         stream: u64,
@@ -103,130 +106,186 @@ impl DeliveryLedger {
         if data.is_empty() {
             return Err(LedgerError::EmptyRange);
         }
-        let end = offset
-            .checked_add(data.len() as u64)
-            .ok_or(LedgerError::OffsetOverflow)?;
-        if let Some(old) = self.context {
-            if context.delivery_epoch != old.delivery_epoch {
-                return Err(LedgerError::OldEpoch);
-            }
-        } else {
-            self.context = Some(context);
-        }
+        self.context_ok(context)?;
+        let len = data.len() as u64;
+        let end = offset.checked_add(len).ok_or(LedgerError::OffsetOverflow)?;
         if !self.streams.contains_key(&stream) && self.streams.len() >= self.limits.max_streams {
             return Err(LedgerError::TooManyStreams);
         }
         let watermark = self.watermark(stream);
-        if offset > watermark.saturating_add(self.limits.max_offset_jump) {
+        let jump = watermark
+            .checked_add(self.limits.max_offset_jump)
+            .ok_or(LedgerError::OffsetOverflow)?;
+        let reorder = watermark
+            .checked_add(self.limits.max_reorder)
+            .ok_or(LedgerError::OffsetOverflow)?;
+        if offset > jump {
             return Err(LedgerError::OffsetJump);
         }
-        if offset > watermark.saturating_add(self.limits.max_reorder) {
+        if offset > reorder {
             return Err(LedgerError::ReorderLimit);
         }
-        for segment in self.segments.values() {
-            let old_end = segment.offset + segment.data.len() as u64;
-            if segment.stream_id == stream && offset < old_end && segment.offset < end {
-                let overlap_start = offset.max(segment.offset);
-                let overlap_end = end.min(old_end);
-                for position in overlap_start..overlap_end {
-                    if data[(position - offset) as usize]
-                        != segment.data[(position - segment.offset) as usize]
-                    {
-                        return Err(LedgerError::Conflict);
-                    }
+        let overlaps: Vec<(u64, u64)> = self
+            .segments
+            .iter()
+            .filter_map(|(k, s)| {
+                let old_end = s.offset.checked_add(s.data.len() as u64)?;
+                (s.stream_id == stream && offset < old_end && s.offset < end).then_some(*k)
+            })
+            .collect();
+        for key in &overlaps {
+            let s = &self.segments[key];
+            let old_end = s
+                .offset
+                .checked_add(s.data.len() as u64)
+                .ok_or(LedgerError::OffsetOverflow)?;
+            for pos in offset.max(s.offset)..end.min(old_end) {
+                if data[(pos - offset) as usize] != s.data[(pos - s.offset) as usize] {
+                    return Err(LedgerError::Conflict);
                 }
             }
         }
-        let key = (stream, offset);
-        if self.segments.contains_key(&key) {
-            return Ok(self.segments[&key].state);
+        if overlaps.is_empty() {
+            let new_bytes = self
+                .bytes
+                .checked_add(data.len())
+                .ok_or(LedgerError::ByteCountOverflow)?;
+            if new_bytes > self.limits.max_connection_bytes {
+                return Err(LedgerError::ConnectionLimit);
+            }
+            self.bytes = new_bytes;
+            self.streams.entry(stream).or_insert(0);
+            self.segments.insert(
+                (stream, offset),
+                DeliverySegment {
+                    stream_id: stream,
+                    offset,
+                    data: data.to_vec(),
+                    state: DeliveryState::Unsent,
+                    context,
+                },
+            );
+            return Ok(DeliveryState::Unsent);
         }
-        if self.bytes + data.len() > self.limits.max_connection_bytes {
+        let mut start = offset;
+        let mut finish = end;
+        let mut state = DeliveryState::Unsent;
+        let mut removed = 0usize;
+        for key in &overlaps {
+            let s = &self.segments[key];
+            start = start.min(s.offset);
+            finish = finish.max(
+                s.offset
+                    .checked_add(s.data.len() as u64)
+                    .ok_or(LedgerError::OffsetOverflow)?,
+            );
+            state = s.state;
+            removed = removed
+                .checked_add(s.data.len())
+                .ok_or(LedgerError::ByteCountOverflow)?;
+        }
+        let merged_len = finish
+            .checked_sub(start)
+            .ok_or(LedgerError::OffsetOverflow)? as usize;
+        let new_total = self
+            .bytes
+            .checked_sub(removed)
+            .ok_or(LedgerError::ByteCountOverflow)?
+            .checked_add(merged_len)
+            .ok_or(LedgerError::ByteCountOverflow)?;
+        if new_total > self.limits.max_connection_bytes {
             return Err(LedgerError::ConnectionLimit);
         }
-        self.bytes += data.len();
-        self.streams.entry(stream).or_insert(0);
+        let mut merged = vec![0u8; merged_len];
+        for key in &overlaps {
+            let s = &self.segments[key];
+            merged[(s.offset - start) as usize..(s.offset - start) as usize + s.data.len()]
+                .copy_from_slice(&s.data);
+        }
+        merged[(offset - start) as usize..(offset - start) as usize + data.len()]
+            .copy_from_slice(data);
+        for key in overlaps {
+            self.segments.remove(&key);
+        }
         self.segments.insert(
-            key,
+            (stream, start),
             DeliverySegment {
                 stream_id: stream,
-                offset,
-                data: data.to_vec(),
-                state: DeliveryState::Unsent,
+                offset: start,
+                data: merged,
+                state,
                 context,
             },
         );
-        Ok(DeliveryState::Unsent)
+        self.bytes = new_total;
+        Ok(state)
     }
-    pub fn mark_in_flight(&mut self, stream: u64, offset: u64) -> Result<(), LedgerError> {
-        self.transition(stream, offset, DeliveryState::InFlight)
+    pub fn mark_in_flight(&mut self, s: u64, o: u64) -> Result<(), LedgerError> {
+        self.transition(s, o, DeliveryState::InFlight)
     }
-    pub fn mark_uncertain(&mut self, stream: u64, offset: u64) -> Result<(), LedgerError> {
-        self.transition(stream, offset, DeliveryState::Uncertain)
+    pub fn mark_uncertain(&mut self, s: u64, o: u64) -> Result<(), LedgerError> {
+        self.transition(s, o, DeliveryState::Uncertain)
     }
-    fn transition(
-        &mut self,
-        stream: u64,
-        offset: u64,
-        to: DeliveryState,
-    ) -> Result<(), LedgerError> {
-        let segment = self
+    fn transition(&mut self, s: u64, o: u64, to: DeliveryState) -> Result<(), LedgerError> {
+        let x = self
             .segments
-            .get_mut(&(stream, offset))
+            .get_mut(&(s, o))
             .ok_or(LedgerError::RangeNotFound)?;
-        let valid = matches!(
-            (segment.state, to),
+        if !matches!(
+            (x.state, to),
             (DeliveryState::Unsent, DeliveryState::InFlight)
                 | (DeliveryState::InFlight, DeliveryState::Uncertain)
-        );
-        if !valid {
+        ) {
             return Err(LedgerError::InvalidTransition);
         }
-        segment.state = to;
+        x.state = to;
         Ok(())
     }
-    /// Logical delivery ACK. Carrier packet feedback must call no equivalent method.
     pub fn confirm_received(
         &mut self,
-        stream: u64,
-        offset: u64,
-        epoch: DeliveryEpoch,
+        s: u64,
+        o: u64,
+        context: SessionContext,
     ) -> Result<(), LedgerError> {
-        let segment = self
+        let x = self
             .segments
-            .get_mut(&(stream, offset))
+            .get_mut(&(s, o))
             .ok_or(LedgerError::RangeNotFound)?;
-        if segment.context.delivery_epoch != epoch {
-            return Err(LedgerError::OldEpoch);
+        if x.context != context {
+            return if x.context.delivery_epoch != context.delivery_epoch {
+                Err(LedgerError::OldEpoch)
+            } else {
+                Err(LedgerError::ContextMismatch)
+            };
         }
         if !matches!(
-            segment.state,
+            x.state,
             DeliveryState::InFlight | DeliveryState::Uncertain | DeliveryState::Confirmed
         ) {
             return Err(LedgerError::InvalidTransition);
         }
-        segment.state = DeliveryState::Confirmed;
-        let end = offset + segment.data.len() as u64;
-        if end > self.watermark(stream) {
-            self.streams.insert(stream, end);
+        x.state = DeliveryState::Confirmed;
+        let end = o
+            .checked_add(x.data.len() as u64)
+            .ok_or(LedgerError::OffsetOverflow)?;
+        if end > self.watermark(s) {
+            self.streams.insert(s, end);
         }
         Ok(())
     }
-    pub fn packet_feedback(&self, _stream: u64, _offset: u64) { /* intentionally no delivery transition */
-    }
+    pub fn packet_feedback(&self, _s: u64, _o: u64) {}
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn ctx(epoch: u64) -> SessionContext {
+    fn c(e: u64, k: u8, p: u64) -> SessionContext {
         SessionContext {
-            delivery_epoch: DeliveryEpoch(epoch),
-            key_phase: KeyPhase(0),
-            path_generation: PathGeneration(1),
+            delivery_epoch: DeliveryEpoch(e),
+            key_phase: KeyPhase(k),
+            path_generation: PathGeneration(p),
         }
     }
-    fn ledger() -> DeliveryLedger {
+    fn l() -> DeliveryLedger {
         DeliveryLedger::new(Limits {
             max_reorder: 8,
             max_streams: 2,
@@ -235,58 +294,69 @@ mod tests {
         })
     }
     #[test]
-    fn state_machine_and_packet_feedback_are_orthogonal() {
-        let mut l = ledger();
-        l.insert(1, 0, b"ab", ctx(1)).unwrap();
-        assert_eq!(l.segments().next().unwrap().state, DeliveryState::Unsent);
-        l.packet_feedback(1, 0);
-        assert_eq!(l.segments().next().unwrap().state, DeliveryState::Unsent);
-        l.mark_in_flight(1, 0).unwrap();
-        l.mark_uncertain(1, 0).unwrap();
-        l.confirm_received(1, 0, DeliveryEpoch(1)).unwrap();
-        assert_eq!(l.watermark(1), 2);
+    fn states_and_feedback() {
+        let mut x = l();
+        x.insert(1, 0, b"ab", c(1, 0, 1)).unwrap();
+        x.packet_feedback(1, 0);
+        assert_eq!(x.segments().next().unwrap().state, DeliveryState::Unsent);
+        x.mark_in_flight(1, 0).unwrap();
+        x.mark_uncertain(1, 0).unwrap();
+        x.confirm_received(1, 0, c(1, 0, 1)).unwrap();
+        assert_eq!(x.watermark(1), 2)
     }
     #[test]
-    fn duplicate_overlap_and_conflict() {
-        let mut l = ledger();
-        l.insert(1, 0, b"abcd", ctx(1)).unwrap();
-        assert_eq!(l.insert(1, 0, b"abcd", ctx(1)), Ok(DeliveryState::Unsent));
-        assert_eq!(l.insert(1, 2, b"cd", ctx(1)), Ok(DeliveryState::Unsent));
-        assert_eq!(l.insert(1, 2, b"cx", ctx(1)), Err(LedgerError::Conflict));
+    fn overlap_merge_and_conflict() {
+        let mut x = l();
+        x.insert(1, 0, b"abcd", c(1, 0, 1)).unwrap();
+        x.insert(1, 2, b"cdef", c(1, 0, 1)).unwrap();
+        assert_eq!(x.segments().next().unwrap().data, b"abcdef");
+        assert_eq!(x.bytes, 6);
+        assert_eq!(x.insert(1, 3, b"X", c(1, 0, 1)), Err(LedgerError::Conflict))
     }
     #[test]
-    fn old_epoch_ack_does_not_move_watermark() {
-        let mut l = ledger();
-        l.insert(1, 0, b"a", ctx(2)).unwrap();
-        l.mark_in_flight(1, 0).unwrap();
+    fn context_and_old_epoch_rejected() {
+        let mut x = l();
+        x.insert(1, 0, b"a", c(2, 0, 1)).unwrap();
         assert_eq!(
-            l.confirm_received(1, 0, DeliveryEpoch(1)),
+            x.insert(1, 1, b"b", c(2, 1, 1)),
+            Err(LedgerError::ContextMismatch)
+        );
+        x.mark_in_flight(1, 0).unwrap();
+        assert_eq!(
+            x.confirm_received(1, 0, c(1, 0, 1)),
             Err(LedgerError::OldEpoch)
         );
-        assert_eq!(l.watermark(1), 0);
+        assert_eq!(x.watermark(1), 0)
     }
     #[test]
-    fn bounds_are_deterministic() {
-        let mut l = ledger();
-        assert_eq!(l.insert(1, 100, b"a", ctx(1)), Err(LedgerError::OffsetJump));
-        l.insert(1, 0, b"abcd", ctx(1)).unwrap();
-        assert_eq!(l.insert(1, 9, b"a", ctx(1)), Err(LedgerError::ReorderLimit));
-        assert_eq!(l.insert(2, 0, b"abcd", ctx(1)), Ok(DeliveryState::Unsent));
+    fn overflow_and_bounds_are_deterministic() {
+        let mut x = l();
         assert_eq!(
-            l.insert(3, 0, b"a", ctx(1)),
-            Err(LedgerError::TooManyStreams)
+            x.insert(1, u64::MAX - 1, b"xx", c(1, 0, 1)),
+            Err(LedgerError::OffsetOverflow)
         );
+        let mut y = DeliveryLedger::new(Limits {
+            max_reorder: u64::MAX,
+            max_streams: 1,
+            max_connection_bytes: usize::MAX,
+            max_offset_jump: u64::MAX,
+        });
+        assert_eq!(
+            y.insert(1, u64::MAX, b"x", c(1, 0, 1)),
+            Err(LedgerError::OffsetOverflow)
+        );
+        assert_eq!(y.bytes.checked_add(usize::MAX), Some(usize::MAX));
+        assert_eq!(usize::MAX.checked_add(1), None);
     }
     #[test]
-    fn ack_watermark_is_monotonic() {
-        let mut l = ledger();
-        l.insert(1, 0, b"a", ctx(1)).unwrap();
-        l.insert(1, 1, b"b", ctx(1)).unwrap();
-        l.mark_in_flight(1, 0).unwrap();
-        l.mark_in_flight(1, 1).unwrap();
-        l.confirm_received(1, 1, DeliveryEpoch(1)).unwrap();
-        assert_eq!(l.watermark(1), 2);
-        l.confirm_received(1, 0, DeliveryEpoch(1)).unwrap();
-        assert_eq!(l.watermark(1), 2);
+    fn watermark_monotonic() {
+        let mut x = l();
+        x.insert(1, 0, b"a", c(1, 0, 1)).unwrap();
+        x.insert(1, 1, b"b", c(1, 0, 1)).unwrap();
+        x.mark_in_flight(1, 0).unwrap();
+        x.mark_in_flight(1, 1).unwrap();
+        x.confirm_received(1, 1, c(1, 0, 1)).unwrap();
+        x.confirm_received(1, 0, c(1, 0, 1)).unwrap();
+        assert_eq!(x.watermark(1), 2)
     }
 }

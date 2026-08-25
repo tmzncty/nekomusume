@@ -225,7 +225,9 @@ impl CarrierState {
                 let p = self.checked(f.path, f.generation)?;
                 match f.kind {
                     PacketFeedbackKind::Ack => {
-                        p.successes = p.successes.saturating_add(1);
+                        if p.validation == PathValidationState::Validated {
+                            p.successes = p.successes.saturating_add(1);
+                        }
                     }
                     PacketFeedbackKind::Loss | PacketFeedbackKind::Reordered => {
                         p.state = if is_active {
@@ -292,7 +294,9 @@ impl CarrierState {
     }
     fn tick_dwell(&mut self) {
         for p in self.paths.values_mut() {
-            p.dwell_events = p.dwell_events.saturating_add(1);
+            if p.validation == PathValidationState::Validated {
+                p.dwell_events = p.dwell_events.saturating_add(1);
+            }
         }
     }
     fn checked(

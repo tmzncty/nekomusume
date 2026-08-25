@@ -97,8 +97,29 @@ fn old_generation_and_late_old_path_cannot_advance_watermark() {
     ledger.insert(1, 0, b"x", context()).unwrap();
     ledger.mark_in_flight(1, 0).unwrap();
     assert_eq!(
-        ledger.confirm_received(1, 0, DeliveryEpoch(10)),
+        ledger.confirm_received(
+            1,
+            0,
+            SessionContext {
+                delivery_epoch: DeliveryEpoch(10),
+                key_phase: KeyPhase(2),
+                path_generation: SessionPathGeneration(GENERATION.0)
+            }
+        ),
         Err(neko_session::LedgerError::OldEpoch)
+    );
+    assert_eq!(ledger.watermark(1), 0);
+    assert_eq!(
+        ledger.confirm_received(
+            1,
+            0,
+            SessionContext {
+                delivery_epoch: DeliveryEpoch(11),
+                key_phase: KeyPhase(3),
+                path_generation: SessionPathGeneration(GENERATION.0),
+            },
+        ),
+        Err(neko_session::LedgerError::ContextMismatch)
     );
     assert_eq!(ledger.watermark(1), 0);
 }
