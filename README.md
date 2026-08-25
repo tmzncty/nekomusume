@@ -1,54 +1,99 @@
 # 猫娘（nekomusume）
 
-一个公开研究用的实验性 UDP 加密传输协议项目。
+一个公开研究用的实验性、**carrier-agnostic** 加密 Session transport / tunnel 项目。
 
 > 为什么叫猫娘？别问，问就是猫娘。
 
 ## 这是什么
 
-猫娘的目标不是“重新发明密码学”，也不是一开始就宣称替代 QUIC/Hysteria2，而是把自定义传输协议当作一个可验证、可测量的工程实验：
+猫娘不再被定义成“另一个 UDP 协议”。UDP 是第一个 Carrier，但不是协议本体。
 
-- 基于 UDP 建立加密会话；
-- 会话内承载一个或多个双向 byte stream；
-- 研究 ACK、丢包恢复、重传、流控与多路复用；
-- 比较不同拥塞控制、pacing 和调度策略；
-- 研究 NAT 重绑定、PMTU、可选 FEC/datagram 等增强；
-- 用可复现实验与 Hysteria2 做公平基准，而不是凭感觉判断“更快”。
+核心目标是研究：**当真实网络只剩下部分通信原语可用时，一个逻辑加密 Session 能否在 UDP、TCP 以及实验性 Carrier 之间 failover / migrate，并尽量保持隧道存活。**
+
+```text
+Application / Tunnel
+        |
+        v
+Nekomusume Session
+        |
+        v
+Carrier Manager
+   /       |       \
+ UDP      TCP    experimental
+```
+
+Hysteria2 仍然是重要 benchmark competitor，但“超过 HY2”不是项目定义。先证明行为，再谈性能。
 
 ## 当前状态
 
 **Research bootstrap / pre-Milestone 0**。
 
-目前真正确认的是：要做一个“目标是在特定场景下可测量地优于 HY2”的实验性传输协议。现有设计交接文档中的大量细节仍是**建议基线**，不是已经最终拍板的协议规范。
+已形成的主要方向：
 
-详见：[`docs/design-handoff.md`](docs/design-handoff.md)
+- 实现语言：**Rust**；
+- 逻辑 Session 与底层 Carrier 解耦；
+- UDP：第一主力 Carrier；
+- TCP：首要 fallback Carrier；
+- 第一阶段只做 failover / migration，不做 UDP+TCP 同时条带化；
+- ICMP Echo / Raw IP experimental protocol：进入真实公网 reachability 实验；
+- SCTP / DCCP：重点参考与实验候选；
+- Linux server + VPS：真实 WAN；
+- QEMU / netns / veth / `tc netem`：可控网络实验。
+
+最新架构方向：[`docs/carrier-architecture.md`](docs/carrier-architecture.md)
+
+设计决定日志：[`docs/decisions.md`](docs/decisions.md)
+
+早期交接基线：[`docs/design-handoff.md`](docs/design-handoff.md)
+
+> `design-handoff.md` 中的“UDP + AEAD + 自定义可靠传输”仍是重要第一实现输入，但已经被更高层的 carrier-agnostic 架构重新定位为“第一个 Carrier 实现”，而不是猫娘的最终定义。
 
 ## 原则
 
 1. **先测量，再宣称。** 没有 benchmark 结果，不写“比 HY2 更好”。
-2. **不自研密码算法。** 使用成熟 TLS 1.3 / Noise / AEAD 实现。
-3. **先最小切片，再叠功能。** 不在第一阶段同时塞入 FEC、多路径、0-RTT 和复杂伪装。
-4. **协议核心与代理业务解耦。** 先把传输层做成独立可测试组件。
-5. **所有关键行为必须可复现。** wire format、状态机、错误码、测试向量、netem 条件和 benchmark 都要留下记录。
+2. **不自研密码算法。** 使用成熟 TLS / Noise / AEAD 实现。
+3. **Session 高于 Carrier。** TCP/UDP/ICMP 等负责搬运，逻辑会话状态属于猫娘。
+4. **先 failover，再 aggregation。** 先证明 UDP <-> TCP 迁移，再研究异构多路径并发。
+5. **协议核心与代理业务解耦。** 隧道是主要用途，但 transport/session 本身应可独立测试。
+6. **所有关键行为必须可复现。** wire format、状态机、错误码、测试向量、netem 条件和 benchmark 都留下记录。
+7. **公开研究不公开生产秘密。** 不提交生产密钥、真实生产拓扑或不必要的地址信息。
 
 ## 初步路线
 
-- M0：wire format、错误码、状态机、golden vectors
-- M1：UDP + 成熟加密库 + 单流加密回显
-- M2：packet number、ACK ranges、RTT、loss detection、frame retransmit
-- M3：多 stream、流控、公平调度、资源限制
-- M4：Reno/CUBIC 基线、pacing、与 HY2 公平 benchmark
-- M5：根据实验结果决定 NAT migration、PMTUD、FEC、datagram、key update、0-RTT、多路径
+- M0：Rust workspace、Session/Carrier 抽象、wire format、错误码、状态机、golden vectors
+- M1：UDP Carrier + 成熟加密库 + 单流加密回显
+- M2：UDP reliable packet engine：ACK、RTT、loss、retransmit、CC baseline
+- M3：TCP Carrier + Session delivery state + UDP -> TCP failover / resume
+- M4：多 stream、流控、调度、Carrier scoring、受控网络实验
+- M5：与 HY2 公平 benchmark + 真实 WAN validation
+- Experimental：ICMP / Raw-IP reachability、SCTP/DCCP、PMTUD/FEC/datagram、异构 multipath
 
-更详细的阶段定义见 [`ROADMAP.md`](ROADMAP.md)。
+详细定义见 [`ROADMAP.md`](ROADMAP.md)。
+
+## Reachability
+
+猫娘会单独测试“今天的真实网络到底允许哪些 communication primitives 活着”。
+
+人类可读输出已经冻结：
+
+```text
+如果通：
+喵~！
+
+如果不通：
+喵呜呜呜呜…
+```
+
+当然，机器可读结果仍然要有 JSON / exit code，不能让 CI 猜猫叫。
 
 ## 当前不做的事情
 
-- 不把实验版本直接替换生产 HY2/Trojan；
+- 不把实验版本直接替换生产隧道；
 - 不为了跑分关闭认证、完整性保护或资源限制；
 - 不把理论优势写成已经验证的性能结论；
-- 不在协议尚未稳定时过早压缩头部、做复杂伪装或同时改多套核心算法。
+- 不在 M0/M1 就同时实现 FEC、多路径、复杂伪装和所有候选 Carrier；
+- 不把实验 IP protocol number 当成正式公网协议号。
 
 ## 许可证
 
-尚未决定。公开研究不等于自动选定开源许可证；在第一批代码进入仓库前再明确即可。
+尚未决定。公开研究不等于自动选定开源许可证；在第一批代码进入仓库前明确。
