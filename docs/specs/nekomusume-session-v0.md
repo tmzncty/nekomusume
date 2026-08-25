@@ -24,7 +24,7 @@ The following gates must be completed before this document can claim a frozen v0
 
 ## Explicit non-goals
 
-This v0 gate does not specify QUIC, MPTCP, SCTP, DCCP, TCP packet acknowledgements, concurrent UDP/TCP striping, congestion-control parameters, 0-RTT, production proxy behavior, or a license choice. Those require separate decisions and evidence.
+This v0 gate does not specify QUIC, MPTCP, SCTP, DCCP, TCP packet acknowledgements, concurrent UDP/TCP striping, congestion-control parameters, 0-RTT, production proxy behavior, or a license choice. The license decision is now resolved as `MIT OR Apache-2.0`; the remaining protocol topics require separate decisions and evidence.
 
 ## Change control
 

@@ -156,3 +156,9 @@ The standards, security and transport research are indexed by [`docs/m0-spec-pla
 **Status: Accepted**
 
 M0 仅建立 virtual Cargo workspace 与 `neko-wire`、`neko-session`、`neko-carrier`、`neko-cli` 四个 crate 边界。当前不实现 UDP/TCP、密码学、wire codec、Session 状态机或 failover；这些能力必须等待对应规范与安全审查门禁。crate 代码只提供可编译的占位标记，避免 README、路线图或规范产生已实现的虚假声明。
+
+## 2026-08-26 — D010：采用 MIT OR Apache-2.0
+
+**Status: Accepted — administrator decision**
+
+管理员裁决本项目采用双许可证表达式 `MIT OR Apache-2.0`，使用者可任选其一。根目录 `LICENSE-MIT` 与 `LICENSE-APACHE` 提供完整文本；workspace 与全部 crate manifest 统一继承 SPDX 表达式。cargo-deny 不在本次变更中启用，许可证策略另行处理。

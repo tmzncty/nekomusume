@@ -30,4 +30,4 @@ No algorithm or library is selected in M0. No self-designed cryptography is allo
 
 ## M0 prohibition list
 
-No self-made cipher, nonce shortcut, 0-RTT, unauthenticated control state change, unbounded decode allocation, production proxy mode, or claim of audit/compliance. TLS/Noise, identity model, key update and license remain decision gates.
+No self-made cipher, nonce shortcut, 0-RTT, unauthenticated control state change, unbounded decode allocation, production proxy mode, or claim of audit/compliance. TLS/Noise, identity model and key update remain decision gates; licensing is resolved as `MIT OR Apache-2.0`.

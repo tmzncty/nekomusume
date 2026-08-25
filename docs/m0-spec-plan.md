@@ -26,7 +26,7 @@ M0 must state whether an ACK proves `received` (peer parsed bytes), `delivered` 
 2. Define `neko-wire`, `neko-session`, `neko-carrier`, and `neko-cli` boundaries. Keep codec/state deterministic and independent of socket/runtime.
 3. Freeze wire magic/version/type/length, canonical integer encoding, maximum sizes, truncation/unknown-version/type errors.
 4. Freeze Session stream/offset/range state, duplicate/conflict rules, `active_path_epoch`, and path challenge contract.
-5. Choose TLS 1.3 vs Noise only through a security-reviewed ADR; do not write crypto before that gate. License selection likewise requires maintainer decision and SPDX/manifest consistency.
+5. Choose TLS 1.3 vs Noise only through a security-reviewed ADR; do not write crypto before that gate. License selection is resolved as `MIT OR Apache-2.0`; SPDX/manifest consistency is now enforced by the workspace metadata.
 6. Add at least 20 deterministic golden encode/decode vectors covering valid, boundary and invalid cases.
 7. Add decode fuzz target with oracle: no panic, OOB, unbounded allocation, or acceptance of impossible lengths. T-FR-01 is the transport failover/replay test plan, not an M0 live-network claim.
 

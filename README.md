@@ -96,7 +96,7 @@ Hysteria2 仍然是重要 benchmark competitor，但“超过 HY2”不是项目
 
 ## 许可证
 
-尚未决定。公开研究不等于自动选定开源许可证；在第一批代码进入仓库前明确。
+本项目采用双许可证，可任选 MIT 或 Apache-2.0。完整文本见 [LICENSE-MIT](LICENSE-MIT) 与 [LICENSE-APACHE](LICENSE-APACHE)。
 
 ## Research and M0 planning
 

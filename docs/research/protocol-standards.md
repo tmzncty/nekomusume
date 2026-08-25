@@ -26,4 +26,4 @@ RFC Editor copies are the external source of truth. “Fact” means the cited s
 
 ## Questions retained
 
-Magic/version, canonical integers, record limits, ACK proof object, challenge transcript, key selection, and license remain governed by `docs/m0-spec-plan.md` and ADRs to be added only when implementation starts.
+Magic/version, canonical integers, record limits, ACK proof object, challenge transcript, key selection, and license is resolved as `MIT OR Apache-2.0`; protocol fields remain governed by `docs/m0-spec-plan.md` and ADRs.

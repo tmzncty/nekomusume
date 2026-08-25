@@ -18,7 +18,7 @@ The review cross-examined the Protocol, Security and Transport research against 
 | no_std/runtime | No embedded requirement; defer no_std. Keep core free of socket/runtime; choose async runtime only at carrier implementation. | Proposed |
 | QUIC/MPTCP/SCTP analogy | Use as evidence and vocabulary only; do not claim compliance or copy packet/token/chunk formats. | Accepted boundary |
 | Fuzz and vectors | >=20 deterministic vectors and bounded decode fuzz; no live-network promise in M0. | Accepted acceptance |
-| License | Maintainer must choose SPDX/license-file policy before code release. | Open gate |
+| License | Administrator chose `MIT OR Apache-2.0`; root license files and workspace SPDX metadata are now present. | Resolved |
 
 ## Conflicts retained
 
