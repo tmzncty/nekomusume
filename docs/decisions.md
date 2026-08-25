@@ -170,3 +170,12 @@ M0 仅建立 virtual Cargo workspace 与 `neko-wire`、`neko-session`、`neko-ca
 `neko-carrier` now exposes a synchronous, non-blocking opaque-byte `Carrier` contract and a bounded in-memory `MemoryPair`. It preserves message boundaries, uses independent FIFO queues, copies input on send, applies checked byte accounting, and defines idempotent close with queued-data drain and explicit closed/peer-closed errors.
 
 This candidate opens no socket and has no runtime, routing, tunnel, firewall, service, UDP, or cryptographic behavior. It does not create `SessionDelivery` or `PathValidated` evidence and does not call `confirm_received`. M1, UDP, crypto, and production transport remain incomplete and unclaimed.
+## 2026-08-26 — D012：M1-S1 loopback UDP carrier
+
+**Status: Accepted — minimal safety slice**
+
+M1-S1 adds `neko-carrier::UdpLoopbackPair` and `UdpLoopbackEndpoint` using only `std::net::UdpSocket`. Construction binds both endpoints to `127.0.0.1:0`, connects the two ephemeral sockets to each other, and sets them nonblocking. The implementation keeps UDP errors in an independent `UdpError` type rather than migrating the existing `CarrierError`; this preserves the M1-S0 API and avoids cross-layer semantic promotion.
+
+Acceptance scope is limited to bidirectional opaque datagrams, preserved message boundaries, empty datagrams, oversize rejection without enqueue, nonblocking `WouldBlock`, OS errors, local idempotent close, and socket resource release by normal ownership. No worker, runtime dependency, fixed port, non-loopback bind, routing, tunnel, firewall, service, netns, WireGuard, TUN, OSPF, or policy-route operation is introduced. The slice makes no claim of `PeerClosed`, `SessionDelivery`, `PathValidated`, ACK, failover, reliability, or production reachability.
+
+The M1-S1 gate passed formatting, workspace check/test/clippy, script checks, and `git diff --check`; the environment snapshot observed no network mutation. Existing fuzz-smoke evidence is inherited from the reviewed baseline. It was intentionally not rerun during documentation closure because the script creates untracked `fuzz/corpus/decode/*` artifacts; those artifacts were removed after the prior run and the repository was returned clean.

@@ -285,6 +285,8 @@ trait Carrier {
 
 这些问题必须由实验逐步回答，不在文档阶段假装已经解决。
 
-## M1-S0 implementation candidate (2026-08-26)
+## M1-S1 implementation candidate (2026-08-26)
 
-The current candidate slice is limited to the synchronous `neko-carrier::Carrier` contract and bounded in-process `MemoryPair`. It is a test double for contract and queue semantics only: no async/Tokio, sockets, runtime, routing, tunnel, firewall, service, UDP, or crypto is introduced. Carrier observations remain isolated from `neko-session` delivery/path-validation evidence.
+M1-S0 remains the bounded in-process `MemoryPair` contract candidate. M1-S1 adds a deliberately minimal, synchronous `std::net::UdpSocket` slice: `UdpLoopbackPair` creates two connected endpoints bound only to `127.0.0.1:0`, connects the pair to each other, and enables nonblocking operation. The API preserves opaque datagram bytes and message boundaries, including empty datagrams; it reports `WouldBlock`, OS errors, oversize rejection, and local idempotent close through an independent UDP error type.
+
+This is loopback-only evidence, not a production network service. It adds no runtime dependency, worker thread, fixed port, non-loopback bind, routing, tunnel, firewall, service, netns, WireGuard, TUN, OSPF, or crypto behavior. It does not claim `PeerClosed`, `SessionDelivery`, `PathValidated`, ACK, failover, reliability, or ordering beyond the individual datagram boundary observed by the endpoint. Carrier observations remain isolated from `neko-session` delivery/path-validation evidence. The M1-S1 acceptance record is maintained in `docs/decisions.md`; the prior fuzz-smoke evidence is inherited and was not rerun because that script generates untracked corpus artifacts.
