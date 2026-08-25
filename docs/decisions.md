@@ -153,9 +153,9 @@ The standards, security and transport research are indexed by [`docs/m0-spec-pla
 
 ## 2026-08-26 — D009：M0 先落地边界，不落地传输
 
-**Status: Accepted**
+**Status: Accepted — historical M0 scope; superseded for UDP by D012**
 
-M0 仅建立 virtual Cargo workspace 与 `neko-wire`、`neko-session`、`neko-carrier`、`neko-cli` 四个 crate 边界。当前不实现 UDP/TCP、密码学、wire codec、Session 状态机或 failover；这些能力必须等待对应规范与安全审查门禁。crate 代码只提供可编译的占位标记，避免 README、路线图或规范产生已实现的虚假声明。
+M0 established only the virtual Cargo workspace and the `neko-wire`, `neko-session`, `neko-carrier`, and `neko-cli` crate boundaries. Within the M0 slice, UDP/TCP, cryptography, wire codec, Session state machine, and failover were not implemented; those capabilities required their own specifications and safety gates. The later M1-S1 loopback UDP slice is documented by D012 and does not retroactively change the M0 scope recorded here.
 
 ## 2026-08-26 — D010：采用 MIT OR Apache-2.0
 

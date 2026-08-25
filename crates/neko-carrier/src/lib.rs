@@ -1,7 +1,8 @@
-//! Pure carrier path evidence model.
+//! M0 carrier path-evidence state model.
 //!
-//! This is an M0 candidate: it opens no sockets, performs no routing or
-//! tunnelling, and never performs a real failover.  Evidence domains are
+//! This portion of the crate opens no sockets, performs no routing or
+//! tunnelling, and never performs a real failover.  The crate also contains
+//! the separately scoped M1-S1 loopback UDP slice; evidence domains remain
 //! deliberately separate so transport observations cannot become Session
 //! delivery or path validation claims by accident.
 

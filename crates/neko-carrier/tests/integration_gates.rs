@@ -1,4 +1,6 @@
-//! Cross-layer M0 candidate gates. No sockets, runtime, crypto, or live failover.
+//! Cross-layer M0 candidate gates. These tests exercise only the M0
+//! cross-layer state/ledger gates and create no sockets; they do not negate
+//! the separately implemented M1-S1 loopback UDP slice.
 use neko_carrier::{
     CarrierEvent, CarrierKind, CarrierState, Hysteresis, Limits as CarrierLimits, PacketFeedback,
     PacketFeedbackKind, PathGeneration, PathId, PathValidated, PathValidationState,
