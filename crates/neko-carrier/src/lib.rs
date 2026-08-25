@@ -731,19 +731,19 @@ mod memory_pair_tests {
             b_done.send(result).unwrap();
         });
 
-        // Wait only on completion notifications. A timeout fails without joining
-        // potentially stuck workers, so this regression itself cannot hang forever.
-        let first = done_rx.recv_timeout(Duration::from_secs(2));
-        let second = if first.is_ok() {
-            done_rx.recv_timeout(Duration::from_secs(2))
-        } else {
-            // Do not wait for a second worker after the bounded failure.
-            return;
-        };
-        assert!(first.is_ok());
-        assert!(second.is_ok());
-        // Both workers reported completion, therefore joining is now bounded by
-        // the carrier contract and cannot be the timeout failure path.
+        // Any timeout or send error is an explicit failure. The failure path
+        // does not join a potentially stuck worker.
+        match done_rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => panic!("concurrent send failed: {error:?}"),
+            Err(error) => panic!("concurrent sends did not complete: {error}"),
+        }
+        match done_rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => panic!("concurrent send failed: {error:?}"),
+            Err(error) => panic!("concurrent sends did not complete: {error}"),
+        }
+        // Joining occurs only after both workers reported Ok(()).
         a_thread.join().unwrap();
         b_thread.join().unwrap();
     }
