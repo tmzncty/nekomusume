@@ -196,10 +196,13 @@ impl DeliveryLedger {
             .iter()
             .map(|key| {
                 let s = &self.segments[key];
-                (s.offset, s.offset + s.data.len() as u64)
+                s.offset
+                    .checked_add(s.data.len() as u64)
+                    .map(|end| (s.offset, end))
+                    .ok_or(LedgerError::OffsetOverflow)
             })
-            .chain(std::iter::once((offset, end)))
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
+        ranges.push((offset, end));
         ranges.sort_unstable();
         let mut covered = start;
         for (range_start, range_end) in ranges {
