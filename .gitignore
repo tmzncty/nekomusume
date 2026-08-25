@@ -17,3 +17,6 @@ logs/
 *.key
 *.pem
 !*.example.pem
+
+# Rust build output
+target/

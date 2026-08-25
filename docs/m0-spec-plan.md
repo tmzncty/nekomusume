@@ -47,3 +47,7 @@ M0 acceptance is documentation/spec review plus deterministic implementation tes
 5. `test(fuzz): add decode smoke and dependency governance`
 
 Every commit body must include actual `Verification:` output and the research-contributor trailers requested by the maintainer. Co-authored-by is omitted without real identities.
+
+## M0 boundary scaffold status
+
+The virtual workspace and four crate boundaries now exist as a compile-only scaffold. No wire codec, socket, cryptography, session state machine, or failover behavior is implemented. The normative gates above remain open.
