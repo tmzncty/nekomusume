@@ -488,6 +488,117 @@ pub trait Carrier {
     fn close(&self) -> Result<(), MemoryPairError>;
 }
 
+/// Local-only connected UDP datagrams. Kept separate from the cross-layer
+/// Carrier trait so OS errors cannot become session or path evidence.
+pub trait UdpCarrier {
+    fn send_datagram(&self, message: &[u8]) -> Result<(), UdpError>;
+    fn recv_datagram(&self) -> Result<Option<Vec<u8>>, UdpError>;
+    fn close(&self) -> Result<(), UdpError>;
+}
+
+#[derive(Debug)]
+pub enum UdpError {
+    InvalidLimits,
+    MessageTooLarge,
+    WouldBlock,
+    Io(std::io::Error),
+    StatePoisoned,
+}
+impl std::fmt::Display for UdpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidLimits => f.write_str("invalid UDP limits"),
+            Self::MessageTooLarge => f.write_str("UDP datagram exceeds limit"),
+            Self::WouldBlock => f.write_str("UDP receive would block"),
+            Self::Io(e) => e.fmt(f),
+            Self::StatePoisoned => f.write_str("UDP endpoint state poisoned"),
+        }
+    }
+}
+impl std::error::Error for UdpError {}
+impl From<std::io::Error> for UdpError {
+    fn from(e: std::io::Error) -> Self {
+        if e.kind() == std::io::ErrorKind::WouldBlock {
+            Self::WouldBlock
+        } else {
+            Self::Io(e)
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UdpLimits {
+    pub max_datagram_bytes: usize,
+}
+#[derive(Debug)]
+pub struct UdpLoopbackEndpoint {
+    socket: std::net::UdpSocket,
+    limits: UdpLimits,
+    closed: std::sync::Mutex<bool>,
+}
+pub struct UdpLoopbackPair;
+impl UdpLoopbackPair {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(limits: UdpLimits) -> Result<(UdpLoopbackEndpoint, UdpLoopbackEndpoint), UdpError> {
+        if limits.max_datagram_bytes == 0 {
+            return Err(UdpError::InvalidLimits);
+        }
+        let a = std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        let b = std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        a.connect(b.local_addr()?)?;
+        b.connect(a.local_addr()?)?;
+        a.set_nonblocking(true)?;
+        b.set_nonblocking(true)?;
+        Ok((Self::endpoint(a, limits), Self::endpoint(b, limits)))
+    }
+    fn endpoint(socket: std::net::UdpSocket, limits: UdpLimits) -> UdpLoopbackEndpoint {
+        UdpLoopbackEndpoint {
+            socket,
+            limits,
+            closed: std::sync::Mutex::new(false),
+        }
+    }
+}
+impl UdpLoopbackEndpoint {
+    pub fn local_addr(&self) -> Result<std::net::SocketAddr, UdpError> {
+        Ok(self.socket.local_addr()?)
+    }
+    fn closed(&self) -> Result<bool, UdpError> {
+        Ok(*self.closed.lock().map_err(|_| UdpError::StatePoisoned)?)
+    }
+}
+impl UdpCarrier for UdpLoopbackEndpoint {
+    fn send_datagram(&self, m: &[u8]) -> Result<(), UdpError> {
+        if m.len() > self.limits.max_datagram_bytes {
+            return Err(UdpError::MessageTooLarge);
+        }
+        if self.closed()? {
+            return Err(UdpError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "endpoint is closed",
+            )));
+        }
+        self.socket.send(m).map(|_| ()).map_err(Into::into)
+    }
+    fn recv_datagram(&self) -> Result<Option<Vec<u8>>, UdpError> {
+        if self.closed()? {
+            return Ok(None);
+        }
+        let mut b = vec![0; self.limits.max_datagram_bytes.saturating_add(1)];
+        match self.socket.recv(&mut b) {
+            Ok(n) if n > self.limits.max_datagram_bytes => Err(UdpError::MessageTooLarge),
+            Ok(n) => {
+                b.truncate(n);
+                Ok(Some(b))
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+    fn close(&self) -> Result<(), UdpError> {
+        *self.closed.lock().map_err(|_| UdpError::StatePoisoned)? = true;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CarrierProperties {
     pub message_boundaries: bool,
@@ -767,5 +878,42 @@ mod memory_pair_tests {
                 max_queue_bytes: 6
             }
         );
+    }
+}
+
+#[cfg(test)]
+mod udp_loopback_tests {
+    use super::{UdpCarrier, UdpError, UdpLimits, UdpLoopbackPair};
+    #[test]
+    fn loopback_preserves_boundaries_empty_and_would_block() {
+        let (a, b) = UdpLoopbackPair::new(UdpLimits {
+            max_datagram_bytes: 8,
+        })
+        .unwrap();
+        assert!(matches!(b.recv_datagram(), Err(UdpError::WouldBlock)));
+        assert!(a.local_addr().unwrap().ip().is_loopback());
+        assert!(b.local_addr().unwrap().ip().is_loopback());
+        a.send_datagram(b"").unwrap();
+        a.send_datagram(b"opaque").unwrap();
+        assert_eq!(b.recv_datagram().unwrap(), Some(Vec::new()));
+        assert_eq!(b.recv_datagram().unwrap(), Some(b"opaque".to_vec()));
+        b.send_datagram(b"reply").unwrap();
+        assert_eq!(a.recv_datagram().unwrap(), Some(b"reply".to_vec()));
+    }
+    #[test]
+    fn oversize_is_rejected_and_close_is_local_idempotent() {
+        let (a, b) = UdpLoopbackPair::new(UdpLimits {
+            max_datagram_bytes: 2,
+        })
+        .unwrap();
+        assert!(matches!(
+            a.send_datagram(b"123"),
+            Err(UdpError::MessageTooLarge)
+        ));
+        a.close().unwrap();
+        a.close().unwrap();
+        assert!(a.recv_datagram().unwrap().is_none());
+        b.send_datagram(b"ok").unwrap();
+        assert!(a.recv_datagram().unwrap().is_none());
     }
 }
