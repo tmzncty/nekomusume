@@ -5,6 +5,9 @@ version = 4
 [[package]]
 name = "neko-carrier"
 version = "0.1.0"
+dependencies = [
+ "neko-session",
+]
 
 [[package]]
 name = "neko-cli"
