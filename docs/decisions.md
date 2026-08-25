@@ -162,3 +162,11 @@ M0 仅建立 virtual Cargo workspace 与 `neko-wire`、`neko-session`、`neko-ca
 **Status: Accepted — administrator decision**
 
 管理员裁决本项目采用双许可证表达式 `MIT OR Apache-2.0`，使用者可任选其一。根目录 `LICENSE-MIT` 与 `LICENSE-APACHE` 提供完整文本；workspace 与全部 crate manifest 统一继承 SPDX 表达式。cargo-deny 不在本次变更中启用，许可证策略另行处理。
+
+## 2026-08-26 — D011：M1-S0 bounded MemoryPair candidate
+
+**Status: Candidate — implementation slice only**
+
+`neko-carrier` now exposes a synchronous, non-blocking opaque-byte `Carrier` contract and a bounded in-memory `MemoryPair`. It preserves message boundaries, uses independent FIFO queues, copies input on send, applies checked byte accounting, and defines idempotent close with queued-data drain and explicit closed/peer-closed errors.
+
+This candidate opens no socket and has no runtime, routing, tunnel, firewall, service, UDP, or cryptographic behavior. It does not create `SessionDelivery` or `PathValidated` evidence and does not call `confirm_received`. M1, UDP, crypto, and production transport remain incomplete and unclaimed.

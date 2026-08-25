@@ -477,3 +477,251 @@ mod tests {
         );
     }
 }
+
+/// Synchronous, non-blocking opaque-byte carrier contract.
+pub trait Carrier {
+    fn kind(&self) -> CarrierKind;
+    fn properties(&self) -> CarrierProperties;
+    fn limits(&self) -> MemoryLimits;
+    fn send(&self, message: &[u8]) -> Result<(), MemoryPairError>;
+    fn recv(&self) -> Result<Option<Vec<u8>>, MemoryPairError>;
+    fn close(&self) -> Result<(), MemoryPairError>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CarrierProperties {
+    pub message_boundaries: bool,
+    pub reliable: bool,
+    pub ordered: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryLimits {
+    pub max_message_bytes: usize,
+    pub max_queue_bytes: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryPairError {
+    InvalidLimits,
+    MessageTooLarge,
+    QueueFull,
+    Closed,
+    PeerClosed,
+    ArithmeticOverflow,
+    StatePoisoned,
+}
+
+#[derive(Debug)]
+struct MemoryState {
+    queue: std::collections::VecDeque<Vec<u8>>,
+    queue_bytes: usize,
+    closed: bool,
+}
+
+#[derive(Debug)]
+struct MemoryShared {
+    limits: MemoryLimits,
+    directions: [std::sync::Mutex<MemoryState>; 2],
+}
+
+/// In-process bounded pair. No runtime, socket, route, tunnel, or service effects.
+#[derive(Debug, Clone)]
+pub struct MemoryEndpoint {
+    shared: std::sync::Arc<MemoryShared>,
+    side: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MemoryPair;
+
+impl MemoryPair {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(limits: MemoryLimits) -> Result<(MemoryEndpoint, MemoryEndpoint), MemoryPairError> {
+        if limits.max_message_bytes == 0
+            || limits.max_queue_bytes == 0
+            || limits.max_message_bytes > limits.max_queue_bytes
+        {
+            return Err(MemoryPairError::InvalidLimits);
+        }
+        let shared = std::sync::Arc::new(MemoryShared {
+            limits,
+            directions: std::array::from_fn(|_| {
+                std::sync::Mutex::new(MemoryState {
+                    queue: std::collections::VecDeque::new(),
+                    queue_bytes: 0,
+                    closed: false,
+                })
+            }),
+        });
+        Ok((
+            MemoryEndpoint {
+                shared: shared.clone(),
+                side: 0,
+            },
+            MemoryEndpoint { shared, side: 1 },
+        ))
+    }
+}
+
+impl MemoryEndpoint {
+    fn lock(&self, side: usize) -> Result<std::sync::MutexGuard<'_, MemoryState>, MemoryPairError> {
+        self.shared.directions[side]
+            .lock()
+            .map_err(|_| MemoryPairError::StatePoisoned)
+    }
+}
+
+impl Carrier for MemoryEndpoint {
+    fn kind(&self) -> CarrierKind {
+        CarrierKind::Other(0)
+    }
+    fn properties(&self) -> CarrierProperties {
+        CarrierProperties {
+            message_boundaries: true,
+            reliable: false,
+            ordered: true,
+        }
+    }
+    fn limits(&self) -> MemoryLimits {
+        self.shared.limits
+    }
+    fn send(&self, message: &[u8]) -> Result<(), MemoryPairError> {
+        let limits = self.shared.limits;
+        if message.len() > limits.max_message_bytes {
+            return Err(MemoryPairError::MessageTooLarge);
+        }
+        if self.lock(self.side)?.closed {
+            return Err(MemoryPairError::Closed);
+        }
+        let peer = 1 - self.side;
+        let mut peer_state = self.lock(peer)?;
+        if peer_state.closed {
+            return Err(MemoryPairError::PeerClosed);
+        }
+        let total = peer_state
+            .queue_bytes
+            .checked_add(message.len())
+            .ok_or(MemoryPairError::ArithmeticOverflow)?;
+        if total > limits.max_queue_bytes {
+            return Err(MemoryPairError::QueueFull);
+        }
+        peer_state.queue.push_back(message.to_vec());
+        peer_state.queue_bytes = total;
+        Ok(())
+    }
+    fn recv(&self) -> Result<Option<Vec<u8>>, MemoryPairError> {
+        let mut state = self.lock(self.side)?;
+        let message = state.queue.pop_front();
+        if let Some(ref bytes) = message {
+            state.queue_bytes = state
+                .queue_bytes
+                .checked_sub(bytes.len())
+                .ok_or(MemoryPairError::ArithmeticOverflow)?;
+        }
+        Ok(message)
+    }
+    fn close(&self) -> Result<(), MemoryPairError> {
+        let mut state = self.lock(self.side)?;
+        state.closed = true;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod memory_pair_tests {
+    use super::*;
+    use crate::Carrier;
+
+    fn pair() -> (MemoryEndpoint, MemoryEndpoint) {
+        MemoryPair::new(MemoryLimits {
+            max_message_bytes: 4,
+            max_queue_bytes: 6,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn bidirectional_fifo_boundaries_and_input_copy() {
+        let (a, b) = pair();
+        let mut input = vec![1, 2];
+        a.send(&input).unwrap();
+        input[0] = 9;
+        a.send(&[]).unwrap();
+        a.send(&[3]).unwrap();
+        assert_eq!(b.recv().unwrap(), Some(vec![1, 2]));
+        assert_eq!(b.recv().unwrap(), Some(vec![]));
+        assert_eq!(b.recv().unwrap(), Some(vec![3]));
+        assert_eq!(b.recv().unwrap(), None);
+        b.send(b"ok").unwrap();
+        assert_eq!(a.recv().unwrap(), Some(b"ok".to_vec()));
+    }
+
+    #[test]
+    fn limits_and_queue_full_are_atomic() {
+        for limits in [
+            MemoryLimits {
+                max_message_bytes: 0,
+                max_queue_bytes: 1,
+            },
+            MemoryLimits {
+                max_message_bytes: 2,
+                max_queue_bytes: 0,
+            },
+            MemoryLimits {
+                max_message_bytes: 3,
+                max_queue_bytes: 2,
+            },
+            MemoryLimits {
+                max_message_bytes: usize::MAX,
+                max_queue_bytes: usize::MAX - 1,
+            },
+        ] {
+            assert!(matches!(
+                MemoryPair::new(limits),
+                Err(MemoryPairError::InvalidLimits)
+            ));
+        }
+        let (a, b) = pair();
+        a.send(b"1234").unwrap();
+        assert_eq!(a.send(b"567"), Err(MemoryPairError::QueueFull));
+        assert_eq!(b.recv().unwrap(), Some(b"1234".to_vec()));
+        assert_eq!(a.send(b"567"), Ok(()));
+        assert_eq!(a.send(b"12345"), Err(MemoryPairError::MessageTooLarge));
+    }
+
+    #[test]
+    fn close_is_idempotent_and_preserves_queued_data() {
+        let (a, b) = pair();
+        a.send(b"queued").unwrap_err();
+        a.send(b"data").unwrap();
+        a.close().unwrap();
+        a.close().unwrap();
+        assert_eq!(a.send(b"x"), Err(MemoryPairError::Closed));
+        assert_eq!(b.recv().unwrap(), Some(b"data".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+        b.send(b"x").unwrap_err();
+        assert_eq!(a.recv().unwrap(), None);
+    }
+
+    #[test]
+    fn contract_is_opaque_and_evidence_free() {
+        let (a, _) = pair();
+        assert_eq!(a.kind(), CarrierKind::Other(0));
+        assert_eq!(
+            a.properties(),
+            CarrierProperties {
+                message_boundaries: true,
+                reliable: false,
+                ordered: true
+            }
+        );
+        assert_eq!(
+            a.limits(),
+            MemoryLimits {
+                max_message_bytes: 4,
+                max_queue_bytes: 6
+            }
+        );
+    }
+}

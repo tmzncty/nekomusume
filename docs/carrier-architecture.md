@@ -284,3 +284,7 @@ trait Carrier {
 6. concurrent UDP + TCP 是否能在不制造严重跨路径 HOL 的前提下提供实际收益？
 
 这些问题必须由实验逐步回答，不在文档阶段假装已经解决。
+
+## M1-S0 implementation candidate (2026-08-26)
+
+The current candidate slice is limited to the synchronous `neko-carrier::Carrier` contract and bounded in-process `MemoryPair`. It is a test double for contract and queue semantics only: no async/Tokio, sockets, runtime, routing, tunnel, firewall, service, UDP, or crypto is introduced. Carrier observations remain isolated from `neko-session` delivery/path-validation evidence.
