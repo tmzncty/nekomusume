@@ -403,10 +403,14 @@ mod tests {
         let mut x = l();
         x.insert(1, 0, b"ab", c(1, 0, 1)).unwrap();
         x.insert(1, 4, b"ef", c(1, 0, 1)).unwrap();
-        x.insert(1, 1, b"bcde", c(1, 0, 1)).unwrap();
+        // This fragment overlaps the first segment but does not cover the
+        // unknown gap before the second; merge only the covered range.
+        x.insert(1, 1, b"bc", c(1, 0, 1)).unwrap();
         let segments: Vec<_> = x.segments().collect();
-        assert_eq!(segments.len(), 1);
-        assert_eq!(segments[0].data, b"abcdef");
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].data, b"abc");
+        assert_eq!(segments[1].data, b"ef");
+        assert_eq!(x.bytes, 5);
     }
 
     #[test]

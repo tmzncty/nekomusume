@@ -436,6 +436,21 @@ mod tests {
         assert_eq!(s.active(), Some((P, G)));
     }
     #[test]
+    fn duplicate_path_reports_exists_before_capacity() {
+        let mut s = CarrierState::new(Limits {
+            max_paths: 1,
+            ..Limits::default()
+        });
+        let event = CarrierEvent::PathAdded {
+            path: PathId(7),
+            carrier: CarrierKind::Tcp,
+            generation: PathGeneration(1),
+        };
+        s.apply(event).unwrap();
+        assert_eq!(s.apply(event), Err(CarrierError::PathExists));
+    }
+
+    #[test]
     fn limits_and_invalid_transitions_are_deterministic() {
         let mut s = state();
         add(&mut s);
