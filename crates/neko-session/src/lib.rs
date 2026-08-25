@@ -65,6 +65,17 @@ pub enum LedgerError {
     InvalidTransition,
     RangeNotFound,
 }
+
+fn checked_total(current: usize, added: usize, limit: usize) -> Result<usize, LedgerError> {
+    let total = current
+        .checked_add(added)
+        .ok_or(LedgerError::ByteCountOverflow)?;
+    if total > limit {
+        return Err(LedgerError::ConnectionLimit);
+    }
+    Ok(total)
+}
+
 #[derive(Debug, Default)]
 pub struct DeliveryLedger {
     limits: Limits,
@@ -146,13 +157,8 @@ impl DeliveryLedger {
             }
         }
         if overlaps.is_empty() {
-            let new_bytes = self
-                .bytes
-                .checked_add(data.len())
-                .ok_or(LedgerError::ByteCountOverflow)?;
-            if new_bytes > self.limits.max_connection_bytes {
-                return Err(LedgerError::ConnectionLimit);
-            }
+            let new_bytes =
+                checked_total(self.bytes, data.len(), self.limits.max_connection_bytes)?;
             self.bytes = new_bytes;
             self.streams.entry(stream).or_insert(0);
             self.segments.insert(
@@ -187,15 +193,11 @@ impl DeliveryLedger {
         let merged_len = finish
             .checked_sub(start)
             .ok_or(LedgerError::OffsetOverflow)? as usize;
-        let new_total = self
+        let remaining = self
             .bytes
             .checked_sub(removed)
-            .ok_or(LedgerError::ByteCountOverflow)?
-            .checked_add(merged_len)
             .ok_or(LedgerError::ByteCountOverflow)?;
-        if new_total > self.limits.max_connection_bytes {
-            return Err(LedgerError::ConnectionLimit);
-        }
+        let new_total = checked_total(remaining, merged_len, self.limits.max_connection_bytes)?;
         let mut merged = vec![0u8; merged_len];
         for key in &overlaps {
             let s = &self.segments[key];
@@ -345,8 +347,10 @@ mod tests {
             y.insert(1, u64::MAX, b"x", c(1, 0, 1)),
             Err(LedgerError::OffsetOverflow)
         );
-        assert_eq!(y.bytes.checked_add(usize::MAX), Some(usize::MAX));
-        assert_eq!(usize::MAX.checked_add(1), None);
+        assert_eq!(
+            checked_total(usize::MAX, 1, usize::MAX),
+            Err(LedgerError::ByteCountOverflow)
+        );
     }
     #[test]
     fn watermark_monotonic() {

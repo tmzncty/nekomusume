@@ -368,6 +368,8 @@ mod tests {
             s.path(P).unwrap().validation,
             PathValidationState::Candidate
         );
+        assert_eq!(s.path(P).unwrap().successes, 0);
+        assert_eq!(s.path(P).unwrap().dwell_events, 0);
     }
     #[test]
     fn pto_is_not_failure() {
