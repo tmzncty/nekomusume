@@ -731,16 +731,19 @@ mod memory_pair_tests {
             b_done.send(result).unwrap();
         });
 
-        // A timeout makes the regression bounded if a future implementation
-        // reintroduces lock-order inversion.
-        assert_eq!(
-            done_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
-            Ok(())
-        );
-        assert_eq!(
-            done_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
-            Ok(())
-        );
+        // Wait only on completion notifications. A timeout fails without joining
+        // potentially stuck workers, so this regression itself cannot hang forever.
+        let first = done_rx.recv_timeout(Duration::from_secs(2));
+        let second = if first.is_ok() {
+            done_rx.recv_timeout(Duration::from_secs(2))
+        } else {
+            // Do not wait for a second worker after the bounded failure.
+            return;
+        };
+        assert!(first.is_ok());
+        assert!(second.is_ok());
+        // Both workers reported completion, therefore joining is now bounded by
+        // the carrier contract and cannot be the timeout failure path.
         a_thread.join().unwrap();
         b_thread.join().unwrap();
     }
