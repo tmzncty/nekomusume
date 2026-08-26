@@ -179,3 +179,11 @@ M1-S1 adds `neko-carrier::UdpLoopbackPair` and `UdpLoopbackEndpoint` using only 
 Acceptance scope is limited to bidirectional opaque datagrams, preserved message boundaries, empty datagrams, oversize rejection without enqueue, nonblocking `WouldBlock`, OS errors, local idempotent close, and socket resource release by normal ownership. No worker, runtime dependency, fixed port, non-loopback bind, routing, tunnel, firewall, service, netns, WireGuard, TUN, OSPF, or policy-route operation is introduced. The slice makes no claim of `PeerClosed`, `SessionDelivery`, `PathValidated`, ACK, failover, reliability, or production reachability.
 
 The M1-S1 gate passed formatting, workspace check/test/clippy, script checks, and `git diff --check`; the environment snapshot observed no network mutation. Existing fuzz-smoke evidence is inherited from the reviewed baseline. It was intentionally not rerun during documentation closure because the script creates untracked `fuzz/corpus/decode/*` artifacts; those artifacts were removed after the prior run and the repository was returned clean.
+
+## 2026-08-26 — D013：M1-S2 bounded candidate record framing seam
+
+**Status: Candidate gate — implementation/test slice only; not a frozen specification**
+
+M1-S2 connects the existing `neko-wire` candidate `encode`/`decode` to `MemoryPair` messages and `UdpLoopbackPair` datagrams in integration tests. Each carrier unit contains exactly one complete record; boundaries and FIFO order are preserved. Empty payloads, the `MAX_PAYLOAD_LEN` boundary, oversized records, nonblocking `WouldBlock`, and malformed magic/version/type/flags/length, truncation, and trailing bytes are covered.
+
+Malformed decoding remains local to the framing seam: tests keep rejection before any evidence-producing API and confirm the carrier remains independently usable. No production session code, crypto/auth/key material, ACK machinery, retransmission, congestion control, network configuration, or new runtime/network dependency is introduced. This candidate gate does not freeze the provisional wire format.
