@@ -197,3 +197,26 @@ M1-S3a adopts the Noise Framework as the direction for a future authenticated ha
 The stage establishes reviewable future invariants for identity/authorization, transcript and AAD binding, independent direction/epoch/key-phase state, nonce uniqueness and checked overflow refusal, replay/duplicate/old-epoch rejection, disabled 0-RTT, bounded pre-auth resources and anti-amplification, and secret-safe logging/error boundaries. The synthetic contract tests only state and rejection semantics: authentication failure, tampering, wrong direction/epoch/key phase, AAD mismatch, truncation, duplicate, oversize, and nonce-counter overflow. It must never fabricate authentication or encryption success and must produce no `SessionDelivery`, `PathValidated`, or `ACK` evidence.
 
 This is a candidate gate, not a security audit or protocol freeze. Real Noise/TLS/AEAD/KDF, key/nonce generation, handshake, identity loading, replay window, path authentication, UDP encryption, and runtime/network implementation remain prohibited until the later approved gates.
+
+## 2026-08-26 — D015：Noise IK 25519/ChaChaPoly/SHA256 G0 candidate contract
+
+**Status: Candidate only — not frozen; not implementation approval**
+
+`Noise_IK_25519_ChaChaPoly_SHA256` is recorded as a G0 candidate only. This
+entry authorizes no Cargo, `src/`, dependency, test, runtime, or network change.
+The complete candidate contract and its unresolved blockers are in
+[`docs/adr/m1-g0-noise-ik-candidate.md`](adr/m1-g0-noise-ik-candidate.md).
+
+The blockers explicitly include trust-store versioning, signatures, rotation,
+revocation and rollback; authentication not being authorization; identity
+leakage and uniform failure behavior; strict prologue/AAD domain separation;
+complete header/wire mapping; nonce uniqueness across restart, concurrency and
+rollback; replay-window capacity/TTL/eviction; key phase and old-epoch rules;
+absolute CPU/memory/concurrency/resource and anti-amplification budgets; disabled
+0-RTT; and isolation of ACK/path/session evidence.
+
+D012 `Accepted` remains limited to the M1-S1 loopback UDP slice acceptance; it
+does not accept Noise or production security. The v0 normative-source title is
+provisional and does not freeze the protocol. G0 PASS and STOP conditions are
+normative review gates in the ADR; until PASS, implementation and security
+claims must stop.
