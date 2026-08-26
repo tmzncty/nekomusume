@@ -7,10 +7,13 @@
 ## Decision
 
 M1-S3a takes the **Noise Framework** as the direction for a future authenticated
-handshake. This ADR does not select a concrete Noise pattern, library, version,
-or license. Those choices require explicit approval at the applicable **G0/G2**
-gates, after review of the threat model, API/maintenance posture, dependency
-licenses, interoperability, and implementation evidence.
+handshake. This ADR does not select a concrete Noise pattern, library, or
+version, nor does it approve the license compatibility of any future
+cryptographic dependency. Those choices require explicit approval at the
+applicable **G0/G2** gates, after review of the threat model, API/maintenance
+posture, dependency license compatibility, interoperability, and implementation
+evidence. The project license decision in D010 remains accepted and unchanged:
+`MIT OR Apache-2.0`.
 
 Stage 1 is deliberately dependency-free. It establishes reviewable invariants,
 rejection semantics, and synthetic test vectors only. It does not implement
@@ -86,8 +89,9 @@ to `tests/vectors/m1-s3a/` and remain plain-text or binary contract data only.
 
 M1-S3a stage 1 is **only a candidate security gate**. It is not a security
 audit, does not freeze the protocol, and does not approve a Noise pattern,
-library, version, license, cryptographic construction, identity scheme, or
-wire encoding. It does not establish production security or interoperability.
+library, version, or cryptographic-dependency license compatibility,
+cryptographic construction, identity scheme, or wire encoding. The accepted
+project license decision in D010, `MIT OR Apache-2.0`, remains unchanged. It does not establish production security or interoperability.
 A later G0/G2 review must turn these invariants into implementation-specific
 requirements and evidence before any cryptographic or handshake code is
 permitted.

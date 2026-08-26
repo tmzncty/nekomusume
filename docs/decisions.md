@@ -192,7 +192,7 @@ Malformed decoding remains local to the framing seam: tests keep rejection befor
 
 **Status: Candidate security gate — documentation and synthetic contract only**
 
-M1-S3a adopts the Noise Framework as the direction for a future authenticated handshake, but does not select a concrete pattern, library, version, or license; those choices require later G0/G2 approval. Stage 1 is dependency-free and changes no Cargo manifest, production `src/` code, wire/carrier/session/CLI code, runtime, or network service.
+M1-S3a adopts the Noise Framework as the direction for a future authenticated handshake, but does not select a concrete pattern or library/version, nor approve license compatibility for any future cryptographic dependency; those choices require later G0/G2 approval. The accepted project license decision in D010, `MIT OR Apache-2.0`, remains unchanged. Stage 1 is dependency-free and changes no Cargo manifest, production `src/` code, wire/carrier/session/CLI code, runtime, or network service.
 
 The stage establishes reviewable future invariants for identity/authorization, transcript and AAD binding, independent direction/epoch/key-phase state, nonce uniqueness and checked overflow refusal, replay/duplicate/old-epoch rejection, disabled 0-RTT, bounded pre-auth resources and anti-amplification, and secret-safe logging/error boundaries. The synthetic contract tests only state and rejection semantics: authentication failure, tampering, wrong direction/epoch/key phase, AAD mismatch, truncation, duplicate, oversize, and nonce-counter overflow. It must never fabricate authentication or encryption success and must produce no `SessionDelivery`, `PathValidated`, or `ACK` evidence.
 
