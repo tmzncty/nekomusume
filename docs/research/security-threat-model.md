@@ -31,3 +31,19 @@ No algorithm or library is selected in M0. No self-designed cryptography is allo
 ## M0 prohibition list
 
 No self-made cipher, nonce shortcut, 0-RTT, unauthenticated control state change, unbounded decode allocation, production proxy mode, or claim of audit/compliance. TLS/Noise, identity model and key update remain decision gates; licensing is resolved as `MIT OR Apache-2.0`.
+
+## Governance boundary (G0)
+
+This file is research input for later review only. It is non-normative, not a
+security audit, not a compliance assessment, and not approval of a protocol,
+Noise pattern, library, dependency, key material, or implementation. Its
+candidate comparisons and references must not be treated as selections or
+passes.
+
+D010's `MIT OR Apache-2.0` records only the project license/SPDX expression;
+it does not approve dependencies. D012 `Accepted` remains only the
+`127.0.0.1` loopback UDP slice. D014 is only the Noise direction and synthetic
+contract, and D015 is only a candidate review target. The v0 document is a
+provisional normative entry point, not frozen. No `Accepted` item may implicitly
+promote a candidate or research result; conflicts require G0 **STOP** and an
+explicit new ADR (or explicit reviewed amendment) before proceeding.

@@ -110,3 +110,23 @@ This record makes the candidate auditable while preserving the existing
 negative boundary. It does not authorize code or dependency changes. The next
 step is a focused G0 review that resolves every blocker and records evidence;
 until then the candidate remains **candidate only**.
+
+## G0 non-escalation rules
+
+This ADR is a candidate-review target only. It must not be described as
+selected, frozen, approved, or **PASS**, and it does not select IK, a library,
+a dependency, or key material. D014 is limited to the Noise direction and its
+dependency-free synthetic contract; synthetic results are not authentication,
+interoperability, implementation, or security-approval evidence.
+
+D010's `MIT OR Apache-2.0` is the project license/SPDX decision only. It does
+not approve a cryptographic or other dependency. D012 `Accepted` is limited to
+the `127.0.0.1` loopback UDP slice and does not escalate to Noise,
+authentication, authorization, production transport, or this candidate.
+
+The v0 document is a provisional normative entry point, not a frozen protocol.
+The threat model is research input only: it is non-normative, not an audit, and
+not an approval. No `Accepted` decision may implicitly promote a candidate or
+research result. If documents conflict, G0 is **STOP**: do not implement,
+merge, or claim approval; record an explicit new ADR (or an explicit amendment
+with the same review gate) before proceeding.

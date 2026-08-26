@@ -1,6 +1,6 @@
 # Nekomusume Session v0 — normative entry point
 
-**Status: candidate gate; not a frozen protocol specification.**
+**Status: provisional normative entry point; not frozen.**
 
 This is the single canonical entry point for Session v0. Current Rust models
 are bounded, synchronous, and transport-independent. They do not implement
@@ -32,3 +32,23 @@ and byte-identical overlaps are idempotent.
 conditions before committing `SessionContext`. A rejected insertion leaves the
 ledger context and delivery state unchanged. This remains a bounded state-model
 invariant, not a claim of complete protocol validation.
+
+## Governance boundary (G0)
+
+This document is a **provisional normative entry point**, not a frozen
+protocol and not an implementation approval. Its existence, heading, or any
+bounded model must not be used to claim that a wire format, Noise IK, a
+library, a dependency, or key material has been selected.
+
+D012 `Accepted` remains limited to the `127.0.0.1` loopback UDP slice. D014 is
+limited to the Noise direction and dependency-free synthetic contract. D015 is
+only a candidate review target. D010 only records the project license/SPDX
+expression; it does not approve dependencies. Synthetic contract output and
+research material do not create authentication, path, delivery, or security
+evidence.
+
+The threat model is research input only and is non-normative, not an audit, and
+not an approval. No `Accepted` record implicitly escalates a candidate. If this
+entry point conflicts with an ADR or research record, G0 is **STOP**; an
+explicit new ADR (or explicit reviewed amendment) is required before any
+selection, freeze, implementation, merge, or security claim.

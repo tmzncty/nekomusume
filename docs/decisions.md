@@ -161,7 +161,7 @@ M0 established only the virtual Cargo workspace and the `neko-wire`, `neko-sessi
 
 **Status: Accepted — administrator decision**
 
-管理员裁决本项目采用双许可证表达式 `MIT OR Apache-2.0`，使用者可任选其一。根目录 `LICENSE-MIT` 与 `LICENSE-APACHE` 提供完整文本；workspace 与全部 crate manifest 统一继承 SPDX 表达式。cargo-deny 不在本次变更中启用，许可证策略另行处理。
+管理员裁决本项目采用双许可证表达式 `MIT OR Apache-2.0`，使用者可任选其一。根目录 `LICENSE-MIT` 与 `LICENSE-APACHE` 提供完整文本；workspace 与全部 crate manifest 统一声明该 SPDX 表达式。D010 仅决定项目许可证表达与 SPDX 标注，不是任何依赖的批准、选型或安全审查；依赖许可证与引入仍须独立门禁。cargo-deny 不在本次变更中启用，许可证策略另行处理。
 
 ## 2026-08-26 — D011：M1-S0 bounded MemoryPair candidate
 
@@ -220,3 +220,29 @@ does not accept Noise or production security. The v0 normative-source title is
 provisional and does not freeze the protocol. G0 PASS and STOP conditions are
 normative review gates in the ADR; until PASS, implementation and security
 claims must stop.
+
+## 2026-08-26 — G0 non-escalation clarification
+
+The status labels in this log are scoped to the exact decision text and its
+stated slice. `Accepted` never implicitly selects, freezes, approves, or
+promotes a `Candidate`, `Research`, or synthetic-contract result. In
+particular:
+
+- **D010** is only the project license and SPDX-expression decision
+  (`MIT OR Apache-2.0`); it is not approval of any dependency, library, version,
+  cryptographic primitive, or dependency license review.
+- **D012 Accepted** is only the `127.0.0.1` loopback UDP slice acceptance. It
+  does not accept Noise, authentication, authorization, production transport,
+  or non-loopback networking.
+- **D014** is only the Noise direction and a dependency-free synthetic
+  contract. It does not select a Noise pattern/library, create cryptographic
+  evidence, or approve implementation.
+- **D015** is only a Noise IK candidate review target. It is not selected,
+  frozen, implemented, or **PASS**; it does not choose IK, a library, or keys.
+
+`docs/specs/nekomusume-session-v0.md` is a provisional normative entry point,
+not a frozen specification. `docs/research/security-threat-model.md` is
+research input only: non-normative, not an audit, and not an approval. If any
+of these documents conflict, G0 is **STOP**. No implementation, merge, or
+security claim may proceed until an explicit new ADR (or explicit reviewed
+amendment) resolves the conflict and states the new scope.
