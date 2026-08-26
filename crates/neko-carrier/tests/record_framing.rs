@@ -28,8 +28,8 @@ fn memory_roundtrip_fifo_and_empty() {
     assert_eq!(decode(&b.recv().unwrap().unwrap()).unwrap(), rs[1]);
     assert_eq!(b.recv().unwrap(), None);
     let reply = rec(RecordType::PathChallenge, b"back");
-    a.send(&encode(&reply).unwrap()).unwrap();
-    assert_eq!(decode(&b.recv().unwrap().unwrap()).unwrap(), reply);
+    b.send(&encode(&reply).unwrap()).unwrap();
+    assert_eq!(decode(&a.recv().unwrap().unwrap()).unwrap(), reply);
 }
 
 #[test]
