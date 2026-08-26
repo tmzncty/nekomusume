@@ -187,3 +187,13 @@ The M1-S1 gate passed formatting, workspace check/test/clippy, script checks, an
 M1-S2 connects the existing `neko-wire` candidate `encode`/`decode` to `MemoryPair` messages and `UdpLoopbackPair` datagrams in integration tests. Each carrier unit contains exactly one complete record; boundaries and FIFO order are preserved. Empty payloads, the `MAX_PAYLOAD_LEN` boundary, oversized records, nonblocking `WouldBlock`, and malformed magic/version/type/flags/length, truncation, and trailing bytes are covered.
 
 Malformed decoding remains local to the framing seam: tests keep rejection before any evidence-producing API and confirm the carrier remains independently usable. No production session code, crypto/auth/key material, ACK machinery, retransmission, congestion control, network configuration, or new runtime/network dependency is introduced. This candidate gate does not freeze the provisional wire format.
+
+## 2026-08-26 — D014：M1-S3a Crypto/Handshake security gate stage 1
+
+**Status: Candidate security gate — documentation and synthetic contract only**
+
+M1-S3a adopts the Noise Framework as the direction for a future authenticated handshake, but does not select a concrete pattern, library, version, or license; those choices require later G0/G2 approval. Stage 1 is dependency-free and changes no Cargo manifest, production `src/` code, wire/carrier/session/CLI code, runtime, or network service.
+
+The stage establishes reviewable future invariants for identity/authorization, transcript and AAD binding, independent direction/epoch/key-phase state, nonce uniqueness and checked overflow refusal, replay/duplicate/old-epoch rejection, disabled 0-RTT, bounded pre-auth resources and anti-amplification, and secret-safe logging/error boundaries. The synthetic contract tests only state and rejection semantics: authentication failure, tampering, wrong direction/epoch/key phase, AAD mismatch, truncation, duplicate, oversize, and nonce-counter overflow. It must never fabricate authentication or encryption success and must produce no `SessionDelivery`, `PathValidated`, or `ACK` evidence.
+
+This is a candidate gate, not a security audit or protocol freeze. Real Noise/TLS/AEAD/KDF, key/nonce generation, handshake, identity loading, replay window, path authentication, UDP encryption, and runtime/network implementation remain prohibited until the later approved gates.
