@@ -130,3 +130,46 @@ not an approval. No `Accepted` decision may implicitly promote a candidate or
 research result. If documents conflict, G0 is **STOP**: do not implement,
 merge, or claim approval; record an explicit new ADR (or an explicit amendment
 with the same review gate) before proceeding.
+
+## Trust and authorization candidate boundary (non-frozen)
+
+The following is a **candidate-only, non-frozen contract for review**. It is not
+an implementation specification, and every item requires later real
+implementation, reproducible negative tests, and two-person security/design
+review before it can be frozen.
+
+A future trust record is a candidate tuple with explicit fields for: record
+schema/version; subject identity and stable identity key or key identifier;
+trust root/issuer and source/provenance; status; validity and policy scope;
+rotation lineage and activation/overlap metadata; revocation reference and
+time; and rollback protection/precedence metadata. The exact field names,
+canonical encoding, cryptographic proof, version negotiation, source
+validation, rotation procedure, revocation distribution/freshness, and
+rollback rules remain **to be frozen**. A record is not trusted merely because
+it is present, parseable, locally cached, or supplied by a peer.
+
+Authentication and authorization are separate decisions. Successful
+cryptographic authentication may establish a candidate peer identity only; it
+does not grant permission. Authorization must be evaluated independently
+against policy and an applicable trust record, and must be explicitly bound to
+the session and the carrier context (including the authenticated transcript,
+carrier instance/role, direction, epoch/key phase, and relevant path/context
+identifiers). A decision for one session, carrier, direction, epoch, or path
+must not be reused as authorization for another. mDNS names, IP addresses,
+and peer IDs are routing/discovery or correlation inputs only and must never
+be used as authorization predicates or trust roots.
+
+The candidate failure boundary is fail-closed: unknown, revoked, expired,
+invalid, malformed/corrupt, unsupported, downgraded, or otherwise
+indeterminate trust state denies authentication-dependent authorization and
+must not be promoted by cache fallback, rotation ambiguity, rollback, or
+partial parsing. Authentication, authorization, and trust failures must not
+produce or imply `Delivery`, `PathValidated`, or `ACK` evidence. Before
+authentication completes, no such evidence may be created; before the
+independent authorization decision succeeds, delivery and path/ACK evidence
+remain prohibited as well.
+
+This section is deliberately **candidate/non-frozen**. It requires subsequent
+real implementation and independent dual review; it does not authorize any
+Cargo, dependency, `src/`, test, runtime, or network change and does not
+constitute security approval, interoperability evidence, or a G0 PASS.

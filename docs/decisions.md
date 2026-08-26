@@ -246,3 +246,32 @@ research input only: non-normative, not an audit, and not an approval. If any
 of these documents conflict, G0 is **STOP**. No implementation, merge, or
 security claim may proceed until an explicit new ADR (or explicit reviewed
 amendment) resolves the conflict and states the new scope.
+
+## 2026-08-26 — D016：Trust/authz candidate boundary for M1-G0
+
+**Status: Candidate only — non-frozen; real implementation and dual review required**
+
+This documentation-only slice records a candidate trust/authz boundary for the
+future M1 handshake. A future trust record may carry explicit schema/version,
+identity, source/provenance, status, rotation, revocation, and rollback
+metadata. Field names, encoding, proof, source validation, freshness,
+rotation/revocation procedure, and rollback semantics remain **to be frozen**;
+presence or parseability is not trust.
+
+Authentication does not equal authorization. Authentication may establish only a
+candidate identity. Authorization is an independent policy decision that must
+bind the applicable trust record to the session and carrier context, including
+transcript, carrier role/instance, direction, epoch/key phase, and relevant
+path/context. mDNS, IP, and peerId are never authorization inputs or trust roots.
+
+Unknown, revoked, expired, invalid, corrupt, unsupported, downgraded, or
+indeterminate trust state fails closed. Authentication must complete before any
+`Delivery`, `PathValidated`, or `ACK` evidence can be produced; independent
+authorization must also succeed before delivery or path/ACK evidence is
+promoted. No cache, rollback, rotation ambiguity, or partial handshake may
+weaken this boundary.
+
+D016 is candidate/non-frozen documentation only. It authorizes no Cargo,
+`src/`, dependency, test, runtime, or network change and is neither a security
+approval nor a G0 PASS. The contract requires later real implementation,
+reproducible negative tests, and independent two-person review.
