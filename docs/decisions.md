@@ -308,3 +308,20 @@ conflated; this documentation is not a real AEAD proof or interoperability
 vector. D017 is candidate/non-frozen only and cannot become implementation or
 security approval without G0/G2 review, canonical vectors, and implementation
 review.
+
+## 2026-08-27 — D019：Pre-auth resource budget / anti-amplification candidate boundary
+
+**Status: Candidate only — non-frozen; instrumented implementation, tests, and independent review required**
+
+This documentation-only slice records auditable candidate absolute limits and
+counting domains for pre-auth concurrency, input/work, memory, queues,
+responses, timeouts, and lifecycle, plus a send-before-validation
+anti-amplification rule. The complete contract and candidate values are in
+[`docs/adr/m1-g0-preauth-resource-budget.md`](adr/m1-g0-preauth-resource-budget.md).
+
+The contract defaults 0-RTT and unauthenticated early data to disabled. Budget
+exhaustion is fail-closed and cannot create `Delivery`, `PathValidated`, `ACK`,
+or equivalent authorization/session/path evidence. Values are candidate only;
+G0 cannot change them without instrumented, reproducible tests and independent
+review. D019 authorizes no Cargo, `src/`, test, runtime, network, carrier,
+cryptographic, dependency, implementation, merge, or security approval.
