@@ -1,6 +1,6 @@
 # 猫娘 Roadmap
 
-本路线图记录当前已经接受的工程推进顺序。它可以被实验结果修改，但修改必须同步到 `docs/decisions.md`，不能让关键设计只存在于聊天记录。
+本路线图记录当前研究推进顺序；实现状态以 [`docs/status.md`](docs/status.md) 为唯一来源。它可以被实验结果修改，但修改必须同步到 `docs/decisions.md`，不能让关键设计只存在于聊天记录。
 
 ## Milestone 0 — Rust 骨架、抽象与测试向量
 

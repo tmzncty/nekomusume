@@ -9,12 +9,13 @@ if [ -f "$HOME/.cargo/env" ]; then
 fi
 
 cargo fmt --all -- --check
-cargo check --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo check --workspace --locked
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 
 # Keep repository policy checks in one place for local and CI parity.
+bash scripts/check-governance-status.sh
 test -f docs/specs/nekomusume-session-v0.md
 test -f LICENSE-MIT
 test -f LICENSE-APACHE
-cargo metadata --format-version 1 --no-deps | grep -q 'MIT OR Apache-2.0'
+cargo metadata --locked --format-version 1 --no-deps | grep -q 'MIT OR Apache-2.0'

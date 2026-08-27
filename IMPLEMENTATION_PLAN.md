@@ -1,5 +1,7 @@
 # IMPLEMENTATION_PLAN.md — Nekomusume
 
+> Status is governed by [`docs/status.md`](docs/status.md). A checked planning item is not evidence of implementation or approval.
+
 本文件把 `ROADMAP.md` 转成 agent 可连续领取的施工顺序。若代码已经完成某项，以代码和测试为准，不重复实现。
 
 ## Phase 0 — Baseline audit

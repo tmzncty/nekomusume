@@ -26,7 +26,7 @@ Hysteria2 仍然是重要 benchmark competitor，但“超过 HY2”不是项目
 
 ## 当前状态
 
-**Research bootstrap / pre-Milestone 0**。
+**Research bootstrap / pre-Milestone 0**。权威状态表见 [`docs/status.md`](docs/status.md)；其中 `implemented` 仅表示仓库证据存在，不表示安全、协议冻结或生产就绪。
 
 已形成的主要方向：
 
@@ -35,7 +35,7 @@ Hysteria2 仍然是重要 benchmark competitor，但“超过 HY2”不是项目
 - UDP：第一主力 Carrier；
 - TCP：首要 fallback Carrier；
 - 第一阶段只做 failover / migration，不做 UDP+TCP 同时条带化；
-- ICMP Echo / Raw IP experimental protocol：进入真实公网 reachability 实验；
+- ICMP Echo / Raw IP experimental protocol：仅为研究队列，当前被治理状态阻断，不进行公网暴露；
 - SCTP / DCCP：重点参考与实验候选；
 - Linux server + VPS：真实 WAN；
 - QEMU / netns / veth / `tc netem`：可控网络实验。
