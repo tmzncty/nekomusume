@@ -16,7 +16,7 @@ while IFS=$'\t' read -r id state evidence; do
   case "$path" in
     ""|/*|*..*|*\\*) echo "unsafe or missing status evidence path: $id: $path"; exit 1;;
   esac
-  test -e "$path" || { echo "missing status evidence: $path"; exit 1; }
+  test -f "$path" || { echo "missing status evidence file: $path"; exit 1; }
 done < <(awk -F'|' '
   function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
   /^\|/ {
