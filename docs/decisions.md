@@ -309,6 +309,27 @@ vector. D017 is candidate/non-frozen only and cannot become implementation or
 security approval without G0/G2 review, canonical vectors, and implementation
 review.
 
+## 2026-08-27 — D018：Privacy-preserving uniform failure candidate boundary
+
+**Status: Candidate only — non-frozen; real implementation and dual review required**
+
+This documentation-only slice records a candidate privacy boundary for future
+M1-G0 handshake and authorization failures. External failures must use a
+reviewed uniform outcome that does not disclose identity, trust-store,
+authorization, key/epoch, replay, path/carrier/session, parse, or cryptographic
+state. Internal diagnostics remain bounded, access-controlled, and redacted;
+they must never cross the external boundary or promote failed state into
+`Delivery`, `PathValidated`, `ACK`, or equivalent evidence.
+
+The complete candidate contract, cleanup ordering, redaction requirements, and
+open review questions are in
+[`docs/adr/m1-g0-privacy-uniform-failure.md`](adr/m1-g0-privacy-uniform-failure.md).
+D018 does not claim constant-time behavior, side-channel elimination, a real
+implementation, a security approval, or G0/G2 PASS. It authorizes no Cargo,
+`src/`, dependency, test, runtime, network, carrier, wire, cryptographic,
+implementation, or merge change. Any conflict with D014–D017 or D019 is G0
+**STOP** until an explicit reviewed amendment or superseding ADR resolves it.
+
 ## 2026-08-27 — D019：Pre-auth resource budget / anti-amplification candidate boundary
 
 **Status: Candidate only — non-frozen; instrumented implementation, tests, and independent review required**
