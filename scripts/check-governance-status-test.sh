@@ -30,13 +30,20 @@ mutate_roadmap() {
   mv "$TMP/ROADMAP.md.new" "$TMP/ROADMAP.md"
 }
 expect_rejection() {
-  local name=$1 rc
+  local name=$1 rc stderr_file
+  stderr_file="$TMP/${name//[^[:alnum:]_.-]/_}.stderr"
   set +e
-  run_checker >/dev/null 2>&1
+  run_checker >/dev/null 2>"$stderr_file"
   rc=$?
   set -e
   printf '%s mutation exit: %s\n' "$name" "$rc"
   [ "$rc" -ne 0 ] || { echo "mutation unexpectedly passed: $name"; exit 1; }
+  if grep -iE '(^|[^[:alnum:]_])warning([^[:alnum:]_]|$)' "$stderr_file" >/dev/null; then
+    echo "unexpected warning on rejected mutation: $name" >&2
+    cat "$stderr_file" >&2
+    exit 1
+  fi
+  printf '%s mutation stderr: no warnings\n' "$name"
 }
 
 run_checker >/dev/null
