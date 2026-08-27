@@ -21,48 +21,52 @@ mutate_roadmap() {
   ' "$TMP/ROADMAP.md" > "$TMP/ROADMAP.md.new"
   mv "$TMP/ROADMAP.md.new" "$TMP/ROADMAP.md"
 }
+expect_rejection() {
+  local name=$1 rc
+  set +e
+  run_checker >/dev/null 2>&1
+  rc=$?
+  set -e
+  printf '%s mutation exit: %s\n' "$name" "$rc"
+  [ "$rc" -ne 0 ] || { echo "mutation unexpectedly passed: $name"; exit 1; }
+}
+
 run_checker >/dev/null
 
-# Leading/trailing whitespace is trimmed and still resolves to the existing Cargo.toml file.
+# Leading and trailing whitespace still resolves to the existing Cargo.toml file.
 mutate_workspace_evidence "  \`Cargo.toml\`  "
 run_checker >/dev/null
+printf '%s\n' 'valid evidence whitespace mutation exit: 0'
 cp "$ROOT/docs/status.md" "$TMP/docs/status.md"
 
-# Missing evidence must fail; preserve and assert the checker exit code.
+# Missing evidence is a distinct mutation and its checker exit code is captured.
 mutate_workspace_evidence "\`does-not-exist.md\`"
-set +e
-run_checker >/dev/null 2>&1
-rc=$?
-set -e
-printf 'missing evidence mutation exit: %s\n' "$rc"
-[ "$rc" -ne 0 ] || { echo 'mutation unexpectedly passed: missing evidence'; exit 1; }
+expect_rejection 'missing evidence'
 cp "$ROOT/docs/status.md" "$TMP/docs/status.md"
 
-# A directory is not valid file evidence; test -f must reject it.
+# Evidence must be a regular file, not a directory.
 mutate_workspace_evidence "\`docs\`"
-set +e
-run_checker >/dev/null 2>&1
-rc=$?
-set -e
-printf 'directory evidence mutation exit: %s\n' "$rc"
-[ "$rc" -ne 0 ] || { echo 'mutation unexpectedly passed: directory evidence'; exit 1; }
+expect_rejection 'directory evidence'
+cp "$ROOT/docs/status.md" "$TMP/docs/status.md"
+
+# Absolute, traversal, and backslash paths are independently rejected.
+mutate_workspace_evidence "\`/etc/passwd\`"
+expect_rejection 'absolute evidence path'
+cp "$ROOT/docs/status.md" "$TMP/docs/status.md"
+mutate_workspace_evidence "\`../Cargo.toml\`"
+expect_rejection 'traversal evidence path'
+cp "$ROOT/docs/status.md" "$TMP/docs/status.md"
+mutate_workspace_evidence "\`docs\\status.md\`"
+expect_rejection 'backslash evidence path'
 cp "$ROOT/docs/status.md" "$TMP/docs/status.md"
 
 # Workspace and CLI checkbox drift are independently rejected.
 mutate_roadmap '建立 Cargo workspace / crate 边界' ' '
-set +e
-run_checker >/dev/null 2>&1
-rc=$?
-set -e
-printf 'workspace checkbox mutation exit: %s\n' "$rc"
-[ "$rc" -ne 0 ] || { echo 'mutation unexpectedly passed: workspace drift'; exit 1; }
+expect_rejection 'workspace checkbox drift'
 cp "$ROOT/ROADMAP.md" "$TMP/ROADMAP.md"
 mutate_roadmap 'CLI skeleton' ' '
-set +e
-run_checker >/dev/null 2>&1
-rc=$?
-set -e
-printf 'CLI checkbox mutation exit: %s\n' "$rc"
-[ "$rc" -ne 0 ] || { echo 'mutation unexpectedly passed: CLI drift'; exit 1; }
+expect_rejection 'CLI checkbox drift'
 
-echo 'governance checker regression tests passed'
+# Keep the file-only contract explicit in the regression test itself.
+grep -F 'test -f' "$ROOT/scripts/check-governance-status.sh" >/dev/null
+printf '%s\n' 'governance checker regression tests passed'
