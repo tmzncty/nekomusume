@@ -1,0 +1,5 @@
+# Ready-to-run agent prompt
+
+把下面整段交给 coding agent 即可：
+
+> 进入 `tmzncty/nekomusume` 后，不要重新从零设计项目。先完整阅读 `AGENTS.md`、`README.md`、`ROADMAP.md`、`IMPLEMENTATION_PLAN.md`、`SECURITY.md`、`docs/decisions.md`、`docs/carrier-architecture.md`、`docs/m0-spec-plan.md`、`docs/specs/nekomusume-session-v0.md`，再检查当前 git 状态、已有 crate、测试、fuzz target 和最近提交。以仓库事实为准，从 `IMPLEMENTATION_PLAN.md` 中依赖已满足的最早未完成任务开始直接施工。保持 Session 高于 Carrier，不要把设计重新写死到 UDP；不要提前做 UDP+TCP 条带化；不要自研密码算法；不要把 UDP packet ACK 与 Session delivery acknowledgement 混为一层。每完成一个最小完整切片，都补齐测试/golden vector/必要规范，运行 `./scripts/check.sh`；涉及 parser/wire decode 时还运行 `./scripts/fuzz-smoke.sh`，真实无法运行的门禁必须如实记录。网络实验默认只用 unit/loopback/netns/veth/QEMU，不得修改生产网络，不得扫描第三方，不得隐式运行 Raw IP/ICMP/其他高权限实验。遇到架构冲突先核对 `docs/decisions.md` 和规范，确需改变既定方向时记录 decision。每个可靠阶段提交一个清楚的 checkpoint，然后继续下一个依赖安全任务；不要因为写完计划、TODO、空 crate 或研究笔记就停。没有真正 blocker 时持续推进。最终汇报：完成能力、测试/fuzz 结果、关键 commit、benchmark/实验条件、剩余下一任务和真实 blocker。
