@@ -7,8 +7,16 @@ cp -a "$ROOT/." "$TMP/"
 run_checker() { (cd "$TMP" && bash scripts/check-governance-status.sh); }
 mutate_workspace_evidence() {
   local replacement=$1
-  awk -v replacement="$replacement" '
-    !done && index($0, "| workspace |") { sub(/`Cargo\.toml`/, replacement); done=1 }
+  REPLACEMENT="$replacement" awk '
+    !done && index($0, "| workspace |") {
+      marker = "`Cargo.toml`"
+      start = index($0, marker)
+      if (start) {
+        print substr($0, 1, start - 1) ENVIRON["REPLACEMENT"] substr($0, start + length(marker))
+        done = 1
+        next
+      }
+    }
     { print }
   ' "$TMP/docs/status.md" > "$TMP/docs/status.md.new"
   mv "$TMP/docs/status.md.new" "$TMP/docs/status.md"
