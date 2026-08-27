@@ -173,3 +173,73 @@ This section is deliberately **candidate/non-frozen**. It requires subsequent
 real implementation and independent dual review; it does not authorize any
 Cargo, dependency, `src/`, test, runtime, or network change and does not
 constitute security approval, interoperability evidence, or a G0 PASS.
+
+## Candidate wire field map (non-frozen)
+
+This is a review map only. It describes the currently visible framing seam and
+candidate future bindings; it does not define a frozen wire format, prove an
+AEAD construction, or authorize a codec change.
+
+| Candidate field | Candidate representation/boundary | Candidate authentication domain | Status and open questions |
+|---|---|---|---|
+| `NK` | Fixed magic/preamble at the start of the record | Candidate header context; exact inclusion and representation are open | Candidate only; value, width, and rejection behavior require G0/G2 review and vectors |
+| `version` | Version field after `NK` | Candidate authenticated header context | Candidate only; negotiation, downgrade binding, and unknown-version behavior are open |
+| `type` | Record/message-type field | Candidate authenticated header context | Candidate only; registry, authorization implications, and unknown-type behavior are open |
+| `flags` | Flags field in the candidate header | Candidate authenticated header context | Candidate only; reserved bits, criticality, and canonical zero/unknown-bit behavior are open |
+| `length` | Length of the candidate payload boundary, not an implicit message/session length | Candidate authenticated header context | Candidate only; integer width/encoding, maximum, overflow, exact-consumption, and whether a tag is counted remain open |
+| `payload` | Exactly the bytes selected by the candidate `length` boundary | Candidate ciphertext/plaintext domain depends on the later protocol stage | Candidate only; content type, padding, tag placement, limits, and trailing-byte behavior require vectors |
+
+The map above is deliberately limited to `NK/version/type/flags/length/payload`.
+It must not be read as freezing, or even selecting, fields for
+`session_id`, `carrier_id`, `path_id`, `data_id`, `stream`, `offset`,
+`delivery_epoch`, `key_phase`, `packet_sequence`, ACK, or path challenge.
+Those names are research identifiers only: presence, width, signedness,
+encoding, scope, uniqueness, lifecycle, replay binding, ordering, and
+cross-carrier semantics are all **not frozen**. In particular, neither a
+packet sequence nor an ACK/path-challenge value may be treated as delivery,
+path-validation, or authorization evidence merely because it is parseable.
+
+### Canonical encoding and malformed-input candidate policy
+
+The candidate requires one canonical encoding per field before implementation:
+fixed-width versus variable-width integers, byte order (endianness), length
+unit and maximum, permitted padding, and exact record consumption must be
+specified together and covered by golden, tamper, truncation, boundary, and
+negative vectors. No alternate byte order, non-minimal integer form, implicit
+native-endian conversion, or silently accepted trailing data may be assumed.
+The length boundary must be checked before allocation or authentication work;
+overflow, impossible bounds, truncation, and inconsistent framing are
+candidate decode failures.
+
+Unknown `version` and unknown `type` behavior is unresolved and must be made
+explicit per message class (for example, uniform rejection versus a safely
+skippable extension); unknown or reserved `flags` must not silently change
+security meaning. Malformed, truncated, overlong, overflowed, non-canonical,
+unsupported, or otherwise ambiguous records must fail closed without producing
+session, delivery, ACK, or path evidence. Error surface, response behavior,
+resource cost, and anti-amplification consequences remain open review items.
+
+### Candidate authenticated-field boundary
+
+The candidate assumption is that security-relevant header fields are bound as
+associated data only after the final field map and canonical encoding are
+approved; payload authentication/encryption and tag placement are separately
+specified. The exact authenticated subset, ordering, tag coverage, and whether
+`NK`/version are authenticated as raw bytes or normalized fields remain
+**unresolved** and require G0/G2 design review plus reproducible vectors and
+implementation review. No field is declared authenticated merely by appearing
+in this document.
+
+The Noise prologue is a separate transcript/context domain from per-record AAD.
+A prologue value must not be reused as AAD, and AAD must not be used as a
+prologue substitute. This document is not a real AEAD proof, does not establish
+nonce/key/tag behavior, and must not be cited as authentication or
+interoperability evidence. Any future binding must also show direction,
+epoch,
+key phase, carrier/path context, replay state, and packet ordering without
+promoting unauthenticated or partially parsed values.
+
+This entire field map is **candidate/non-frozen** and requires G0/G2 approval,
+canonical test vectors, implementation review, and negative/security review
+before any implementation or claim. Until those gates pass, the existing
+framing is a candidate boundary only.

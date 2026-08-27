@@ -275,3 +275,53 @@ D016 is candidate/non-frozen documentation only. It authorizes no Cargo,
 `src/`, dependency, test, runtime, or network change and is neither a security
 approval nor a G0 PASS. The contract requires later real implementation,
 reproducible negative tests, and independent two-person review.
+
+## 2026-08-27 — D017：Wire canonical field-map candidate boundary
+
+**Status: Candidate only — non-frozen; G0/G2, vectors, and implementation review required**
+
+The current visible framing seam is recorded only as a candidate map:
+`NK/version/type/flags/length/payload`, with `length` selecting the payload
+boundary. This entry does not freeze a wire format or authorize codec, Cargo,
+`src/`, dependency, test, network, or runtime changes. The complete candidate
+map, malformed-input boundary, and review gates are in
+[`docs/adr/m1-g0-noise-ik-candidate.md`](adr/m1-g0-noise-ik-candidate.md).
+
+Canonical encoding remains unresolved: field widths, integer encoding and
+endianness, length unit/maximum, padding, exact record consumption, tag
+placement/counting, and allocation-before-validation rules require explicit
+vectors. Unknown version/type and reserved flags behavior is unresolved and
+must not silently weaken security. Malformed, non-canonical, truncated,
+overlong, overflowed, unsupported, or ambiguous input must fail closed without
+creating delivery, ACK, path, session, or authorization evidence; these are
+candidate requirements, not implementation claims.
+
+`session_id`, `carrier_id`, `path_id`, `data_id`, `stream`, `offset`,
+`delivery_epoch`, `key_phase`, `packet_sequence`, ACK, and path challenge are
+explicitly not frozen. Their presence, encoding, scope, lifecycle, replay and
+cross-carrier semantics require separate design. No parseable value is evidence
+of delivery, path validation, or authorization.
+
+The exact authenticated field subset, ordering, and byte-level coverage remain
+open. Noise prologue and per-record AAD are domain-separated and must not be
+conflated; this documentation is not a real AEAD proof or interoperability
+vector. D017 is candidate/non-frozen only and cannot become implementation or
+security approval without G0/G2 review, canonical vectors, and implementation
+review.
+
+## 2026-08-27 — D019：Pre-auth resource budget / anti-amplification candidate boundary
+
+**Status: Candidate only — non-frozen; instrumented implementation, tests, and independent review required**
+
+This documentation-only slice records auditable candidate absolute limits and
+counting domains for pre-auth concurrency, input/work, memory, queues,
+responses, timeouts, and lifecycle, plus a send-before-validation
+anti-amplification rule. The complete contract and candidate values are in
+[`docs/adr/m1-g0-preauth-resource-budget.md`](adr/m1-g0-preauth-resource-budget.md).
+
+The contract defaults 0-RTT and unauthenticated early data to disabled. Budget
+exhaustion is fail-closed and cannot create `Delivery`, `PathValidated`, `ACK`,
+or equivalent authorization/session/path evidence. Values are candidate only;
+G0 cannot change them without instrumented, reproducible tests and independent
+review. D019 authorizes no Cargo, `src/`, test, runtime, network, carrier,
+cryptographic, dependency, implementation, merge, or security approval.
