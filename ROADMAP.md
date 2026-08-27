@@ -7,7 +7,7 @@
 目标：先让“Session 是什么、Carrier 是什么、字节长什么样、状态怎么走”可验证。
 
 - [x] 实现语言：Rust
-- [ ] 建立 Cargo workspace / crate 边界
+- [x] 建立 Cargo workspace / crate 边界
 - [ ] 定义 `Session` / `Carrier` / `Path` 的最小抽象
 - [ ] 明确协议版本与 magic
 - [ ] 固定第一版 session record / UDP packet header
@@ -17,7 +17,7 @@
 - [ ] 写状态机文档
 - [ ] 至少 20 个 golden encode/decode tests
 - [ ] fuzz：畸形输入不得 panic、越界或无限分配
-- [ ] CLI skeleton：`neko client` / `neko server` / `neko probe`
+- [x] CLI skeleton：`neko client` / `neko server` / `neko probe`
 
 M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session 写死成 UDP socket。
 

@@ -3,22 +3,42 @@ set -euo pipefail
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 status=docs/status.md
+roadmap=ROADMAP.md
 test -s "$status"
-awk -F'|' '
-  /^\| [^ -]/ {
-    id=$2; state=$4; evidence=$5
-    gsub(/^ +| +$/, "", id); gsub(/^ +| +$/, "", state); gsub(/^ +| +$/, "", evidence)
-    if (id != "ID" && state !~ /^(implemented|candidate|provisional|absent|blocked)$/) { print "invalid status: " id ": " state; bad=1 }
-    if (id != "ID" && evidence !~ /^`[^`]+`/) { print "missing evidence: " id; bad=1 }
+test -s "$roadmap"
+
+while IFS=$'\t' read -r id state evidence; do
+  [ -n "$id" ] || continue
+  case "$evidence" in
+    \`*\`) path=${evidence#\`}; path=${path%\`};;
+    *) echo "missing evidence: $id"; exit 1;;
+  esac
+  case "$path" in
+    ""|/*|*..*|*\\*) echo "unsafe or missing status evidence path: $id: $path"; exit 1;;
+  esac
+  test -e "$path" || { echo "missing status evidence: $path"; exit 1; }
+done < <(awk -F'|' '
+  function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+  /^\|/ {
+    id=trim($2); state=trim($4); evidence=trim($5)
+    if (id == "" || id == "ID" || id ~ /^-+$/) next
+    if (state !~ /^(implemented|candidate|provisional|absent|blocked)$/) { print "invalid status: " id ": " state > "/dev/stderr"; bad=1 }
+    if (evidence !~ /^`[^`]+`$/) { print "missing evidence: " id > "/dev/stderr"; bad=1 }
+    print id "\t" state "\t" evidence
     count[id]++
   }
-  END { if (count["G0"] != 1) { print "expected exactly one G0 row"; bad=1 } if (bad) exit 1 }
-' "$status"
-while IFS= read -r path; do
-  case "$path" in \`*\`) path=${path#\`}; path=${path%\`};; *) continue;; esac
-  test -e "$path" || { echo "missing status evidence: $path"; exit 1; }
-done < <(awk -F'|' '/^\| [^ -]/ && $2 != " ID " {print $5}' "$status")
-# Governance guard: these claims must remain absent from repository implementation/status prose.
+  END { if (count["G0"] != 1) { print "expected exactly one G0 row" > "/dev/stderr"; bad=1 } if (bad) exit 1 }
+' "$status")
+
+# ROADMAP checkboxes are descriptive; docs/status.md remains the status source.
+check_checkbox() {
+  local id=$1 expected=$2 label=$3 actual
+  actual=$(awk -v label="$label" '$0 ~ "^- \\[.\\].*" label { print substr($0,4,1); found=1 } END { if (!found) exit 2 }' "$roadmap") || { echo "missing roadmap checkbox: $label"; return 1; }
+  [ "$actual" = "$expected" ] || { echo "roadmap/status mismatch: $id ($label) is [$actual], status requires [$expected]"; return 1; }
+}
+check_checkbox workspace x '建立 Cargo workspace / crate 边界'
+check_checkbox cli x 'CLI skeleton'
+
 if grep -RIn --exclude-dir=.git --exclude-dir=target --exclude='status.md' -E 'production[- ]ready|security audit passed|publicly deployable|implemented (protocol|security|tunnel)|protocol (is )?frozen' README.md ROADMAP.md IMPLEMENTATION_PLAN.md docs; then
   echo 'forbidden governance escalation claim found'; exit 1
 fi
