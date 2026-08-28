@@ -42,3 +42,9 @@ check_checkbox cli x 'CLI skeleton'
 if grep -RIn --exclude-dir=.git --exclude-dir=target --exclude='status.md' -E 'production[- ]ready|security audit passed|publicly deployable|implemented (protocol|security|tunnel)|protocol (is )?frozen' README.md ROADMAP.md IMPLEMENTATION_PLAN.md docs; then
   echo 'forbidden governance escalation claim found'; exit 1
 fi
+
+# Administrator authorization permits only bounded research implementation.
+test -f docs/adr/m1-g0-research-authorization.md
+grep -q 'external security audit' docs/adr/m1-g0-research-authorization.md
+grep -q 'public, non-loopback listeners' docs/adr/m1-g0-research-authorization.md
+grep -q 'research-authorized / not-security-approved' docs/adr/m1-g0-research-authorization.md

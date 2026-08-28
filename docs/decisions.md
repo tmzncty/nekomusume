@@ -346,3 +346,22 @@ or equivalent authorization/session/path evidence. Values are candidate only;
 G0 cannot change them without instrumented, reproducible tests and independent
 review. D019 authorizes no Cargo, `src/`, test, runtime, network, carrier,
 cryptographic, dependency, implementation, merge, or security approval.
+
+## 2026-08-29 — D020：管理员授权有界研究实现
+
+**Status: Accepted — administrator authorization; not a security audit or protocol freeze**
+
+管理员明确授权继续推进 G0 之后的密码学、Session 和 loopback UDP 研究实现，
+并授权 agent 自主拆分和执行 task。该授权只覆盖本地、loopback、内存、单元/集成
+测试、fuzz 和隔离实验；不等同于外部安全审计、生产批准、协议冻结、互操作批准或
+公网暴露批准。
+
+允许实现并审查维护中的密码库、候选 trust/authentication/authorization、
+transcript/AAD、directional nonce、replay、epoch/key-phase、pre-auth budget、
+加密 record 和 loopback encrypted echo。原有 G0 每项通过标准仍是实现门禁，管理员
+授权不豁免测试、依赖许可证/维护审查或 fail-closed 约束。
+
+公网/非 loopback listener、生产 tunnel/proxy、第三方探测、真实生产秘密、0-RTT
+和安全审计/生产就绪/协议冻结声明继续禁止。G0 状态改为“research-authorized /
+not security-approved”，而不是 PASS；详细边界见
+[`docs/adr/m1-g0-research-authorization.md`](adr/m1-g0-research-authorization.md)。
