@@ -16,6 +16,7 @@
 | crypto-handshake | authenticated handshake and AEAD | candidate | `crates/neko-crypto/src/lib.rs` | Bounded Noise IK research implementation with trust/authz, context binding, nonce and replay tests; no security approval or public/production use |
 | preauth-admission | runtime pre-auth accounting | candidate | `docs/adr/m1-g0-research-authorization.md` | Bounded research implementation may proceed; candidate values and fail-closed tests remain required |
 | live-udp | UDP socket carrier | candidate | `crates/neko-carrier/tests/encrypted_udp_echo.rs` | Authenticated encrypted echo proven on connected 127.0.0.1 ephemeral sockets only; no service/public/production listener |
+| reliable-udp | bounded UDP packet recovery state | candidate | `crates/neko-reliable/src/lib.rs` | Deterministic packet/ACK/RTT/loss/PTO/frame-retransmit/Reno/pacing model; no live service or Session-delivery promotion |
 | live-tcp | TCP carrier and resume | absent | `ROADMAP.md` | Requires later gated implementation |
 | reachability | probe / public-network experiments | blocked | `ROADMAP.md` | Explicitly out of scope; no public exposure |
 | production | production deployment/readiness | blocked | `SECURITY.md` | Research-only repository; no production or security approval |

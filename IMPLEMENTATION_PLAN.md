@@ -103,15 +103,15 @@
 
 按依赖顺序：
 
-1. packet number；
-2. ACK range encoding/decoding；
-3. RTT estimator；
-4. packet/time threshold loss detection；
-5. PTO；
-6. frame-level retransmission；
-7. congestion-control baseline；
-8. pacing；
-9. resource limits。
+1. [x] packet number；
+2. [x] ACK range canonical state（wire encoding/decoding remains a later wire slice）；
+3. [x] RTT estimator；
+4. [x] packet/time threshold loss detection；
+5. [x] PTO；
+6. [x] frame-level retransmission；
+7. [x] congestion-control baseline；
+8. [x] pacing；
+9. [x] resource limits。
 
 测试矩阵：0/1/5/10% random loss、burst loss、reorder、RTT change、blackhole。
 

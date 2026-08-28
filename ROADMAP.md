@@ -33,15 +33,15 @@ M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session
 
 ## Milestone 2 — UDP reliable packet engine
 
-- [ ] packet number
-- [ ] ACK ranges
-- [ ] RTT 估计
-- [ ] packet/time threshold loss detection
-- [ ] PTO
-- [ ] frame-level retransmission
-- [ ] Reno/CUBIC 风格第一拥塞控制基线
-- [ ] pacing
-- [ ] 1% / 5% / 10% 丢包下数据完整性测试
+- [x] packet number
+- [x] ACK ranges
+- [x] RTT 估计
+- [x] packet/time threshold loss detection
+- [x] PTO
+- [x] frame-level retransmission
+- [x] Reno 风格第一拥塞控制基线
+- [x] pacing
+- [x] 1% / 5% / 10% 确定性首发丢包下数据完整性测试
 
 这一层属于 UDP Carrier；不要把 UDP packet ACK 误当成跨 Carrier 的 Session delivery acknowledgement。
 

@@ -401,3 +401,20 @@ the response is charged against both packet and 3x byte anti-amplification limit
 This is not a daemon or public listener. It adds no fixed port, bind-all address,
 CLI server behavior, QEMU/LAN/WAN claim, reliability, retransmission, congestion
 control, proxy, TUN or production deployment.
+
+
+## 2026-08-29 — D023：Bounded deterministic UDP recovery core
+
+**Status: Candidate implementation — Carrier-local state only**
+
+`neko-reliable` implements full-width fail-closed packet numbers, bounded
+canonical ACK ranges, RFC 9002-inspired RTT/PTO and packet/time-threshold loss
+state, frame-level retransmission selection, a Reno baseline, and pacing
+intervals. PTO probes do not declare loss; lost packet images are not resent;
+only outstanding frame identities become eligible. Sent state and frame lists
+are bounded. Deterministic simulations cover reversal and 0/1/5/10% first-send
+loss with complete final delivery.
+
+Packet ACK remains UDP Carrier evidence and cannot confirm Session delivery or
+validate a path. This slice adds no public listener, daemon, production service,
+wire ACK parser, benchmark result, or performance superiority claim.
