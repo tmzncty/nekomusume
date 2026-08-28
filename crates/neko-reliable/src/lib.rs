@@ -839,3 +839,191 @@ mod plpmtud_tests {
         }
     }
 }
+
+/// Bounded systematic XOR block-FEC candidate. FEC is an optional carrier
+/// optimization: it does not acknowledge delivery, replace retransmission, or
+/// alter congestion-control evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FecConfig {
+    pub block_size: u8,
+    pub symbol_size: u16,
+    pub max_blocks: u16,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FecBlock {
+    pub block_id: u64,
+    pub data: Vec<Vec<u8>>,
+    pub parity: Vec<u8>,
+    pub received: Vec<bool>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FecError {
+    InvalidConfig,
+    TooManyBlocks,
+    WrongSymbolSize,
+    IndexOutOfRange,
+    Duplicate,
+    Unrecoverable,
+    Empty,
+}
+impl FecConfig {
+    fn validate(self) -> Result<(), FecError> {
+        if self.block_size < 2
+            || self.block_size > 32
+            || self.symbol_size == 0
+            || self.max_blocks == 0
+        {
+            return Err(FecError::InvalidConfig);
+        }
+        Ok(())
+    }
+}
+impl FecBlock {
+    pub fn encode(config: FecConfig, block_id: u64, symbols: &[Vec<u8>]) -> Result<Self, FecError> {
+        config.validate()?;
+        if symbols.len() != config.block_size as usize {
+            return Err(FecError::InvalidConfig);
+        }
+        if symbols
+            .iter()
+            .any(|s| s.len() != config.symbol_size as usize)
+        {
+            return Err(FecError::WrongSymbolSize);
+        }
+        let mut parity = vec![0; config.symbol_size as usize];
+        for s in symbols {
+            for (i, b) in s.iter().enumerate() {
+                parity[i] ^= *b
+            }
+        }
+        Ok(Self {
+            block_id,
+            data: symbols.to_vec(),
+            parity,
+            received: vec![true; config.block_size as usize],
+        })
+    }
+    pub fn mark_missing(&mut self, index: usize) -> Result<(), FecError> {
+        if index >= self.data.len() {
+            return Err(FecError::IndexOutOfRange);
+        }
+        if !self.received[index] {
+            return Err(FecError::Duplicate);
+        }
+        self.received[index] = false;
+        Ok(())
+    }
+    pub fn recover_one(&mut self) -> Result<usize, FecError> {
+        let missing: Vec<_> = self
+            .received
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| (!r).then_some(i))
+            .collect();
+        if missing.is_empty() {
+            return Err(FecError::Empty);
+        }
+        if missing.len() > 1 {
+            return Err(FecError::Unrecoverable);
+        }
+        let index = missing[0];
+        let mut recovered = self.parity.clone();
+        for (i, s) in self.data.iter().enumerate() {
+            if i != index {
+                for (j, b) in s.iter().enumerate() {
+                    recovered[j] ^= *b
+                }
+            }
+        }
+        self.data[index] = recovered;
+        self.received[index] = true;
+        Ok(index)
+    }
+    pub fn complete(&self) -> bool {
+        self.received.iter().all(|x| *x)
+    }
+}
+
+#[cfg(test)]
+mod fec_tests {
+    use super::*;
+    #[test]
+    fn xor_recovers_single_loss_and_is_reorder_independent() {
+        let c = FecConfig {
+            block_size: 4,
+            symbol_size: 3,
+            max_blocks: 2,
+        };
+        let mut b = FecBlock::encode(
+            c,
+            1,
+            vec![
+                b"abc".to_vec(),
+                b"DEF".to_vec(),
+                b"123".to_vec(),
+                b"xyz".to_vec(),
+            ]
+            .as_slice(),
+        )
+        .unwrap();
+        b.mark_missing(2).unwrap();
+        assert_eq!(b.recover_one(), Ok(2));
+        assert_eq!(b.data[2], b"123");
+        assert!(b.complete());
+    }
+    #[test]
+    fn multiple_loss_is_not_silently_recovered() {
+        let c = FecConfig {
+            block_size: 4,
+            symbol_size: 2,
+            max_blocks: 1,
+        };
+        let mut b = FecBlock::encode(
+            c,
+            1,
+            vec![
+                b"ab".to_vec(),
+                b"CD".to_vec(),
+                b"12".to_vec(),
+                b"xy".to_vec(),
+            ]
+            .as_slice(),
+        )
+        .unwrap();
+        b.mark_missing(0).unwrap();
+        b.mark_missing(3).unwrap();
+        assert_eq!(b.recover_one(), Err(FecError::Unrecoverable));
+    }
+    #[test]
+    fn fec_limits_and_duplicate_boundaries_are_explicit() {
+        let c = FecConfig {
+            block_size: 1,
+            symbol_size: 2,
+            max_blocks: 1,
+        };
+        assert_eq!(
+            FecBlock::encode(c, 1, &[b"aa".to_vec()]),
+            Err(FecError::InvalidConfig)
+        );
+        let c = FecConfig {
+            block_size: 2,
+            symbol_size: 2,
+            max_blocks: 1,
+        };
+        let mut b = FecBlock::encode(c, 1, &[b"aa".to_vec(), b"bb".to_vec()]).unwrap();
+        assert_eq!(b.mark_missing(2), Err(FecError::IndexOutOfRange));
+        b.mark_missing(0).unwrap();
+        assert_eq!(b.mark_missing(0), Err(FecError::Duplicate));
+    }
+    #[test]
+    fn parity_overhead_is_one_symbol_per_block() {
+        let c = FecConfig {
+            block_size: 8,
+            symbol_size: 1200,
+            max_blocks: 4,
+        };
+        let b = FecBlock::encode(c, 1, &vec![vec![0; 1200]; 8]).unwrap();
+        assert_eq!(b.parity.len(), 1200);
+        assert_eq!(b.data.len(), 8);
+    }
+}
