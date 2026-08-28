@@ -385,3 +385,19 @@ This is not a security audit or protocol freeze. Key persistence/rotation and
 restart rollback policy are not implemented; generated identities are test/local
 process material. No listener, production configuration, public network behavior,
 0-RTT, delivery evidence, path validation or authorization side effect is added.
+
+
+## 2026-08-29 — D022：Bounded encrypted UDP loopback echo
+
+**Status: Accepted research slice — loopback-only**
+
+The M1 loopback seam now composes connected ephemeral `127.0.0.1` UDP endpoints
+with the D021 Noise IK secure session. Integration tests perform authenticated
+handshake, independent scope authorization, bidirectional encrypted echo, local
+idempotent close, ciphertext plaintext-absence check, corruption rejection and
+no-response-on-authentication-failure. Pre-auth input is charged before parse and
+the response is charged against both packet and 3x byte anti-amplification limits.
+
+This is not a daemon or public listener. It adds no fixed port, bind-all address,
+CLI server behavior, QEMU/LAN/WAN claim, reliability, retransmission, congestion
+control, proxy, TUN or production deployment.

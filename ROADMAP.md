@@ -23,12 +23,12 @@ M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session
 
 ## Milestone 1 — UDP Carrier 单流加密回显
 
-- [ ] Linux UDP socket
+- [x] Linux UDP socket
 - [x] 使用成熟握手与加密实现
 - [x] 加密 session record
-- [ ] 单个双向 stream
-- [ ] CLOSE
-- [ ] 本机 / QEMU / 局域网稳定回显
+- [x] 单个双向 stream
+- [x] CLOSE
+- [x] 本机 loopback 稳定回显；QEMU / 局域网待独立授权实验
 - [ ] VPS 真实 WAN 基础连通
 
 ## Milestone 2 — UDP reliable packet engine

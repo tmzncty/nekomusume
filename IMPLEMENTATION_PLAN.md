@@ -85,13 +85,13 @@
 
 ## Phase 4 — M1 UDP Carrier + encrypted echo
 
-- [ ] Linux UDP Carrier；
+- [x] Linux UDP Carrier（loopback-only）；
 - [x] 成熟握手/AEAD 库接入；
 - [x] 身份/密钥配置最小模型；
 - [x] encrypted session record；
-- [ ] 单个双向 stream；
-- [ ] CLOSE；
-- [ ] loopback/netns echo；
+- [x] 单个双向 stream；
+- [x] CLOSE；
+- [x] loopback echo；netns 待后续实验；
 - [x] corruption/authentication failure tests；
 - [x] replay 基础边界。
 
