@@ -513,3 +513,21 @@ new key, bidirectional post-update records, old-phase rejection and overflow.
 
 This remains a candidate research behavior, not a protocol freeze or security
 approval. 0-RTT, listeners and production deployment remain disabled.
+
+
+## 2026-08-29 — D030：Bounded authenticated PLPMTUD state
+
+**Status: Candidate deterministic implementation — no live probing**
+
+The UDP recovery layer now models packetization-layer PMTU discovery using a
+configured safe base, explicit upper bound, bounded binary search, one
+outstanding probe, bounded retries/probe count, and acknowledgements bound to
+probe ID, exact size and path generation. Only authenticated explicit probe ACKs
+raise the confirmed MTU; unauthenticated ICMP is not a trust input. Timeout lowers
+the candidate upper bound but is not path-failure evidence. Repeated confirmed-
+size loss may conservatively return to base after a threshold, without claiming
+causality. New generations discard old probe evidence.
+
+This adds no socket, listener, route change, ICMP parser, public probe, production
+behavior or performance claim. Live integration requires authenticated carrier
+probe records and a separate reviewed gate.

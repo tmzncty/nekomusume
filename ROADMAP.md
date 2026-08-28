@@ -155,7 +155,7 @@ fail: 喵呜呜呜呜…
 
 仅根据前面实验决定：
 
-- [ ] PMTUD
+- [x] bounded authenticated PLPMTUD state
 - [ ] FEC
 - [ ] unreliable datagram API
 - [x] bounded synchronized key update
