@@ -156,7 +156,7 @@ fail: 喵呜呜呜呜…
 仅根据前面实验决定：
 
 - [ ] PMTUD
-- [ ] FEC
+- [x] bounded XOR FEC candidate（未启用；证据不足以选择）
 - [ ] unreliable datagram API
 - [x] bounded synchronized key update
 - [ ] 0-RTT
