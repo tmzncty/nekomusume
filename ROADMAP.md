@@ -49,15 +49,15 @@ M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session
 
 这是猫娘区别于“又一个 UDP 协议”的第一个关键里程碑。
 
-- [ ] TCP Carrier framing
-- [ ] TCP/UDP capability model
-- [ ] Session delivery state 可跨 Carrier 表达
-- [ ] UDP primary + TCP fallback
-- [ ] UDP 失效时切换 TCP
-- [ ] 对 uncertain data 做安全重发与接收端去重
-- [ ] TCP 上不重复实现 packet-level TCP ACK
-- [ ] path validation / anti-replay 基础
-- [ ] failover latency / duplicate bytes / recovery success 指标
+- [x] TCP Carrier framing
+- [x] TCP/UDP capability model
+- [x] Session delivery state 可跨 Carrier 表达
+- [x] UDP primary + TCP fallback
+- [x] UDP 失效时切换 TCP
+- [x] 对 uncertain data 做安全重发与接收端去重
+- [x] TCP 上不重复实现 packet-level TCP ACK
+- [x] path validation / anti-replay 基础
+- [x] failover latency / duplicate bytes / recovery success 指标
 
 第一阶段禁止为了聚合带宽而把相邻数据简单轮流扔给 TCP/UDP。
 

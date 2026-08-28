@@ -119,15 +119,15 @@
 
 ## Phase 6 — M3 TCP Carrier and heterogeneous failover
 
-- [ ] TCP framing；
-- [ ] capability model；
-- [ ] UDP primary / TCP fallback；
-- [ ] hard-failure detection；
-- [ ] uncertain data safe resend；
-- [ ] receiver deduplication；
-- [ ] anti-replay/path validation baseline；
-- [ ] recovery metrics；
-- [ ] UDP recovery/migration-back policy先写设计再实现。
+- [x] TCP framing；
+- [x] capability model；
+- [x] UDP primary / TCP fallback；
+- [x] hard-failure detection；
+- [x] uncertain data safe resend；
+- [x] receiver deduplication；
+- [x] anti-replay/path validation baseline；
+- [x] recovery metrics；
+- [x] UDP recovery/migration-back policy 设计已记录；实现归入 Carrier Manager。
 
 核心验收场景：传输中途 UDP blackhole，Session 通过 TCP 恢复，最终字节流无丢失且重复可测/受控。
 

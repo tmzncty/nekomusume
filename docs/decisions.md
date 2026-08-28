@@ -418,3 +418,23 @@ loss with complete final delivery.
 Packet ACK remains UDP Carrier evidence and cannot confirm Session delivery or
 validate a path. This slice adds no public listener, daemon, production service,
 wire ACK parser, benchmark result, or performance superiority claim.
+
+
+## 2026-08-29 — D024：Bounded UDP-to-TCP heterogeneous failover
+
+**Status: Candidate implementation — loopback research only**
+
+The carrier layer now provides bounded four-byte-length TCP framing on ephemeral
+`127.0.0.1`, explicit UDP/TCP capabilities, and a bounded failover controller.
+Consecutive UDP PTO observations form the hard-failure gate; uncertain DataIds
+are resent over TCP with fresh authenticated Noise records and deduplicated at
+the receiver. Conflicting DataId reuse fails closed. Metrics expose switch and
+recovery counts, monotonic recovery latency, unique delivery bytes and duplicate
+bytes. The integration test models an actual UDP blackhole and proves complete
+encrypted recovery over TCP.
+
+TCP uses its native reliability and has no packet ACK layer. Packet/path/Session
+evidence remain separate. Migration back requires a newly validated UDP path
+generation and Carrier Manager hysteresis; it is intentionally not automatic
+here. No public bind, proxy, production listener, concurrent striping or WAN
+claim is introduced.
