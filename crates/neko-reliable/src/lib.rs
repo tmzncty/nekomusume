@@ -6,6 +6,8 @@ pub const PACKET_THRESHOLD: u64 = 3;
 pub const LOSS_TIME_NUMERATOR: u64 = 9;
 pub const LOSS_TIME_DENOMINATOR: u64 = 8;
 pub const DEFAULT_MSS: u64 = 1200;
+pub const DEFAULT_MAX_SENT_PACKETS: usize = 4096;
+pub const DEFAULT_MAX_FRAMES_PER_PACKET: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
@@ -15,6 +17,8 @@ pub enum Error {
     TooManyRanges,
     UnknownPacket,
     Arithmetic,
+    Capacity,
+    EmptyPacket,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,16 +110,22 @@ impl AckRanges {
     }
     pub fn from_ranges(max_ranges: usize, ranges: &[AckRange]) -> Result<Self, Error> {
         let mut out = Self::new(max_ranges)?;
-        for r in ranges {
-            if r.start > r.end {
-                return Err(Error::InvalidRange);
-            };
-            for n in r.start..=r.end {
-                out.insert(n)?;
-                if n == u64::MAX {
-                    break;
-                }
+        let mut candidate = ranges.to_vec();
+        if candidate.iter().any(|r| r.start > r.end) {
+            return Err(Error::InvalidRange);
+        }
+        candidate.sort_by_key(|r| r.start);
+        for range in candidate {
+            if let Some(last) = out.ranges.last_mut()
+                && range.start <= last.end.saturating_add(1)
+            {
+                last.end = last.end.max(range.end);
+                continue;
             }
+            if out.ranges.len() == out.max_ranges {
+                return Err(Error::TooManyRanges);
+            }
+            out.ranges.push(range);
         }
         Ok(out)
     }
@@ -190,17 +200,45 @@ pub struct RecoveryResult {
     pub acked_bytes: u64,
     pub lost_bytes: u64,
 }
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Recovery {
     sent: BTreeMap<u64, SentPacket>,
     outstanding_frames: BTreeSet<FrameId>,
+    max_sent_packets: usize,
+    max_frames_per_packet: usize,
     pub rtt: RttEstimator,
+    pub pto_count: u32,
+}
+impl Default for Recovery {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_SENT_PACKETS, DEFAULT_MAX_FRAMES_PER_PACKET)
+            .expect("valid recovery defaults")
+    }
 }
 impl Recovery {
+    pub fn new(max_sent_packets: usize, max_frames_per_packet: usize) -> Result<Self, Error> {
+        if max_sent_packets == 0 || max_frames_per_packet == 0 {
+            return Err(Error::InvalidLimit);
+        }
+        Ok(Self {
+            sent: BTreeMap::new(),
+            outstanding_frames: BTreeSet::new(),
+            max_sent_packets,
+            max_frames_per_packet,
+            rtt: RttEstimator::default(),
+            pto_count: 0,
+        })
+    }
     pub fn on_sent(&mut self, p: SentPacket) -> Result<(), Error> {
         if self.sent.contains_key(&p.number) {
             return Err(Error::InvalidRange);
-        };
+        }
+        if self.sent.len() >= self.max_sent_packets || p.frames.len() > self.max_frames_per_packet {
+            return Err(Error::Capacity);
+        }
+        if p.bytes == 0 || (p.ack_eliciting && p.frames.is_empty()) {
+            return Err(Error::EmptyPacket);
+        }
         for f in &p.frames {
             self.outstanding_frames.insert(*f);
         }
@@ -260,7 +298,24 @@ impl Recovery {
             }
         }
         out.retransmit_frames = frames.into_iter().collect();
+        if !out.acked_packets.is_empty() {
+            self.pto_count = 0;
+        }
         Ok(out)
+    }
+    /// PTO schedules at most `max_probe_frames` oldest outstanding frames. It
+    /// does not declare packets lost and does not create Session delivery evidence.
+    pub fn on_pto(&mut self, max_probe_frames: usize) -> Result<Vec<FrameId>, Error> {
+        if max_probe_frames == 0 {
+            return Err(Error::InvalidLimit);
+        }
+        self.pto_count = self.pto_count.saturating_add(1);
+        Ok(self
+            .outstanding_frames
+            .iter()
+            .copied()
+            .take(max_probe_frames)
+            .collect())
     }
 }
 
@@ -277,7 +332,7 @@ impl Reno {
             return Err(Error::InvalidLimit);
         }
         Ok(Self {
-            cwnd: 10 * mss,
+            cwnd: 10u64.checked_mul(mss).ok_or(Error::Arithmetic)?,
             ssthresh: u64::MAX,
             bytes_in_flight: 0,
             mss,
@@ -306,6 +361,63 @@ impl Reno {
     pub fn pacing_interval_us(&self, rtt_us: u64, bytes: u64) -> u64 {
         rtt_us.saturating_mul(bytes).div_ceil(self.cwnd.max(1))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SimulationResult {
+    pub sent: u64,
+    pub delivered: u64,
+    pub retransmitted: u64,
+    pub rounds: u64,
+}
+
+/// Deterministic frame-delivery simulation used for bounded loss/reorder tests.
+/// `drop_every=0` means no loss; otherwise every Nth first transmission is lost.
+pub fn simulate_delivery(
+    total_frames: u64,
+    drop_every: u64,
+    reorder: bool,
+) -> Result<SimulationResult, Error> {
+    if total_frames == 0 || total_frames > 100_000 {
+        return Err(Error::InvalidLimit);
+    }
+    let mut pending: Vec<u64> = (0..total_frames).collect();
+    let mut delivered = BTreeSet::new();
+    let mut sent = 0u64;
+    let mut retransmitted = 0u64;
+    let mut rounds = 0u64;
+    while !pending.is_empty() {
+        rounds = rounds.checked_add(1).ok_or(Error::Arithmetic)?;
+        if rounds > total_frames.saturating_add(2) {
+            return Err(Error::Capacity);
+        }
+        let current = std::mem::take(&mut pending);
+        let mut arrivals = Vec::new();
+        for frame in current {
+            sent = sent.checked_add(1).ok_or(Error::Arithmetic)?;
+            let first_attempt = !delivered.contains(&frame) && rounds == 1;
+            if first_attempt && drop_every != 0 && (frame + 1) % drop_every == 0 {
+                pending.push(frame);
+                continue;
+            }
+            if rounds > 1 {
+                retransmitted = retransmitted.checked_add(1).ok_or(Error::Arithmetic)?;
+            }
+            arrivals.push(frame);
+        }
+        if reorder {
+            arrivals.reverse();
+        }
+        for frame in arrivals {
+            delivered.insert(frame);
+        }
+    }
+    Ok(SimulationResult {
+        sent,
+        delivered: delivered.len() as u64,
+        retransmitted,
+        rounds,
+    })
 }
 
 #[cfg(test)]
@@ -402,5 +514,39 @@ mod tests {
         c.sent(2400);
         c.lost(2400);
         assert_eq!(c.cwnd, c.ssthresh);
+    }
+    #[test]
+    fn huge_ack_range_is_constant_work_and_canonical() {
+        let a = AckRanges::from_ranges(1, &[AckRange::new(0, u64::MAX).unwrap()]).unwrap();
+        assert_eq!(
+            a.ranges(),
+            &[AckRange {
+                start: 0,
+                end: u64::MAX
+            }]
+        );
+    }
+    #[test]
+    fn recovery_capacity_and_pto_are_bounded() {
+        let mut r = Recovery::new(1, 1).unwrap();
+        r.on_sent(packet(1, 0, 7)).unwrap();
+        assert_eq!(r.on_sent(packet(2, 0, 8)), Err(Error::Capacity));
+        assert_eq!(r.on_pto(1), Ok(vec![FrameId(7)]));
+        assert_eq!(r.in_flight(), 1);
+        assert_eq!(r.pto_count, 1);
+    }
+    #[test]
+    fn deterministic_loss_and_reorder_preserve_all_frames() {
+        for drop_every in [0, 100, 20, 10] {
+            for reorder in [false, true] {
+                let x = simulate_delivery(1000, drop_every, reorder).unwrap();
+                assert_eq!(x.delivered, 1000);
+                assert!(x.rounds <= 2);
+                assert_eq!(
+                    x.retransmitted,
+                    1000u64.checked_div(drop_every).unwrap_or(0)
+                );
+            }
+        }
     }
 }
