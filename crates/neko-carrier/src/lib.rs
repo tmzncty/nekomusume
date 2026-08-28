@@ -918,3 +918,361 @@ mod udp_loopback_tests {
         assert!(a.recv_datagram().unwrap().is_none());
     }
 }
+
+/// Bounded length-prefixed TCP carrier for loopback research. TCP reliability
+/// is used directly; this layer intentionally has no packet ACK mechanism.
+pub trait TcpCarrier {
+    fn send_frame(&self, frame: &[u8]) -> Result<(), TcpError>;
+    fn recv_frame(&self) -> Result<Vec<u8>, TcpError>;
+    fn close(&self) -> Result<(), TcpError>;
+}
+
+#[derive(Debug)]
+pub enum TcpError {
+    InvalidLimits,
+    FrameTooLarge,
+    Closed,
+    Truncated,
+    Io(std::io::Error),
+    StatePoisoned,
+}
+impl std::fmt::Display for TcpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidLimits => f.write_str("invalid TCP limits"),
+            Self::FrameTooLarge => f.write_str("TCP frame exceeds limit"),
+            Self::Closed => f.write_str("TCP endpoint closed"),
+            Self::Truncated => f.write_str("TCP frame truncated"),
+            Self::Io(e) => e.fmt(f),
+            Self::StatePoisoned => f.write_str("TCP endpoint state poisoned"),
+        }
+    }
+}
+impl std::error::Error for TcpError {}
+impl From<std::io::Error> for TcpError {
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TcpLimits {
+    pub max_frame_bytes: usize,
+}
+#[derive(Debug)]
+pub struct TcpLoopbackEndpoint {
+    stream: std::sync::Mutex<std::net::TcpStream>,
+    limits: TcpLimits,
+    closed: std::sync::Mutex<bool>,
+}
+pub struct TcpLoopbackPair;
+impl TcpLoopbackPair {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(limits: TcpLimits) -> Result<(TcpLoopbackEndpoint, TcpLoopbackEndpoint), TcpError> {
+        if limits.max_frame_bytes == 0 || limits.max_frame_bytes > u32::MAX as usize {
+            return Err(TcpError::InvalidLimits);
+        }
+        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        let client = std::net::TcpStream::connect(listener.local_addr()?)?;
+        let (server, peer) = listener.accept()?;
+        if !peer.ip().is_loopback()
+            || !client.local_addr()?.ip().is_loopback()
+            || !server.local_addr()?.ip().is_loopback()
+        {
+            return Err(TcpError::InvalidLimits);
+        }
+        for stream in [&client, &server] {
+            stream.set_nodelay(true)?;
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(1)))?;
+            stream.set_write_timeout(Some(std::time::Duration::from_secs(1)))?;
+        }
+        Ok((
+            Self::endpoint(client, limits),
+            Self::endpoint(server, limits),
+        ))
+    }
+    fn endpoint(stream: std::net::TcpStream, limits: TcpLimits) -> TcpLoopbackEndpoint {
+        TcpLoopbackEndpoint {
+            stream: std::sync::Mutex::new(stream),
+            limits,
+            closed: std::sync::Mutex::new(false),
+        }
+    }
+}
+impl TcpLoopbackEndpoint {
+    pub fn local_addr(&self) -> Result<std::net::SocketAddr, TcpError> {
+        Ok(self
+            .stream
+            .lock()
+            .map_err(|_| TcpError::StatePoisoned)?
+            .local_addr()?)
+    }
+    fn is_closed(&self) -> Result<bool, TcpError> {
+        Ok(*self.closed.lock().map_err(|_| TcpError::StatePoisoned)?)
+    }
+}
+impl TcpCarrier for TcpLoopbackEndpoint {
+    fn send_frame(&self, frame: &[u8]) -> Result<(), TcpError> {
+        use std::io::Write;
+        if self.is_closed()? {
+            return Err(TcpError::Closed);
+        }
+        if frame.len() > self.limits.max_frame_bytes {
+            return Err(TcpError::FrameTooLarge);
+        }
+        let length = u32::try_from(frame.len()).map_err(|_| TcpError::FrameTooLarge)?;
+        let mut stream = self.stream.lock().map_err(|_| TcpError::StatePoisoned)?;
+        stream.write_all(&length.to_be_bytes())?;
+        stream.write_all(frame)?;
+        stream.flush()?;
+        Ok(())
+    }
+    fn recv_frame(&self) -> Result<Vec<u8>, TcpError> {
+        use std::io::Read;
+        if self.is_closed()? {
+            return Err(TcpError::Closed);
+        }
+        let mut stream = self.stream.lock().map_err(|_| TcpError::StatePoisoned)?;
+        let mut header = [0; 4];
+        stream.read_exact(&mut header).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                TcpError::Truncated
+            } else {
+                TcpError::Io(e)
+            }
+        })?;
+        let length = u32::from_be_bytes(header) as usize;
+        if length > self.limits.max_frame_bytes {
+            return Err(TcpError::FrameTooLarge);
+        }
+        let mut frame = vec![0; length];
+        stream.read_exact(&mut frame).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                TcpError::Truncated
+            } else {
+                TcpError::Io(e)
+            }
+        })?;
+        Ok(frame)
+    }
+    fn close(&self) -> Result<(), TcpError> {
+        let mut closed = self.closed.lock().map_err(|_| TcpError::StatePoisoned)?;
+        if !*closed {
+            self.stream
+                .lock()
+                .map_err(|_| TcpError::StatePoisoned)?
+                .shutdown(std::net::Shutdown::Both)?;
+            *closed = true;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CarrierCapabilities {
+    pub message_boundaries: bool,
+    pub reliable: bool,
+    pub ordered: bool,
+    pub packet_feedback: bool,
+}
+pub const UDP_CAPABILITIES: CarrierCapabilities = CarrierCapabilities {
+    message_boundaries: true,
+    reliable: false,
+    ordered: false,
+    packet_feedback: true,
+};
+pub const TCP_CAPABILITIES: CarrierCapabilities = CarrierCapabilities {
+    message_boundaries: false,
+    reliable: true,
+    ordered: true,
+    packet_feedback: false,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DataId(pub u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveCarrier {
+    Udp,
+    Tcp,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FailoverMetrics {
+    pub switches: u64,
+    pub recovery_events: u64,
+    pub duplicate_bytes: u64,
+    pub delivered_bytes: u64,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FailoverError {
+    InvalidLimit,
+    Capacity,
+    Conflict,
+    NotFound,
+    WrongCarrier,
+}
+#[derive(Debug)]
+pub struct FailoverController {
+    active: ActiveCarrier,
+    hard_failure_ptos: u32,
+    consecutive_ptos: u32,
+    max_uncertain_entries: usize,
+    max_uncertain_bytes: usize,
+    uncertain_bytes: usize,
+    uncertain: BTreeMap<DataId, Vec<u8>>,
+    received: BTreeMap<DataId, Vec<u8>>,
+    pub metrics: FailoverMetrics,
+}
+impl FailoverController {
+    pub fn new(
+        hard_failure_ptos: u32,
+        max_uncertain_entries: usize,
+        max_uncertain_bytes: usize,
+    ) -> Result<Self, FailoverError> {
+        if hard_failure_ptos == 0 || max_uncertain_entries == 0 || max_uncertain_bytes == 0 {
+            return Err(FailoverError::InvalidLimit);
+        }
+        Ok(Self {
+            active: ActiveCarrier::Udp,
+            hard_failure_ptos,
+            consecutive_ptos: 0,
+            max_uncertain_entries,
+            max_uncertain_bytes,
+            uncertain_bytes: 0,
+            uncertain: BTreeMap::new(),
+            received: BTreeMap::new(),
+            metrics: FailoverMetrics::default(),
+        })
+    }
+    pub const fn active(&self) -> ActiveCarrier {
+        self.active
+    }
+    pub fn track_uncertain(&mut self, id: DataId, data: &[u8]) -> Result<(), FailoverError> {
+        if let Some(old) = self.uncertain.get(&id) {
+            return if old == data {
+                Ok(())
+            } else {
+                Err(FailoverError::Conflict)
+            };
+        }
+        let total = self
+            .uncertain_bytes
+            .checked_add(data.len())
+            .ok_or(FailoverError::Capacity)?;
+        if self.uncertain.len() >= self.max_uncertain_entries || total > self.max_uncertain_bytes {
+            return Err(FailoverError::Capacity);
+        }
+        self.uncertain.insert(id, data.to_vec());
+        self.uncertain_bytes = total;
+        Ok(())
+    }
+    pub fn udp_progress(&mut self) {
+        self.consecutive_ptos = 0
+    }
+    pub fn udp_pto(&mut self) -> bool {
+        if self.active != ActiveCarrier::Udp {
+            return false;
+        }
+        self.consecutive_ptos = self.consecutive_ptos.saturating_add(1);
+        if self.consecutive_ptos >= self.hard_failure_ptos {
+            self.active = ActiveCarrier::Tcp;
+            self.metrics.switches = self.metrics.switches.saturating_add(1);
+            self.metrics.recovery_events = self.metrics.recovery_events.saturating_add(1);
+            true
+        } else {
+            false
+        }
+    }
+    pub fn tcp_resend(&self) -> Result<Vec<(DataId, Vec<u8>)>, FailoverError> {
+        if self.active != ActiveCarrier::Tcp {
+            return Err(FailoverError::WrongCarrier);
+        }
+        Ok(self
+            .uncertain
+            .iter()
+            .map(|(id, v)| (*id, v.clone()))
+            .collect())
+    }
+    pub fn confirm(&mut self, id: DataId) -> Result<(), FailoverError> {
+        let v = self.uncertain.remove(&id).ok_or(FailoverError::NotFound)?;
+        self.uncertain_bytes = self.uncertain_bytes.saturating_sub(v.len());
+        Ok(())
+    }
+    /// Returns true once for first delivery and false for an exact duplicate.
+    pub fn receive(&mut self, id: DataId, data: &[u8]) -> Result<bool, FailoverError> {
+        if let Some(old) = self.received.get(&id) {
+            if old != data {
+                return Err(FailoverError::Conflict);
+            }
+            self.metrics.duplicate_bytes = self
+                .metrics
+                .duplicate_bytes
+                .saturating_add(data.len() as u64);
+            return Ok(false);
+        }
+        if self.received.len() >= self.max_uncertain_entries {
+            return Err(FailoverError::Capacity);
+        }
+        self.received.insert(id, data.to_vec());
+        self.metrics.delivered_bytes = self
+            .metrics
+            .delivered_bytes
+            .saturating_add(data.len() as u64);
+        Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tcp_failover_tests {
+    use super::*;
+    #[test]
+    fn tcp_framing_preserves_empty_and_boundaries() {
+        let (a, b) = TcpLoopbackPair::new(TcpLimits { max_frame_bytes: 8 }).unwrap();
+        assert!(a.local_addr().unwrap().ip().is_loopback());
+        a.send_frame(b"").unwrap();
+        a.send_frame(b"12345678").unwrap();
+        assert_eq!(b.recv_frame().unwrap(), b"");
+        assert_eq!(b.recv_frame().unwrap(), b"12345678");
+        assert!(matches!(
+            a.send_frame(b"123456789"),
+            Err(TcpError::FrameTooLarge)
+        ));
+        a.close().unwrap();
+        a.close().unwrap();
+    }
+    #[test]
+    fn capabilities_do_not_duplicate_tcp_packet_ack() {
+        let capabilities = [UDP_CAPABILITIES, TCP_CAPABILITIES];
+        assert!(capabilities[0].packet_feedback);
+        assert!(!capabilities[1].packet_feedback);
+        assert!(capabilities[1].reliable && capabilities[1].ordered);
+    }
+    #[test]
+    fn hard_failure_switches_and_resends_uncertain_with_dedup() {
+        let mut f = FailoverController::new(2, 4, 64).unwrap();
+        f.track_uncertain(DataId(1), b"cat").unwrap();
+        assert!(!f.udp_pto());
+        assert!(f.udp_pto());
+        assert_eq!(f.active(), ActiveCarrier::Tcp);
+        let resend = f.tcp_resend().unwrap();
+        assert_eq!(resend, vec![(DataId(1), b"cat".to_vec())]);
+        assert_eq!(f.receive(DataId(1), b"cat"), Ok(true));
+        assert_eq!(f.receive(DataId(1), b"cat"), Ok(false));
+        assert_eq!(f.receive(DataId(1), b"dog"), Err(FailoverError::Conflict));
+        f.confirm(DataId(1)).unwrap();
+        assert_eq!(f.metrics.delivered_bytes, 3);
+        assert_eq!(f.metrics.duplicate_bytes, 3);
+    }
+    #[test]
+    fn uncertain_limits_are_atomic() {
+        let mut f = FailoverController::new(1, 1, 3).unwrap();
+        assert_eq!(
+            f.track_uncertain(DataId(1), b"four"),
+            Err(FailoverError::Capacity)
+        );
+        f.track_uncertain(DataId(1), b"cat").unwrap();
+        assert_eq!(
+            f.track_uncertain(DataId(2), b"x"),
+            Err(FailoverError::Capacity)
+        );
+    }
+}
