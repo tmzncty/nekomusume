@@ -467,3 +467,19 @@ frames, delivered frames, retransmission count, rounds, failures, median and P95
 local harness timing. The fixture makes no socket, route, firewall, netns, veth,
 WAN or third-party change. Timing is harness execution time, not RTT, throughput
 or WAN performance.
+
+
+## 2026-08-29 — D027：Cleanup-safe netns/netem experiment matrix
+
+**Status: Accepted isolated experiment evidence — not comparative performance**
+
+A privileged lab run created only two unique temporary namespaces and one veth
+pair, applied baseline, delay, random/burst loss, reorder, rate and blackhole
+netem conditions, wrote machine-readable samples, then removed all resources by
+trap. Nine scenarios completed with zero harness failures; measured ICMP median
+RTT was 0.050 ms and P95 was 10.054 ms. These figures validate the experiment
+harness and qdiscs, not Nekomusume throughput.
+
+The HY2 comparison script remains fail-closed and unexecuted because no exact
+controlled HY2/Nekomusume commands, endpoint and equal-condition metadata exist.
+No superiority or WAN claim is made.

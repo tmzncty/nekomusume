@@ -164,11 +164,11 @@ fail: 喵呜呜呜呜…
 
 ## Phase 9 — Benchmark harness
 
-- [ ] netns/veth/netem 自动化；
-- [ ] baseline/RTT/loss/reorder/bandwidth/blackhole 场景；
+- [x] netns/veth/netem 自动化；
+- [x] baseline/RTT/loss/burst/reorder/bandwidth/blackhole 场景；
 - [x] 结果机器可读；
 - [x] median/P95/failure；
-- [ ] HY2 对照脚本与条件说明；
+- [x] HY2 fail-closed 对照脚手架与同条件约束说明；未执行比较。
 - [x] 确定性 fixture 与未来真实 WAN 结果分开保存。
 
 不要为 benchmark 关闭安全机制。
