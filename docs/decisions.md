@@ -552,3 +552,20 @@ retransmission and congestion control and is not enabled by any carrier.
 
 No wire negotiation, public service, WAN experiment, production behavior or
 performance claim is introduced.
+
+
+## 2026-08-29 — D033：0-RTT gate remains explicitly disabled
+
+**Status: Governance closure — no early-data implementation**
+
+Current evidence covers established-session authentication, bounded replay, key
+phase changes, trust/scope authorization and pre-auth budgets, but not replay-safe
+resumption across restart/rollback, ticket freshness, persistent anti-replay
+state, or authorization-before-side-effect vectors. 0-RTT therefore remains
+rejected. Failed or early data cannot produce delivery, path, ACK, authorization
+or mutating control evidence.
+
+This decision neither claims 0-RTT impossible nor authorizes future tickets,
+resumption keys, wire changes, listeners or production behavior. A future gate
+requires a concrete design, canonical vectors, persistence/rollback tests and
+independent review.

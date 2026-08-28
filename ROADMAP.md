@@ -159,7 +159,7 @@ fail: 喵呜呜呜呜…
 - [x] bounded XOR FEC candidate（未启用，证据不足以选择）
 - [x] bounded authenticated unreliable datagram API
 - [x] bounded synchronized key update
-- [ ] 0-RTT
+- [x] 0-RTT gate closed（明确禁用；未实现）
 - [ ] concurrent UDP + TCP
 - [ ] heterogeneous multipath aggregation
 
