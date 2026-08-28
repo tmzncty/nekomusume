@@ -23,7 +23,7 @@ This audit was performed on `tmzn-server` from `/media/tmzn/DATA5/nekomusume-res
 ## Not implemented or not approved
 
 - No authenticated handshake, AEAD, key management, trust store, authorization, or cryptographic dependency is selected or implemented.
-- No live UDP service, TCP carrier, failover/resume, reliability engine, congestion control, multi-stream scheduler, benchmark harness, or production tunnel exists.
+- No production or public service exists. Candidate local/loopback slices now exist for encrypted UDP echo, TCP framing/failover, bounded reliable recovery, multi-stream scheduling, Carrier Manager, PLPMTUD, unreliable datagrams, key update, and isolated benchmark harness; these remain research candidates and do not constitute production deployment.
 - G0 remains `blocked`; the Noise and pre-auth documents are candidate-only security gates. The provisional v0 document is not a frozen protocol.
 - Reachability experiments and public-network exposure remain blocked and were not run.
 
