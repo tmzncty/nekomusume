@@ -156,7 +156,7 @@ fail: 喵呜呜呜呜…
 仅根据前面实验决定：
 
 - [x] bounded authenticated PLPMTUD state
-- [ ] FEC
+- [x] bounded XOR FEC candidate（未启用，证据不足以选择）
 - [x] bounded authenticated unreliable datagram API
 - [x] bounded synchronized key update
 - [ ] 0-RTT

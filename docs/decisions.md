@@ -536,3 +536,19 @@ probe records and a separate reviewed gate.
 ## D031 — Bounded authenticated unreliable datagram
 
 Candidate local implementation: 1200-byte cap, authenticated context/nonce/replay, uniform rejection, no retransmission or delivery evidence; 0-RTT and public/WAN use remain disabled.
+
+
+## 2026-08-29 — D032：Bounded XOR FEC candidate, not enabled
+
+**Status: Candidate implementation — no default activation**
+
+Existing isolated evidence demonstrates recovery behavior under deterministic
+loss, but no workload or network result shows FEC improves goodput, latency,
+recovery time or resource use. We therefore add only a bounded systematic XOR
+block candidate for controlled experiments: 2–32 equal-size data symbols plus
+one parity symbol, single-loss recovery, explicit multi-loss failure, duplicate
+and bounds errors. It remains separate from packet ACK, Session delivery,
+retransmission and congestion control and is not enabled by any carrier.
+
+No wire negotiation, public service, WAN experiment, production behavior or
+performance claim is introduced.

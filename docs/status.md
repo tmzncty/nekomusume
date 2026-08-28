@@ -17,6 +17,7 @@
 | preauth-admission | runtime pre-auth accounting | candidate | `docs/adr/m1-g0-research-authorization.md` | Bounded research implementation may proceed; candidate values and fail-closed tests remain required |
 | live-udp | UDP socket carrier | candidate | `crates/neko-carrier/tests/encrypted_udp_echo.rs` | Authenticated encrypted echo proven on connected 127.0.0.1 ephemeral sockets only; no service/public/production listener |
 | unreliable-datagram | bounded authenticated unreliable datagram | candidate | `docs/spec/m2-unreliable-datagram.md` | Authenticated bounded datagrams; no retransmission or Session delivery evidence |
+| fec | bounded systematic XOR FEC candidate | candidate/not enabled | `docs/spec/m2-fec.md` | Single-loss block recovery and bounded failure tests; no evidence-based enablement or performance claim |
 | plpmtud | bounded packetization-layer PMTU discovery state | candidate | `docs/spec/m2-plpmtud.md` | Explicit probe ACK/generation binding, bounded search/retry/fallback tests; no live/public probe or ICMP trust |
 | reliable-udp | bounded UDP packet recovery state | candidate | `crates/neko-reliable/src/lib.rs` | Deterministic packet/ACK/RTT/loss/PTO/frame-retransmit/Reno/pacing model; no live service or Session-delivery promotion |
 | benchmark-fixture | deterministic and privileged isolated benchmark harness | candidate | `scripts/bench/run-netns.sh` | Cleanup-safe netns/veth/netem matrix plus machine-readable summaries; no WAN/HY2 result or performance superiority claim |
