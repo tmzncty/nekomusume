@@ -140,7 +140,7 @@
 - [x] health probes；
 - [x] scoring；
 - [x] hysteresis；
-- [ ] migration-back。
+- [x] migration-back（validated generation + health margin + hold gate）；
 
 验收：大 bulk stream 不显著饿死交互小 stream；路径抖动不导致频繁切换。
 

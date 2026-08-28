@@ -1457,6 +1457,26 @@ pub struct CarrierManager {
     active: Option<PathId>,
     hold: u32,
     pub switches: u64,
+    active_generation: Option<PathGeneration>,
+    migration_hold: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MigrationCandidate {
+    pub path: PathId,
+    pub generation: PathGeneration,
+    pub validated: bool,
+    pub health: HealthSample,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationError {
+    NotTcp,
+    Unvalidated,
+    OldGeneration,
+    GenerationMismatch,
+    Unhealthy,
+    ScoreMargin,
+    HoldGate,
 }
 impl CarrierManager {
     pub fn new(limits: ManagerLimits) -> Result<Self, FlowError> {
@@ -1469,6 +1489,8 @@ impl CarrierManager {
             active: None,
             hold: 0,
             switches: 0,
+            active_generation: None,
+            migration_hold: 0,
         })
     }
     pub fn observe(&mut self, path: PathId, sample: HealthSample) -> Result<(), FlowError> {
@@ -1491,6 +1513,72 @@ impl CarrierManager {
     pub fn active(&self) -> Option<PathId> {
         self.active
     }
+    pub fn set_active_tcp(
+        &mut self,
+        path: PathId,
+        generation: PathGeneration,
+    ) -> Result<(), MigrationError> {
+        if !self.samples.contains_key(&path) {
+            return Err(MigrationError::GenerationMismatch);
+        }
+        self.active = Some(path);
+        self.active_generation = Some(generation);
+        self.migration_hold = 0;
+        Ok(())
+    }
+
+    /// Propose migration from active TCP back to UDP. Every gate is checked
+    /// before mutation; rejected candidates leave active path, hold and metrics
+    /// unchanged. `validated` represents explicit path-challenge evidence and
+    /// is intentionally separate from health/packet feedback.
+    pub fn migrate_back_to_udp(
+        &mut self,
+        candidate: MigrationCandidate,
+    ) -> Result<bool, MigrationError> {
+        let active = self.active.ok_or(MigrationError::NotTcp)?;
+        let active_generation = self.active_generation.ok_or(MigrationError::NotTcp)?;
+        if candidate.path == active {
+            return Err(MigrationError::NotTcp);
+        }
+        if candidate.generation.0 < active_generation.0 {
+            return Err(MigrationError::OldGeneration);
+        }
+        if candidate.generation.0 != active_generation.0 {
+            return Err(MigrationError::GenerationMismatch);
+        }
+        if !candidate.validated {
+            return Err(MigrationError::Unvalidated);
+        }
+        let candidate_score = Self::score(candidate.health);
+        if !candidate_score.healthy {
+            return Err(MigrationError::Unhealthy);
+        }
+        let current = self
+            .samples
+            .get(&active)
+            .copied()
+            .ok_or(MigrationError::NotTcp)?;
+        let current_score = Self::score(current);
+        if !current_score.healthy
+            || candidate_score.score < current_score.score + self.limits.switch_margin
+        {
+            return Err(MigrationError::ScoreMargin);
+        }
+        if self.migration_hold < self.limits.min_hold_events {
+            self.migration_hold = self.migration_hold.saturating_add(1);
+            return Err(MigrationError::HoldGate);
+        }
+        self.active = Some(candidate.path);
+        self.active_generation = Some(candidate.generation);
+        self.migration_hold = 0;
+        self.switches = self.switches.saturating_add(1);
+        Ok(true)
+    }
+
+    pub fn migration_hold(&self) -> u32 {
+        self.migration_hold
+    }
+
     pub fn choose(&mut self) -> Option<PathId> {
         let best = self
             .samples
@@ -1621,5 +1709,93 @@ mod manager_tests {
         m.hold = 3;
         assert_eq!(m.choose(), Some(PathId(2)));
         assert_eq!(m.switches, 2);
+    }
+    #[test]
+    fn migration_back_requires_validation_generation_health_margin_and_hold() {
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 2,
+            switch_margin: 10,
+            max_paths: 3,
+        })
+        .unwrap();
+        m.observe(
+            PathId(10),
+            HealthSample {
+                rtt_us: 100,
+                loss_per_mille: 0,
+                pto: 0,
+            },
+        )
+        .unwrap();
+        m.observe(
+            PathId(20),
+            HealthSample {
+                rtt_us: 20,
+                loss_per_mille: 0,
+                pto: 0,
+            },
+        )
+        .unwrap();
+        m.set_active_tcp(PathId(10), PathGeneration(7)).unwrap();
+        let base = MigrationCandidate {
+            path: PathId(20),
+            generation: PathGeneration(7),
+            validated: true,
+            health: HealthSample {
+                rtt_us: 20,
+                loss_per_mille: 0,
+                pto: 0,
+            },
+        };
+        assert_eq!(
+            m.migrate_back_to_udp(MigrationCandidate {
+                validated: false,
+                ..base
+            }),
+            Err(MigrationError::Unvalidated)
+        );
+        assert_eq!(
+            m.migrate_back_to_udp(MigrationCandidate {
+                generation: PathGeneration(6),
+                ..base
+            }),
+            Err(MigrationError::OldGeneration)
+        );
+        assert_eq!(
+            m.migrate_back_to_udp(MigrationCandidate {
+                generation: PathGeneration(8),
+                ..base
+            }),
+            Err(MigrationError::GenerationMismatch)
+        );
+        assert_eq!(
+            m.migrate_back_to_udp(MigrationCandidate {
+                health: HealthSample {
+                    rtt_us: 20,
+                    loss_per_mille: 600,
+                    pto: 0
+                },
+                ..base
+            }),
+            Err(MigrationError::Unhealthy)
+        );
+        assert_eq!(
+            m.migrate_back_to_udp(MigrationCandidate {
+                health: HealthSample {
+                    rtt_us: 95,
+                    loss_per_mille: 0,
+                    pto: 0
+                },
+                ..base
+            }),
+            Err(MigrationError::ScoreMargin)
+        );
+        assert_eq!(m.active(), Some(PathId(10)));
+        assert_eq!(m.migrate_back_to_udp(base), Err(MigrationError::HoldGate));
+        assert_eq!(m.migrate_back_to_udp(base), Err(MigrationError::HoldGate));
+        assert_eq!(m.migrate_back_to_udp(base), Ok(true));
+        assert_eq!(m.active(), Some(PathId(20)));
+        assert_eq!(m.switches, 1);
+        assert_eq!(m.migrate_back_to_udp(base), Err(MigrationError::NotTcp));
     }
 }

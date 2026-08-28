@@ -22,3 +22,14 @@ packet ACK layer.
 Migration back to UDP is deliberately not automatic in this slice. It requires
 a newly validated UDP path generation plus Carrier Manager hysteresis and a
 minimum hold period; the active TCP path remains stable until that later gate.
+
+
+## Migration-back gate
+
+Migration from active TCP to UDP is a separate atomic Carrier Manager
+transition. The candidate must carry the same path generation as the active
+TCP session, explicit path-challenge validation, a healthy sample, and a score
+exceeding the active path by the configured margin. A minimum hold count is
+required before commit. Old/mismatched generations, unvalidated, unhealthy,
+low-margin, and early candidates do not mutate active path, switch metrics, or
+Session evidence.

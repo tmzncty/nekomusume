@@ -72,7 +72,7 @@ M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session
 - [x] Carrier health probe
 - [x] Carrier scoring
 - [x] failover hysteresis，避免路径来回抖动
-- [ ] UDP 恢复后的迁回策略
+- [x] UDP 恢复后的迁回策略（validated generation + health margin + hold gate）
 
 ## Milestone 5 — Benchmark 与真实 WAN validation
 

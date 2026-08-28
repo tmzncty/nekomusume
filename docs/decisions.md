@@ -483,3 +483,17 @@ harness and qdiscs, not Nekomusume throughput.
 The HY2 comparison script remains fail-closed and unexecuted because no exact
 controlled HY2/Nekomusume commands, endpoint and equal-condition metadata exist.
 No superiority or WAN claim is made.
+
+
+## 2026-08-29 — D028：Validated UDP migration-back gate
+
+**Status: Candidate implementation — Carrier Manager local state only**
+
+Migration-back from active TCP to UDP now requires, atomically and in order, a
+matching path generation, explicit path validation, healthy candidate sample,
+score margin over the active TCP path, and minimum hold hysteresis. Rejected
+old/mismatched, unvalidated, unhealthy, low-margin, or premature candidates do
+not mutate active path, hold metrics beyond the bounded hold observation, switch
+count, or Session evidence. Successful commit increments the bounded switch
+metric once. No public listener, WAN probe, production service, or automatic
+application-level migration claim is introduced.
