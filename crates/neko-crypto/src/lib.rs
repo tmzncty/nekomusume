@@ -508,3 +508,106 @@ mod session_tests {
         assert!(r.receive_first(&first, ctx(0)).is_err());
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreauthLimits {
+    pub max_input_bytes: usize,
+    pub max_input_packets: u8,
+    pub max_response_bytes: usize,
+    pub max_response_packets: u8,
+}
+impl Default for PreauthLimits {
+    fn default() -> Self {
+        Self {
+            max_input_bytes: 8192,
+            max_input_packets: 4,
+            max_response_bytes: 2048,
+            max_response_packets: 4,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreauthBudget {
+    limits: PreauthLimits,
+    input_bytes: usize,
+    input_packets: u8,
+    response_bytes: usize,
+    response_packets: u8,
+}
+impl PreauthBudget {
+    pub fn new(limits: PreauthLimits) -> Result<Self, SessionRejected> {
+        if limits.max_input_bytes == 0
+            || limits.max_input_packets == 0
+            || limits.max_response_bytes == 0
+            || limits.max_response_packets == 0
+        {
+            return Err(SessionRejected);
+        }
+        Ok(Self {
+            limits,
+            input_bytes: 0,
+            input_packets: 0,
+            response_bytes: 0,
+            response_packets: 0,
+        })
+    }
+    pub fn charge_input(&mut self, bytes: usize) -> Result<(), SessionRejected> {
+        let new_bytes = self.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
+        let new_packets = self.input_packets.checked_add(1).ok_or(SessionRejected)?;
+        if new_bytes > self.limits.max_input_bytes || new_packets > self.limits.max_input_packets {
+            return Err(SessionRejected);
+        }
+        self.input_bytes = new_bytes;
+        self.input_packets = new_packets;
+        Ok(())
+    }
+    pub fn charge_response(&mut self, bytes: usize) -> Result<(), SessionRejected> {
+        let new_bytes = self
+            .response_bytes
+            .checked_add(bytes)
+            .ok_or(SessionRejected)?;
+        let new_packets = self
+            .response_packets
+            .checked_add(1)
+            .ok_or(SessionRejected)?;
+        let amplification = self
+            .input_bytes
+            .checked_mul(3)
+            .ok_or(SessionRejected)?
+            .min(self.limits.max_response_bytes);
+        let packet_allowance = self.input_packets.min(self.limits.max_response_packets);
+        if new_bytes > amplification || new_packets > packet_allowance {
+            return Err(SessionRejected);
+        }
+        self.response_bytes = new_bytes;
+        self.response_packets = new_packets;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod preauth_tests {
+    use super::*;
+    #[test]
+    fn response_requires_charged_input_and_respects_amplification() {
+        let mut b = PreauthBudget::new(PreauthLimits::default()).unwrap();
+        assert_eq!(b.charge_response(1), Err(SessionRejected));
+        b.charge_input(10).unwrap();
+        assert_eq!(b.charge_response(30), Ok(()));
+        assert_eq!(b.charge_response(1), Err(SessionRejected));
+    }
+    #[test]
+    fn rejected_charge_is_atomic() {
+        let mut b = PreauthBudget::new(PreauthLimits {
+            max_input_bytes: 4,
+            max_input_packets: 1,
+            max_response_bytes: 12,
+            max_response_packets: 1,
+        })
+        .unwrap();
+        assert_eq!(b.charge_input(5), Err(SessionRejected));
+        b.charge_input(4).unwrap();
+        b.charge_response(12).unwrap();
+        assert_eq!(b.charge_response(1), Err(SessionRejected));
+    }
+}
