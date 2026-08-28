@@ -569,3 +569,22 @@ This decision neither claims 0-RTT impossible nor authorizes future tickets,
 resumption keys, wire changes, listeners or production behavior. A future gate
 requires a concrete design, canonical vectors, persistence/rollback tests and
 independent review.
+
+
+## 2026-08-29 — D034：Concurrent-carrier and multipath aggregation remain disabled
+
+**Status: Governance closure — no striping implementation**
+
+Sequential UDP/TCP failover, validated migration and health scoring are proven
+in bounded local slices, but no controlled application A/B result demonstrates
+a benefit from simultaneous UDP+TCP. A complete connection-level data sequence,
+bounded cross-path reorder/gap state, retransmission ownership, ACK attribution,
+TCP-HOL policy and coupled congestion-control design is also absent. Implementing
+round-robin striping now would risk unbounded queues, duplicate transmission,
+carrier-feedback confusion and unfair bottleneck competition.
+
+Concurrent UDP+TCP and heterogeneous aggregation therefore remain explicitly
+disabled. A future gate requires a deterministic DSN/reordering/congestion model
+and isolated asymmetric-path/blackhole A/B evidence before any live scheduler.
+No wire field, listener, WAN experiment, production setting or superiority claim
+is introduced.

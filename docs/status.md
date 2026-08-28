@@ -22,6 +22,7 @@
 | plpmtud | bounded packetization-layer PMTU discovery state | candidate | `docs/spec/m2-plpmtud.md` | Explicit probe ACK/generation binding, bounded search/retry/fallback tests; no live/public probe or ICMP trust |
 | reliable-udp | bounded UDP packet recovery state | candidate | `crates/neko-reliable/src/lib.rs` | Deterministic packet/ACK/RTT/loss/PTO/frame-retransmit/Reno/pacing model; no live service or Session-delivery promotion |
 | benchmark-fixture | deterministic and privileged isolated benchmark harness | candidate | `scripts/bench/run-netns.sh` | Cleanup-safe netns/veth/netem matrix plus machine-readable summaries; no WAN/HY2 result or performance superiority claim |
+| concurrent-multipath | concurrent UDP+TCP and heterogeneous aggregation gate | candidate | `docs/spec/m4-concurrent-multipath-gate.md` | Explicitly disabled pending DSN/reordering/congestion-coupling design and controlled benefit evidence; no striping |
 | manager | bounded multi-stream scheduler and Carrier Manager | candidate | `crates/neko-carrier/src/lib.rs` | Fair round-robin, stream/session limits, health score, hysteresis tests; validated migration-back gate with generation/health/margin/hold tests; no production manager |
 | live-tcp | TCP carrier and resume | candidate | `crates/neko-carrier/tests/tcp_failover.rs` | Encrypted loopback UDP-blackhole recovery over bounded TCP framing with DataId dedup and metrics; no public/production listener |
 | reachability | probe / public-network experiments | blocked | `ROADMAP.md` | Explicitly out of scope; no public exposure |

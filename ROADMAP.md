@@ -160,8 +160,8 @@ fail: 喵呜呜呜呜…
 - [x] bounded authenticated unreliable datagram API
 - [x] bounded synchronized key update
 - [x] 0-RTT gate closed（明确禁用；未实现）
-- [ ] concurrent UDP + TCP
-- [ ] heterogeneous multipath aggregation
+- [x] concurrent UDP + TCP gate closed（明确禁用；无受控收益证据）
+- [x] heterogeneous multipath aggregation gate closed（明确禁用；DSN/重排/拥塞耦合未闭合）
 
 ## 当前第一轮研究问题
 
