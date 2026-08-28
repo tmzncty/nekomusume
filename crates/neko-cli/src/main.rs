@@ -4,7 +4,9 @@ const USAGE: &str = "Usage: neko <client|server|probe> [--help]\n\nM0 boundary s
 
 fn print_help(command: Option<&str>) {
     match command {
-        Some(name) => println!("neko {name}: M0 boundary scaffold; no transport is implemented\n\nUsage: neko {name} [--help]"),
+        Some(name) => println!(
+            "neko {name}: M0 boundary scaffold; no transport is implemented\n\nUsage: neko {name} [--help]"
+        ),
         None => print!("{USAGE}"),
     }
 }
