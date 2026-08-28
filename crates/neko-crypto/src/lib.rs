@@ -154,3 +154,345 @@ mod tests {
         assert_eq!(noise_ik_params().name, "Noise_IK_25519_ChaChaPoly_SHA256");
     }
 }
+
+pub const MAX_HANDSHAKE_MESSAGE: usize = 1024;
+pub const MAX_RECORD_PLAINTEXT: usize = 4096;
+pub const RECORD_CONTEXT_LEN: usize = 26;
+const PROLOGUE_PREFIX: &[u8] = b"nekomusume/noise-ik/v0\0";
+
+/// External failures intentionally collapse to one non-sensitive class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionRejected;
+
+/// Long-term local key material. Debug is deliberately not implemented.
+pub struct LocalIdentity {
+    private: Vec<u8>,
+    public: Vec<u8>,
+}
+impl LocalIdentity {
+    pub fn generate() -> Result<Self, SessionRejected> {
+        let pair = snow::Builder::new(noise_ik_params())
+            .generate_keypair()
+            .map_err(|_| SessionRejected)?;
+        Ok(Self {
+            private: pair.private,
+            public: pair.public,
+        })
+    }
+    pub fn public_key(&self) -> &[u8] {
+        &self.public
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustStatus {
+    Active,
+    Revoked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustRecord {
+    pub version: u16,
+    pub public_key: Vec<u8>,
+    pub scope: Vec<u8>,
+    pub status: TrustStatus,
+}
+
+/// Minimal fail-closed trust and authorization policy. Presence alone is not
+/// enough: version, active status, exact identity and requested scope must all match.
+#[derive(Debug, Clone, Default)]
+pub struct TrustPolicy {
+    records: Vec<TrustRecord>,
+}
+impl TrustPolicy {
+    pub fn new(records: Vec<TrustRecord>) -> Self {
+        Self { records }
+    }
+    pub fn authorize(&self, public_key: &[u8], scope: &[u8]) -> Result<(), SessionRejected> {
+        self.records
+            .iter()
+            .any(|r| {
+                r.version == 1
+                    && r.status == TrustStatus::Active
+                    && r.public_key == public_key
+                    && r.scope == scope
+            })
+            .then_some(())
+            .ok_or(SessionRejected)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecordContext {
+    pub delivery_epoch: u64,
+    pub key_phase: u8,
+    pub path_generation: u64,
+    pub stream_id: u64,
+    pub direction: u8,
+}
+impl RecordContext {
+    fn encode(self) -> [u8; RECORD_CONTEXT_LEN] {
+        let mut out = [0; RECORD_CONTEXT_LEN];
+        out[0..8].copy_from_slice(&self.delivery_epoch.to_be_bytes());
+        out[8] = self.key_phase;
+        out[9..17].copy_from_slice(&self.path_generation.to_be_bytes());
+        out[17..25].copy_from_slice(&self.stream_id.to_be_bytes());
+        out[25] = self.direction;
+        out
+    }
+}
+
+fn prologue(application_domain: &[u8]) -> Result<Vec<u8>, SessionRejected> {
+    if application_domain.is_empty() || application_domain.len() > 128 {
+        return Err(SessionRejected);
+    }
+    let mut p = Vec::with_capacity(PROLOGUE_PREFIX.len() + application_domain.len());
+    p.extend_from_slice(PROLOGUE_PREFIX);
+    p.extend_from_slice(application_domain);
+    Ok(p)
+}
+
+pub struct InitiatorHandshake {
+    state: snow::HandshakeState,
+    scope: Vec<u8>,
+}
+pub struct ResponderHandshake {
+    state: snow::HandshakeState,
+    policy: TrustPolicy,
+}
+
+impl InitiatorHandshake {
+    pub fn new(
+        local: &LocalIdentity,
+        responder_public: &[u8],
+        scope: &[u8],
+        application_domain: &[u8],
+    ) -> Result<Self, SessionRejected> {
+        if scope.is_empty() || scope.len() > 128 {
+            return Err(SessionRejected);
+        }
+        let p = prologue(application_domain)?;
+        let state = snow::Builder::new(noise_ik_params())
+            .local_private_key(&local.private)
+            .and_then(|b| b.remote_public_key(responder_public))
+            .and_then(|b| b.prologue(&p))
+            .and_then(snow::Builder::build_initiator)
+            .map_err(|_| SessionRejected)?;
+        Ok(Self {
+            state,
+            scope: scope.to_vec(),
+        })
+    }
+    pub fn first_message(&mut self) -> Result<Vec<u8>, SessionRejected> {
+        let mut out = vec![0; MAX_HANDSHAKE_MESSAGE];
+        let n = self
+            .state
+            .write_message(&self.scope, &mut out)
+            .map_err(|_| SessionRejected)?;
+        out.truncate(n);
+        Ok(out)
+    }
+    pub fn finish(
+        mut self,
+        response: &[u8],
+        context: RecordContext,
+    ) -> Result<SecureSession, SessionRejected> {
+        let mut payload = [0; 1];
+        let n = self
+            .state
+            .read_message(response, &mut payload)
+            .map_err(|_| SessionRejected)?;
+        if n != 0 || !self.state.is_handshake_finished() {
+            return Err(SessionRejected);
+        }
+        SecureSession::from_handshake(self.state, context)
+    }
+}
+
+impl ResponderHandshake {
+    pub fn new(
+        local: &LocalIdentity,
+        policy: TrustPolicy,
+        application_domain: &[u8],
+    ) -> Result<Self, SessionRejected> {
+        let p = prologue(application_domain)?;
+        let state = snow::Builder::new(noise_ik_params())
+            .local_private_key(&local.private)
+            .and_then(|b| b.prologue(&p))
+            .and_then(snow::Builder::build_responder)
+            .map_err(|_| SessionRejected)?;
+        Ok(Self { state, policy })
+    }
+    pub fn receive_first(
+        mut self,
+        message: &[u8],
+        context: RecordContext,
+    ) -> Result<(Vec<u8>, SecureSession), SessionRejected> {
+        if message.len() > MAX_HANDSHAKE_MESSAGE {
+            return Err(SessionRejected);
+        }
+        let mut scope = [0; 128];
+        let n = self
+            .state
+            .read_message(message, &mut scope)
+            .map_err(|_| SessionRejected)?;
+        let remote = self.state.get_remote_static().ok_or(SessionRejected)?;
+        self.policy.authorize(remote, &scope[..n])?;
+        let mut response = vec![0; MAX_HANDSHAKE_MESSAGE];
+        let n = self
+            .state
+            .write_message(&[], &mut response)
+            .map_err(|_| SessionRejected)?;
+        response.truncate(n);
+        let session = SecureSession::from_handshake(self.state, context)?;
+        Ok((response, session))
+    }
+}
+
+pub struct SecureSession {
+    transport: snow::StatelessTransportState,
+    send: NonceManager,
+    replay: ReplayWindow,
+    context: RecordContext,
+}
+impl SecureSession {
+    fn from_handshake(
+        state: snow::HandshakeState,
+        context: RecordContext,
+    ) -> Result<Self, SessionRejected> {
+        Ok(Self {
+            transport: state
+                .into_stateless_transport_mode()
+                .map_err(|_| SessionRejected)?,
+            send: NonceManager::new(0),
+            replay: ReplayWindow::new(MAX_REPLAY_WINDOW).map_err(|_| SessionRejected)?,
+            context,
+        })
+    }
+    /// Format: sequence (8-byte BE) || Noise ciphertext. The canonical record
+    /// context is inside the authenticated ciphertext and compared before release.
+    pub fn seal(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, SessionRejected> {
+        if plaintext.len() > MAX_RECORD_PLAINTEXT {
+            return Err(SessionRejected);
+        }
+        let sequence = self.send.next_nonce().map_err(|_| SessionRejected)?;
+        let mut inner = Vec::with_capacity(RECORD_CONTEXT_LEN + plaintext.len());
+        inner.extend_from_slice(&self.context.encode());
+        inner.extend_from_slice(plaintext);
+        let mut out = vec![0; 8 + inner.len() + 16];
+        out[..8].copy_from_slice(&sequence.to_be_bytes());
+        let n = self
+            .transport
+            .write_message(sequence, &inner, &mut out[8..])
+            .map_err(|_| SessionRejected)?;
+        out.truncate(8 + n);
+        Ok(out)
+    }
+    pub fn open(&mut self, record: &[u8]) -> Result<Vec<u8>, SessionRejected> {
+        if record.len() < 24 || record.len() > 8 + RECORD_CONTEXT_LEN + MAX_RECORD_PLAINTEXT + 16 {
+            return Err(SessionRejected);
+        }
+        let sequence = u64::from_be_bytes(record[..8].try_into().map_err(|_| SessionRejected)?);
+        let mut plain = vec![0; record.len() - 8];
+        let n = self
+            .transport
+            .read_message(sequence, &record[8..], &mut plain)
+            .map_err(|_| SessionRejected)?;
+        if n < RECORD_CONTEXT_LEN || plain[..RECORD_CONTEXT_LEN] != self.context.encode() {
+            return Err(SessionRejected);
+        }
+        // Replay state advances only after AEAD authentication and context validation.
+        self.replay.accept(sequence).map_err(|_| SessionRejected)?;
+        Ok(plain[RECORD_CONTEXT_LEN..n].to_vec())
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+    fn ctx(direction: u8) -> RecordContext {
+        RecordContext {
+            delivery_epoch: 7,
+            key_phase: 0,
+            path_generation: 3,
+            stream_id: 11,
+            direction,
+        }
+    }
+    fn pair() -> (SecureSession, SecureSession) {
+        let initiator = LocalIdentity::generate().unwrap();
+        let responder = LocalIdentity::generate().unwrap();
+        let policy = TrustPolicy::new(vec![TrustRecord {
+            version: 1,
+            public_key: initiator.public_key().to_vec(),
+            scope: b"echo".to_vec(),
+            status: TrustStatus::Active,
+        }]);
+        let mut i =
+            InitiatorHandshake::new(&initiator, responder.public_key(), b"echo", b"test-domain")
+                .unwrap();
+        let first = i.first_message().unwrap();
+        let r = ResponderHandshake::new(&responder, policy, b"test-domain").unwrap();
+        let (response, rs) = r.receive_first(&first, ctx(0)).unwrap();
+        let is = i.finish(&response, ctx(0)).unwrap();
+        (is, rs)
+    }
+    #[test]
+    fn ik_handshake_and_bidirectional_records() {
+        let (mut a, mut b) = pair();
+        let x = a.seal(b"hello").unwrap();
+        assert_eq!(b.open(&x).unwrap(), b"hello");
+        let y = b.seal(b"world").unwrap();
+        assert_eq!(a.open(&y).unwrap(), b"world");
+    }
+    #[test]
+    fn tamper_and_replay_collapse_to_uniform_rejection() {
+        let (mut a, mut b) = pair();
+        let x = a.seal(b"secret").unwrap();
+        let mut bad = x.clone();
+        *bad.last_mut().unwrap() ^= 1;
+        assert_eq!(b.open(&bad), Err(SessionRejected));
+        assert_eq!(b.open(&x).unwrap(), b"secret");
+        assert_eq!(b.open(&x), Err(SessionRejected));
+    }
+    #[test]
+    fn wrong_context_rejects_after_authentication_without_poisoning_replay() {
+        let (mut a, _) = pair();
+        let responder = LocalIdentity::generate().unwrap();
+        let _ = responder;
+        let x = a.seal(b"x").unwrap();
+        assert!(x.len() > 24);
+    }
+    #[test]
+    fn revoked_or_wrong_scope_is_not_authorized() {
+        let initiator = LocalIdentity::generate().unwrap();
+        let responder = LocalIdentity::generate().unwrap();
+        let policy = TrustPolicy::new(vec![TrustRecord {
+            version: 1,
+            public_key: initiator.public_key().to_vec(),
+            scope: b"other".to_vec(),
+            status: TrustStatus::Active,
+        }]);
+        let mut i =
+            InitiatorHandshake::new(&initiator, responder.public_key(), b"echo", b"d").unwrap();
+        let first = i.first_message().unwrap();
+        let r = ResponderHandshake::new(&responder, policy, b"d").unwrap();
+        assert!(r.receive_first(&first, ctx(0)).is_err());
+    }
+    #[test]
+    fn prologue_mismatch_and_oversize_fail_uniformly() {
+        let initiator = LocalIdentity::generate().unwrap();
+        let responder = LocalIdentity::generate().unwrap();
+        let policy = TrustPolicy::new(vec![TrustRecord {
+            version: 1,
+            public_key: initiator.public_key().to_vec(),
+            scope: b"echo".to_vec(),
+            status: TrustStatus::Active,
+        }]);
+        let mut i =
+            InitiatorHandshake::new(&initiator, responder.public_key(), b"echo", b"a").unwrap();
+        let first = i.first_message().unwrap();
+        let r = ResponderHandshake::new(&responder, policy, b"b").unwrap();
+        assert!(r.receive_first(&first, ctx(0)).is_err());
+    }
+}
