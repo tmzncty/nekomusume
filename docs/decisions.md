@@ -454,3 +454,16 @@ Deterministic tests prove atomic flow-limit rejection and bounded path oscillati
 This slice does not expose a service or perform network probing. Automatic UDP
 migration-back remains gated on a newly validated path generation and is not
 implemented here.
+
+
+## 2026-08-29 — D026：Isolated deterministic benchmark fixture
+
+**Status: Candidate benchmark fixture — not network performance evidence**
+
+The repository now ships `scripts/bench/run-isolated.sh`, which emits a stable
+JSON schema covering baseline, modeled RTT, deterministic 1/5/10% first-send
+loss, reversal/reorder, modeled bandwidth and blackhole scenarios. It reports
+frames, delivered frames, retransmission count, rounds, failures, median and P95
+local harness timing. The fixture makes no socket, route, firewall, netns, veth,
+WAN or third-party change. Timing is harness execution time, not RTT, throughput
+or WAN performance.

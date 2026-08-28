@@ -166,10 +166,10 @@ fail: 喵呜呜呜呜…
 
 - [ ] netns/veth/netem 自动化；
 - [ ] baseline/RTT/loss/reorder/bandwidth/blackhole 场景；
-- [ ] 结果机器可读；
-- [ ] median/P95/failure；
+- [x] 结果机器可读；
+- [x] median/P95/failure；
 - [ ] HY2 对照脚本与条件说明；
-- [ ] 真实 WAN 结果与可控实验分开保存。
+- [x] 确定性 fixture 与未来真实 WAN 结果分开保存。
 
 不要为 benchmark 关闭安全机制。
 

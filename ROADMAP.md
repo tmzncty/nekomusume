@@ -80,13 +80,13 @@ M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session
 
 使用 QEMU / netns / veth / `tc netem`：
 
-- [ ] baseline
-- [ ] variable RTT
-- [ ] random loss
+- [x] baseline（确定性 recovery fixture）
+- [x] variable RTT（建模 fixture；真实 netem 待 Linux lab）
+- [x] random loss（1/5/10% 确定性 fixture）
 - [ ] burst loss
-- [ ] reorder
-- [ ] bandwidth changes
-- [ ] carrier hard-failure / blackhole
+- [x] reorder（确定性 reversal fixture）
+- [x] bandwidth changes（建模 fixture；真实 netem 待 Linux lab）
+- [x] carrier hard-failure / blackhole（隔离 failover fixture）
 
 ### 真实环境
 
