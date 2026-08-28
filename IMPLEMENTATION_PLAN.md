@@ -1,199 +1,178 @@
-# IMPLEMENTATION_PLAN.md — Nekomusume
+# 猫娘 Roadmap
 
-> Status is governed by [`docs/status.md`](docs/status.md). A checked planning item is not evidence of implementation or approval.
+本路线图记录当前研究推进顺序；实现状态以 [`docs/status.md`](docs/status.md) 为唯一来源。它可以被实验结果修改，但修改必须同步到 `docs/decisions.md`，不能让关键设计只存在于聊天记录。
 
-本文件把 `ROADMAP.md` 转成 agent 可连续领取的施工顺序。若代码已经完成某项，以代码和测试为准，不重复实现。
+## Milestone 0 — Rust 骨架、抽象与测试向量
 
-## Phase 0 — Baseline audit
+目标：先让“Session 是什么、Carrier 是什么、字节长什么样、状态怎么走”可验证。
 
-- [x] 运行 `./scripts/check.sh`，记录当前基线；
-- [x] 检查 workspace/crate 实际边界与 `docs/m0-spec-plan.md` 是否一致；
-- [x] 列出当前已实现的 wire/session/CLI 能力；
-- [x] 将“研究完成但代码未完成”的事项保持未完成状态。
+- [x] 实现语言：Rust
+- [x] 建立 Cargo workspace / crate 边界
+- [x] 定义 `Session` / `Carrier` / `Path` 的最小抽象
+- [x] 明确协议版本与 magic
+- [x] 固定第一版 session record / UDP packet header
+- [x] 定义 frame type 与字段编码
+- [x] 定义 Session delivery state / acknowledgement 语义
+- [x] 定义错误码与兼容策略
+- [x] 写状态机文档
+- [x] 至少 20 个 golden encode/decode tests
+- [x] fuzz：畸形输入不得 panic、越界或无限分配
+- [x] CLI skeleton：`neko client` / `neko server` / `neko probe`
 
-验收：有一份简短、基于当前仓库事实的 baseline note；不得把旧文档计划当实现。
+M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session 写死成 UDP socket。
 
-## Phase 1 — M0 normative wire/session core
+## Milestone 1 — UDP Carrier 单流加密回显
 
-### 1.1 crate boundary
+- [x] Linux UDP socket
+- [x] 使用成熟握手与加密实现
+- [x] 加密 session record
+- [x] 单个双向 stream
+- [x] CLOSE
+- [x] 本机 loopback 稳定回显；QEMU / 局域网待独立授权实验
+- [ ] VPS 真实 WAN 基础连通
 
-目标：最小拆分支持 `wire`、`session`、carrier 抽象和 CLI，不为未来功能提前建大量空 crate。
+## Milestone 2 — UDP reliable packet engine
 
-- [x] 固定 workspace 成员；
-- [x] 依赖方向无循环；
-- [x] core 不依赖具体 UDP/TCP socket。
+- [x] packet number
+- [x] ACK ranges
+- [x] RTT 估计
+- [x] packet/time threshold loss detection
+- [x] PTO
+- [x] frame-level retransmission
+- [x] Reno 风格第一拥塞控制基线
+- [x] pacing
+- [x] 1% / 5% / 10% 确定性首发丢包下数据完整性测试
 
-### 1.2 protocol identity
+这一层属于 UDP Carrier；不要把 UDP packet ACK 误当成跨 Carrier 的 Session delivery acknowledgement。
 
-- [x] version/magic；
-- [x] session record/header；
-- [x] frame type 与字段编码；
-- [x] error code；
-- [x] unknown version/type 行为；
-- [x] compatibility policy。
+## Milestone 3 — TCP Carrier 与真正的异构 failover
 
-所有行为同步到 `docs/specs/nekomusume-session-v0.md`。
+这是猫娘区别于“又一个 UDP 协议”的第一个关键里程碑。
 
-### 1.3 golden vectors
+- [x] TCP Carrier framing
+- [x] TCP/UDP capability model
+- [x] Session delivery state 可跨 Carrier 表达
+- [x] UDP primary + TCP fallback
+- [x] UDP 失效时切换 TCP
+- [x] 对 uncertain data 做安全重发与接收端去重
+- [x] TCP 上不重复实现 packet-level TCP ACK
+- [x] path validation / anti-replay 基础
+- [x] failover latency / duplicate bytes / recovery success 指标
 
-至少覆盖：
+第一阶段禁止为了聚合带宽而把相邻数据简单轮流扔给 TCP/UDP。
 
-- 最小合法 record；
-- 多 frame；
-- 边界长度；
-- unknown type；
-- truncation；
-- 超限长度；
-- 非法 enum；
-- deterministic encode；
-- decode→encode round-trip；
-- version rejection/negotiation baseline。
+## Milestone 4 — 多 stream、流控与 Carrier Manager
 
-目标：≥20 个稳定向量。
+- [x] 多 stream
+- [x] connection/session-level flow control
+- [x] per-stream flow control
+- [x] 公平调度
+- [x] 大流不得显著阻塞交互小流
+- [x] 每连接与全局资源上限
+- [x] Carrier health probe
+- [x] Carrier scoring
+- [x] failover hysteresis，避免路径来回抖动
+- [x] UDP 恢复后的迁回策略（validated generation + health margin + hold gate）
 
-### 1.4 parser hardening
+## Milestone 5 — Benchmark 与真实 WAN validation
 
-- [x] 所有外部长度有上限；
-- [x] 畸形输入不 panic；
-- [x] 不无限分配；
-- [x] fuzz target 覆盖主要 decode path；
-- [x] corpus 放入最小 regression seeds。
+### 可控环境
 
-验收：`check.sh` + `fuzz-smoke.sh`。
+使用 QEMU / netns / veth / `tc netem`：
 
-## Phase 2 — Session state semantics
+- [x] baseline（确定性 fixture + netns 实证）
+- [x] variable RTT（建模 fixture + netns 20ms 实证）
+- [x] random loss（1/5/10% 确定性 fixture + netns 实证）
+- [x] burst loss（netns gemodel 实证）
+- [x] reorder（确定性 reversal + netns 实证）
+- [x] bandwidth changes（建模 fixture + netns 10mbit 实证）
+- [x] carrier hard-failure / blackhole（隔离 failover + netns 100% loss 实证）
 
-- [x] 定义 Session lifecycle；
-- [x] 定义 delivery acknowledgement；
-- [x] 明确 confirmed / uncertain / delivered / closed 等状态；
-- [x] 设计跨 Carrier 可序列化状态；
-- [x] ACK 语义与 UDP packet ACK 分离；
-- [x] 单元测试覆盖重复、乱序、重放、关闭边界。
+### 真实环境
 
-验收：不创建 socket 也能用纯状态机测试一次 Session delivery 流程。
+Linux server <-> VPS：
 
-## Phase 3 — CLI skeleton
+- [ ] UDP 正常路径
+- [ ] UDP 退化 / TCP fallback
+- [ ] 长连接稳定性
+- [ ] NAT / endpoint change（条件允许时）
+- [ ] 与 HY2 在同服务器、同线路、同 MTU、同安全等级、同应用流量下比较
+- [ ] 报告 median / P95 / failures，而不是只贴最好成绩
 
-- [ ] `neko client`；
-- [ ] `neko server`；
-- [ ] `neko probe`；
-- [x] `--help`/错误 exit code；
-- [ ] 结构化日志基础；
-- [ ] 不在 CLI 中堆协议状态逻辑。
+## Experimental Track A — Reachability Matrix
 
-验收：CLI 可运行、参数错误稳定、核心 crate 可独立测试。
+建立独立 `neko probe` 工具，研究真实网络还能放行哪些底层通信原语。
 
-## Phase 4 — M1 UDP Carrier + encrypted echo
+第一批候选：
 
-- [x] Linux UDP Carrier（loopback-only）；
-- [x] 成熟握手/AEAD 库接入；
-- [x] 身份/密钥配置最小模型；
-- [x] encrypted session record；
-- [x] 单个双向 stream；
-- [x] CLOSE；
-- [x] loopback echo；netns 待后续实验；
-- [x] corruption/authentication failure tests；
-- [x] replay 基础边界。
+- [ ] TCP IPv4 / IPv6
+- [ ] UDP IPv4 / IPv6
+- [ ] ICMP Echo / ICMPv6 Echo
+- [ ] SCTP
+- [ ] DCCP
+- [ ] GRE
+- [ ] ESP
+- [ ] Raw IP experimental protocol 253/254（显式启用）
 
-真实 WAN 只有在本地测试稳定后再做。
+记录：
 
-验收：同一 payload 在 loopback/netns 下完整往返，抓包中应用明文不可见。
+- reachability；
+- RTT / first response；
+- loss；
+- usable payload；
+- sustained bidirectional viability；
+- privileges；
+- kernel / VPS / network metadata。
 
-## Phase 5 — M2 reliable UDP engine
-
-按依赖顺序：
-
-1. [x] packet number；
-2. [x] ACK range canonical state（wire encoding/decoding remains a later wire slice）；
-3. [x] RTT estimator；
-4. [x] packet/time threshold loss detection；
-5. [x] PTO；
-6. [x] frame-level retransmission；
-7. [x] congestion-control baseline；
-8. [x] pacing；
-9. [x] resource limits。
-
-测试矩阵：0/1/5/10% random loss、burst loss、reorder、RTT change、blackhole。
-
-验收：数据完整性稳定；输出 retransmit/loss/RTT 指标。
-
-## Phase 6 — M3 TCP Carrier and heterogeneous failover
-
-- [x] TCP framing；
-- [x] capability model；
-- [x] UDP primary / TCP fallback；
-- [x] hard-failure detection；
-- [x] uncertain data safe resend；
-- [x] receiver deduplication；
-- [x] anti-replay/path validation baseline；
-- [x] recovery metrics；
-- [x] UDP recovery/migration-back policy 设计已记录；实现归入 Carrier Manager。
-
-核心验收场景：传输中途 UDP blackhole，Session 通过 TCP 恢复，最终字节流无丢失且重复可测/受控。
-
-## Phase 7 — M4 multi-stream and Carrier Manager
-
-- [x] stream ids/lifecycle；
-- [x] per-stream + session flow control；
-- [x] scheduler fairness；
-- [x] global/per-connection limits；
-- [x] health probes；
-- [x] scoring；
-- [x] hysteresis；
-- [x] migration-back（validated generation + health margin + hold gate）；
-
-验收：大 bulk stream 不显著饿死交互小 stream；路径抖动不导致频繁切换。
-
-## Phase 8 — `neko probe` reachability track
-
-先支持安全、无需特权或最常见路径：
-
-- [ ] TCP IPv4/IPv6；
-- [ ] UDP IPv4/IPv6；
-- [ ] ICMP Echo（显式权限检查）；
-- [ ] SCTP/DCCP/GRE/ESP/Raw-IP 仅在明确启用时测试。
-
-机器输出：JSON + exit code；人类输出保留：
+人类可读输出：
 
 ```text
 pass: 喵~！
 fail: 喵呜呜呜呜…
 ```
 
-记录环境、权限、RTT、loss、usable payload、持续双向能力。
+同时输出结构化结果与正确 exit code。
 
-## Phase 9 — Benchmark harness
+## Experimental Track B — 其他 Carrier / 协议参考
 
-- [x] netns/veth/netem 自动化；
-- [x] baseline/RTT/loss/burst/reorder/bandwidth/blackhole 场景；
-- [x] 结果机器可读；
-- [x] median/P95/failure；
-- [x] HY2 fail-closed 对照脚手架与同条件约束说明；未执行比较。
-- [x] 确定性 fixture 与未来真实 WAN 结果分开保存。
+### 重点阅读/候选实验
 
-不要为 benchmark 关闭安全机制。
+- [ ] SCTP：multi-stream / multi-homing / per-path congestion state
+- [ ] DCCP：congestion-controlled unreliable datagrams
 
-## Phase 10 — Experimental enhancements
+### 协议考古 / 对照
 
-只有前面结果给出理由后领取：
+- [ ] UDP-Lite
+- [ ] GRE
+- [ ] IP-in-IP
+- [ ] ESP/IPsec
+- [ ] HTTP CONNECT / WebSocket
+- [ ] MASQUE / CONNECT-IP
 
-- PMTUD；
-- FEC；
-- unreliable datagram API；
-- key update；
-- 0-RTT；
-- concurrent carriers；
-- heterogeneous aggregation。
+进入列表不等于承诺实现。
 
-每项先写 decision/research，回答“解决了哪个已观察到的问题”。
+## Experimental Track C — 后期增强
 
-## 每个切片的完成门禁
+仅根据前面实验决定：
 
-- 代码/研究产物真实存在；
-- 测试覆盖关键行为；
-- `./scripts/check.sh` 通过；
-- parser/wire 改动运行 fuzz smoke；
-- 网络实验不污染生产环境；
-- 规范同步；
-- checkpoint commit；
-- 下一任务依赖明确。
+- [ ] PMTUD
+- [ ] FEC
+- [ ] unreliable datagram API
+- [x] bounded synchronized key update
+- [ ] 0-RTT
+- [ ] concurrent UDP + TCP
+- [ ] heterogeneous multipath aggregation
+
+## 当前第一轮研究问题
+
+1. Cargo workspace 应如何拆：`wire` / `session` / `carrier-*` / `crypto` / `probe` 是否足够？
+2. Session delivery acknowledgement 使用 offset range、message receipt，还是两者并存？
+3. v0 packet/session record header 是否先固定长度以方便抓包和 fuzz？
+4. 第一版握手直接复用 TLS 1.3 还是 Noise library？
+5. UDP -> TCP failover 如何定义“确认收到 / uncertain / 可安全重发”？
+6. Carrier score 如何避免因为瞬时 loss/RTT 变化不断切换？
+7. ICMP 与 Raw-IP 在真实 VPS/运营商网络的持续双向可用程度到底如何？
+
+## M0 research record
+
+The executable pre-implementation plan is [`docs/m0-spec-plan.md`](docs/m0-spec-plan.md). The research files under [`docs/research/`](docs/research/) do not mark implementation work complete; all existing unchecked M0 items remain unchecked until code and tests exist.

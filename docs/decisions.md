@@ -497,3 +497,19 @@ not mutate active path, hold metrics beyond the bounded hold observation, switch
 count, or Session evidence. Successful commit increments the bounded switch
 metric once. No public listener, WAN probe, production service, or automatic
 application-level migration claim is introduced.
+
+
+## 2026-08-29 — D029：Bounded synchronized key-phase update
+
+**Status: Candidate implementation — local research only**
+
+`SecureSession::update_key_phase` performs a bounded Noise rekey on both
+directions, increments the authenticated `RecordContext.key_phase`, resets the
+directional nonce only after rekey, and clears the replay window. Phase overflow
+is rejected. Both peers must invoke the transition in synchronized order; an
+unsynchronized peer fails closed and old-phase ciphertext cannot be accepted
+under the new context/key. Tests prove nonce reset to zero is unique under the
+new key, bidirectional post-update records, old-phase rejection and overflow.
+
+This remains a candidate research behavior, not a protocol freeze or security
+approval. 0-RTT, listeners and production deployment remain disabled.

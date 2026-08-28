@@ -158,7 +158,7 @@ fail: 喵呜呜呜呜…
 - [ ] PMTUD
 - [ ] FEC
 - [ ] unreliable datagram API
-- [ ] key update
+- [x] bounded synchronized key update
 - [ ] 0-RTT
 - [ ] concurrent UDP + TCP
 - [ ] heterogeneous multipath aggregation

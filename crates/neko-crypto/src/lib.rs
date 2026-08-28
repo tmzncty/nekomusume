@@ -158,6 +158,7 @@ mod tests {
 pub const MAX_HANDSHAKE_MESSAGE: usize = 1024;
 pub const MAX_RECORD_PLAINTEXT: usize = 4096;
 pub const RECORD_CONTEXT_LEN: usize = 26;
+pub const MAX_KEY_PHASE: u8 = 1;
 const PROLOGUE_PREFIX: &[u8] = b"nekomusume/noise-ik/v0\0";
 
 /// External failures intentionally collapse to one non-sensitive class.
@@ -369,6 +370,28 @@ impl SecureSession {
             context,
         })
     }
+    /// Rekey both directions at an authenticated phase boundary. The caller
+    /// must invoke this on both peers in the same order; no old-phase records
+    /// are accepted after commit.
+    pub fn update_key_phase(&mut self) -> Result<(), SessionRejected> {
+        if self.context.key_phase >= MAX_KEY_PHASE {
+            return Err(SessionRejected);
+        }
+        self.transport.rekey_outgoing();
+        self.transport.rekey_incoming();
+        self.context.key_phase = self
+            .context
+            .key_phase
+            .checked_add(1)
+            .ok_or(SessionRejected)?;
+        self.send = NonceManager::new(0);
+        self.replay = ReplayWindow::new(MAX_REPLAY_WINDOW).map_err(|_| SessionRejected)?;
+        Ok(())
+    }
+    pub fn key_phase(&self) -> u8 {
+        self.context.key_phase
+    }
+
     /// Format: sequence (8-byte BE) || Noise ciphertext. The canonical record
     /// context is inside the authenticated ciphertext and compared before release.
     pub fn seal(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, SessionRejected> {
@@ -410,7 +433,7 @@ impl SecureSession {
 #[cfg(test)]
 mod session_tests {
     use super::*;
-    fn ctx(direction: u8) -> RecordContext {
+    pub(super) fn ctx(direction: u8) -> RecordContext {
         RecordContext {
             delivery_epoch: 7,
             key_phase: 0,
@@ -419,7 +442,7 @@ mod session_tests {
             direction,
         }
     }
-    fn pair() -> (SecureSession, SecureSession) {
+    pub(super) fn pair() -> (SecureSession, SecureSession) {
         let initiator = LocalIdentity::generate().unwrap();
         let responder = LocalIdentity::generate().unwrap();
         let policy = TrustPolicy::new(vec![TrustRecord {
@@ -587,6 +610,7 @@ impl PreauthBudget {
 
 #[cfg(test)]
 mod preauth_tests {
+    use super::session_tests::pair;
     use super::*;
     #[test]
     fn response_requires_charged_input_and_respects_amplification() {
@@ -609,5 +633,27 @@ mod preauth_tests {
         b.charge_input(4).unwrap();
         b.charge_response(12).unwrap();
         assert_eq!(b.charge_response(1), Err(SessionRejected));
+    }
+    #[test]
+    fn synchronized_key_update_resets_nonce_and_rejects_old_phase() {
+        let (mut a, mut b) = pair();
+        let old = a.seal(b"old").unwrap();
+        assert_eq!(b.open(&old).unwrap(), b"old");
+        a.update_key_phase().unwrap();
+        b.update_key_phase().unwrap();
+        assert_eq!((a.key_phase(), b.key_phase()), (1, 1));
+        let fresh = a.seal(b"new").unwrap();
+        assert_eq!(u64::from_be_bytes(fresh[..8].try_into().unwrap()), 0);
+        assert_eq!(b.open(&fresh).unwrap(), b"new");
+        assert_eq!(b.open(&old), Err(SessionRejected));
+        assert_eq!(a.update_key_phase(), Err(SessionRejected));
+    }
+    #[test]
+    fn unsynchronized_update_fails_closed_without_peer_state_change() {
+        let (mut a, mut b) = pair();
+        a.update_key_phase().unwrap();
+        let old = b.seal(b"old").unwrap();
+        assert_eq!(a.open(&old), Err(SessionRejected));
+        assert_eq!(b.key_phase(), 0);
     }
 }
