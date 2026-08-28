@@ -550,3 +550,292 @@ mod tests {
         }
     }
 }
+
+/// Socket-free Packetization Layer PMTU Discovery candidate. Only an explicit,
+/// authenticated probe acknowledgement may raise the confirmed size; ICMP and
+/// ordinary packet loss are intentionally outside this state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlpmtudConfig {
+    pub base_mtu: u16,
+    pub max_mtu: u16,
+    pub attempts_per_size: u8,
+    pub max_probes: u16,
+    pub blackhole_threshold: u8,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Probe {
+    pub id: u64,
+    pub path_generation: u64,
+    pub size: u16,
+    attempts_left: u8,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlpmtudError {
+    InvalidConfig,
+    ProbeOutstanding,
+    NoProbeNeeded,
+    ProbeLimit,
+    StaleAck,
+    WrongSize,
+    NoOutstandingProbe,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeTimeout {
+    Retry(Probe),
+    ReducedUpperBound,
+    Converged,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Plpmtud {
+    config: PlpmtudConfig,
+    generation: u64,
+    confirmed: u16,
+    upper: u16,
+    next_probe_id: u64,
+    probes_started: u16,
+    outstanding: Option<Probe>,
+    base_loss_run: u8,
+}
+impl Plpmtud {
+    pub fn new(config: PlpmtudConfig, generation: u64) -> Result<Self, PlpmtudError> {
+        if config.base_mtu < 576
+            || config.max_mtu < config.base_mtu
+            || config.attempts_per_size == 0
+            || config.max_probes == 0
+            || config.blackhole_threshold == 0
+        {
+            return Err(PlpmtudError::InvalidConfig);
+        }
+        Ok(Self {
+            config,
+            generation,
+            confirmed: config.base_mtu,
+            upper: config.max_mtu,
+            next_probe_id: 0,
+            probes_started: 0,
+            outstanding: None,
+            base_loss_run: 0,
+        })
+    }
+    pub const fn confirmed_mtu(&self) -> u16 {
+        self.confirmed
+    }
+    pub const fn upper_bound(&self) -> u16 {
+        self.upper
+    }
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+    pub const fn outstanding(&self) -> Option<Probe> {
+        self.outstanding
+    }
+    pub fn converged(&self) -> bool {
+        self.confirmed >= self.upper
+    }
+    pub fn start_probe(&mut self) -> Result<Probe, PlpmtudError> {
+        if self.outstanding.is_some() {
+            return Err(PlpmtudError::ProbeOutstanding);
+        }
+        if self.converged() {
+            return Err(PlpmtudError::NoProbeNeeded);
+        }
+        if self.probes_started >= self.config.max_probes {
+            return Err(PlpmtudError::ProbeLimit);
+        }
+        let gap = self.upper - self.confirmed;
+        let size = self.confirmed + gap.div_ceil(2);
+        let probe = Probe {
+            id: self.next_probe_id,
+            path_generation: self.generation,
+            size,
+            attempts_left: self.config.attempts_per_size,
+        };
+        self.next_probe_id = self
+            .next_probe_id
+            .checked_add(1)
+            .ok_or(PlpmtudError::ProbeLimit)?;
+        self.probes_started += 1;
+        self.outstanding = Some(probe);
+        Ok(probe)
+    }
+    /// ACK must be bound to the authenticated path generation, probe id and size.
+    pub fn acknowledge(
+        &mut self,
+        id: u64,
+        generation: u64,
+        size: u16,
+    ) -> Result<bool, PlpmtudError> {
+        let probe = self.outstanding.ok_or(PlpmtudError::NoOutstandingProbe)?;
+        if generation != self.generation || generation != probe.path_generation || id != probe.id {
+            return Err(PlpmtudError::StaleAck);
+        }
+        if size != probe.size {
+            return Err(PlpmtudError::WrongSize);
+        }
+        self.confirmed = self.confirmed.max(size);
+        self.outstanding = None;
+        self.base_loss_run = 0;
+        Ok(self.converged())
+    }
+    /// Timeout is probe-local loss evidence, never direct path-failure evidence.
+    pub fn timeout(&mut self) -> Result<ProbeTimeout, PlpmtudError> {
+        let mut probe = self.outstanding.ok_or(PlpmtudError::NoOutstandingProbe)?;
+        if probe.attempts_left > 1 {
+            probe.attempts_left -= 1;
+            self.outstanding = Some(probe);
+            return Ok(ProbeTimeout::Retry(probe));
+        }
+        self.outstanding = None;
+        self.upper = probe.size.saturating_sub(1).max(self.confirmed);
+        Ok(if self.converged() {
+            ProbeTimeout::Converged
+        } else {
+            ProbeTimeout::ReducedUpperBound
+        })
+    }
+    /// Repeated loss at or below the confirmed size invokes a conservative
+    /// blackhole fallback. It does not declare the path failed.
+    pub fn observe_confirmed_size_loss(&mut self, packet_size: u16) -> bool {
+        if packet_size > self.confirmed {
+            return false;
+        }
+        self.base_loss_run = self.base_loss_run.saturating_add(1);
+        if self.base_loss_run < self.config.blackhole_threshold {
+            return false;
+        }
+        self.confirmed = self.config.base_mtu;
+        self.upper = self.upper.max(self.confirmed);
+        self.outstanding = None;
+        self.base_loss_run = 0;
+        true
+    }
+    pub fn observe_progress(&mut self) {
+        self.base_loss_run = 0;
+    }
+    /// A new path generation discards stale probe evidence and restarts from base.
+    pub fn reset_generation(&mut self, generation: u64) {
+        self.generation = generation;
+        self.confirmed = self.config.base_mtu;
+        self.upper = self.config.max_mtu;
+        self.outstanding = None;
+        self.probes_started = 0;
+        self.base_loss_run = 0;
+    }
+}
+
+#[cfg(test)]
+mod plpmtud_tests {
+    use super::*;
+    fn config() -> PlpmtudConfig {
+        PlpmtudConfig {
+            base_mtu: 1200,
+            max_mtu: 1500,
+            attempts_per_size: 2,
+            max_probes: 32,
+            blackhole_threshold: 3,
+        }
+    }
+    fn discover(actual: u16) -> Plpmtud {
+        let mut p = Plpmtud::new(config(), 7).unwrap();
+        while !p.converged() {
+            let q = p.start_probe().unwrap();
+            if q.size <= actual {
+                p.acknowledge(q.id, q.path_generation, q.size).unwrap();
+            } else {
+                p.timeout().unwrap();
+                p.timeout().unwrap();
+            }
+        }
+        p
+    }
+    #[test]
+    fn converges_across_path_mtus() {
+        for mtu in [1200, 1201, 1280, 1499, 1500] {
+            assert_eq!(discover(mtu).confirmed_mtu(), mtu);
+        }
+    }
+    #[test]
+    fn timeout_retries_then_reduces_without_path_failure() {
+        let mut p = Plpmtud::new(config(), 1).unwrap();
+        let q = p.start_probe().unwrap();
+        assert_eq!(
+            p.timeout(),
+            Ok(ProbeTimeout::Retry(Probe {
+                attempts_left: 1,
+                ..q
+            }))
+        );
+        assert_eq!(p.timeout(), Ok(ProbeTimeout::ReducedUpperBound));
+        assert_eq!(p.upper_bound(), q.size - 1);
+    }
+    #[test]
+    fn stale_reordered_duplicate_and_wrong_ack_are_rejected() {
+        let mut p = Plpmtud::new(config(), 5).unwrap();
+        let q = p.start_probe().unwrap();
+        assert_eq!(p.acknowledge(q.id, 4, q.size), Err(PlpmtudError::StaleAck));
+        assert_eq!(
+            p.acknowledge(q.id, 5, q.size - 1),
+            Err(PlpmtudError::WrongSize)
+        );
+        p.acknowledge(q.id, 5, q.size).unwrap();
+        assert_eq!(
+            p.acknowledge(q.id, 5, q.size),
+            Err(PlpmtudError::NoOutstandingProbe)
+        );
+        let old = p.start_probe().unwrap();
+        p.reset_generation(6);
+        assert_eq!(
+            p.acknowledge(old.id, 5, old.size),
+            Err(PlpmtudError::NoOutstandingProbe)
+        );
+    }
+    #[test]
+    fn only_one_probe_and_resource_limit() {
+        let mut c = config();
+        c.max_probes = 1;
+        let mut p = Plpmtud::new(c, 1).unwrap();
+        p.start_probe().unwrap();
+        assert_eq!(p.start_probe(), Err(PlpmtudError::ProbeOutstanding));
+        p.timeout().unwrap();
+        p.timeout().unwrap();
+        assert_eq!(p.start_probe(), Err(PlpmtudError::ProbeLimit));
+    }
+    #[test]
+    fn blackhole_fallback_is_bounded_and_progress_resets_counter() {
+        let mut p = discover(1500);
+        assert_eq!(p.confirmed_mtu(), 1500);
+        assert!(!p.observe_confirmed_size_loss(1400));
+        p.observe_progress();
+        assert!(!p.observe_confirmed_size_loss(1400));
+        assert!(!p.observe_confirmed_size_loss(1400));
+        assert!(p.observe_confirmed_size_loss(1400));
+        assert_eq!(p.confirmed_mtu(), 1200);
+    }
+    #[test]
+    fn invalid_configurations_fail_closed() {
+        for c in [
+            PlpmtudConfig {
+                base_mtu: 575,
+                ..config()
+            },
+            PlpmtudConfig {
+                max_mtu: 1199,
+                ..config()
+            },
+            PlpmtudConfig {
+                attempts_per_size: 0,
+                ..config()
+            },
+            PlpmtudConfig {
+                max_probes: 0,
+                ..config()
+            },
+            PlpmtudConfig {
+                blackhole_threshold: 0,
+                ..config()
+            },
+        ] {
+            assert_eq!(Plpmtud::new(c, 0), Err(PlpmtudError::InvalidConfig));
+        }
+    }
+}
