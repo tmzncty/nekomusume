@@ -1,0 +1,11 @@
+[package]
+name = "neko-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+snow = { version = "0.10.0", default-features = true }
+
+[lints]
+workspace = true

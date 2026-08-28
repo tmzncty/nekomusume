@@ -5,6 +5,7 @@ members = [
     "crates/neko-session",
     "crates/neko-carrier",
     "crates/neko-cli",
+    "crates/neko-crypto",
 ]
 
 [workspace.package]
