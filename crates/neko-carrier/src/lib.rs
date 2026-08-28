@@ -1101,6 +1101,7 @@ pub struct FailoverMetrics {
     pub recovery_events: u64,
     pub duplicate_bytes: u64,
     pub delivered_bytes: u64,
+    pub last_recovery_latency_us: Option<u64>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FailoverError {
@@ -1118,6 +1119,7 @@ pub struct FailoverController {
     max_uncertain_entries: usize,
     max_uncertain_bytes: usize,
     uncertain_bytes: usize,
+    failure_started_us: Option<u64>,
     uncertain: BTreeMap<DataId, Vec<u8>>,
     received: BTreeMap<DataId, Vec<u8>>,
     pub metrics: FailoverMetrics,
@@ -1138,6 +1140,7 @@ impl FailoverController {
             max_uncertain_entries,
             max_uncertain_bytes,
             uncertain_bytes: 0,
+            failure_started_us: None,
             uncertain: BTreeMap::new(),
             received: BTreeMap::new(),
             metrics: FailoverMetrics::default(),
@@ -1166,17 +1169,25 @@ impl FailoverController {
         Ok(())
     }
     pub fn udp_progress(&mut self) {
-        self.consecutive_ptos = 0
+        self.consecutive_ptos = 0;
+        self.failure_started_us = None;
     }
     pub fn udp_pto(&mut self) -> bool {
+        self.udp_pto_at(0)
+    }
+    pub fn udp_pto_at(&mut self, now_us: u64) -> bool {
         if self.active != ActiveCarrier::Udp {
             return false;
         }
+        self.failure_started_us.get_or_insert(now_us);
         self.consecutive_ptos = self.consecutive_ptos.saturating_add(1);
         if self.consecutive_ptos >= self.hard_failure_ptos {
             self.active = ActiveCarrier::Tcp;
             self.metrics.switches = self.metrics.switches.saturating_add(1);
             self.metrics.recovery_events = self.metrics.recovery_events.saturating_add(1);
+            self.metrics.last_recovery_latency_us = self
+                .failure_started_us
+                .and_then(|started| now_us.checked_sub(started));
             true
         } else {
             false
@@ -1261,6 +1272,13 @@ mod tcp_failover_tests {
         f.confirm(DataId(1)).unwrap();
         assert_eq!(f.metrics.delivered_bytes, 3);
         assert_eq!(f.metrics.duplicate_bytes, 3);
+    }
+    #[test]
+    fn recovery_latency_is_monotonic_and_bounded() {
+        let mut f = FailoverController::new(2, 1, 8).unwrap();
+        assert!(!f.udp_pto_at(10_000));
+        assert!(f.udp_pto_at(25_000));
+        assert_eq!(f.metrics.last_recovery_latency_us, Some(15_000));
     }
     #[test]
     fn uncertain_limits_are_atomic() {
