@@ -24,8 +24,8 @@ M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session
 ## Milestone 1 — UDP Carrier 单流加密回显
 
 - [ ] Linux UDP socket
-- [ ] 使用成熟握手与加密实现
-- [ ] 加密 session record
+- [x] 使用成熟握手与加密实现
+- [x] 加密 session record
 - [ ] 单个双向 stream
 - [ ] CLOSE
 - [ ] 本机 / QEMU / 局域网稳定回显

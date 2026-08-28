@@ -13,7 +13,7 @@
 | carrier-model | in-memory Carrier/Path state | candidate | `crates/neko-carrier/src/lib.rs` | Candidate model; no live carrier or failover |
 | cli | CLI scaffold | implemented | `crates/neko-cli/src/main.rs` | Scaffold only; no client/server/probe transport |
 | normative-spec | Session v0 normative entry point | provisional | `docs/specs/nekomusume-session-v0.md` | Provisional and not frozen |
-| crypto-handshake | authenticated handshake and AEAD | candidate | `docs/adr/m1-g0-research-authorization.md` | Research-only implementation may proceed after dependency/license review; no public or production use |
+| crypto-handshake | authenticated handshake and AEAD | candidate | `crates/neko-crypto/src/lib.rs` | Bounded Noise IK research implementation with trust/authz, context binding, nonce and replay tests; no security approval or public/production use |
 | preauth-admission | runtime pre-auth accounting | candidate | `docs/adr/m1-g0-research-authorization.md` | Bounded research implementation may proceed; candidate values and fail-closed tests remain required |
 | live-udp | UDP socket carrier | absent | `ROADMAP.md` | Requires later gated implementation |
 | live-tcp | TCP carrier and resume | absent | `ROADMAP.md` | Requires later gated implementation |

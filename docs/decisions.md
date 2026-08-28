@@ -365,3 +365,23 @@ transcript/AAD、directional nonce、replay、epoch/key-phase、pre-auth budget�
 和安全审计/生产就绪/协议冻结声明继续禁止。G0 状态改为“research-authorized /
 not security-approved”，而不是 PASS；详细边界见
 [`docs/adr/m1-g0-research-authorization.md`](adr/m1-g0-research-authorization.md)。
+
+
+## 2026-08-29 — D021：Noise IK bounded secure-session research slice
+
+**Status: Candidate implementation — local/loopback research only**
+
+The reviewed `snow` 0.10.0 dependency implements the exact
+`Noise_IK_25519_ChaChaPoly_SHA256` research pattern in `neko-crypto`. The slice
+separates trust authentication from scope authorization, binds a domain-specific
+prologue, authenticates canonical delivery epoch/key phase/path/stream/direction
+context inside each record, uses direction-local fail-closed sequence counters,
+and advances a bounded replay window only after successful AEAD authentication
+and context validation. External failures collapse to `SessionRejected`; private
+identity material has no `Debug` representation. Tests cover IK both directions,
+tamper, replay, context/prologue mismatch, wrong scope and bounds.
+
+This is not a security audit or protocol freeze. Key persistence/rotation and
+restart rollback policy are not implemented; generated identities are test/local
+process material. No listener, production configuration, public network behavior,
+0-RTT, delivery evidence, path validation or authorization side effect is added.

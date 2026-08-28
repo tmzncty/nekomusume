@@ -456,12 +456,24 @@ mod session_tests {
         assert_eq!(b.open(&x), Err(SessionRejected));
     }
     #[test]
-    fn wrong_context_rejects_after_authentication_without_poisoning_replay() {
-        let (mut a, _) = pair();
+    fn record_context_mismatch_is_rejected() {
+        let initiator = LocalIdentity::generate().unwrap();
         let responder = LocalIdentity::generate().unwrap();
-        let _ = responder;
-        let x = a.seal(b"x").unwrap();
-        assert!(x.len() > 24);
+        let policy = TrustPolicy::new(vec![TrustRecord {
+            version: 1,
+            public_key: initiator.public_key().to_vec(),
+            scope: b"echo".to_vec(),
+            status: TrustStatus::Active,
+        }]);
+        let mut i =
+            InitiatorHandshake::new(&initiator, responder.public_key(), b"echo", b"context-test")
+                .unwrap();
+        let first = i.first_message().unwrap();
+        let r = ResponderHandshake::new(&responder, policy, b"context-test").unwrap();
+        let (response, mut receiver) = r.receive_first(&first, ctx(1)).unwrap();
+        let mut sender = i.finish(&response, ctx(0)).unwrap();
+        let record = sender.seal(b"bound").unwrap();
+        assert_eq!(receiver.open(&record), Err(SessionRejected));
     }
     #[test]
     fn revoked_or_wrong_scope_is_not_authorized() {
