@@ -63,15 +63,15 @@ M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session
 
 ## Milestone 4 — 多 stream、流控与 Carrier Manager
 
-- [ ] 多 stream
-- [ ] connection/session-level flow control
-- [ ] per-stream flow control
-- [ ] 公平调度
-- [ ] 大流不得显著阻塞交互小流
-- [ ] 每连接与全局资源上限
-- [ ] Carrier health probe
-- [ ] Carrier scoring
-- [ ] failover hysteresis，避免路径来回抖动
+- [x] 多 stream
+- [x] connection/session-level flow control
+- [x] per-stream flow control
+- [x] 公平调度
+- [x] 大流不得显著阻塞交互小流
+- [x] 每连接与全局资源上限
+- [x] Carrier health probe
+- [x] Carrier scoring
+- [x] failover hysteresis，避免路径来回抖动
 - [ ] UDP 恢复后的迁回策略
 
 ## Milestone 5 — Benchmark 与真实 WAN validation

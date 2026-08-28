@@ -438,3 +438,19 @@ evidence remain separate. Migration back requires a newly validated UDP path
 generation and Carrier Manager hysteresis; it is intentionally not automatic
 here. No public bind, proxy, production listener, concurrent striping or WAN
 claim is introduced.
+
+
+## 2026-08-29 — D025：Bounded multi-stream fairness and Carrier Manager
+
+**Status: Candidate implementation — deterministic local state only**
+
+The carrier layer now includes bounded stream/session queues with explicit stream
+IDs, priorities, per-stream and session byte ceilings, and round-robin scheduling
+so a bulk stream cannot monopolize the queue ahead of an interactive stream. A
+Carrier Manager records bounded RTT/loss/PTO health samples, computes a simple
+health score, and requires a minimum hold plus score margin before switching.
+Deterministic tests prove atomic flow-limit rejection and bounded path oscillation.
+
+This slice does not expose a service or perform network probing. Automatic UDP
+migration-back remains gated on a newly validated path generation and is not
+implemented here.

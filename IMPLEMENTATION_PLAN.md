@@ -133,13 +133,13 @@
 
 ## Phase 7 — M4 multi-stream and Carrier Manager
 
-- [ ] stream ids/lifecycle；
-- [ ] per-stream + session flow control；
-- [ ] scheduler fairness；
-- [ ] global/per-connection limits；
-- [ ] health probes；
-- [ ] scoring；
-- [ ] hysteresis；
+- [x] stream ids/lifecycle；
+- [x] per-stream + session flow control；
+- [x] scheduler fairness；
+- [x] global/per-connection limits；
+- [x] health probes；
+- [x] scoring；
+- [x] hysteresis；
 - [ ] migration-back。
 
 验收：大 bulk stream 不显著饿死交互小 stream；路径抖动不导致频繁切换。

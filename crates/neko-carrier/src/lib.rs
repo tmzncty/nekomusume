@@ -1294,3 +1294,332 @@ mod tcp_failover_tests {
         );
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct StreamId(pub u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlowLimits {
+    pub max_streams: usize,
+    pub max_session_bytes: usize,
+    pub max_stream_bytes: usize,
+}
+impl Default for FlowLimits {
+    fn default() -> Self {
+        Self {
+            max_streams: 64,
+            max_session_bytes: 1 << 20,
+            max_stream_bytes: 1 << 18,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamPriority {
+    Interactive,
+    Bulk,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamSnapshot {
+    pub id: StreamId,
+    pub priority: StreamPriority,
+    pub queued_bytes: usize,
+    pub max_bytes: usize,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlowError {
+    InvalidLimit,
+    TooManyStreams,
+    StreamNotFound,
+    StreamLimit,
+    SessionLimit,
+    EmptyData,
+}
+#[derive(Debug)]
+struct FlowStream {
+    priority: StreamPriority,
+    queue: std::collections::VecDeque<Vec<u8>>,
+    queued_bytes: usize,
+    max_bytes: usize,
+}
+#[derive(Debug)]
+pub struct FairScheduler {
+    limits: FlowLimits,
+    streams: BTreeMap<StreamId, FlowStream>,
+    session_bytes: usize,
+    cursor: usize,
+    order: Vec<StreamId>,
+}
+impl FairScheduler {
+    pub fn new(limits: FlowLimits) -> Result<Self, FlowError> {
+        if limits.max_streams == 0 || limits.max_session_bytes == 0 || limits.max_stream_bytes == 0
+        {
+            return Err(FlowError::InvalidLimit);
+        }
+        Ok(Self {
+            limits,
+            streams: BTreeMap::new(),
+            session_bytes: 0,
+            cursor: 0,
+            order: Vec::new(),
+        })
+    }
+    pub fn open(&mut self, id: StreamId, priority: StreamPriority) -> Result<(), FlowError> {
+        if self.streams.contains_key(&id) {
+            return Ok(());
+        }
+        if self.streams.len() >= self.limits.max_streams {
+            return Err(FlowError::TooManyStreams);
+        }
+        self.streams.insert(
+            id,
+            FlowStream {
+                priority,
+                queue: std::collections::VecDeque::new(),
+                queued_bytes: 0,
+                max_bytes: self.limits.max_stream_bytes,
+            },
+        );
+        self.order.push(id);
+        Ok(())
+    }
+    pub fn enqueue(&mut self, id: StreamId, data: &[u8]) -> Result<(), FlowError> {
+        if data.is_empty() {
+            return Err(FlowError::EmptyData);
+        }
+        let stream = self.streams.get(&id).ok_or(FlowError::StreamNotFound)?;
+        let sn = stream
+            .queued_bytes
+            .checked_add(data.len())
+            .ok_or(FlowError::StreamLimit)?;
+        let cn = self
+            .session_bytes
+            .checked_add(data.len())
+            .ok_or(FlowError::SessionLimit)?;
+        if sn > stream.max_bytes {
+            return Err(FlowError::StreamLimit);
+        }
+        if cn > self.limits.max_session_bytes {
+            return Err(FlowError::SessionLimit);
+        }
+        let stream = self.streams.get_mut(&id).ok_or(FlowError::StreamNotFound)?;
+        stream.queue.push_back(data.to_vec());
+        stream.queued_bytes = sn;
+        self.session_bytes = cn;
+        Ok(())
+    }
+    pub fn next_frame(&mut self) -> Option<(StreamId, Vec<u8>)> {
+        if self.order.is_empty() {
+            return None;
+        }
+        for _ in 0..self.order.len() {
+            let id = self.order[self.cursor % self.order.len()];
+            self.cursor = (self.cursor + 1) % self.order.len();
+            if let Some(s) = self.streams.get_mut(&id)
+                && let Some(data) = s.queue.pop_front()
+            {
+                s.queued_bytes -= data.len();
+                self.session_bytes -= data.len();
+                return Some((id, data));
+            }
+        }
+        None
+    }
+    pub fn snapshots(&self) -> impl Iterator<Item = StreamSnapshot> + '_ {
+        self.streams.iter().map(|(id, s)| StreamSnapshot {
+            id: *id,
+            priority: s.priority,
+            queued_bytes: s.queued_bytes,
+            max_bytes: s.max_bytes,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HealthSample {
+    pub rtt_us: u64,
+    pub loss_per_mille: u16,
+    pub pto: u16,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CarrierScore {
+    pub score: i64,
+    pub healthy: bool,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ManagerLimits {
+    pub min_hold_events: u32,
+    pub switch_margin: i64,
+    pub max_paths: usize,
+}
+#[derive(Debug)]
+pub struct CarrierManager {
+    limits: ManagerLimits,
+    samples: BTreeMap<PathId, HealthSample>,
+    active: Option<PathId>,
+    hold: u32,
+    pub switches: u64,
+}
+impl CarrierManager {
+    pub fn new(limits: ManagerLimits) -> Result<Self, FlowError> {
+        if limits.min_hold_events == 0 || limits.max_paths == 0 {
+            return Err(FlowError::InvalidLimit);
+        }
+        Ok(Self {
+            limits,
+            samples: BTreeMap::new(),
+            active: None,
+            hold: 0,
+            switches: 0,
+        })
+    }
+    pub fn observe(&mut self, path: PathId, sample: HealthSample) -> Result<(), FlowError> {
+        if self.samples.len() >= self.limits.max_paths && !self.samples.contains_key(&path) {
+            return Err(FlowError::TooManyStreams);
+        }
+        self.samples.insert(path, sample);
+        Ok(())
+    }
+    pub fn score(sample: HealthSample) -> CarrierScore {
+        let score = 10_000
+            - (sample.rtt_us.min(10_000) as i64)
+            - (sample.loss_per_mille as i64 * 5)
+            - (sample.pto as i64 * 1000);
+        CarrierScore {
+            score,
+            healthy: sample.pto < 3 && sample.loss_per_mille < 500,
+        }
+    }
+    pub fn active(&self) -> Option<PathId> {
+        self.active
+    }
+    pub fn choose(&mut self) -> Option<PathId> {
+        let best = self
+            .samples
+            .iter()
+            .filter_map(|(p, s)| {
+                let x = Self::score(*s);
+                x.healthy.then_some((*p, x.score))
+            })
+            .max_by_key(|(_, score)| *score)
+            .map(|(p, _)| p);
+        let current_score = self
+            .active
+            .and_then(|p| self.samples.get(&p).map(|s| Self::score(*s).score));
+        if let Some(candidate) = best {
+            if self.active == Some(candidate) {
+                self.hold = 0
+            } else if self.active.is_none()
+                || self.hold >= self.limits.min_hold_events
+                    && Some(candidate) != self.active
+                    && current_score.is_none_or(|x| {
+                        Self::score(*self.samples.get(&candidate).unwrap()).score
+                            >= x + self.limits.switch_margin
+                    })
+            {
+                self.active = Some(candidate);
+                self.hold = 0;
+                self.switches = self.switches.saturating_add(1)
+            } else {
+                self.hold = self.hold.saturating_add(1)
+            }
+        }
+        self.active
+    }
+}
+
+#[cfg(test)]
+mod manager_tests {
+    use super::*;
+    #[test]
+    fn bulk_does_not_starve_interactive() {
+        let mut s = FairScheduler::new(FlowLimits {
+            max_streams: 2,
+            max_session_bytes: 100,
+            max_stream_bytes: 80,
+        })
+        .unwrap();
+        s.open(StreamId(1), StreamPriority::Bulk).unwrap();
+        s.open(StreamId(2), StreamPriority::Interactive).unwrap();
+        for _ in 0..5 {
+            s.enqueue(StreamId(1), b"bulk").unwrap()
+        }
+        s.enqueue(StreamId(2), b"ping").unwrap();
+        let first = (0..3).filter_map(|_| s.next_frame()).collect::<Vec<_>>();
+        assert!(first.iter().any(|(id, _)| *id == StreamId(2)));
+    }
+    #[test]
+    fn flow_limits_are_atomic() {
+        let mut s = FairScheduler::new(FlowLimits {
+            max_streams: 1,
+            max_session_bytes: 4,
+            max_stream_bytes: 4,
+        })
+        .unwrap();
+        s.open(StreamId(1), StreamPriority::Bulk).unwrap();
+        assert_eq!(
+            s.enqueue(StreamId(1), b"12345"),
+            Err(FlowError::StreamLimit)
+        );
+        assert_eq!(s.snapshots().next().unwrap().queued_bytes, 0);
+    }
+    #[test]
+    fn carrier_scoring_and_hysteresis_bound_oscillation() {
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 3,
+            switch_margin: 10,
+            max_paths: 2,
+        })
+        .unwrap();
+        m.observe(
+            PathId(1),
+            HealthSample {
+                rtt_us: 100,
+                loss_per_mille: 0,
+                pto: 0,
+            },
+        )
+        .unwrap();
+        m.observe(
+            PathId(2),
+            HealthSample {
+                rtt_us: 500,
+                loss_per_mille: 0,
+                pto: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(m.choose(), Some(PathId(1)));
+        m.observe(
+            PathId(2),
+            HealthSample {
+                rtt_us: 50,
+                loss_per_mille: 0,
+                pto: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(m.choose(), Some(PathId(1)));
+        assert_eq!(m.switches, 1);
+        m.observe(
+            PathId(2),
+            HealthSample {
+                rtt_us: 50,
+                loss_per_mille: 0,
+                pto: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(m.choose(), Some(PathId(1)));
+        m.observe(
+            PathId(2),
+            HealthSample {
+                rtt_us: 50,
+                loss_per_mille: 0,
+                pto: 0,
+            },
+        )
+        .unwrap();
+        m.hold = 3;
+        assert_eq!(m.choose(), Some(PathId(2)));
+        assert_eq!(m.switches, 2);
+    }
+}
