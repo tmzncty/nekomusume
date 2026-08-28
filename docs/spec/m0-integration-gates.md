@@ -25,3 +25,10 @@ The gates enforce these separations:
 
 The candidate delivery proof remains `received`/transport acceptance only; it
 never claims application `delivered`, `effect`, or side-effect commit.
+
+
+The session-side regression suite additionally covers exact duplicate
+idempotence, invalid lifecycle transitions, missing ranges, old-epoch replay,
+and the invariant that rejected operations leave state and watermark unchanged.
+Carrier-side tests cover idempotent local close, queued-data drain, peer-close
+errors, and no post-close send.

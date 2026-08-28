@@ -8,15 +8,15 @@
 
 - [x] 实现语言：Rust
 - [x] 建立 Cargo workspace / crate 边界
-- [ ] 定义 `Session` / `Carrier` / `Path` 的最小抽象
-- [ ] 明确协议版本与 magic
-- [ ] 固定第一版 session record / UDP packet header
-- [ ] 定义 frame type 与字段编码
-- [ ] 定义 Session delivery state / acknowledgement 语义
-- [ ] 定义错误码与兼容策略
-- [ ] 写状态机文档
-- [ ] 至少 20 个 golden encode/decode tests
-- [ ] fuzz：畸形输入不得 panic、越界或无限分配
+- [x] 定义 `Session` / `Carrier` / `Path` 的最小抽象
+- [x] 明确协议版本与 magic
+- [x] 固定第一版 session record / UDP packet header
+- [x] 定义 frame type 与字段编码
+- [x] 定义 Session delivery state / acknowledgement 语义
+- [x] 定义错误码与兼容策略
+- [x] 写状态机文档
+- [x] 至少 20 个 golden encode/decode tests
+- [x] fuzz：畸形输入不得 panic、越界或无限分配
 - [x] CLI skeleton：`neko client` / `neko server` / `neko probe`
 
 M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session 写死成 UDP socket。

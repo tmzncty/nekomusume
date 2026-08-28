@@ -17,3 +17,15 @@ This phase models the weakest candidate proof, `received`/transport delivery: th
 - Per-stream watermarks never decrease.
 - `max_reorder`, `max_streams`, `max_connection_bytes`, and `max_offset_jump` produce deterministic errors.
 - All limits and field meanings remain provisional until the normative v0 gates are reviewed.
+
+
+## Lifecycle and close boundary
+
+The M0 ledger is a delivery-state component, not a live Session owner. Its
+explicit lifecycle is `Unsent -> InFlight -> Uncertain -> Confirmed`; invalid
+transitions and missing ranges return stable `LedgerError` values and do not
+mutate state. Exact duplicate insertion is idempotent, old-epoch confirmation
+is rejected as replay/rollback evidence, and the watermark is monotonic.
+Transport endpoint close is specified and tested in the carrier layer; M0 does
+not invent a second Session close protocol or claim application-level
+`Delivered`/`Closed` semantics.

@@ -427,6 +427,49 @@ mod tests {
     }
 
     #[test]
+    fn exact_duplicate_is_idempotent_and_state_transition_is_bounded() {
+        let mut x = l();
+        x.insert(1, 0, b"abc", c(1, 0, 1)).unwrap();
+        x.mark_in_flight(1, 0).unwrap();
+        x.confirm_received(1, 0, c(1, 0, 1)).unwrap();
+        assert_eq!(
+            x.insert(1, 0, b"abc", c(1, 0, 1)),
+            Ok(DeliveryState::Confirmed)
+        );
+        assert_eq!(x.segments().count(), 1);
+        assert_eq!(x.bytes, 3);
+        assert_eq!(x.mark_uncertain(1, 0), Err(LedgerError::InvalidTransition));
+        assert_eq!(x.confirm_received(1, 0, c(1, 0, 1)), Ok(()));
+        assert_eq!(x.watermark(1), 3);
+    }
+
+    #[test]
+    fn old_epoch_replay_cannot_confirm_or_change_state() {
+        let mut x = l();
+        x.insert(1, 0, b"abc", c(7, 2, 9)).unwrap();
+        x.mark_in_flight(1, 0).unwrap();
+        x.mark_uncertain(1, 0).unwrap();
+        assert_eq!(
+            x.confirm_received(1, 0, c(6, 2, 9)),
+            Err(LedgerError::OldEpoch)
+        );
+        assert_eq!(x.segments().next().unwrap().state, DeliveryState::Uncertain);
+        assert_eq!(x.watermark(1), 0);
+    }
+
+    #[test]
+    fn missing_range_and_invalid_transition_are_stable_errors() {
+        let mut x = l();
+        assert_eq!(x.mark_in_flight(99, 0), Err(LedgerError::RangeNotFound));
+        x.insert(1, 0, b"x", c(1, 0, 1)).unwrap();
+        assert_eq!(x.mark_uncertain(1, 0), Err(LedgerError::InvalidTransition));
+        assert_eq!(
+            x.confirm_received(1, 0, c(1, 0, 1)),
+            Err(LedgerError::InvalidTransition)
+        );
+    }
+
+    #[test]
     fn overlap_preserves_delivered_bytes() {
         let mut x = l();
         x.insert(1, 0, b"ab", c(1, 0, 1)).unwrap();

@@ -6,10 +6,10 @@
 
 ## Phase 0 — Baseline audit
 
-- [ ] 运行 `./scripts/check.sh`，记录当前基线；
-- [ ] 检查 workspace/crate 实际边界与 `docs/m0-spec-plan.md` 是否一致；
-- [ ] 列出当前已实现的 wire/session/CLI 能力；
-- [ ] 将“研究完成但代码未完成”的事项保持未完成状态。
+- [x] 运行 `./scripts/check.sh`，记录当前基线；
+- [x] 检查 workspace/crate 实际边界与 `docs/m0-spec-plan.md` 是否一致；
+- [x] 列出当前已实现的 wire/session/CLI 能力；
+- [x] 将“研究完成但代码未完成”的事项保持未完成状态。
 
 验收：有一份简短、基于当前仓库事实的 baseline note；不得把旧文档计划当实现。
 
@@ -19,18 +19,18 @@
 
 目标：最小拆分支持 `wire`、`session`、carrier 抽象和 CLI，不为未来功能提前建大量空 crate。
 
-- [ ] 固定 workspace 成员；
-- [ ] 依赖方向无循环；
-- [ ] core 不依赖具体 UDP/TCP socket。
+- [x] 固定 workspace 成员；
+- [x] 依赖方向无循环；
+- [x] core 不依赖具体 UDP/TCP socket。
 
 ### 1.2 protocol identity
 
-- [ ] version/magic；
-- [ ] session record/header；
-- [ ] frame type 与字段编码；
-- [ ] error code；
-- [ ] unknown version/type 行为；
-- [ ] compatibility policy。
+- [x] version/magic；
+- [x] session record/header；
+- [x] frame type 与字段编码；
+- [x] error code；
+- [x] unknown version/type 行为；
+- [x] compatibility policy。
 
 所有行为同步到 `docs/specs/nekomusume-session-v0.md`。
 
@@ -53,22 +53,22 @@
 
 ### 1.4 parser hardening
 
-- [ ] 所有外部长度有上限；
-- [ ] 畸形输入不 panic；
-- [ ] 不无限分配；
-- [ ] fuzz target 覆盖主要 decode path；
-- [ ] corpus 放入最小 regression seeds。
+- [x] 所有外部长度有上限；
+- [x] 畸形输入不 panic；
+- [x] 不无限分配；
+- [x] fuzz target 覆盖主要 decode path；
+- [x] corpus 放入最小 regression seeds。
 
 验收：`check.sh` + `fuzz-smoke.sh`。
 
 ## Phase 2 — Session state semantics
 
-- [ ] 定义 Session lifecycle；
-- [ ] 定义 delivery acknowledgement；
-- [ ] 明确 confirmed / uncertain / delivered / closed 等状态；
-- [ ] 设计跨 Carrier 可序列化状态；
-- [ ] ACK 语义与 UDP packet ACK 分离；
-- [ ] 单元测试覆盖重复、乱序、重放、关闭边界。
+- [x] 定义 Session lifecycle；
+- [x] 定义 delivery acknowledgement；
+- [x] 明确 confirmed / uncertain / delivered / closed 等状态；
+- [x] 设计跨 Carrier 可序列化状态；
+- [x] ACK 语义与 UDP packet ACK 分离；
+- [x] 单元测试覆盖重复、乱序、重放、关闭边界。
 
 验收：不创建 socket 也能用纯状态机测试一次 Session delivery 流程。
 
@@ -77,7 +77,7 @@
 - [ ] `neko client`；
 - [ ] `neko server`；
 - [ ] `neko probe`；
-- [ ] `--help`/错误 exit code；
+- [x] `--help`/错误 exit code；
 - [ ] 结构化日志基础；
 - [ ] 不在 CLI 中堆协议状态逻辑。
 
