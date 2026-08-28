@@ -531,3 +531,8 @@ causality. New generations discard old probe evidence.
 This adds no socket, listener, route change, ICMP parser, public probe, production
 behavior or performance claim. Live integration requires authenticated carrier
 probe records and a separate reviewed gate.
+
+
+## D031 — Bounded authenticated unreliable datagram
+
+Candidate local implementation: 1200-byte cap, authenticated context/nonce/replay, uniform rejection, no retransmission or delivery evidence; 0-RTT and public/WAN use remain disabled.

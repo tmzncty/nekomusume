@@ -157,6 +157,7 @@ mod tests {
 
 pub const MAX_HANDSHAKE_MESSAGE: usize = 1024;
 pub const MAX_RECORD_PLAINTEXT: usize = 4096;
+pub const MAX_UNRELIABLE_DATAGRAM: usize = 1200;
 pub const RECORD_CONTEXT_LEN: usize = 26;
 pub const MAX_KEY_PHASE: u8 = 1;
 const PROLOGUE_PREFIX: &[u8] = b"nekomusume/noise-ik/v0\0";
@@ -370,6 +371,16 @@ impl SecureSession {
             context,
         })
     }
+    pub fn seal_unreliable(&mut self, payload: &[u8]) -> Result<Vec<u8>, SessionRejected> {
+        if payload.len() > MAX_UNRELIABLE_DATAGRAM {
+            return Err(SessionRejected);
+        }
+        self.seal(payload)
+    }
+    pub fn open_unreliable(&mut self, record: &[u8]) -> Result<Vec<u8>, SessionRejected> {
+        self.open(record)
+    }
+
     /// Rekey both directions at an authenticated phase boundary. The caller
     /// must invoke this on both peers in the same order; no old-phase records
     /// are accepted after commit.
@@ -655,5 +666,16 @@ mod preauth_tests {
         let old = b.seal(b"old").unwrap();
         assert_eq!(a.open(&old), Err(SessionRejected));
         assert_eq!(b.key_phase(), 0);
+    }
+    #[test]
+    fn unreliable_datagram_roundtrip_replay_and_size_are_bounded() {
+        let (mut a, mut b) = super::session_tests::pair();
+        let record = a.seal_unreliable(b"telemetry").unwrap();
+        assert_eq!(b.open_unreliable(&record).unwrap(), b"telemetry");
+        assert_eq!(b.open_unreliable(&record), Err(SessionRejected));
+        assert_eq!(
+            a.seal_unreliable(&vec![0; MAX_UNRELIABLE_DATAGRAM + 1]),
+            Err(SessionRejected)
+        );
     }
 }

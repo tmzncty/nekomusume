@@ -157,7 +157,7 @@ fail: 喵呜呜呜呜…
 
 - [x] bounded authenticated PLPMTUD state
 - [ ] FEC
-- [ ] unreliable datagram API
+- [x] bounded authenticated unreliable datagram API
 - [x] bounded synchronized key update
 - [ ] 0-RTT
 - [ ] concurrent UDP + TCP
