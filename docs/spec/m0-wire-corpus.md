@@ -10,3 +10,12 @@ The nine-byte header is `NK`, version `0`, type, zero flags, and a big-endian
 replace the deterministic unit test or claim that the candidate format is
 frozen. The 4096-byte entry is intentionally retained to exercise the current
 payload limit.
+
+
+## Boundary evidence update
+
+The wire test suite now exercises every input length from zero through the
+short-prefix boundary and explicit overflowing/non-canonical varint cases. The
+fuzz target additionally asserts that decoding never panics for arbitrary bytes;
+its return value remains ignored because malformed input is expected. Fuzz smoke
+artifacts are disposable and must not be committed as protocol vectors.

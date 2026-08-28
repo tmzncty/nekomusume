@@ -588,3 +588,15 @@ disabled. A future gate requires a deterministic DSN/reordering/congestion model
 and isolated asymmetric-path/blackhole A/B evidence before any live scheduler.
 No wire field, listener, WAN experiment, production setting or superiority claim
 is introduced.
+
+
+## 2026-08-29 — D035：Wire decoder boundary and panic-free fuzz evidence
+
+**Status: Candidate test hardening — no wire freeze**
+
+The wire suite now checks all byte lengths 0–7 and representative overflowing
+and non-canonical varints. The fuzz target wraps decoding in a panic assertion,
+while preserving malformed-input rejection and zero evidence promotion. Fuzz
+corpus discoveries remain disposable artifacts and are removed after smoke runs.
+No field map, interoperability contract, listener or production behavior is
+changed.

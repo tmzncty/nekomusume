@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | G0 | governance and security release gate | candidate | `docs/adr/m1-g0-research-authorization.md` | Research implementation authorized in bounded local/loopback scope; no security approval, protocol freeze, public exposure, or production claim |
 | workspace | Rust workspace and crate boundaries | implemented | `Cargo.toml` | Research engineering baseline only |
-| wire-codec | deterministic bounded wire codec | candidate | `crates/neko-wire/src/lib.rs` | Candidate format; no frozen interoperability contract |
+| wire-codec | deterministic bounded wire codec | candidate | `crates/neko-wire/src/lib.rs` | Candidate format; exhaustive short-prefix/overflow regression and panic-free fuzz-smoke evidence; no frozen interoperability contract |
 | session-model | in-memory Session delivery state | candidate | `crates/neko-session/src/lib.rs` | Candidate model; correctness gaps remain |
 | carrier-model | Carrier/Path state and loopback carrier slices | candidate | `crates/neko-carrier/src/lib.rs` | Candidate state model plus bounded loopback UDP/TCP/failover evidence; no public or production carrier |
 | cli | CLI scaffold | implemented | `crates/neko-cli/src/main.rs` | Scaffold only; no client/server/probe transport |

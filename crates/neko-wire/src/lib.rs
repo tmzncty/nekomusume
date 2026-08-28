@@ -262,6 +262,27 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_all_short_prefixes_without_panic_or_evidence() {
+        for len in 0..=7 {
+            let input = vec![0x4e; len];
+            assert!(decode(&input).is_err(), "length {len} unexpectedly decoded");
+        }
+    }
+    #[test]
+    fn decode_rejects_overflow_and_noncanonical_varints() {
+        let cases = [
+            vec![
+                b'N', b'K', 1, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0x02,
+            ],
+            vec![b'N', b'K', 1, 0, 0x80, 0x00],
+        ];
+        for input in cases {
+            assert!(decode(&input).is_err());
+        }
+    }
+
+    #[test]
     fn encode_rejects_flags_and_oversized_payloads() {
         assert_eq!(
             encode(&Record {
