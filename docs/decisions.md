@@ -692,3 +692,14 @@ repository-relative regular file and a Git-tracked path. An isolated regression
 constructs an otherwise valid temporary evidence file and proves it cannot
 satisfy the status table. This prevents generated or unreviewed artifacts from
 being used as governance evidence.
+
+
+## 2026-08-29 — D044：Scoped status evidence coverage
+
+**Status: Accepted governance-harness hardening — no protocol change**
+
+The checker now requires each status-referenced `docs/spec/` or `docs/adr/`
+evidence path to be a unique, Git-tracked regular file. It deliberately does
+not require every planning or ADR document to appear in the status table: unused
+research/planning documents remain valid. Isolated mutations cover missing and
+duplicate scoped evidence.

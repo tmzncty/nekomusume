@@ -17,6 +17,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 bash scripts/check-governance-status.sh
 bash scripts/check-status-evidence.sh
 bash scripts/check-status-evidence-test.sh
+bash scripts/check-status-coverage.sh
+bash scripts/check-status-coverage-test.sh
 bash scripts/check-shell-syntax.sh
 bash scripts/check-markdown-links.sh
 bash scripts/check-markdown-links-test.sh

@@ -14,7 +14,7 @@
 | cli | CLI scaffold | implemented | `crates/neko-cli/src/main.rs` | Scaffold only; no client/server/probe transport |
 | normative-spec | Session v0 normative entry point | provisional | `docs/specs/nekomusume-session-v0.md` | Provisional and not frozen |
 | crypto-handshake | authenticated handshake and AEAD | candidate | `crates/neko-crypto/src/lib.rs` | Bounded Noise IK research implementation with trust/authz, context binding, nonce/replay and synchronized key-phase tests; no security approval or public/production use |
-| preauth-admission | runtime pre-auth accounting | candidate | `docs/adr/m1-g0-research-authorization.md` | Bounded research implementation may proceed; candidate values and fail-closed tests remain required |
+| preauth-admission | runtime pre-auth accounting | candidate | `docs/adr/m1-g0-preauth-resource-budget.md` | Bounded research implementation may proceed; candidate values and fail-closed tests remain required |
 | live-udp | UDP socket carrier | candidate | `crates/neko-carrier/tests/encrypted_udp_echo.rs` | Authenticated encrypted echo proven on connected 127.0.0.1 ephemeral sockets only; no service/public/production listener |
 | unreliable-datagram | bounded authenticated unreliable datagram | candidate | `docs/spec/m2-unreliable-datagram.md` | Authenticated bounded datagrams; no retransmission or Session delivery evidence |
 | 0rtt | 0-RTT governance gate | candidate | `docs/spec/m4-0rtt-gate.md` | Explicitly rejected pending replay-safe resumption, persistence/rollback, authorization and review evidence; no early data |
