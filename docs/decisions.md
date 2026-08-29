@@ -812,3 +812,15 @@ and cannot be combined with a crypto/path regression; old values fail closed.
 Overlapping segments with mixed delivery states are not collapsed into a
 misleading single state. Delivery watermark and evidence separation remain
 monotonic.
+
+
+## 2026-08-29 — D055：Authenticated SessionRecord has an explicit Frame list
+
+**Status: Candidate wire architecture — non-frozen**
+
+The NK outer header is retained while its authenticated payload gains a bounded
+frame grammar. DATA, DELIVERY_ACK, CLOSE, PATH_CHALLENGE and PATH_RESPONSE are
+known candidates; low-bit ignorable semantics, reserved types, 1024-byte frame
+limits, 4096-byte record limits and 64-frame limits are tested. Unknown
+critical/reserved types fail closed while unknown ignorable types remain
+extensible. This does not select cryptographic AAD fields or freeze v0.

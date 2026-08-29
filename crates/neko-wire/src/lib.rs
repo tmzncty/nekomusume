@@ -42,6 +42,158 @@ pub struct Record {
     pub payload: Vec<u8>,
 }
 
+/// Candidate authenticated SessionRecord frame type. The outer NK header remains
+/// unchanged; this layer is the authenticated payload grammar.
+const FRAME_IGNORABLE: u8 = 0x01;
+const FRAME_RESERVED_MASK: u8 = 0xf0;
+const FRAME_DATA: u8 = 0x00;
+const FRAME_DELIVERY_ACK: u8 = 0x02;
+const FRAME_CLOSE: u8 = 0x04;
+const FRAME_PATH_CHALLENGE: u8 = 0x06;
+const FRAME_PATH_RESPONSE: u8 = 0x08;
+const FRAME_HEADER_LEN: usize = 3;
+const MAX_FRAME_PAYLOAD_LEN: usize = 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Frame {
+    Data(Vec<u8>),
+    DeliveryAck(Vec<u8>),
+    Close(Vec<u8>),
+    PathChallenge([u8; 8]),
+    PathResponse([u8; 8]),
+    UnknownIgnorable { frame_type: u8, payload: Vec<u8> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrameError {
+    Empty,
+    Truncated,
+    LengthTooLarge(usize),
+    InvalidLength { frame_type: u8, length: usize },
+    UnknownCritical(u8),
+    ReservedType(u8),
+    TooManyFrames,
+}
+
+fn frame_type(frame: &Frame) -> u8 {
+    match frame {
+        Frame::Data(_) => FRAME_DATA,
+        Frame::DeliveryAck(_) => FRAME_DELIVERY_ACK,
+        Frame::Close(_) => FRAME_CLOSE,
+        Frame::PathChallenge(_) => FRAME_PATH_CHALLENGE,
+        Frame::PathResponse(_) => FRAME_PATH_RESPONSE,
+        Frame::UnknownIgnorable { frame_type, .. } => *frame_type,
+    }
+}
+fn frame_payload(frame: &Frame) -> &[u8] {
+    match frame {
+        Frame::Data(p) | Frame::DeliveryAck(p) | Frame::Close(p) => p,
+        Frame::PathChallenge(p) | Frame::PathResponse(p) => p,
+        Frame::UnknownIgnorable { payload, .. } => payload,
+    }
+}
+fn validate_frame_type(t: u8, len: usize) -> Result<(), FrameError> {
+    if t & FRAME_RESERVED_MASK == FRAME_RESERVED_MASK {
+        return Err(FrameError::ReservedType(t));
+    }
+    match t & !FRAME_IGNORABLE {
+        FRAME_DATA | FRAME_DELIVERY_ACK | FRAME_CLOSE => {
+            if len > MAX_FRAME_PAYLOAD_LEN {
+                Err(FrameError::LengthTooLarge(len))
+            } else {
+                Ok(())
+            }
+        }
+        FRAME_PATH_CHALLENGE | FRAME_PATH_RESPONSE => {
+            if len == 8 {
+                Ok(())
+            } else {
+                Err(FrameError::InvalidLength {
+                    frame_type: t,
+                    length: len,
+                })
+            }
+        }
+        _ if t & FRAME_IGNORABLE != 0 => Ok(()),
+        _ => Err(FrameError::UnknownCritical(t)),
+    }
+}
+
+/// Encode a bounded list of frames into the authenticated SessionRecord payload.
+pub fn encode_frames(frames: &[Frame]) -> Result<Vec<u8>, FrameError> {
+    if frames.is_empty() {
+        return Err(FrameError::Empty);
+    }
+    if frames.len() > 64 {
+        return Err(FrameError::TooManyFrames);
+    }
+    let mut out = Vec::new();
+    for frame in frames {
+        let t = frame_type(frame);
+        let payload = frame_payload(frame);
+        validate_frame_type(t, payload.len())?;
+        let len =
+            u16::try_from(payload.len()).map_err(|_| FrameError::LengthTooLarge(payload.len()))?;
+        out.push(t);
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(payload);
+        if out.len() > MAX_PAYLOAD_LEN {
+            return Err(FrameError::LengthTooLarge(out.len()));
+        }
+    }
+    Ok(out)
+}
+
+/// Decode all frames from one authenticated SessionRecord payload. Unknown
+/// ignorable types are retained; unknown critical and reserved types fail closed.
+pub fn decode_frames(mut input: &[u8]) -> Result<Vec<Frame>, FrameError> {
+    if input.is_empty() {
+        return Err(FrameError::Empty);
+    }
+    let mut frames = Vec::new();
+    while !input.is_empty() {
+        if frames.len() >= 64 {
+            return Err(FrameError::TooManyFrames);
+        }
+        if input.len() < FRAME_HEADER_LEN {
+            return Err(FrameError::Truncated);
+        }
+        let t = input[0];
+        let len = u16::from_be_bytes([input[1], input[2]]) as usize;
+        validate_frame_type(t, len)?;
+        input = &input[FRAME_HEADER_LEN..];
+        if input.len() < len {
+            return Err(FrameError::Truncated);
+        }
+        let payload = &input[..len];
+        input = &input[len..];
+        let base = t & !FRAME_IGNORABLE;
+        let frame = match base {
+            FRAME_DATA => Frame::Data(payload.to_vec()),
+            FRAME_DELIVERY_ACK => Frame::DeliveryAck(payload.to_vec()),
+            FRAME_CLOSE => Frame::Close(payload.to_vec()),
+            FRAME_PATH_CHALLENGE => {
+                Frame::PathChallenge(payload.try_into().map_err(|_| FrameError::InvalidLength {
+                    frame_type: t,
+                    length: len,
+                })?)
+            }
+            FRAME_PATH_RESPONSE => {
+                Frame::PathResponse(payload.try_into().map_err(|_| FrameError::InvalidLength {
+                    frame_type: t,
+                    length: len,
+                })?)
+            }
+            _ => Frame::UnknownIgnorable {
+                frame_type: t,
+                payload: payload.to_vec(),
+            },
+        };
+        frames.push(frame);
+    }
+    Ok(frames)
+}
+
 /// Errors emitted deterministically by candidate decoding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodeError {
@@ -295,6 +447,59 @@ mod tests {
         assert_eq!(
             encode(&record(RecordType::Data, &vec![0; MAX_PAYLOAD_LEN + 1])),
             Err(EncodeError::PayloadTooLarge(MAX_PAYLOAD_LEN + 1))
+        );
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+    #[test]
+    fn multi_frame_roundtrip_and_unknown_compatibility() {
+        let frames = vec![
+            Frame::Data(b"data".to_vec()),
+            Frame::DeliveryAck(vec![1, 2]),
+            Frame::PathChallenge(*b"12345678"),
+            Frame::UnknownIgnorable {
+                frame_type: 0x11,
+                payload: vec![9],
+            },
+            Frame::Close(vec![]),
+        ];
+        assert_eq!(
+            decode_frames(&encode_frames(&frames).unwrap()).unwrap(),
+            frames
+        );
+    }
+    #[test]
+    fn critical_unknown_and_reserved_types_fail_closed() {
+        assert_eq!(
+            decode_frames(&[0x0a, 0, 0]),
+            Err(FrameError::UnknownCritical(0x0a))
+        );
+        assert_eq!(
+            decode_frames(&[0xf1, 0, 0]),
+            Err(FrameError::ReservedType(0xf1))
+        );
+    }
+    #[test]
+    fn frame_bounds_and_malformed_lengths_are_deterministic() {
+        assert_eq!(encode_frames(&[]), Err(FrameError::Empty));
+        assert_eq!(decode_frames(&[FRAME_DATA, 0]), Err(FrameError::Truncated));
+        assert_eq!(
+            decode_frames(&[FRAME_PATH_CHALLENGE, 0, 7, 0, 0, 0, 0, 0, 0, 0]),
+            Err(FrameError::InvalidLength {
+                frame_type: FRAME_PATH_CHALLENGE,
+                length: 7
+            })
+        );
+        assert_eq!(
+            decode_frames(&[FRAME_DATA, 0, 4, 1]),
+            Err(FrameError::Truncated)
+        );
+        assert_eq!(
+            encode_frames(&[Frame::Data(vec![0; MAX_FRAME_PAYLOAD_LEN + 1])]),
+            Err(FrameError::LengthTooLarge(MAX_FRAME_PAYLOAD_LEN + 1))
         );
     }
 }

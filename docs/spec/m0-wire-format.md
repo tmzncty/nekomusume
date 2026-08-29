@@ -24,3 +24,19 @@ The decoder accepts exactly one record and rejects truncation, unknown version/t
 `encode_varint` uses minimal unsigned little-endian base-128 encoding. Non-minimal encodings, truncation, and `u64` overflow are rejected. This helper is not yet assigned to a protocol field.
 
 Golden round-trip vectors and malformed-input tests live beside the implementation. They are evidence for the candidate codec only; they do not constitute a wire freeze.
+
+
+## Candidate authenticated SessionRecord frames
+
+The existing NK/version/fixed 9-byte header remains the outer Carrier packet
+header. Its payload may now be parsed as a bounded authenticated SessionRecord
+containing a list of frames. Each frame is `type:u8 || length:u16be || payload`;
+maximum frame payload is 1024 bytes, maximum SessionRecord payload remains 4096
+bytes, and at most 64 frames are accepted.
+
+The low type bit is the compatibility bit: `0` is critical and `1` is
+ignorable. DATA (`0x00`), DELIVERY_ACK (`0x02`), CLOSE (`0x04`),
+PATH_CHALLENGE (`0x06`) and PATH_RESPONSE (`0x08`) are candidate known types.
+Unknown critical and `0xf0..=0xff` reserved types fail closed; unknown
+ignorable types are retained and skipped by higher layers. This is candidate,
+non-frozen syntax and does not define authentication/AAD placement.
