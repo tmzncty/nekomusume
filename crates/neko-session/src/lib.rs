@@ -729,6 +729,9 @@ impl SessionRuntime {
         self.total_bytes
     }
     pub fn close_remote(&mut self, now_ms: u64) -> Result<(), RuntimeError> {
+        if self.state == RuntimeState::Closed {
+            return Ok(());
+        }
         self.check(now_ms)?;
         self.state = RuntimeState::Closed;
         self.send.clear();

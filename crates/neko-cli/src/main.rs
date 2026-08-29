@@ -10,7 +10,9 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-const USAGE: &str = "Usage: neko <server|client|probe|lab|keygen> [bounded options]\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
+const USAGE: &str = "Usage: neko <server|client|probe|lab|keygen> [bounded options]
+
+  --count N: bounded authenticated exchanges (1-64)\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
 const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
 const MAX_DURATION: u64 = 30;
@@ -86,6 +88,15 @@ fn parse(args: &[String], key: &str, default: Option<&str>) -> String {
         .or_else(|| default.map(str::to_string))
         .unwrap_or_else(|| fail(&format!("missing {key}")))
 }
+fn exchange_count(args: &[String]) -> usize {
+    let n = parse(args, "--count", Some("1"))
+        .parse::<usize>()
+        .unwrap_or_else(|_| fail("invalid count"));
+    if n == 0 || n > 64 {
+        fail("count outside 1-64");
+    }
+    n
+}
 fn common(args: &[String]) -> (String, u16, usize, Duration) {
     let t = parse(args, "--transport", None);
     if t != "tcp" && t != "udp" {
@@ -132,6 +143,7 @@ fn write_frame(s: &mut TcpStream, b: &[u8]) -> std::io::Result<()> {
 }
 fn server(args: &[String]) {
     let (t, p, max, d) = common(args);
+    let count = exchange_count(args);
     let idpath = PathBuf::from(parse(args, "--identity", Some("neko-server.identity")));
     let id = load_or_generate(&idpath);
     if !json_mode(args) {
@@ -169,14 +181,17 @@ fn server(args: &[String]) {
                         .receive_first(&first, context(0))
                         .unwrap_or_else(|_| fail("unauthorized handshake"));
                     write_frame(&mut s, &resp).unwrap();
-                    let frame = read_frame(&mut s, max + 64).unwrap_or_else(|_| fail("bad data"));
-                    let plain = ss
-                        .open_unreliable(&frame)
-                        .unwrap_or_else(|_| fail("auth failure"));
-                    let reply = ss
-                        .seal_unreliable(&plain)
-                        .unwrap_or_else(|_| fail("seal failure"));
-                    write_frame(&mut s, &reply).unwrap();
+                    for _ in 0..count {
+                        let frame =
+                            read_frame(&mut s, max + 64).unwrap_or_else(|_| fail("bad data"));
+                        let plain = ss
+                            .open_unreliable(&frame)
+                            .unwrap_or_else(|_| fail("auth failure"));
+                        let reply = ss
+                            .seal_unreliable(&plain)
+                            .unwrap_or_else(|_| fail("seal failure"));
+                        write_frame(&mut s, &reply).unwrap();
+                    }
                     return;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -209,14 +224,16 @@ fn server(args: &[String]) {
                     .receive_first(first, context(0))
                     .unwrap_or_else(|_| fail("unauthorized handshake"));
                 u.send_to(&resp, peer).unwrap();
-                let (n, peer) = u.recv_from(&mut b).unwrap_or_else(|_| fail("data timeout"));
-                let plain = ss
-                    .open_unreliable(&b[..n])
-                    .unwrap_or_else(|_| fail("auth failure"));
-                let reply = ss
-                    .seal_unreliable(&plain)
-                    .unwrap_or_else(|_| fail("seal failure"));
-                u.send_to(&reply, peer).unwrap();
+                for _ in 0..count {
+                    let (n, peer) = u.recv_from(&mut b).unwrap_or_else(|_| fail("data timeout"));
+                    let plain = ss
+                        .open_unreliable(&b[..n])
+                        .unwrap_or_else(|_| fail("auth failure"));
+                    let reply = ss
+                        .seal_unreliable(&plain)
+                        .unwrap_or_else(|_| fail("seal failure"));
+                    u.send_to(&reply, peer).unwrap();
+                }
                 return;
             }
         }
@@ -225,6 +242,7 @@ fn server(args: &[String]) {
 }
 fn client(args: &[String]) {
     let (t, _p, max, d) = common(args);
+    let count = exchange_count(args);
     let addr = parse(args, "--addr", None);
     let sk = unhex(&parse(args, "--server-key", None));
     let idpath = PathBuf::from(parse(args, "--identity", Some("neko-client.identity")));
@@ -266,34 +284,38 @@ fn client(args: &[String]) {
         let mut ss = hs
             .finish(&b[..n], context(0))
             .unwrap_or_else(|_| fail("handshake finish failed"));
-        let rec = ss
-            .seal_unreliable(&payload)
-            .unwrap_or_else(|_| fail("payload too large"));
-        u.send_to(&rec, target).unwrap();
-        let (n, _) = u.recv_from(&mut b).unwrap_or_else(|_| fail("echo timeout"));
-        if ss
-            .open_unreliable(&b[..n])
-            .unwrap_or_else(|_| fail("echo auth failed"))
-            != payload
-        {
-            fail("echo mismatch")
-        };
+        for _ in 0..count {
+            let rec = ss
+                .seal_unreliable(&payload)
+                .unwrap_or_else(|_| fail("payload too large"));
+            u.send_to(&rec, target).unwrap();
+            let (n, _) = u.recv_from(&mut b).unwrap_or_else(|_| fail("echo timeout"));
+            if ss
+                .open_unreliable(&b[..n])
+                .unwrap_or_else(|_| fail("echo auth failed"))
+                != payload
+            {
+                fail("echo mismatch");
+            }
+        }
         emit_probe(args, "udp", max, start.elapsed().as_millis());
         return;
     };
     let (mut s, mut ss) = cs.unwrap();
-    let rec = ss
-        .seal_unreliable(&payload)
-        .unwrap_or_else(|_| fail("payload too large"));
-    write_frame(&mut s, &rec).unwrap();
-    let reply = read_frame(&mut s, max + 128).unwrap_or_else(|_| fail("echo timeout"));
-    if ss
-        .open_unreliable(&reply)
-        .unwrap_or_else(|_| fail("echo auth failed"))
-        != payload
-    {
-        fail("echo mismatch")
-    };
+    for _ in 0..count {
+        let rec = ss
+            .seal_unreliable(&payload)
+            .unwrap_or_else(|_| fail("payload too large"));
+        write_frame(&mut s, &rec).unwrap();
+        let reply = read_frame(&mut s, max + 128).unwrap_or_else(|_| fail("echo timeout"));
+        if ss
+            .open_unreliable(&reply)
+            .unwrap_or_else(|_| fail("echo auth failed"))
+            != payload
+        {
+            fail("echo mismatch");
+        }
+    }
     emit_probe(args, "tcp", max, start.elapsed().as_millis())
 }
 fn lab(args: &[String]) {
