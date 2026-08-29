@@ -29,3 +29,17 @@ security, performance-superiority or production evidence.
 The temporary `/root/nekomusume-test` runtime, identities, logs and listeners
 were removed. A final listener check found no process bound to ports
 `40080-40100`; no firewall changes were made. The VPS remains SSH-only.
+
+
+## Authenticated IPv4/IPv6 baseline matrix — 2026-08-29
+
+The dedicated client-to-VPS key path was used; no private key was copied between hosts. Each case was a bounded single authenticated echo, three repetitions per payload size (1, 32, 1200 bytes), with temporary listeners on TCP/40080 or UDP/40081 and cleanup after each case.
+
+| Family | Carrier | Payloads | Success | Wall-clock median (ms) |
+|---|---|---:|---:|---:|
+| IPv4 | TCP | 1/32/1200 | 9/9 | 93–95 |
+| IPv4 | UDP | 1/32/1200 | 9/9 | 51 |
+| IPv6 | TCP | 1/32/1200 | 9/9 | 82–87 |
+| IPv6 | UDP | 1/32/1200 | 9/9 | 42–43 |
+
+Raw machine-readable output: [`docs/data/vps-wan-baseline-2026-08-29.jsonl`](data/vps-wan-baseline-2026-08-29.jsonl). This is an authorized isolated observation, not a throughput result, broad reachability claim, interoperability claim, or production/security approval.
