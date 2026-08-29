@@ -1062,4 +1062,65 @@ mod runtime_tests {
             "{\"schema\":1,\"seq\":0,\"at_ms\":0,\"session\":9,\"stream\":null,\"kind\":\"session_opened\"}"
         );
     }
+
+    #[test]
+    fn virtual_clock_udp_death_preserves_order_after_tcp_recovery() {
+        let sim_limits = RuntimeLimits {
+            max_streams: 1,
+            max_queue_records: 8,
+            max_queue_bytes: 16,
+            max_total_bytes: 16,
+            max_record_bytes: 4,
+            idle_timeout_ms: 100,
+            close_timeout_ms: 10,
+        };
+        let mut sender = SessionRuntime::new(SessionId(41), sim_limits, 0).unwrap();
+        let mut receiver = SessionRuntime::new(SessionId(41), sim_limits, 0).unwrap();
+        sender.open_stream(StreamId(1), 0).unwrap();
+        receiver.open_stream(StreamId(1), 0).unwrap();
+        for n in 0..8u8 {
+            sender
+                .queue_send(StreamId(1), &[n], u64::from(n) + 1)
+                .unwrap();
+        }
+        let mut delivered = Vec::new();
+        for n in 0..8u8 {
+            let record = sender.pop_send(u64::from(n) + 10).unwrap().unwrap();
+            if n < 3 {
+                receiver
+                    .receive(
+                        InboundRecord {
+                            stream: record.stream,
+                            offset: record.offset,
+                            data: record.data,
+                        },
+                        20 + u64::from(n),
+                    )
+                    .unwrap();
+            }
+        }
+        for n in 3..8u8 {
+            receiver
+                .receive(
+                    InboundRecord {
+                        stream: StreamId(1),
+                        offset: u64::from(n),
+                        data: vec![n],
+                    },
+                    40 + u64::from(n),
+                )
+                .unwrap();
+        }
+        while let Some(r) = receiver.pop_receive(60).unwrap() {
+            delivered.extend(r.data);
+        }
+        assert_eq!(delivered, (0u8..8).collect::<Vec<_>>());
+        assert_eq!(
+            receiver
+                .observable_events()
+                .filter(|e| e.kind == RuntimeEventKind::DataReceived)
+                .count(),
+            8
+        );
+    }
 }
