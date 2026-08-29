@@ -1,4 +1,6 @@
 //! Bounded authenticated research probe runtime; never a proxy or tunnel.
+mod reachability;
+
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, ResumeGuard, TrustPolicy,
     TrustRecord, TrustStatus,
@@ -744,10 +746,45 @@ fn lab(args: &[String]) {
     }
 }
 
+fn matrix_probe(args: &[String]) -> ! {
+    let get = |key: &str| args.windows(2).find(|w| w[0] == key).map(|w| w[1].as_str());
+    let target: SocketAddr = get("--target")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| fail("missing or invalid --target"));
+    let transport = match get("--transport") {
+        Some("tcp") => reachability::Transport::Tcp,
+        Some("udp") => reachability::Transport::Udp,
+        _ => fail("--transport must be tcp or udp"),
+    };
+    let version = match get("--ip-version") {
+        Some("ipv4") => reachability::IpVersion::V4,
+        Some("ipv6") => reachability::IpVersion::V6,
+        _ => fail("--ip-version must be ipv4 or ipv6"),
+    };
+    let timeout = get("--timeout-ms")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(500);
+    let bytes = get("--bytes").and_then(|v| v.parse().ok()).unwrap_or(32);
+    let artifact = reachability::run(transport, version, target, timeout, bytes);
+    if json_mode(args) {
+        println!("{artifact}");
+    } else if artifact.contains("\"reachable\":true") {
+        println!("pass: 喵~！");
+    } else {
+        println!("fail: 喵呜呜呜呜…");
+    }
+    std::process::exit(if artifact.contains("\"reachable\":true") {
+        0
+    } else {
+        1
+    });
+}
+
 fn main() {
     let a: Vec<String> = env::args().skip(1).collect();
     match a.first().map(String::as_str) {
         Some("server") => server(&a),
+        Some("probe") if a.iter().any(|v| v == "--matrix") => matrix_probe(&a),
         Some("client") | Some("probe") => client(&a),
         Some("lab") => lab(&a),
         Some("failover") | Some("failover-server") | Some("failover-client") => failover_gate(&a),
