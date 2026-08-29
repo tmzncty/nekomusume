@@ -1,0 +1,55 @@
+{
+  "schema": "nekomusume.vps-environment.v1",
+  "captured_at": "2026-08-29",
+  "scope": "owned-vps-read-only",
+  "deidentified": true,
+  "host_identifiers_included": false,
+  "network_addresses_included": false,
+  "os": {"distribution": "Ubuntu", "version": "24.04.4 LTS"},
+  "kernel": {"release": "6.8.0-124-generic", "architecture": "x86_64", "clocksource": "kvm-clock"},
+  "compute": {"logical_cpus": 2, "cpu_model_family": "AMD EPYC 7K62", "ram_mib": 3723, "swap_mib": 1953},
+  "network": {
+    "primary_interface": "eth0",
+    "primary_mtu": 1500,
+    "ipv4_default_route": true,
+    "ipv6_default_route": true,
+    "ipv6_route_mtu": 1464,
+    "qdisc_root": "mq",
+    "qdisc_leaf": "fq_codel",
+    "tcp_congestion_control": "cubic",
+    "tcp_congestion_available": ["reno", "cubic"],
+    "ephemeral_port_range": [32768, 60999]
+  },
+  "socket_buffers": {
+    "core_rmem_default": 212992,
+    "core_rmem_max": 212992,
+    "core_wmem_default": 212992,
+    "core_wmem_max": 212992,
+    "tcp_rmem": [4096, 131072, 6291456],
+    "tcp_wmem": [4096, 16384, 4194304],
+    "udp_rmem_min": 4096,
+    "udp_wmem_min": 4096
+  },
+  "time": {"synchronized": true, "service": "chrony", "version": "4.5"},
+  "firewall": {
+    "nftables_ruleset": "empty-at-capture",
+    "iptables_backend": "nf_tables",
+    "iptables_policies": {"input": "ACCEPT", "forward": "ACCEPT", "output": "ACCEPT"},
+    "provider_firewall": "unknown"
+  },
+  "kernel_protocol_capability": {
+    "sctp": "absent",
+    "dccp": "module-configured-not-loaded",
+    "raw_socket": "existing-ipv6-kernel-socket-observed-no-capability-escalation"
+  },
+  "tooling": {
+    "rustc": "1.75.0",
+    "cargo": "1.75.0",
+    "iproute2": "6.1",
+    "nftables": "1.0.9",
+    "iptables": "1.8.10",
+    "ethtool": "6.7"
+  },
+  "installed_experiment_software": {"nekomusume": false, "hysteria2": false},
+  "capture_safety": {"listeners_started": false, "network_experiment_run": false, "secrets_recorded": false}
+}
