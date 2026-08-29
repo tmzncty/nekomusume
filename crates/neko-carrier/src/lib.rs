@@ -2288,6 +2288,41 @@ mod manager_tests {
         assert_eq!(m.switches, 2);
     }
     #[test]
+    fn changing_best_path_does_not_accumulate_hold_across_candidates() {
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 3,
+            switch_margin: 0,
+            max_paths: 3,
+        })
+        .unwrap();
+        for (path, rtt) in [(PathId(1), 100), (PathId(2), 200), (PathId(3), 300)] {
+            m.observe(
+                path,
+                HealthSample {
+                    rtt_us: rtt,
+                    loss_per_mille: 0,
+                    pto: 0,
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(m.choose(), Some(PathId(1)));
+        for (path, rtt) in [(PathId(2), 10), (PathId(3), 1), (PathId(2), 0)] {
+            m.observe(
+                path,
+                HealthSample {
+                    rtt_us: rtt,
+                    loss_per_mille: 0,
+                    pto: 0,
+                },
+            )
+            .unwrap();
+            assert_eq!(m.choose(), Some(PathId(1)));
+        }
+        assert_eq!(m.switches, 1);
+    }
+
+    #[test]
     fn migration_back_requires_validation_generation_health_margin_and_hold() {
         let mut m = CarrierManager::new(ManagerLimits {
             min_hold_events: 2,
