@@ -24,8 +24,8 @@
 | benchmark-fixture | deterministic and privileged isolated benchmark harness | candidate | `scripts/bench/run-netns.sh` | Cleanup-safe netns/veth/netem matrix plus machine-readable summaries; no WAN/HY2 result or performance superiority claim |
 | concurrent-multipath | concurrent UDP+TCP and heterogeneous aggregation gate | candidate | `docs/spec/m4-concurrent-multipath-gate.md` | Explicitly disabled pending DSN/reordering/congestion-coupling design and controlled benefit evidence; no striping |
 | manager | bounded multi-stream scheduler and Carrier Manager | candidate | `crates/neko-carrier/src/lib.rs` | Fair round-robin, stream/session limits, health score, hysteresis and validated migration-back gate tests; no production manager |
-| live-tcp | TCP carrier and resume | candidate | `crates/neko-carrier/tests/tcp_failover.rs` | Encrypted loopback UDP-blackhole recovery over bounded TCP framing with DataId dedup and metrics; no public/production listener |
-| reachability | probe / public-network experiments | blocked | `ROADMAP.md` | Explicitly out of scope; no public exposure |
+| live-tcp | TCP carrier and resume | candidate | `crates/neko-carrier/src/lib.rs` | Encrypted loopback and isolated VPS IPv4 TCP/UDP authenticated echo; failover remains loopback candidate; no production listener |
+| reachability | bounded probe / public-network experiments | blocked | `docs/vps-experiment-2026-08-29.md` | Only isolated authorized observation is permitted; broader WAN, scanning, public exposure and production claims remain blocked; no public listener |
 | production | production deployment/readiness | blocked | `docs/spec/m5-release-readiness-gate.md` | Research-only repository; WAN/reachability, independent review and release evidence absent; no production or security approval |
 
 ## Status vocabulary

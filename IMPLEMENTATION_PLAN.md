@@ -29,7 +29,7 @@ M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session
 - [x] 单个双向 stream
 - [x] CLOSE
 - [x] 本机 loopback 稳定回显；QEMU / 局域网待独立授权实验
-- [ ] VPS 真实 WAN 基础连通
+- [x] VPS 真实 WAN 基础连通（IPv4 TCP/UDP authenticated echo；IPv6 基础路由与端口已验证）
 
 ## Milestone 2 — UDP reliable packet engine
 
@@ -92,7 +92,7 @@ M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session
 
 Linux server <-> VPS：
 
-- [ ] UDP 正常路径
+- [x] UDP 正常路径（single authenticated echo）
 - [ ] UDP 退化 / TCP fallback
 - [ ] 长连接稳定性
 - [ ] NAT / endpoint change（条件允许时）
@@ -105,8 +105,8 @@ Linux server <-> VPS：
 
 第一批候选：
 
-- [ ] TCP IPv4 / IPv6
-- [ ] UDP IPv4 / IPv6
+- [x] TCP IPv4 / IPv6（bounded probe）
+- [x] UDP IPv4 / IPv6（bounded probe）
 - [ ] ICMP Echo / ICMPv6 Echo
 - [ ] SCTP
 - [ ] DCCP
