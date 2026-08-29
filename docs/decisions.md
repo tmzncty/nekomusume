@@ -755,3 +755,14 @@ Failover regression now covers `DataId(u64::MAX)`, exact duplicate/conflict
 behavior, missing confirmation, wrong-carrier resend, saturated PTO counters,
 and recovery timestamps near `u64::MAX`. Rejections remain atomic. No public
 listener, production failover or Session-delivery claim is introduced.
+
+
+## 2026-08-29 — D050：Bounded-local candidate work is closed out
+
+**Status: Research closeout — blocked gates unchanged**
+
+All currently executable DATA5/local-loopback candidate audits have completed.
+The durable capability and blocker ledger is
+[`docs/bounded-local-closeout-2026-08-29.md`](bounded-local-closeout-2026-08-29.md).
+This closeout does not authorize WAN/public listeners, production deployment,
+security approval, protocol freeze, 0-RTT, FEC activation or multipath.
