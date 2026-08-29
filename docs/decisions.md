@@ -745,3 +745,13 @@ AEAD open and replay-window mutation. A regression proves a 1201-byte payload
 record is rejected by the unreliable policy without consuming its sequence; the
 generic bounded record path remains independently testable. Context binding and
 replay semantics are unchanged for accepted datagrams.
+
+
+## 2026-08-29 — D049：Failover uncertain state remains bounded at edges
+
+**Status: Candidate test hardening — loopback only**
+
+Failover regression now covers `DataId(u64::MAX)`, exact duplicate/conflict
+behavior, missing confirmation, wrong-carrier resend, saturated PTO counters,
+and recovery timestamps near `u64::MAX`. Rejections remain atomic. No public
+listener, production failover or Session-delivery claim is introduced.

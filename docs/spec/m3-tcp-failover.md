@@ -33,3 +33,11 @@ exceeding the active path by the configured margin. A minimum hold count is
 required before commit. Old/mismatched generations, unvalidated, unhealthy,
 low-margin, and early candidates do not mutate active path, switch metrics, or
 Session evidence.
+
+
+## Uncertain-state edge audit
+
+Uncertain entries are keyed by `DataId`; exact duplicate tracking is idempotent,
+conflicting payloads are rejected, and failed capacity/confirmation operations
+do not mutate the ledger. Counter increments saturate, and recovery latency uses
+checked subtraction so timestamps near `u64::MAX` remain deterministic.

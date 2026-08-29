@@ -1274,6 +1274,26 @@ mod tcp_failover_tests {
         assert_eq!(f.metrics.duplicate_bytes, 3);
     }
     #[test]
+    fn uncertain_duplicate_and_counter_boundaries_are_atomic() {
+        let mut f = FailoverController::new(u32::MAX, 2, 4).unwrap();
+        f.track_uncertain(DataId(u64::MAX), b"cat").unwrap();
+        assert_eq!(f.track_uncertain(DataId(u64::MAX), b"cat"), Ok(()));
+        assert_eq!(
+            f.track_uncertain(DataId(u64::MAX), b"dog"),
+            Err(FailoverError::Conflict)
+        );
+        assert_eq!(f.confirm(DataId(7)), Err(FailoverError::NotFound));
+        assert_eq!(f.tcp_resend(), Err(FailoverError::WrongCarrier));
+        assert!(!f.udp_pto_at(u64::MAX));
+        assert_eq!(f.active(), ActiveCarrier::Udp);
+        // The second PTO reaches the configured threshold without wrapping counters.
+        let mut g = FailoverController::new(2, 1, 1).unwrap();
+        assert!(!g.udp_pto_at(u64::MAX - 1));
+        assert!(g.udp_pto_at(u64::MAX));
+        assert_eq!(g.metrics.last_recovery_latency_us, Some(1));
+    }
+
+    #[test]
     fn recovery_latency_is_monotonic_and_bounded() {
         let mut f = FailoverController::new(2, 1, 8).unwrap();
         assert!(!f.udp_pto_at(10_000));
