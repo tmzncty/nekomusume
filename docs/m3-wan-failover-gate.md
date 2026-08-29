@@ -23,3 +23,22 @@ loopback process-level test before any authorized isolated WAN observation.
 
 No proxy, tunnel, 0-RTT, concurrent multipath, public listener, or WAN test is
 enabled by this gate.
+
+## Process boundary wire (candidate)
+
+`neko-session::ProcessMessage` is the socket-free seam for a future runner.
+Frames are capped at `PROCESS_FRAME_MAX = 4096` bytes and use the fixed `NK`
+magic plus version `1`. The candidate message set is:
+
+- `Data`: logical Session ID, stream, byte offset, and bounded payload;
+- `Resume`: logical Session ID plus delivery/key/path generation, expiry, and
+  opaque resume token;
+- `DeliveryAck`: logical Session ID, stream, offset, and acknowledged length.
+
+Encoding and decoding are exact-length and fail closed on truncation, unknown
+version/type, overflow, empty data, or frames above the cap. This protocol is
+only an in-process/test boundary today; it does not open sockets, bind WAN
+listeners, or claim cross-process failover. A Carrier runner must authenticate
+transport records separately, validate the resume claim with `ResumeGuard`, and
+feed decoded data/ACKs into the same `SessionRuntime` instance before any WAN
+experiment is reconsidered.

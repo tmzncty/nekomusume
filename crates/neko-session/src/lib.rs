@@ -644,6 +644,160 @@ pub struct InboundRecord {
     pub offset: u64,
     pub data: Vec<u8>,
 }
+/// Socket-free process-boundary messages used by a Carrier runner. The
+/// process owns framing/transport; SessionRuntime consumes only these bounded
+/// records and therefore never needs a socket or address type.
+pub const PROCESS_FRAME_MAX: usize = 4096;
+const PROCESS_MAGIC: [u8; 2] = *b"NK";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumeWireBinding {
+    pub session_id: SessionId,
+    pub delivery_epoch: u64,
+    pub key_phase: u8,
+    pub path_generation: u64,
+    pub expires_at_ms: u64,
+    pub token: [u8; 32],
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessMessage {
+    Data {
+        session: SessionId,
+        record: OutboundRecord,
+    },
+    DeliveryAck {
+        session: SessionId,
+        stream: StreamId,
+        offset: u64,
+        len: usize,
+    },
+    Resume {
+        binding: ResumeWireBinding,
+    },
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessCodecError {
+    TooLarge,
+    Malformed,
+    LengthOverflow,
+}
+
+impl ProcessMessage {
+    pub fn encode(&self) -> Result<Vec<u8>, ProcessCodecError> {
+        let mut out = Vec::with_capacity(PROCESS_FRAME_MAX.min(128));
+        out.extend_from_slice(&PROCESS_MAGIC);
+        out.push(1);
+        match self {
+            Self::Data { session, record } => {
+                if record.data.is_empty() || record.data.len() > u16::MAX as usize {
+                    return Err(ProcessCodecError::TooLarge);
+                }
+                out.push(1);
+                out.extend_from_slice(&session.0.to_be_bytes());
+                out.extend_from_slice(&record.stream.0.to_be_bytes());
+                out.extend_from_slice(&record.offset.to_be_bytes());
+                out.extend_from_slice(&(record.data.len() as u16).to_be_bytes());
+                out.extend_from_slice(&record.data);
+            }
+            Self::DeliveryAck {
+                session,
+                stream,
+                offset,
+                len,
+            } => {
+                let len = u64::try_from(*len).map_err(|_| ProcessCodecError::LengthOverflow)?;
+                out.push(2);
+                out.extend_from_slice(&session.0.to_be_bytes());
+                out.extend_from_slice(&stream.0.to_be_bytes());
+                out.extend_from_slice(&offset.to_be_bytes());
+                out.extend_from_slice(&len.to_be_bytes());
+            }
+            Self::Resume { binding } => {
+                out.push(3);
+                out.extend_from_slice(&binding.session_id.0.to_be_bytes());
+                out.extend_from_slice(&binding.delivery_epoch.to_be_bytes());
+                out.push(binding.key_phase);
+                out.extend_from_slice(&binding.path_generation.to_be_bytes());
+                out.extend_from_slice(&binding.expires_at_ms.to_be_bytes());
+                out.extend_from_slice(&binding.token);
+            }
+        }
+        if out.len() > PROCESS_FRAME_MAX {
+            return Err(ProcessCodecError::TooLarge);
+        }
+        Ok(out)
+    }
+    pub fn decode(input: &[u8]) -> Result<Self, ProcessCodecError> {
+        if input.len() < 4
+            || input.len() > PROCESS_FRAME_MAX
+            || input[..2] != PROCESS_MAGIC
+            || input[2] != 1
+        {
+            return Err(ProcessCodecError::Malformed);
+        }
+        let kind = input[3];
+        let u64_at = |at: usize| -> Result<u64, ProcessCodecError> {
+            input
+                .get(at..at + 8)
+                .and_then(|x| x.try_into().ok())
+                .map(u64::from_be_bytes)
+                .ok_or(ProcessCodecError::Malformed)
+        };
+        match kind {
+            1 => {
+                let len = input
+                    .get(28..30)
+                    .and_then(|x| x.try_into().ok())
+                    .map(u16::from_be_bytes)
+                    .ok_or(ProcessCodecError::Malformed)? as usize;
+                if len == 0 || input.len() != 30 + len {
+                    return Err(ProcessCodecError::Malformed);
+                }
+                Ok(Self::Data {
+                    session: SessionId(u64_at(4)?),
+                    record: OutboundRecord {
+                        stream: StreamId(u64_at(12)?),
+                        offset: u64_at(20)?,
+                        data: input[30..].to_vec(),
+                    },
+                })
+            }
+            2 => {
+                if input.len() != 36 {
+                    return Err(ProcessCodecError::Malformed);
+                }
+                let len =
+                    usize::try_from(u64_at(28)?).map_err(|_| ProcessCodecError::LengthOverflow)?;
+                Ok(Self::DeliveryAck {
+                    session: SessionId(u64_at(4)?),
+                    stream: StreamId(u64_at(12)?),
+                    offset: u64_at(20)?,
+                    len,
+                })
+            }
+            3 => {
+                if input.len() != 69 {
+                    return Err(ProcessCodecError::Malformed);
+                }
+                let token: [u8; 32] = input[37..69]
+                    .try_into()
+                    .map_err(|_| ProcessCodecError::Malformed)?;
+                Ok(Self::Resume {
+                    binding: ResumeWireBinding {
+                        session_id: SessionId(u64_at(4)?),
+                        delivery_epoch: u64_at(12)?,
+                        key_phase: input[20],
+                        path_generation: u64_at(21)?,
+                        expires_at_ms: u64_at(29)?,
+                        token,
+                    },
+                })
+            }
+            _ => Err(ProcessCodecError::Malformed),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeEventKind {
     SessionOpened,
@@ -1030,6 +1184,64 @@ impl SessionRuntime {
             stream: None,
             kind: e.kind,
         })
+    }
+}
+
+#[cfg(test)]
+mod process_boundary_tests {
+    use super::*;
+    #[test]
+    fn bounded_process_messages_roundtrip_identity_resume_data_and_ack() {
+        let data = ProcessMessage::Data {
+            session: SessionId(9),
+            record: OutboundRecord {
+                stream: StreamId(1),
+                offset: 4,
+                data: b"abc".to_vec(),
+            },
+        };
+        assert_eq!(ProcessMessage::decode(&data.encode().unwrap()), Ok(data));
+        let ack = ProcessMessage::DeliveryAck {
+            session: SessionId(9),
+            stream: StreamId(1),
+            offset: 4,
+            len: 3,
+        };
+        assert_eq!(ProcessMessage::decode(&ack.encode().unwrap()), Ok(ack));
+        let resume = ProcessMessage::Resume {
+            binding: ResumeWireBinding {
+                session_id: SessionId(9),
+                delivery_epoch: 1,
+                key_phase: 0,
+                path_generation: 2,
+                expires_at_ms: 99,
+                token: [7; 32],
+            },
+        };
+        assert_eq!(
+            ProcessMessage::decode(&resume.encode().unwrap()),
+            Ok(resume)
+        );
+    }
+    #[test]
+    fn process_boundary_rejects_truncation_unknown_version_and_oversize() {
+        assert_eq!(
+            ProcessMessage::decode(b"NK\x01\x01"),
+            Err(ProcessCodecError::Malformed)
+        );
+        assert_eq!(
+            ProcessMessage::decode(b"NK\x02\x01"),
+            Err(ProcessCodecError::Malformed)
+        );
+        let msg = ProcessMessage::Data {
+            session: SessionId(1),
+            record: OutboundRecord {
+                stream: StreamId(1),
+                offset: 0,
+                data: vec![1; PROCESS_FRAME_MAX],
+            },
+        };
+        assert_eq!(msg.encode(), Err(ProcessCodecError::TooLarge));
     }
 }
 
