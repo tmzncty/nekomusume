@@ -719,6 +719,24 @@ impl SessionRuntime {
     pub fn state(&self) -> RuntimeState {
         self.state
     }
+    pub fn queued_bytes(&self) -> usize {
+        self.queued_bytes
+    }
+    pub fn queued_records(&self) -> usize {
+        self.send.len() + self.recv.len()
+    }
+    pub fn total_bytes(&self) -> usize {
+        self.total_bytes
+    }
+    pub fn close_remote(&mut self, now_ms: u64) -> Result<(), RuntimeError> {
+        self.check(now_ms)?;
+        self.state = RuntimeState::Closed;
+        self.send.clear();
+        self.recv.clear();
+        self.queued_bytes = 0;
+        self.event(now_ms, RuntimeEventKind::SessionClosed);
+        Ok(())
+    }
     pub fn events(&self) -> impl Iterator<Item = &RuntimeEvent> {
         self.events.iter()
     }
@@ -919,6 +937,35 @@ pub struct ObservableEvent {
     pub stream: Option<StreamId>,
     pub kind: RuntimeEventKind,
 }
+impl RuntimeEventKind {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::SessionOpened => "session_opened",
+            Self::StreamOpened => "stream_opened",
+            Self::DataQueued => "data_queued",
+            Self::DataReceived => "data_received",
+            Self::StreamClosed => "stream_closed",
+            Self::CloseSent => "close_sent",
+            Self::SessionClosed => "session_closed",
+            Self::Error => "error",
+        }
+    }
+}
+impl ObservableEvent {
+    /// Stable JSON-lines representation shared by lab/WAN adapters.
+    pub fn to_json_line(self) -> String {
+        format!(
+            "{{\"schema\":{},\"seq\":{},\"at_ms\":{},\"session\":{},\"stream\":{},\"kind\":\"{}\"}}",
+            self.schema,
+            self.seq,
+            self.at_ms,
+            self.session.0,
+            self.stream
+                .map_or_else(|| "null".to_string(), |x| x.0.to_string()),
+            self.kind.name()
+        )
+    }
+}
 impl SessionRuntime {
     pub fn observable_events(&self) -> impl Iterator<Item = ObservableEvent> + '_ {
         self.events.iter().map(move |e| ObservableEvent {
@@ -1001,6 +1048,18 @@ mod runtime_tests {
         assert_eq!(
             r.queue_send(StreamId(1), b"x", 12),
             Err(RuntimeError::Terminal)
+        );
+    }
+    #[test]
+    fn observable_event_json_is_stable_and_monotonic() {
+        let mut r = SessionRuntime::new(SessionId(9), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 1).unwrap();
+        let e: Vec<_> = r.observable_events().collect();
+        assert_eq!(e[0].seq, 0);
+        assert_eq!(e[1].seq, 1);
+        assert_eq!(
+            e[0].to_json_line(),
+            "{\"schema\":1,\"seq\":0,\"at_ms\":0,\"session\":9,\"stream\":null,\"kind\":\"session_opened\"}"
         );
     }
 }
