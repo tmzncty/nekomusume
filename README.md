@@ -26,7 +26,7 @@ Hysteria2 仍然是重要 benchmark competitor，但“超过 HY2”不是项目
 
 ## 当前状态
 
-**Research bootstrap / pre-Milestone 0**。权威状态表见 [`docs/status.md`](docs/status.md)；其中 `implemented` 仅表示仓库证据存在，不表示安全、协议冻结或生产就绪。
+**Research bootstrap / pre-Milestone 0**。权威状态表见 [`docs/status.md`](docs/status.md)；其中 `implemented` 仅表示仓库证据存在，不表示安全、协议冻结、互操作或生产就绪。当前发布门禁见 [`docs/spec/m5-release-readiness-gate.md`](docs/spec/m5-release-readiness-gate.md)，仍为 blocked。
 
 已形成的主要方向：
 

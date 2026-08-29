@@ -1,6 +1,6 @@
 # Carrier-agnostic Session Architecture
 
-> Status: design direction, not a frozen wire specification.
+> Status: design direction, not a frozen wire specification or release approval. Public/WAN and production use remain blocked; see [`docs/spec/m5-release-readiness-gate.md`](spec/m5-release-readiness-gate.md).
 >
 > 本文记录 2026-08-26 讨论后形成的新架构方向。它高于早期 `design-handoff.md` 中的“UDP + 自定义可靠传输”建议基线；后者仍保留为历史设计输入，但 UDP 不再定义猫娘本身。
 
