@@ -778,3 +778,15 @@ for one authenticated encrypted echo over TCP or UDP. Ports are restricted to
 handles one exchange before exiting. It has no proxy/tunnel behavior, no routing
 changes, no system service and no production claim. Public validation remains
 experimental and must use the isolated `neko-test` VPS only.
+
+
+## 2026-08-29 — D052：Dedicated VPS single-exchange probe evidence
+
+**Status: Candidate WAN observation — not release evidence**
+
+On the isolated `neko-test` VPS, the bounded candidate binary completed one
+authenticated encrypted IPv4 TCP echo on port 40080 and one IPv4 UDP echo on
+port 40081 from the controlled client. The server was stopped and cleaned after
+each exchange. No global IPv6 endpoint was present, and no IPv6 positive claim
+was made. Results and limits are recorded in
+[`docs/vps-experiment-2026-08-29.md`](vps-experiment-2026-08-29.md).
