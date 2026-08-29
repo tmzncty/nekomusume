@@ -669,3 +669,15 @@ exist, remain `blocked`, and retain explicit prohibitions. An isolated mutation
 regression proves accidental unblocking and unsafe release wording fail closed.
 This guards the research-only boundary without probing networks or changing any
 protocol behavior.
+
+
+## 2026-08-29 — D042：Roadmap and executable plan markers are synchronized
+
+**Status: Accepted repository-harness hardening — no protocol change**
+
+The full checker now compares the completion markers for shared experimental
+gates in `ROADMAP.md` and `IMPLEMENTATION_PLAN.md`: PLPMTUD, FEC, unreliable
+datagrams, key update, 0-RTT, concurrent UDP/TCP and heterogeneous aggregation.
+An isolated mutation regression proves marker drift fails closed. This prevents
+planning documents from silently overstating or understating the same candidate
+without enabling any blocked feature.
