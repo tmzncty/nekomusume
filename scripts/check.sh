@@ -15,6 +15,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 
 # Keep repository policy checks in one place for local and CI parity.
 bash scripts/check-governance-status.sh
+bash scripts/check-status-evidence.sh
 test -f docs/specs/nekomusume-session-v0.md
 test -f LICENSE-MIT
 test -f LICENSE-APACHE
