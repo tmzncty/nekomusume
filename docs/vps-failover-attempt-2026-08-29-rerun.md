@@ -31,3 +31,7 @@ Unlike the earlier attempt, this run is validly serialized and therefore is evid
 After the client ended, the VPS server was terminated and waited for. A final `ss` check found no listener on TCP `40080` or UDP `40081`; no test process remained. Temporary binary, identities, logs and runtime directories were removed from both hosts. No firewall changes were made.
 
 Further WAN retries require fresh explicit authorization.
+
+## Frozen WAN evidence boundary
+
+This evidence is frozen: candidate `125bbcf` failed during the UDP handshake and never entered an established-session failover transition. No automatic WAN retry was performed or enabled. Any future WAN attempt requires fresh explicit authorization; this worktree adds diagnostics only and does not touch public WAN.

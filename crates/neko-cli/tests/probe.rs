@@ -172,3 +172,37 @@ fn executable_loopback_udp_blackhole_tcp_resume() {
     );
     assert!(String::from_utf8_lossy(&out.stdout).contains("udp_blackhole=true"));
 }
+
+#[test]
+fn failover_udp_handshake_timeout_reports_last_success_stage() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let dir = tmp("failover-timeout");
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--json",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            "40099",
+            "--tcp-port",
+            "40100",
+            "--server-key",
+            &"00".repeat(32),
+            "--identity",
+            dir.to_str().unwrap(),
+            "--duration",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success());
+    assert!(stdout.contains(r#""stage":"udp_bind""#));
+    assert!(stdout.contains(r#""stage":"client_hello_sent""#));
+    assert!(
+        stdout.contains(r#""stage":"timeout","last_success_stage":"client_hello_sent""#),
+        "{stdout}"
+    );
+    let _ = fs::remove_file(dir);
+}

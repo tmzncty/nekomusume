@@ -42,6 +42,37 @@ fn fail(msg: &str) -> ! {
     eprintln!("neko: {msg}");
     std::process::exit(2)
 }
+#[derive(Clone, Copy)]
+struct HandshakeDiagnostics {
+    role: &'static str,
+    last_success: &'static str,
+}
+impl HandshakeDiagnostics {
+    fn new(role: &'static str) -> Self {
+        Self {
+            role,
+            last_success: "none",
+        }
+    }
+    fn event(&mut self, args: &[String], stage: &'static str) {
+        self.last_success = stage;
+        if json_mode(args) {
+            println!(
+                "{{\"ok\":true,\"subsystem\":\"udp_handshake\",\"role\":\"{}\",\"stage\":\"{}\",\"last_success_stage\":\"{}\"}}",
+                self.role, stage, self.last_success
+            );
+        }
+    }
+    fn timeout(&self, args: &[String]) {
+        if json_mode(args) {
+            println!(
+                "{{\"ok\":false,\"subsystem\":\"udp_handshake\",\"role\":\"{}\",\"stage\":\"timeout\",\"last_success_stage\":\"{}\"}}",
+                self.role, self.last_success
+            );
+        }
+    }
+}
+
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -355,6 +386,7 @@ fn runtime_limits(bytes: usize, count: usize) -> RuntimeLimits {
 }
 #[allow(clippy::collapsible_if, clippy::collapsible_match)]
 fn failover_server(args: &[String]) {
+    let mut diag = HandshakeDiagnostics::new("server");
     let count = exchange_count(args);
     let (_t, _p, bytes, duration) = (
         "failover",
@@ -410,6 +442,7 @@ fn failover_server(args: &[String]) {
     udp.set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap();
     tcp.set_nonblocking(true).unwrap();
+    diag.event(args, "udp_bind");
     let started = Instant::now();
     let mut buf = [0u8; 65536];
     let mut secure = None;
@@ -420,6 +453,7 @@ fn failover_server(args: &[String]) {
     while started.elapsed() < duration {
         if secure.is_none() {
             if let Ok((n, peer)) = udp.recv_from(&mut buf) {
+                diag.event(args, "server_hello_received");
                 let (resp, ss, remote, binding) =
                     ResponderHandshake::new(&id, policy.clone(), DOMAIN)
                         .unwrap()
@@ -429,6 +463,7 @@ fn failover_server(args: &[String]) {
                         })
                         .unwrap_or_else(|_| fail("unauthorized UDP handshake"));
                 udp.send_to(&resp, peer).unwrap();
+                diag.event(args, "server_response_sent");
                 guard = Some(ResumeGuard::new(&remote, &binding).unwrap());
                 secure = Some((ss, peer));
             }
@@ -436,6 +471,8 @@ fn failover_server(args: &[String]) {
         if let Some((ref mut ss, peer)) = secure {
             if let Ok((n, _)) = udp.recv_from(&mut buf) {
                 if let Ok(plain) = ss.open_unreliable(&buf[..n]) {
+                    diag.event(args, "client_response_received");
+                    diag.event(args, "authenticated");
                     if let Ok(ProcessMessage::Data { session, record }) =
                         ProcessMessage::decode(&plain)
                     {
@@ -526,9 +563,11 @@ fn failover_server(args: &[String]) {
             }
         }
     }
+    diag.timeout(args);
     fail("failover timeout")
 }
 fn failover_client(args: &[String]) {
+    let mut diag = HandshakeDiagnostics::new("client");
     let count = exchange_count(args);
     let bytes = parse(args, "--bytes", Some("32"))
         .parse::<usize>()
@@ -562,14 +601,17 @@ fn failover_client(args: &[String]) {
     let first = hs.first_message().unwrap();
     let target = format!("{addr}:{up}");
     let u = UdpSocket::bind("0.0.0.0:0").unwrap();
+    diag.event(args, "udp_bind");
     u.set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap();
     let mut buf = [0u8; 65536];
     let mut handshake = None;
     for _ in 0..20 {
         u.send_to(&first, &target).unwrap();
+        diag.event(args, "client_hello_sent");
         match u.recv_from(&mut buf) {
             Ok((n, _)) => {
+                diag.event(args, "server_hello_received");
                 handshake = Some(n);
                 break;
             }
@@ -582,7 +624,13 @@ fn failover_client(args: &[String]) {
             Err(_) => fail("UDP handshake receive failed"),
         }
     }
-    let n = handshake.unwrap_or_else(|| fail("UDP handshake timeout"));
+    let n = match handshake {
+        Some(n) => n,
+        None => {
+            diag.timeout(args);
+            fail("UDP handshake timeout")
+        }
+    };
     let mut us = hs.finish(&buf[..n], context(1)).unwrap();
     let payload = vec![b'x'; bytes];
     let mut records = Vec::new();
@@ -599,6 +647,7 @@ fn failover_client(args: &[String]) {
         .unwrap();
         records.push(msg);
     }
+    diag.event(args, "authenticated");
     let rec = us.seal_unreliable(&records[0]).unwrap();
     u.send_to(&rec, &target).unwrap();
     let _ = u.recv_from(&mut buf);
