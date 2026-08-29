@@ -1649,7 +1649,11 @@ pub struct FairScheduler {
     session_bytes: usize,
     cursor: usize,
     order: Vec<StreamId>,
+    consecutive_interactive: usize,
 }
+
+/// Bound interactive work ahead of bulk work deterministically.
+const INTERACTIVE_BURST: usize = 3;
 impl FairScheduler {
     pub fn new(limits: FlowLimits) -> Result<Self, FlowError> {
         if limits.max_streams == 0 || limits.max_session_bytes == 0 || limits.max_stream_bytes == 0
@@ -1662,6 +1666,7 @@ impl FairScheduler {
             session_bytes: 0,
             cursor: 0,
             order: Vec::new(),
+            consecutive_interactive: 0,
         })
     }
     pub fn open(&mut self, id: StreamId, priority: StreamPriority) -> Result<(), FlowError> {
@@ -1712,18 +1717,33 @@ impl FairScheduler {
         if self.order.is_empty() {
             return None;
         }
-        for _ in 0..self.order.len() {
-            let id = self.order[self.cursor % self.order.len()];
-            self.cursor = (self.cursor + 1) % self.order.len();
-            if let Some(s) = self.streams.get_mut(&id)
-                && let Some(data) = s.queue.pop_front()
-            {
-                s.queued_bytes -= data.len();
-                self.session_bytes -= data.len();
-                return Some((id, data));
-            }
+        let start = self.cursor % self.order.len();
+        let find = |priority: Option<StreamPriority>| {
+            (0..self.order.len()).find_map(|offset| {
+                let index = (start + offset) % self.order.len();
+                let stream = self.streams.get(&self.order[index])?;
+                (stream.queued_bytes > 0 && priority.is_none_or(|p| p == stream.priority))
+                    .then_some(index)
+            })
+        };
+        let preferred = if self.consecutive_interactive < INTERACTIVE_BURST {
+            StreamPriority::Interactive
+        } else {
+            StreamPriority::Bulk
+        };
+        let index = find(Some(preferred)).or_else(|| find(None))?;
+        let id = self.order[index];
+        self.cursor = (index + 1) % self.order.len();
+        let stream = self.streams.get_mut(&id)?;
+        let data = stream.queue.pop_front()?;
+        stream.queued_bytes -= data.len();
+        self.session_bytes -= data.len();
+        if stream.priority == StreamPriority::Interactive {
+            self.consecutive_interactive += 1;
+        } else {
+            self.consecutive_interactive = 0;
         }
-        None
+        Some((id, data))
     }
     pub fn snapshots(&self) -> impl Iterator<Item = StreamSnapshot> + '_ {
         self.streams.iter().map(|(id, s)| StreamSnapshot {
@@ -1936,6 +1956,40 @@ mod manager_tests {
         let first = (0..3).filter_map(|_| s.next_frame()).collect::<Vec<_>>();
         assert!(first.iter().any(|(id, _)| *id == StreamId(2)));
     }
+    #[test]
+    fn interactive_burst_is_bounded_and_order_is_repeatable() {
+        fn sequence() -> Vec<StreamId> {
+            let mut s = FairScheduler::new(FlowLimits {
+                max_streams: 2,
+                max_session_bytes: 64,
+                max_stream_bytes: 64,
+            })
+            .unwrap();
+            s.open(StreamId(10), StreamPriority::Interactive).unwrap();
+            s.open(StreamId(20), StreamPriority::Bulk).unwrap();
+            for _ in 0..4 {
+                s.enqueue(StreamId(10), b"i").unwrap();
+                s.enqueue(StreamId(20), b"b").unwrap();
+            }
+            (0..8)
+                .filter_map(|_| s.next_frame().map(|(id, _)| id))
+                .collect()
+        }
+
+        let expected = vec![
+            StreamId(10),
+            StreamId(10),
+            StreamId(10),
+            StreamId(20),
+            StreamId(10),
+            StreamId(20),
+            StreamId(20),
+            StreamId(20),
+        ];
+        assert_eq!(sequence(), expected);
+        assert_eq!(sequence(), expected);
+    }
+
     #[test]
     fn flow_limits_are_atomic() {
         let mut s = FairScheduler::new(FlowLimits {
