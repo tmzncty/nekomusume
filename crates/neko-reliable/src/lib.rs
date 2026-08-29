@@ -371,6 +371,90 @@ pub struct SimulationResult {
     pub rounds: u64,
 }
 
+/// Monotonic socket-free clock used by deterministic acceptance tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct VirtualClock {
+    now_us: u64,
+}
+impl VirtualClock {
+    pub const fn new() -> Self {
+        Self { now_us: 0 }
+    }
+    pub const fn now_us(self) -> u64 {
+        self.now_us
+    }
+    pub fn advance(&mut self, delta_us: u64) -> Result<u64, Error> {
+        self.now_us = self.now_us.checked_add(delta_us).ok_or(Error::Arithmetic)?;
+        Ok(self.now_us)
+    }
+}
+
+/// Deterministic loss, burst, reorder and blackhole faults for local recovery tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FaultProfile {
+    pub drop_every: u64,
+    pub burst_start: u64,
+    pub burst_len: u64,
+    pub reorder: bool,
+    pub blackhole: bool,
+}
+pub fn simulate_fault_profile(
+    total_frames: u64,
+    profile: FaultProfile,
+) -> Result<SimulationResult, Error> {
+    if total_frames == 0 || total_frames > 100_000 {
+        return Err(Error::InvalidLimit);
+    }
+    let mut clock = VirtualClock::new();
+    let mut pending: Vec<u64> = (0..total_frames).collect();
+    let mut delivered = BTreeSet::new();
+    let mut sent = 0;
+    let mut retransmitted = 0;
+    let mut rounds = 0;
+    while !pending.is_empty() {
+        rounds = rounds.checked_add(1).ok_or(Error::Arithmetic)?;
+        if rounds > total_frames.saturating_add(2) {
+            return Err(Error::Capacity);
+        }
+        let current = std::mem::take(&mut pending);
+        let mut arrivals = Vec::new();
+        for frame in current {
+            sent = sent.checked_add(1).ok_or(Error::Arithmetic)?;
+            let first = !delivered.contains(&frame);
+            let burst = profile.burst_len > 0
+                && frame >= profile.burst_start
+                && frame < profile.burst_start.saturating_add(profile.burst_len);
+            if profile.blackhole
+                || (first
+                    && (burst
+                        || (profile.drop_every != 0 && (frame + 1) % profile.drop_every == 0)))
+            {
+                if !profile.blackhole {
+                    pending.push(frame);
+                }
+                continue;
+            }
+            if !first {
+                retransmitted = retransmitted.checked_add(1).ok_or(Error::Arithmetic)?;
+            }
+            arrivals.push(frame);
+        }
+        if profile.reorder {
+            arrivals.reverse();
+        }
+        for frame in arrivals {
+            delivered.insert(frame);
+        }
+        clock.advance(1)?;
+    }
+    Ok(SimulationResult {
+        sent,
+        delivered: delivered.len() as u64,
+        retransmitted,
+        rounds,
+    })
+}
+
 /// Deterministic frame-delivery simulation used for bounded loss/reorder tests.
 /// `drop_every=0` means no loss; otherwise every Nth first transmission is lost.
 pub fn simulate_delivery(
@@ -536,6 +620,34 @@ mod tests {
         assert_eq!(r.pto_count, 1);
     }
     #[test]
+    #[test]
+    fn fault_profiles_cover_burst_reorder_blackhole_and_clock() {
+        let x = simulate_fault_profile(
+            100,
+            FaultProfile {
+                burst_start: 20,
+                burst_len: 10,
+                reorder: true,
+                ..FaultProfile::default()
+            },
+        )
+        .unwrap();
+        assert_eq!((x.delivered, x.retransmitted, x.rounds), (100, 10, 2));
+        let x = simulate_fault_profile(
+            8,
+            FaultProfile {
+                blackhole: true,
+                ..FaultProfile::default()
+            },
+        )
+        .unwrap();
+        assert_eq!((x.delivered, x.sent), (0, 8));
+        let mut clock = VirtualClock::new();
+        assert_eq!(clock.advance(25), Ok(25));
+        assert_eq!(clock.advance(u64::MAX), Err(Error::Arithmetic));
+        assert_eq!(clock.now_us(), 25);
+    }
+
     fn deterministic_loss_and_reorder_preserve_all_frames() {
         for drop_every in [0, 100, 20, 10] {
             for reorder in [false, true] {
