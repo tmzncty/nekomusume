@@ -184,6 +184,18 @@ impl LocalIdentity {
     pub fn public_key(&self) -> &[u8] {
         &self.public
     }
+    pub fn private_key(&self) -> &[u8] {
+        &self.private
+    }
+    pub fn from_keypair(private: &[u8], public: &[u8]) -> Result<Self, SessionRejected> {
+        if private.len() != 32 || public.len() != 32 {
+            return Err(SessionRejected);
+        }
+        Ok(Self {
+            private: private.to_vec(),
+            public: public.to_vec(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

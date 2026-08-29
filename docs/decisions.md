@@ -766,3 +766,15 @@ The durable capability and blocker ledger is
 [`docs/bounded-local-closeout-2026-08-29.md`](bounded-local-closeout-2026-08-29.md).
 This closeout does not authorize WAN/public listeners, production deployment,
 security approval, protocol freeze, 0-RTT, FEC activation or multipath.
+
+
+## 2026-08-29 — D051：Bounded authenticated VPS probe runtime
+
+**Status: Candidate implementation — explicit test runtime only**
+
+The CLI now provides bounded `server`, `client`/`probe`, and `keygen` commands
+for one authenticated encrypted echo over TCP or UDP. Ports are restricted to
+40080–40100, payloads to 1–1200 bytes, duration to 1–30 seconds, and the server
+handles one exchange before exiting. It has no proxy/tunnel behavior, no routing
+changes, no system service and no production claim. Public validation remains
+experimental and must use the isolated `neko-test` VPS only.

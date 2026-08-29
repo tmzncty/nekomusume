@@ -1,49 +1,273 @@
-//! Deterministic M0 command-line boundary; transport behavior is intentionally absent.
-
-const USAGE: &str = "Usage: neko <client|server|probe> [--help]\n\nM0 boundary scaffold; no transport is implemented.\n";
-
-fn print_help(command: Option<&str>) {
-    match command {
-        Some(name) => println!(
-            "neko {name}: M0 boundary scaffold; no transport is implemented\n\nUsage: neko {name} [--help]"
-        ),
-        None => print!("{USAGE}"),
+//! Bounded authenticated research probe runtime; never a proxy or tunnel.
+use neko_crypto::{
+    InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, TrustPolicy, TrustRecord,
+    TrustStatus,
+};
+use std::{
+    env, fs,
+    io::{Read, Write},
+    net::{TcpListener, TcpStream, UdpSocket},
+    path::PathBuf,
+    time::{Duration, Instant},
+};
+const USAGE: &str = "Usage: neko server|client|probe --transport tcp|udp --port 40080 [bounded options]\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
+const MAX_PORT: u16 = 40100;
+const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
+const MAX_DURATION: u64 = 30;
+const DOMAIN: &[u8] = b"nekomusume-vps-probe";
+fn fail(msg: &str) -> ! {
+    eprintln!("neko: {msg}");
+    std::process::exit(2)
+}
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+fn unhex(s: &str) -> Vec<u8> {
+    if !s.len().is_multiple_of(2) {
+        fail("hex length");
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap_or_else(|_| fail("invalid hex")))
+        .collect()
+}
+fn context(direction: u8) -> RecordContext {
+    RecordContext {
+        delivery_epoch: 1,
+        key_phase: 0,
+        path_generation: 1,
+        stream_id: 1,
+        direction,
     }
 }
-
-fn main() {
-    let mut args = std::env::args().skip(1);
-    let command = args.next();
-    match command.as_deref() {
-        None => print_help(None),
-        Some("client" | "server" | "probe") => {
-            let command_name = command.as_deref().expect("matched command");
-            match args.next().as_deref() {
-                None | Some("--help") => print_help(Some(command_name)),
-                Some(flag) => {
-                    eprintln!("neko {command_name}: unexpected argument `{flag}`");
-                    eprintln!("Usage: neko {command_name} [--help]");
-                    std::process::exit(2);
+fn load_or_generate(path: &PathBuf) -> LocalIdentity {
+    if let Ok(s) = fs::read_to_string(path) {
+        let p = s.trim().split(':').map(unhex).collect::<Vec<_>>();
+        if p.len() == 2 {
+            return LocalIdentity::from_keypair(&p[0], &p[1])
+                .unwrap_or_else(|_| fail("invalid identity file"));
+        }
+        fail("invalid identity file");
+    }
+    let id = LocalIdentity::generate().unwrap_or_else(|_| fail("identity generation failed"));
+    fs::write(
+        path,
+        format!("{}:{}\n", hex(id.private_key()), hex(id.public_key())),
+    )
+    .unwrap_or_else(|_| fail("identity write failed"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .unwrap_or_else(|_| fail("identity permission failed"));
+    }
+    id
+}
+fn parse(args: &[String], key: &str, default: Option<&str>) -> String {
+    args.windows(2)
+        .find(|x| x[0] == key)
+        .map(|x| x[1].clone())
+        .or_else(|| default.map(str::to_string))
+        .unwrap_or_else(|| fail(&format!("missing {key}")))
+}
+fn common(args: &[String]) -> (String, u16, usize, Duration) {
+    let t = parse(args, "--transport", None);
+    if t != "tcp" && t != "udp" {
+        fail("transport must be tcp or udp")
+    };
+    let p = parse(args, "--port", None)
+        .parse()
+        .unwrap_or_else(|_| fail("invalid port"));
+    if !(40080..=MAX_PORT).contains(&p) {
+        fail("port outside 40080-40100")
+    };
+    let bytes = parse(args, "--bytes", Some("32"))
+        .parse()
+        .unwrap_or_else(|_| fail("invalid bytes"));
+    if bytes == 0 || bytes > MAX_BYTES {
+        fail("bytes outside 1-1200")
+    };
+    let secs = parse(args, "--duration", Some("10"))
+        .parse()
+        .unwrap_or_else(|_| fail("invalid duration"));
+    if secs == 0 || secs > MAX_DURATION {
+        fail("duration outside 1-30")
+    };
+    (t, p, bytes, Duration::from_secs(secs))
+}
+fn read_frame(s: &mut TcpStream, max: usize) -> std::io::Result<Vec<u8>> {
+    let mut h = [0; 4];
+    s.read_exact(&mut h)?;
+    let n = u32::from_be_bytes(h) as usize;
+    if n > max {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
+    };
+    let mut b = vec![0; n];
+    s.read_exact(&mut b)?;
+    Ok(b)
+}
+fn write_frame(s: &mut TcpStream, b: &[u8]) -> std::io::Result<()> {
+    s.write_all(&(b.len() as u32).to_be_bytes())?;
+    s.write_all(b)?;
+    s.flush()
+}
+fn server(args: &[String]) {
+    let (t, p, max, d) = common(args);
+    let idpath = PathBuf::from(parse(args, "--identity", Some("neko-server.identity")));
+    let id = load_or_generate(&idpath);
+    println!("server_public_key={}", hex(id.public_key()));
+    let start = Instant::now();
+    let client_hex = parse(args, "--client-key", None);
+    let client_key = unhex(&client_hex);
+    let policy = TrustPolicy::new(vec![TrustRecord {
+        version: 1,
+        public_key: client_key,
+        scope: b"probe".to_vec(),
+        status: TrustStatus::Active,
+    }]);
+    if t == "tcp" {
+        let l = TcpListener::bind(("0.0.0.0", p)).unwrap_or_else(|_| fail("bind failed"));
+        l.set_nonblocking(true).unwrap();
+        while start.elapsed() < d {
+            match l.accept() {
+                Ok((mut s, _)) => {
+                    let first = read_frame(&mut s, 1024).unwrap_or_else(|_| fail("bad handshake"));
+                    let (resp, mut ss) = ResponderHandshake::new(&id, policy.clone(), DOMAIN)
+                        .unwrap()
+                        .receive_first(&first, context(0))
+                        .unwrap_or_else(|_| fail("unauthorized handshake"));
+                    write_frame(&mut s, &resp).unwrap();
+                    let frame = read_frame(&mut s, max + 64).unwrap_or_else(|_| fail("bad data"));
+                    let plain = ss
+                        .open_unreliable(&frame)
+                        .unwrap_or_else(|_| fail("auth failure"));
+                    let reply = ss
+                        .seal_unreliable(&plain)
+                        .unwrap_or_else(|_| fail("seal failure"));
+                    write_frame(&mut s, &reply).unwrap();
+                    return;
                 }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                Err(_) => fail("accept failed"),
             }
         }
-        Some("--help") => print_help(None),
-        Some(command_name) => {
-            eprintln!("neko: unknown command `{command_name}`");
-            eprintln!("{USAGE}");
-            std::process::exit(2);
+    } else {
+        let u = UdpSocket::bind(("0.0.0.0", p)).unwrap_or_else(|_| fail("bind failed"));
+        u.set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let mut b = [0; 65536];
+        while start.elapsed() < d {
+            if let Ok((n, peer)) = u.recv_from(&mut b) {
+                let first = &b[..n];
+                let (resp, mut ss) = ResponderHandshake::new(&id, policy.clone(), DOMAIN)
+                    .unwrap()
+                    .receive_first(first, context(0))
+                    .unwrap_or_else(|_| fail("unauthorized handshake"));
+                u.send_to(&resp, peer).unwrap();
+                let (n, peer) = u.recv_from(&mut b).unwrap_or_else(|_| fail("data timeout"));
+                let plain = ss
+                    .open_unreliable(&b[..n])
+                    .unwrap_or_else(|_| fail("auth failure"));
+                let reply = ss
+                    .seal_unreliable(&plain)
+                    .unwrap_or_else(|_| fail("seal failure"));
+                u.send_to(&reply, peer).unwrap();
+                return;
+            }
         }
     }
+    fail("duration expired")
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn usage_mentions_all_scaffold_commands() {
-        assert!(USAGE.contains("client"));
-        assert!(USAGE.contains("server"));
-        assert!(USAGE.contains("probe"));
+fn client(args: &[String]) {
+    let (t, _p, max, d) = common(args);
+    let addr = parse(args, "--addr", None);
+    let sk = unhex(&parse(args, "--server-key", None));
+    let idpath = PathBuf::from(parse(args, "--identity", Some("neko-client.identity")));
+    let id = load_or_generate(&idpath);
+    println!("client_public_key={}", hex(id.public_key()));
+    let mut hs = InitiatorHandshake::new(&id, &sk, b"probe", DOMAIN)
+        .unwrap_or_else(|_| fail("handshake setup failed"));
+    let first = hs
+        .first_message()
+        .unwrap_or_else(|_| fail("handshake failed"));
+    let payload = vec![b'x'; max];
+    let start = Instant::now();
+    let cs = if t == "tcp" {
+        let mut s =
+            TcpStream::connect_timeout(&addr.parse().unwrap_or_else(|_| fail("bad address")), d)
+                .unwrap_or_else(|_| fail("connect failed"));
+        write_frame(&mut s, &first).unwrap();
+        let resp = read_frame(&mut s, 1024).unwrap_or_else(|_| fail("handshake response failed"));
+        Some((
+            s,
+            hs.finish(&resp, context(0))
+                .unwrap_or_else(|_| fail("handshake finish failed")),
+        ))
+    } else {
+        let u = UdpSocket::bind("0.0.0.0:0").unwrap();
+        u.set_read_timeout(Some(d)).unwrap();
+        u.send_to(&first, &addr).unwrap();
+        let mut b = [0; 65536];
+        let (n, _) = u
+            .recv_from(&mut b)
+            .unwrap_or_else(|_| fail("handshake response failed"));
+        let mut ss = hs
+            .finish(&b[..n], context(0))
+            .unwrap_or_else(|_| fail("handshake finish failed"));
+        let rec = ss
+            .seal_unreliable(&payload)
+            .unwrap_or_else(|_| fail("payload too large"));
+        u.send_to(&rec, &addr).unwrap();
+        let (n, _) = u.recv_from(&mut b).unwrap_or_else(|_| fail("echo timeout"));
+        if ss
+            .open_unreliable(&b[..n])
+            .unwrap_or_else(|_| fail("echo auth failed"))
+            != payload
+        {
+            fail("echo mismatch")
+        };
+        println!(
+            "probe_ok transport=udp bytes={} elapsed_ms={}",
+            max,
+            start.elapsed().as_millis()
+        );
+        return;
+    };
+    let (mut s, mut ss) = cs.unwrap();
+    let rec = ss
+        .seal_unreliable(&payload)
+        .unwrap_or_else(|_| fail("payload too large"));
+    write_frame(&mut s, &rec).unwrap();
+    let reply = read_frame(&mut s, max + 128).unwrap_or_else(|_| fail("echo timeout"));
+    if ss
+        .open_unreliable(&reply)
+        .unwrap_or_else(|_| fail("echo auth failed"))
+        != payload
+    {
+        fail("echo mismatch")
+    };
+    println!(
+        "probe_ok transport=tcp bytes={} elapsed_ms={}",
+        max,
+        start.elapsed().as_millis()
+    )
+}
+fn main() {
+    let a: Vec<String> = env::args().skip(1).collect();
+    match a.first().map(String::as_str) {
+        Some("server") => server(&a),
+        Some("client") | Some("probe") => client(&a),
+        Some("keygen") => {
+            let path = PathBuf::from(parse(&a, "--identity", Some("neko-client.identity")));
+            let id = load_or_generate(&path);
+            println!("client_public_key={}", hex(id.public_key()));
+        }
+        Some("--help") | None => println!("{USAGE}"),
+        _ => fail("unknown command"),
     }
 }

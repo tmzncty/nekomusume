@@ -4,5 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[dependencies]
+neko-crypto = { path = "../neko-crypto" }
+
 [lints]
 workspace = true

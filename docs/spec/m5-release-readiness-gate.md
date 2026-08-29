@@ -27,3 +27,12 @@ review, canonical interoperability vectors, sustained repeated WAN results,
 resource/abuse limits, and a reviewed comparison protocol. Until all are
 present, `docs/status.md` `reachability` and `production` rows remain blocked.
 No command in this repository should silently widen that boundary.
+
+
+## Bounded probe runtime boundary
+
+The candidate CLI probe runtime is a one-exchange authenticated echo intended
+for the isolated test VPS. It is not a service: it permits only TCP/UDP ports
+40080–40100, 1–1200-byte payloads, 1–30-second duration, and one server-side
+exchange. It performs no forwarding, routing, proxying or tunnel behavior and
+must be stopped and cleaned after each experiment.
