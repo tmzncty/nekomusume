@@ -907,6 +907,31 @@ impl SessionRuntime {
     }
 }
 
+/// Versioned, transport-neutral event projection shared by lab and WAN runners.
+/// The projection is intentionally plain data: serialization belongs to the
+/// adapter, and observing an event cannot mutate Session state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObservableEvent {
+    pub schema: u16,
+    pub seq: u64,
+    pub at_ms: u64,
+    pub session: SessionId,
+    pub stream: Option<StreamId>,
+    pub kind: RuntimeEventKind,
+}
+impl SessionRuntime {
+    pub fn observable_events(&self) -> impl Iterator<Item = ObservableEvent> + '_ {
+        self.events.iter().map(move |e| ObservableEvent {
+            schema: 1,
+            seq: e.seq,
+            at_ms: e.at_ms,
+            session: self.id,
+            stream: None,
+            kind: e.kind,
+        })
+    }
+}
+
 #[cfg(test)]
 mod runtime_tests {
     use super::*;
