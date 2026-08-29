@@ -250,3 +250,189 @@ fn bounded_udp_blackhole_tcp_resume_preserves_order_and_exactly_once_bytes() {
     assert_eq!(receiver_runtime.queued_records(), 0);
     assert_eq!(receiver_runtime.queued_bytes(), 0);
 }
+
+#[test]
+fn process_boundary_runner_uses_two_ends_for_bounded_udp_to_tcp_resume() {
+    use neko_carrier::{DataId, FailoverController};
+    use neko_session::{ProcessMessage, ResumeWireBinding};
+    use std::sync::mpsc;
+
+    let (udp_tx, udp_rx) = mpsc::sync_channel::<Vec<u8>>(8);
+    let (tcp_tx, tcp_rx) = mpsc::sync_channel::<Vec<u8>>(8);
+    let (ack_tx, ack_rx) = mpsc::sync_channel::<Vec<u8>>(8);
+    let client_public = vec![4u8; 32];
+    let original = neko_crypto::ResumeBinding {
+        session_id: 7001,
+        delivery_epoch: 1,
+        key_phase: 0,
+        path_generation: 1,
+        expires_at_ms: 1_000,
+        token: [9; 32],
+    };
+    let guard = neko_crypto::ResumeGuard::new(&client_public, &original).unwrap();
+    let server_thread = std::thread::spawn(move || {
+        let limits = RuntimeLimits {
+            max_queue_records: 8,
+            max_queue_bytes: 128,
+            max_total_bytes: 128,
+            max_record_bytes: 32,
+            idle_timeout_ms: 1_000,
+            close_timeout_ms: 100,
+            max_streams: 1,
+        };
+        let mut runtime = SessionRuntime::new(SessionId(7001), limits, 0).unwrap();
+        runtime.open_stream(StreamId(1), 0).unwrap();
+        let mut guard = guard;
+        let first = ProcessMessage::decode(&udp_rx.recv().unwrap()).unwrap();
+        let ProcessMessage::Data { session, record } = first else {
+            panic!("expected UDP data")
+        };
+        assert_eq!(session, SessionId(7001));
+        runtime
+            .receive(
+                InboundRecord {
+                    stream: record.stream,
+                    offset: record.offset,
+                    data: record.data,
+                },
+                1,
+            )
+            .unwrap();
+        let ProcessMessage::Resume { binding } =
+            ProcessMessage::decode(&tcp_rx.recv().unwrap()).unwrap()
+        else {
+            panic!("expected resume")
+        };
+        let claim = neko_crypto::ResumeBinding {
+            session_id: binding.session_id.0,
+            delivery_epoch: binding.delivery_epoch,
+            key_phase: binding.key_phase,
+            path_generation: binding.path_generation,
+            expires_at_ms: binding.expires_at_ms,
+            token: binding.token,
+        };
+        guard.attach(&client_public, &claim, 2).unwrap();
+        for _ in 0..2 {
+            let ProcessMessage::Data { session, record } =
+                ProcessMessage::decode(&tcp_rx.recv().unwrap()).unwrap()
+            else {
+                panic!("expected TCP data")
+            };
+            let offset = record.offset;
+            let len = record.data.len();
+            runtime
+                .receive(
+                    InboundRecord {
+                        stream: record.stream,
+                        offset,
+                        data: record.data,
+                    },
+                    3,
+                )
+                .unwrap();
+            ack_tx
+                .send(
+                    ProcessMessage::DeliveryAck {
+                        session,
+                        stream: StreamId(1),
+                        offset,
+                        len,
+                    }
+                    .encode()
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        let ProcessMessage::Data { record, .. } =
+            ProcessMessage::decode(&tcp_rx.recv().unwrap()).unwrap()
+        else {
+            panic!("expected duplicate")
+        };
+        runtime
+            .receive(
+                InboundRecord {
+                    stream: record.stream,
+                    offset: record.offset,
+                    data: record.data,
+                },
+                4,
+            )
+            .unwrap();
+        let mut application = Vec::new();
+        while let Some(record) = runtime.pop_receive(5).unwrap() {
+            application.extend_from_slice(&record.data);
+        }
+        runtime.close_graceful(6).unwrap();
+        runtime.close_remote(7).unwrap();
+        assert_eq!(runtime.queued_bytes(), 0);
+        application
+    });
+    let mut failover = FailoverController::new(2, 8, 128).unwrap();
+    let records = [
+        (0u64, b"alpha".as_slice()),
+        (5, b"-bounded".as_slice()),
+        (13, b"-runner".as_slice()),
+    ];
+    for (offset, data) in records {
+        failover.track_uncertain(DataId(offset), data).unwrap();
+        let msg = ProcessMessage::Data {
+            session: SessionId(7001),
+            record: neko_session::OutboundRecord {
+                stream: StreamId(1),
+                offset,
+                data: data.to_vec(),
+            },
+        };
+        if offset == 0 {
+            udp_tx.send(msg.encode().unwrap()).unwrap();
+        }
+    }
+    assert!(!failover.udp_pto_at(10));
+    assert!(failover.udp_pto_at(20));
+    tcp_tx
+        .send(
+            ProcessMessage::Resume {
+                binding: ResumeWireBinding {
+                    session_id: SessionId(7001),
+                    delivery_epoch: 1,
+                    key_phase: 0,
+                    path_generation: 2,
+                    expires_at_ms: 1_000,
+                    token: [9; 32],
+                },
+            }
+            .encode()
+            .unwrap(),
+        )
+        .unwrap();
+    for (offset, data) in [(5, records[1].1), (13, records[2].1), (0, records[0].1)] {
+        tcp_tx
+            .send(
+                ProcessMessage::Data {
+                    session: SessionId(7001),
+                    record: neko_session::OutboundRecord {
+                        stream: StreamId(1),
+                        offset,
+                        data: data.to_vec(),
+                    },
+                }
+                .encode()
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    for _ in 0..2 {
+        let ProcessMessage::DeliveryAck { offset, len, .. } =
+            ProcessMessage::decode(&ack_rx.recv().unwrap()).unwrap()
+        else {
+            panic!("expected ACK")
+        };
+        failover.confirm(DataId(offset)).unwrap();
+        assert!(len > 0);
+    }
+    // The first UDP record was already delivered before the switch; its
+    // ambiguity is cleared by the duplicate replay after the TCP ACKs.
+    failover.confirm(DataId(0)).unwrap();
+    assert!(failover.tcp_resend().unwrap().is_empty());
+    assert_eq!(server_thread.join().unwrap(), b"alpha-bounded-runner");
+}
