@@ -160,7 +160,7 @@ fn executable_loopback_udp_blackhole_tcp_resume() {
         ])
         .output()
         .unwrap();
-    let _ = server.wait();
+    let server_out = server.wait_with_output().unwrap();
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     assert!(
@@ -171,6 +171,29 @@ fn executable_loopback_udp_blackhole_tcp_resume() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(String::from_utf8_lossy(&out.stdout).contains("udp_blackhole=true"));
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let server_log = String::from_utf8_lossy(&server_out.stdout);
+    for event in [
+        "udp_authenticated",
+        "udp_blackhole_injected",
+        "tcp_resume_guard",
+        "ordered_records_complete",
+    ] {
+        assert!(
+            client_log.contains(&format!("carrier_event name={event}")),
+            "missing client event {event}: {client_log}"
+        );
+    }
+    assert!(server_log.contains("carrier_event name=udp_authenticated"));
+    assert!(server_log.contains("carrier_event name=tcp_resumed"));
+    assert!(
+        server_log.contains("duplicates=0"),
+        "duplicate delivery: {server_log}"
+    );
+    assert!(
+        server_log.contains("bytes_hex=616c7068612d626f756e6465642d65786163746c792d6f6e6365"),
+        "incomplete ordered bytes: {server_log}"
+    );
 }
 
 #[test]

@@ -447,6 +447,8 @@ fn failover_server(args: &[String]) {
     let mut buf = [0u8; 65536];
     let mut secure = None;
     let mut guard = None;
+    let mut app = Vec::new();
+    let mut duplicates = 0usize;
     let mut runtime =
         SessionRuntime::new(SessionId(7001), runtime_limits(bytes, count), 0).unwrap();
     runtime.open_stream(StreamId(1), 0).unwrap();
@@ -466,6 +468,7 @@ fn failover_server(args: &[String]) {
                 diag.event(args, "server_response_sent");
                 guard = Some(ResumeGuard::new(&remote, &binding).unwrap());
                 secure = Some((ss, peer));
+                println!("carrier_event name=udp_authenticated session=7001 generation=0");
             }
         }
         if let Some((ref mut ss, peer)) = secure {
@@ -500,7 +503,15 @@ fn failover_server(args: &[String]) {
                             .encode()
                             .unwrap();
                             udp.send_to(&ack, peer).unwrap();
-                            let _ = runtime.pop_receive(2);
+                            if runtime
+                                .observable_events()
+                                .any(|e| e.kind == neko_session::RuntimeEventKind::DuplicateDedup)
+                            {
+                                duplicates += 1;
+                            }
+                            if let Some(delivered) = runtime.pop_receive(2).unwrap() {
+                                app.extend_from_slice(&delivered.data);
+                            }
                         }
                     }
                 }
@@ -553,12 +564,25 @@ fn failover_server(args: &[String]) {
                                     .unwrap(),
                                 )
                                 .unwrap();
-                                let _ = runtime.pop_receive(3);
+                                if runtime.observable_events().any(|e| {
+                                    e.kind == neko_session::RuntimeEventKind::DuplicateDedup
+                                }) {
+                                    duplicates += 1;
+                                }
+                                if let Some(delivered) = runtime.pop_receive(3).unwrap() {
+                                    app.extend_from_slice(&delivered.data);
+                                }
                             }
                         }
                     }
                 }
-                println!("failover_server_ok");
+                println!("carrier_event name=tcp_resumed session=7001 generation=1");
+                println!(
+                    "failover_server_ok session=7001 records={} bytes_hex={} duplicates={} udp_blackhole=true carrier_events=udp_authenticated,tcp_resumed",
+                    count,
+                    hex(&app),
+                    duplicates
+                );
                 return;
             }
         }
@@ -648,9 +672,11 @@ fn failover_client(args: &[String]) {
         records.push(msg);
     }
     diag.event(args, "authenticated");
+    println!("carrier_event name=udp_authenticated session=7001 generation=0");
     let rec = us.seal_unreliable(&records[0]).unwrap();
     u.send_to(&rec, &target).unwrap();
     let _ = u.recv_from(&mut buf);
+    println!("carrier_event name=udp_blackhole_injected session=7001 generation=0");
     let mut hs2 = InitiatorHandshake::with_resume_binding(
         &id,
         &sk,
@@ -668,6 +694,7 @@ fn failover_client(args: &[String]) {
     write_frame(&mut tcp, &first2).unwrap();
     let resp = read_frame(&mut tcp, 1024).unwrap();
     let mut ts = hs2.finish(&resp, context(2)).unwrap();
+    println!("carrier_event name=tcp_resume_guard session=7001 generation=1");
     write_frame(
         &mut tcp,
         &ProcessMessage::Resume {
@@ -682,6 +709,9 @@ fn failover_client(args: &[String]) {
         write_frame(&mut tcp, &encrypted).unwrap();
         let _ = read_frame(&mut tcp, PROCESS_FRAME_MAX);
     }
+    println!(
+        "carrier_event name=ordered_records_complete session=7001 count={count} bytes={bytes}"
+    );
     println!("failover_client_ok session=7001 count={count} bytes={bytes} udp_blackhole=true")
 }
 fn failover_gate(args: &[String]) {
