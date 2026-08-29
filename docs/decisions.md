@@ -792,7 +792,7 @@ was made. Results and limits are recorded in
 [`docs/vps-experiment-2026-08-29.md`](vps-experiment-2026-08-29.md).
 
 
-## 2026-08-29 — D053：Carrier API is transport-neutral
+## 2026-08-29 — D054：Carrier API is transport-neutral
 
 **Status: Candidate architecture hardening — no wire change**
 
@@ -802,7 +802,7 @@ adapter APIs and map their errors/limits at the generic boundary; no
 `MemoryLimits` or `MemoryPairError` appears in the trait.
 
 
-## 2026-08-29 — D054：Session context migration is monotonic
+## 2026-08-29 — D055：Session context migration is monotonic
 
 **Status: Candidate architecture hardening — no wire change**
 
@@ -814,7 +814,7 @@ misleading single state. Delivery watermark and evidence separation remain
 monotonic.
 
 
-## 2026-08-29 — D055：Authenticated SessionRecord has an explicit Frame list
+## 2026-08-29 — D056：Authenticated SessionRecord has an explicit Frame list
 
 **Status: Candidate wire architecture — non-frozen**
 
@@ -826,7 +826,7 @@ critical/reserved types fail closed while unknown ignorable types remain
 extensible. This does not select cryptographic AAD fields or freeze v0.
 
 
-## 2026-08-29 — D056：Bounded CLI lab/timeline output
+## 2026-08-29 — D057：Bounded CLI lab/timeline output
 
 **Status: Candidate research tooling**
 
@@ -837,7 +837,7 @@ byte and duration limits. These outputs describe candidate simulations and do
 not claim a production runtime or performance result.
 
 
-## 2026-08-29 — D057：Bounded deterministic fault sequence generation
+## 2026-08-29 — D058：Bounded deterministic fault sequence generation
 
 **Status: Candidate state-machine tooling**
 
@@ -847,7 +847,7 @@ scenarios. It is a deterministic test input source capped at 4096 events; it
 does not itself promote packet evidence to delivery or enable live fault injection.
 
 
-## 2026-08-29 — D058：Failover vertical timeline evidence
+## 2026-08-29 — D059：Failover vertical timeline evidence
 
 **Status: Candidate loopback implementation**
 
@@ -857,7 +857,7 @@ Encrypted payload recovery remains DataId-deduplicated and byte-preserving. The
 sequence is bounded and local/loopback only; no WAN, performance or production
 claim is added.
 
-## 2026-08-29 — D059：Experimental Wireshark candidate dissector
+## 2026-08-29 — D060：Experimental Wireshark candidate dissector
 
 **Status: Non-authoritative research tool — non-frozen**
 
@@ -867,7 +867,7 @@ not an interoperability implementation, does not validate cryptographic
 integrity, and carries no security or production claim.
 
 
-## 2026-08-29 — D053：M3-alpha First Surviving Session contract
+## 2026-08-29 — D061：M3-alpha First Surviving Session contract
 
 **Status: Accepted design contract — implementation and WAN gates remain separate**
 
