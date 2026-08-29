@@ -647,3 +647,14 @@ HY2 superiority. Public listeners, VPS/WAN probes, production deployment and
 comparative claims remain blocked. A future release requires explicit scope,
 controlled endpoints, rollback, reproducible metadata, independent review,
 canonical vectors, repeated WAN evidence and abuse/resource limits.
+
+
+## 2026-08-29 — D040：Governance-facing Markdown links are checked
+
+**Status: Accepted repository-harness hardening — no protocol change**
+
+The full checker validates local Markdown links in key user/governance documents.
+Repository-relative targets must exist and may not be absolute, traverse outside
+the repository, contain backslashes, or include malformed backticks. An isolated
+mutation regression proves fail-closed behavior. External URLs are intentionally
+left to separate availability checks.

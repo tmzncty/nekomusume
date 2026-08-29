@@ -18,6 +18,8 @@ bash scripts/check-governance-status.sh
 bash scripts/check-status-evidence.sh
 bash scripts/check-status-evidence-test.sh
 bash scripts/check-shell-syntax.sh
+bash scripts/check-markdown-links.sh
+bash scripts/check-markdown-links-test.sh
 test -f docs/specs/nekomusume-session-v0.md
 test -f LICENSE-MIT
 test -f LICENSE-APACHE
