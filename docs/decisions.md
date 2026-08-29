@@ -600,3 +600,15 @@ while preserving malformed-input rejection and zero evidence promotion. Fuzz
 corpus discoveries remain disposable artifacts and are removed after smoke runs.
 No field map, interoperability contract, listener or production behavior is
 changed.
+
+
+## 2026-08-29 — D036：Fuzz smoke artifacts are worktree-isolated
+
+**Status: Accepted test-harness hardening — no protocol change**
+
+Fuzz smoke now copies tracked decoder seeds into a unique temporary corpus and
+routes libFuzzer discoveries/crash artifacts to a temporary artifact directory.
+Signal/normal-exit cleanup removes both. A regression smoke asserts identical
+full porcelain status before and after execution. This prevents recurring CI or
+cron verification from dirtying or deleting audited seed vectors. Decoder and
+wire semantics are unchanged.

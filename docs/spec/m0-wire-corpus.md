@@ -19,3 +19,13 @@ short-prefix boundary and explicit overflowing/non-canonical varint cases. The
 fuzz target additionally asserts that decoding never panics for arbitrary bytes;
 its return value remains ignored because malformed input is expected. Fuzz smoke
 artifacts are disposable and must not be committed as protocol vectors.
+
+
+## Smoke-run isolation
+
+`./scripts/fuzz-smoke.sh` copies the tracked seed corpus into a unique temporary
+directory and directs libFuzzer discoveries and crash artifacts there. An
+EXIT/INT/TERM trap removes the temporary tree. Recurring smoke verification
+therefore cannot add, rewrite, or delete repository corpus vectors.
+`./scripts/fuzz-smoke-test.sh` executes a short smoke run and asserts that the
+complete porcelain worktree status is byte-for-byte unchanged.
