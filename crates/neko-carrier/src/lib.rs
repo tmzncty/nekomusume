@@ -1762,6 +1762,108 @@ pub struct HealthSample {
     pub pto: u16,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthState {
+    Unknown,
+    Healthy,
+    Degraded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HealthLimits {
+    pub degrade_after: u32,
+    pub fail_after: u32,
+    pub recover_after: u32,
+    pub max_paths: usize,
+}
+impl Default for HealthLimits {
+    fn default() -> Self {
+        Self {
+            degrade_after: 2,
+            fail_after: 4,
+            recover_after: 2,
+            max_paths: 8,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HealthRecord {
+    pub state: HealthState,
+    pub consecutive_bad: u32,
+    pub consecutive_good: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthError {
+    InvalidLimit,
+    ResourceLimit,
+}
+
+#[derive(Debug)]
+pub struct CarrierHealth {
+    limits: HealthLimits,
+    records: BTreeMap<PathId, HealthRecord>,
+}
+impl CarrierHealth {
+    pub fn new(limits: HealthLimits) -> Result<Self, HealthError> {
+        if limits.degrade_after == 0
+            || limits.fail_after < limits.degrade_after
+            || limits.recover_after == 0
+            || limits.max_paths == 0
+        {
+            return Err(HealthError::InvalidLimit);
+        }
+        Ok(Self {
+            limits,
+            records: BTreeMap::new(),
+        })
+    }
+    pub fn path(&self, path: PathId) -> Option<HealthRecord> {
+        self.records.get(&path).copied()
+    }
+    pub fn observe(
+        &mut self,
+        path: PathId,
+        sample: HealthSample,
+    ) -> Result<HealthState, HealthError> {
+        if !self.records.contains_key(&path) && self.records.len() >= self.limits.max_paths {
+            return Err(HealthError::ResourceLimit);
+        }
+        let bad = sample.pto >= 3 || sample.loss_per_mille >= 500;
+        let r = self.records.entry(path).or_insert(HealthRecord {
+            state: HealthState::Unknown,
+            consecutive_bad: 0,
+            consecutive_good: 0,
+        });
+        if bad {
+            r.consecutive_bad = r.consecutive_bad.saturating_add(1);
+            r.consecutive_good = 0;
+            if r.consecutive_bad >= self.limits.fail_after {
+                r.state = HealthState::Failed;
+            } else if r.consecutive_bad >= self.limits.degrade_after {
+                r.state = HealthState::Degraded;
+            }
+        } else {
+            r.consecutive_good = r.consecutive_good.saturating_add(1);
+            r.consecutive_bad = 0;
+            match r.state {
+                HealthState::Unknown => r.state = HealthState::Healthy,
+                HealthState::Degraded if r.consecutive_good >= self.limits.recover_after => {
+                    r.state = HealthState::Healthy;
+                }
+                HealthState::Failed if r.consecutive_good >= self.limits.recover_after => {
+                    r.state = HealthState::Degraded;
+                    r.consecutive_good = 0;
+                }
+                _ => {}
+            }
+        }
+        Ok(r.state)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CarrierScore {
     pub score: i64,
     pub healthy: bool,
@@ -1939,6 +2041,55 @@ impl CarrierManager {
 #[cfg(test)]
 mod manager_tests {
     use super::*;
+
+    const GOOD: HealthSample = HealthSample {
+        rtt_us: 100,
+        loss_per_mille: 0,
+        pto: 0,
+    };
+    const BAD: HealthSample = HealthSample {
+        rtt_us: 100,
+        loss_per_mille: 500,
+        pto: 0,
+    };
+
+    #[test]
+    fn health_transitions_are_bounded_and_staged() {
+        let mut h = CarrierHealth::new(HealthLimits {
+            degrade_after: 2,
+            fail_after: 3,
+            recover_after: 2,
+            max_paths: 1,
+        })
+        .unwrap();
+        let p = PathId(9);
+        assert_eq!(h.observe(p, GOOD), Ok(HealthState::Healthy));
+        assert_eq!(h.observe(p, BAD), Ok(HealthState::Healthy));
+        assert_eq!(h.observe(p, BAD), Ok(HealthState::Degraded));
+        assert_eq!(h.observe(p, BAD), Ok(HealthState::Failed));
+        assert_eq!(h.observe(p, GOOD), Ok(HealthState::Failed));
+        assert_eq!(h.observe(p, GOOD), Ok(HealthState::Degraded));
+        assert_eq!(h.observe(p, GOOD), Ok(HealthState::Degraded));
+        assert_eq!(h.observe(p, GOOD), Ok(HealthState::Healthy));
+    }
+
+    #[test]
+    fn health_limits_and_capacity_are_deterministic() {
+        assert!(matches!(
+            CarrierHealth::new(HealthLimits {
+                degrade_after: 0,
+                ..HealthLimits::default()
+            }),
+            Err(HealthError::InvalidLimit)
+        ));
+        let mut h = CarrierHealth::new(HealthLimits {
+            max_paths: 1,
+            ..HealthLimits::default()
+        })
+        .unwrap();
+        h.observe(PathId(1), GOOD).unwrap();
+        assert_eq!(h.observe(PathId(2), GOOD), Err(HealthError::ResourceLimit));
+    }
     #[test]
     fn bulk_does_not_starve_interactive() {
         let mut s = FairScheduler::new(FlowLimits {
