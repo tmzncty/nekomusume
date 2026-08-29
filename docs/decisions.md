@@ -845,3 +845,14 @@ The carrier crate exposes a bounded seeded event generator for insert/send/loss,
 uncertain, generation change, duplicate, old/new ACK, drain, fail and activate
 scenarios. It is a deterministic test input source capped at 4096 events; it
 does not itself promote packet evidence to delivery or enable live fault injection.
+
+
+## 2026-08-29 — D058：Failover vertical timeline evidence
+
+**Status: Candidate loopback implementation**
+
+The bounded TCP failover integration now records an explicit state sequence:
+UDP active → UDP uncertain → PTO → TCP active → TCP resend → delivery ACK.
+Encrypted payload recovery remains DataId-deduplicated and byte-preserving. The
+sequence is bounded and local/loopback only; no WAN, performance or production
+claim is added.

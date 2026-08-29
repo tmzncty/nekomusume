@@ -82,4 +82,34 @@ fn udp_blackhole_recovers_over_tcp_without_loss_and_deduplicates() {
     assert_eq!(receiver.metrics.delivered_bytes, payload.len() as u64);
     assert_eq!(receiver.metrics.duplicate_bytes, payload.len() as u64);
     assert_eq!(sender.metrics.switches, 1);
+    assert_eq!(sender.metrics.delivered_bytes, 0);
+    assert!(sender.tcp_resend().unwrap().is_empty());
+}
+
+#[test]
+fn failover_timeline_is_explicit_and_bounded() {
+    let mut sender = FailoverController::new(2, 8, 4096).unwrap();
+    let mut timeline = vec!["udp_active"];
+    sender.track_uncertain(DataId(1), b"bytes").unwrap();
+    timeline.push("udp_uncertain");
+    assert!(!sender.udp_pto_at(10));
+    timeline.push("udp_pto");
+    assert!(sender.udp_pto_at(20));
+    timeline.push("tcp_active");
+    assert_eq!(sender.tcp_resend().unwrap().len(), 1);
+    timeline.push("tcp_resend");
+    sender.confirm(DataId(1)).unwrap();
+    timeline.push("delivery_ack");
+    assert_eq!(
+        timeline,
+        vec![
+            "udp_active",
+            "udp_uncertain",
+            "udp_pto",
+            "tcp_active",
+            "tcp_resend",
+            "delivery_ack"
+        ]
+    );
+    assert!(timeline.len() <= 16);
 }
