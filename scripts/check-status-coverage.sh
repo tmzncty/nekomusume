@@ -18,9 +18,13 @@ tracked=set(subprocess.check_output(['git','-C',str(root),'ls-files','--','docs/
 missing=sorted(scoped-tracked)
 if missing: raise SystemExit('status-referenced governance evidence is not Git-tracked: '+', '.join(missing))
 for rel in sorted(scoped):
-    p=(root/rel).resolve()
+    raw=root/rel
+    p=raw.resolve()
     try: p.relative_to(root)
     except ValueError: raise SystemExit('status evidence escapes repository: '+rel)
-    if not p.is_file(): raise SystemExit('status evidence is not a regular file: '+rel)
+    if raw.is_symlink() or not p.is_file(): raise SystemExit('status evidence must be a non-symlink regular file: '+rel)
+    # Resolve against the actual worktree, not an arbitrary alternate path.
+    worktree=Path(subprocess.check_output(['git','-C',str(root),'rev-parse','--show-toplevel'],text=True).strip()).resolve()
+    if p != (worktree/rel).resolve(): raise SystemExit('status evidence path is not in worktree: '+rel)
 print(f'status scoped coverage validation passed: {len(scoped)} referenced docs/spec and docs/adr files')
 PY
