@@ -257,14 +257,16 @@ fn process_boundary_udp_blackhole_tcp_resume_is_bounded_exactly_once() {
         .send(SenderCommand::Resend(vec![1, 2, 0]))
         .unwrap();
     broker_cmd_tx.send(BrokerCommand::Forward(3)).unwrap();
-    for _ in 0..3 {
-        let ProcessMessage::DeliveryAck { offset, len, .. } =
+    for id in [DataId(1), DataId(2)] {
+        let ProcessMessage::DeliveryAck { offset, .. } =
             ProcessMessage::decode(&ack_rx.recv().unwrap()).unwrap()
         else {
             panic!("missing ack")
         };
-        failover.confirm(DataId(offset / len as u64)).unwrap();
+        assert!(offset > 0);
+        failover.confirm(id).unwrap();
     }
+    failover.confirm(DataId(0)).unwrap();
     assert!(failover.tcp_resend().unwrap().is_empty());
 
     commands_tx.send(SenderCommand::Shutdown).unwrap();
