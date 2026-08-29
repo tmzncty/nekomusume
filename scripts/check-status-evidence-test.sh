@@ -38,4 +38,15 @@ import sys
 p=Path(sys.argv[1]); lines=p.read_text().splitlines(); i=next(i for i,x in enumerate(lines) if x.startswith('| G0 |')); lines[i]='| G0 | malformed | candidate | `docs/adr/m1-g0-research-authorization.md` |'; lines[i]=lines[i][:-2]; p.write_text('\n'.join(lines)+'\n')
 PY2
 if ./scripts/check-status-evidence.sh "$TMP/malformed.md" >/dev/null 2>&1; then exit 1; fi
+mkdir -p "$TMP/untracked"
+printf '%s\n' 'temporary evidence' > "$TMP/untracked/evidence.md"
+cp "$ROOT/docs/status.md" "$TMP/untracked.md"
+python3 - "$TMP/untracked.md" "$TMP/untracked/evidence.md" <<'PY2'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); evidence=Path(sys.argv[2]).resolve()
+s=p.read_text(); old='`docs/adr/m1-g0-research-authorization.md`'; assert old in s
+p.write_text(s.replace(old, '`'+evidence.as_posix()+'`', 1))
+PY2
+if ./scripts/check-status-evidence.sh "$TMP/untracked.md" >/dev/null 2>&1; then exit 1; fi
 printf '%s\n' 'status evidence mutation tests passed'

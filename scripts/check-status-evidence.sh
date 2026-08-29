@@ -24,6 +24,10 @@ for line in text.splitlines():
     try: candidate.relative_to(root)
     except ValueError: raise SystemExit(f'evidence escapes repository: {ident}: {evidence}')
     if not candidate.is_file(): raise SystemExit(f'evidence is missing or not a file: {ident}: {evidence}')
+    rel=candidate.relative_to(root).as_posix()
+    import subprocess
+    tracked=subprocess.run(['git','-C',str(root),'ls-files','--error-unmatch','--',rel], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if tracked.returncode != 0: raise SystemExit(f'evidence is not Git-tracked: {ident}: {evidence}')
     rows.append(ident)
 if not rows: raise SystemExit('status table has no rows')
 print(f'status evidence validation passed: {len(rows)} rows')

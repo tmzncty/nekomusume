@@ -681,3 +681,14 @@ datagrams, key update, 0-RTT, concurrent UDP/TCP and heterogeneous aggregation.
 An isolated mutation regression proves marker drift fails closed. This prevents
 planning documents from silently overstating or understating the same candidate
 without enabling any blocked feature.
+
+
+## 2026-08-29 — D043：Status evidence must be Git-tracked
+
+**Status: Accepted governance-harness hardening — no protocol change**
+
+Status evidence validation now requires each evidence target to be an existing
+repository-relative regular file and a Git-tracked path. An isolated regression
+constructs an otherwise valid temporary evidence file and proves it cannot
+satisfy the status table. This prevents generated or unreviewed artifacts from
+being used as governance evidence.
