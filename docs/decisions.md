@@ -881,3 +881,17 @@ acceptance tests are recorded in
 [`docs/m3-runtime-contract-2026-08-29.md`](m3-runtime-contract-2026-08-29.md).
 0-RTT, multipath, FEC enablement, proxy/tunnel behavior and production/security
 claims remain excluded.
+
+
+## 2026-08-30 — D062：迁回 UDP 使用显式有界状态机
+
+**Status: Candidate design — local/loopback implementation gate only**
+
+现有 `CarrierManager::migrate_back_to_udp` 已实现 generation、独立 validation、
+health、score margin 和 hold gates，但此前没有单独记录拒绝原子性、hold 递进与
+激活边界的状态机契约。新增
+[`docs/adr/m4-migration-back-state-machine.md`](adr/m4-migration-back-state-machine.md)
+固定候选设计：TCP_ACTIVE → TCP_HOLD → UDP_ACTIVE；只有 eligible proposal 才能
+递进，拒绝不得改变 active/generation/switches，hold rejection 仅允许递增有界
+hold counter。该文档不新增代码、wire、socket、WAN 或生产/安全批准；loopback
+实现和 process-level gate 仍需单独验证。
