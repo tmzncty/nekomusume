@@ -408,9 +408,10 @@ pub fn simulate_fault_profile(
     let mut clock = VirtualClock::new();
     let mut pending: Vec<u64> = (0..total_frames).collect();
     let mut delivered = BTreeSet::new();
-    let mut sent = 0;
-    let mut retransmitted = 0;
-    let mut rounds = 0;
+    let mut attempted = BTreeSet::new();
+    let mut sent: u64 = 0;
+    let mut retransmitted: u64 = 0;
+    let mut rounds: u64 = 0;
     while !pending.is_empty() {
         rounds = rounds.checked_add(1).ok_or(Error::Arithmetic)?;
         if rounds > total_frames.saturating_add(2) {
@@ -420,7 +421,7 @@ pub fn simulate_fault_profile(
         let mut arrivals = Vec::new();
         for frame in current {
             sent = sent.checked_add(1).ok_or(Error::Arithmetic)?;
-            let first = !delivered.contains(&frame);
+            let first = attempted.insert(frame);
             let burst = profile.burst_len > 0
                 && frame >= profile.burst_start
                 && frame < profile.burst_start.saturating_add(profile.burst_len);
@@ -619,7 +620,6 @@ mod tests {
         assert_eq!(r.in_flight(), 1);
         assert_eq!(r.pto_count, 1);
     }
-    #[test]
     #[test]
     fn fault_profiles_cover_burst_reorder_blackhole_and_clock() {
         let x = simulate_fault_profile(
