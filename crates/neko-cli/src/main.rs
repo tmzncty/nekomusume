@@ -10,11 +10,27 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-const USAGE: &str = "Usage: neko server|client|probe --transport tcp|udp --port 40080 [bounded options]\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
+const USAGE: &str = "Usage: neko <server|client|probe|lab|keygen> [bounded options]\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
 const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
 const MAX_DURATION: u64 = 30;
 const DOMAIN: &[u8] = b"nekomusume-vps-probe";
+fn json_mode(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--json")
+}
+fn emit_probe(args: &[String], transport: &str, bytes: usize, elapsed_ms: u128) {
+    if json_mode(args) {
+        println!(
+            "{{\"ok\":true,\"transport\":\"{}\",\"bytes\":{},\"elapsed_ms\":{}}}",
+            transport, bytes, elapsed_ms
+        );
+    } else {
+        println!(
+            "probe_ok transport={} bytes={} elapsed_ms={}",
+            transport, bytes, elapsed_ms
+        );
+    }
+}
 fn fail(msg: &str) -> ! {
     eprintln!("neko: {msg}");
     std::process::exit(2)
@@ -231,11 +247,7 @@ fn client(args: &[String]) {
         {
             fail("echo mismatch")
         };
-        println!(
-            "probe_ok transport=udp bytes={} elapsed_ms={}",
-            max,
-            start.elapsed().as_millis()
-        );
+        emit_probe(args, "udp", max, start.elapsed().as_millis());
         return;
     };
     let (mut s, mut ss) = cs.unwrap();
@@ -251,17 +263,47 @@ fn client(args: &[String]) {
     {
         fail("echo mismatch")
     };
-    println!(
-        "probe_ok transport=tcp bytes={} elapsed_ms={}",
-        max,
-        start.elapsed().as_millis()
-    )
+    emit_probe(args, "tcp", max, start.elapsed().as_millis())
 }
+fn lab(args: &[String]) {
+    let json = json_mode(args);
+    let timeline = [
+        ("udp", "active", 0u64),
+        ("udp", "pto", 1),
+        ("udp", "uncertain", 8192),
+        ("tcp", "validated", 8192),
+        ("tcp", "migrated", 8192),
+        ("tcp", "duplicate_dedup", 1024),
+        ("tcp", "recovered", 9216),
+    ];
+    if json {
+        print!("{{\"ok\":true,\"demo\":\"failover\",\"timeline\":[");
+        for (i, (carrier, event, bytes)) in timeline.iter().enumerate() {
+            if i > 0 {
+                print!(",");
+            }
+            print!(
+                "{{\"step\":{},\"carrier\":\"{}\",\"event\":\"{}\",\"bytes\":{}}}",
+                i, carrier, event, bytes
+            );
+        }
+        println!("]}}");
+    } else {
+        for (i, (carrier, event, bytes)) in timeline.iter().enumerate() {
+            println!(
+                "step={} carrier={} event={} bytes={}",
+                i, carrier, event, bytes
+            );
+        }
+    }
+}
+
 fn main() {
     let a: Vec<String> = env::args().skip(1).collect();
     match a.first().map(String::as_str) {
         Some("server") => server(&a),
         Some("client") | Some("probe") => client(&a),
+        Some("lab") => lab(&a),
         Some("keygen") => {
             let path = PathBuf::from(parse(&a, "--identity", Some("neko-client.identity")));
             let id = load_or_generate(&path);

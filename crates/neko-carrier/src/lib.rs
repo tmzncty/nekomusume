@@ -1224,6 +1224,9 @@ impl<C: Carrier> FaultInjectCarrier<C> {
     pub fn inner(&self) -> &C {
         &self.inner
     }
+    pub fn policy(&self) -> FaultPolicy {
+        self.policy
+    }
 }
 #[cfg(test)]
 mod fault_inject_tests {

@@ -824,3 +824,14 @@ known candidates; low-bit ignorable semantics, reserved types, 1024-byte frame
 limits, 4096-byte record limits and 64-frame limits are tested. Unknown
 critical/reserved types fail closed while unknown ignorable types remain
 extensible. This does not select cryptographic AAD fields or freeze v0.
+
+
+## 2026-08-29 — D056：Bounded CLI lab/timeline output
+
+**Status: Candidate research tooling**
+
+`neko lab --json` now emits a stable bounded failover timeline fixture covering
+UDP active/PTO/uncertain, TCP validation/migration, duplicate de-duplication and
+recovery. Probe JSON output is also stable and retains fixed transport, port,
+byte and duration limits. These outputs describe candidate simulations and do
+not claim a production runtime or performance result.
