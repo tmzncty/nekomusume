@@ -16,6 +16,16 @@ The release binary SHA-256 was `bce999e3d64f42d76eb99f8fcfe0fabd67a62d8b687e1949
 - VPS server stderr: `neko: failover timeout`.
 - No successful cross-carrier WAN failover is claimed.
 
+## Evidence reconciliation
+
+The captured timestamps show the client began at `21:48:18+08:00`, while the
+VPS listener was not started until `21:48:22+08:00`. The authorized observation
+was therefore invalid as a reachability test: orchestration ordering allowed the
+bounded client retry window to expire before the server was ready. This explains
+the observed UDP handshake timeout without establishing a protocol or network
+failure. The run remains a failed-closed attempt and is not retried here; a
+properly serialized rerun still requires fresh explicit authorization.
+
 ## Cleanup
 
 The VPS listener check during the run showed only the intended `0.0.0.0:40080/tcp` and `0.0.0.0:40081/udp` listeners. After termination, `ss` showed no listener on either port and no test process remained. Temporary runtime files and identities were removed from the client and VPS after evidence capture. No firewall changes were made.
