@@ -1,5 +1,5 @@
 //! Pure synchronous candidate delivery ledger and state machine.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 pub const DEFAULT_MAX_REORDER: u64 = 64;
 pub const DEFAULT_MAX_STREAMS: usize = 64;
@@ -569,5 +569,413 @@ mod tests {
         x.confirm_received(1, 1, c(1, 0, 1)).unwrap();
         x.confirm_received(1, 0, c(1, 0, 1)).unwrap();
         assert_eq!(x.watermark(1), 2)
+    }
+}
+
+/// M3-alpha bounded Session runtime state. Carrier I/O is deliberately outside
+/// this type: callers feed authenticated records and drain accepted outbound
+/// records, while a carrier adapter performs socket/path mechanics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionId(pub u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct StreamId(pub u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeLimits {
+    pub max_streams: usize,
+    pub max_queue_records: usize,
+    pub max_queue_bytes: usize,
+    pub max_total_bytes: usize,
+    pub max_record_bytes: usize,
+    pub idle_timeout_ms: u64,
+    pub close_timeout_ms: u64,
+}
+impl Default for RuntimeLimits {
+    fn default() -> Self {
+        Self {
+            max_streams: 1,
+            max_queue_records: 64,
+            max_queue_bytes: 64 * 1024,
+            max_total_bytes: 1 << 20,
+            max_record_bytes: 1200,
+            idle_timeout_ms: 30_000,
+            close_timeout_ms: 5_000,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeState {
+    Open,
+    Closing,
+    Closed,
+    Error,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamState {
+    Open,
+    HalfClosedLocal,
+    HalfClosedRemote,
+    Closed,
+    Reset,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeError {
+    InvalidLimits,
+    Terminal,
+    QueueFull,
+    RecordTooLarge,
+    TotalLimit,
+    StreamLimit,
+    UnknownStream,
+    InvalidTransition,
+    Deadline,
+    IdleTimeout,
+    Cancelled,
+    Protocol,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboundRecord {
+    pub stream: StreamId,
+    pub offset: u64,
+    pub data: Vec<u8>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InboundRecord {
+    pub stream: StreamId,
+    pub offset: u64,
+    pub data: Vec<u8>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeEventKind {
+    SessionOpened,
+    StreamOpened,
+    DataQueued,
+    DataReceived,
+    StreamClosed,
+    CloseSent,
+    SessionClosed,
+    Error,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeEvent {
+    pub seq: u64,
+    pub at_ms: u64,
+    pub kind: RuntimeEventKind,
+}
+#[derive(Debug, Clone)]
+struct RuntimeStream {
+    state: StreamState,
+    next_send: u64,
+    next_receive: u64,
+}
+#[derive(Debug)]
+pub struct SessionRuntime {
+    id: SessionId,
+    limits: RuntimeLimits,
+    state: RuntimeState,
+    streams: BTreeMap<StreamId, RuntimeStream>,
+    send: VecDeque<OutboundRecord>,
+    recv: VecDeque<InboundRecord>,
+    queued_bytes: usize,
+    total_bytes: usize,
+    last_activity_ms: u64,
+    close_deadline_ms: Option<u64>,
+    cancelled: bool,
+    events: Vec<RuntimeEvent>,
+    next_event: u64,
+}
+impl SessionRuntime {
+    pub fn new(id: SessionId, limits: RuntimeLimits, now_ms: u64) -> Result<Self, RuntimeError> {
+        if limits.max_streams == 0
+            || limits.max_queue_records == 0
+            || limits.max_queue_bytes == 0
+            || limits.max_total_bytes == 0
+            || limits.max_record_bytes == 0
+            || limits.idle_timeout_ms == 0
+            || limits.close_timeout_ms == 0
+        {
+            return Err(RuntimeError::InvalidLimits);
+        }
+        let mut r = Self {
+            id,
+            limits,
+            state: RuntimeState::Open,
+            streams: BTreeMap::new(),
+            send: VecDeque::new(),
+            recv: VecDeque::new(),
+            queued_bytes: 0,
+            total_bytes: 0,
+            last_activity_ms: now_ms,
+            close_deadline_ms: None,
+            cancelled: false,
+            events: Vec::new(),
+            next_event: 0,
+        };
+        r.event(now_ms, RuntimeEventKind::SessionOpened);
+        Ok(r)
+    }
+    pub fn id(&self) -> SessionId {
+        self.id
+    }
+    pub fn state(&self) -> RuntimeState {
+        self.state
+    }
+    pub fn events(&self) -> impl Iterator<Item = &RuntimeEvent> {
+        self.events.iter()
+    }
+    pub fn open_stream(&mut self, stream: StreamId, now_ms: u64) -> Result<(), RuntimeError> {
+        self.check(now_ms)?;
+        if self.streams.contains_key(&stream) {
+            return Err(RuntimeError::InvalidTransition);
+        }
+        if self.streams.len() >= self.limits.max_streams {
+            return Err(RuntimeError::StreamLimit);
+        }
+        self.streams.insert(
+            stream,
+            RuntimeStream {
+                state: StreamState::Open,
+                next_send: 0,
+                next_receive: 0,
+            },
+        );
+        self.event(now_ms, RuntimeEventKind::StreamOpened);
+        Ok(())
+    }
+    pub fn queue_send(
+        &mut self,
+        stream: StreamId,
+        data: &[u8],
+        now_ms: u64,
+    ) -> Result<u64, RuntimeError> {
+        self.check(now_ms)?;
+        let s = self
+            .streams
+            .get_mut(&stream)
+            .ok_or(RuntimeError::UnknownStream)?;
+        if s.state != StreamState::Open && s.state != StreamState::HalfClosedRemote {
+            return Err(RuntimeError::InvalidTransition);
+        }
+        if data.is_empty() {
+            return Ok(s.next_send);
+        }
+        if data.len() > self.limits.max_record_bytes {
+            return Err(RuntimeError::RecordTooLarge);
+        }
+        if self.send.len() >= self.limits.max_queue_records
+            || self
+                .queued_bytes
+                .checked_add(data.len())
+                .ok_or(RuntimeError::TotalLimit)?
+                > self.limits.max_queue_bytes
+        {
+            return Err(RuntimeError::QueueFull);
+        }
+        if self
+            .total_bytes
+            .checked_add(data.len())
+            .ok_or(RuntimeError::TotalLimit)?
+            > self.limits.max_total_bytes
+        {
+            return Err(RuntimeError::TotalLimit);
+        }
+        let off = s.next_send;
+        s.next_send += data.len() as u64;
+        self.total_bytes += data.len();
+        self.queued_bytes += data.len();
+        self.send.push_back(OutboundRecord {
+            stream,
+            offset: off,
+            data: data.to_vec(),
+        });
+        self.touch(now_ms);
+        self.event(now_ms, RuntimeEventKind::DataQueued);
+        Ok(off)
+    }
+    pub fn pop_send(&mut self, now_ms: u64) -> Result<Option<OutboundRecord>, RuntimeError> {
+        self.check(now_ms)?;
+        let x = self.send.pop_front();
+        if let Some(ref r) = x {
+            self.queued_bytes -= r.data.len();
+            self.touch(now_ms);
+        }
+        Ok(x)
+    }
+    pub fn receive(&mut self, record: InboundRecord, now_ms: u64) -> Result<(), RuntimeError> {
+        self.check(now_ms)?;
+        if record.data.is_empty() || record.data.len() > self.limits.max_record_bytes {
+            return Err(RuntimeError::RecordTooLarge);
+        }
+        if self.recv.len() >= self.limits.max_queue_records
+            || self
+                .queued_bytes
+                .checked_add(record.data.len())
+                .ok_or(RuntimeError::TotalLimit)?
+                > self.limits.max_queue_bytes
+        {
+            return Err(RuntimeError::QueueFull);
+        }
+        let s = self
+            .streams
+            .get_mut(&record.stream)
+            .ok_or(RuntimeError::UnknownStream)?;
+        if record.offset != s.next_receive {
+            return Err(RuntimeError::Protocol);
+        }
+        s.next_receive += record.data.len() as u64;
+        self.recv.push_back(record);
+        self.queued_bytes += self.recv.back().unwrap().data.len();
+        self.touch(now_ms);
+        self.event(now_ms, RuntimeEventKind::DataReceived);
+        Ok(())
+    }
+    pub fn pop_receive(&mut self, now_ms: u64) -> Result<Option<InboundRecord>, RuntimeError> {
+        self.check(now_ms)?;
+        let x = self.recv.pop_front();
+        if let Some(ref r) = x {
+            self.queued_bytes -= r.data.len();
+            self.touch(now_ms);
+        }
+        Ok(x)
+    }
+    pub fn close_graceful(&mut self, now_ms: u64) -> Result<(), RuntimeError> {
+        self.check(now_ms)?;
+        if self.state == RuntimeState::Open {
+            self.state = RuntimeState::Closing;
+            self.close_deadline_ms = Some(now_ms.saturating_add(self.limits.close_timeout_ms));
+            self.event(now_ms, RuntimeEventKind::CloseSent);
+        }
+        Ok(())
+    }
+    pub fn cancel(&mut self, now_ms: u64) -> Result<(), RuntimeError> {
+        if self.state == RuntimeState::Closed {
+            return Ok(());
+        }
+        self.cancelled = true;
+        self.state = RuntimeState::Error;
+        self.send.clear();
+        self.recv.clear();
+        self.queued_bytes = 0;
+        self.event(now_ms, RuntimeEventKind::Error);
+        Ok(())
+    }
+    pub fn tick(&mut self, now_ms: u64) -> Result<(), RuntimeError> {
+        if self.state == RuntimeState::Closed || self.state == RuntimeState::Error {
+            return Ok(());
+        }
+        if now_ms.saturating_sub(self.last_activity_ms) >= self.limits.idle_timeout_ms {
+            self.state = RuntimeState::Closed;
+            self.send.clear();
+            self.recv.clear();
+            self.queued_bytes = 0;
+            self.event(now_ms, RuntimeEventKind::SessionClosed);
+            return Err(RuntimeError::IdleTimeout);
+        }
+        if let Some(d) = self.close_deadline_ms
+            && now_ms >= d
+        {
+            self.state = RuntimeState::Closed;
+            self.send.clear();
+            self.recv.clear();
+            self.queued_bytes = 0;
+            self.event(now_ms, RuntimeEventKind::SessionClosed);
+        }
+        Ok(())
+    }
+    fn check(&mut self, now_ms: u64) -> Result<(), RuntimeError> {
+        if self.cancelled || self.state == RuntimeState::Error {
+            return Err(RuntimeError::Cancelled);
+        }
+        if self.state == RuntimeState::Closed {
+            return Err(RuntimeError::Terminal);
+        }
+        if now_ms.saturating_sub(self.last_activity_ms) >= self.limits.idle_timeout_ms {
+            return self.tick(now_ms).and(Err(RuntimeError::IdleTimeout));
+        }
+        Ok(())
+    }
+    fn touch(&mut self, now: u64) {
+        self.last_activity_ms = now
+    }
+    fn event(&mut self, at: u64, kind: RuntimeEventKind) {
+        let seq = self.next_event;
+        self.next_event += 1;
+        self.events.push(RuntimeEvent {
+            seq,
+            at_ms: at,
+            kind,
+        });
+    }
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::*;
+
+    fn limits() -> RuntimeLimits {
+        RuntimeLimits {
+            max_streams: 1,
+            max_queue_records: 2,
+            max_queue_bytes: 4,
+            max_total_bytes: 8,
+            max_record_bytes: 4,
+            idle_timeout_ms: 10,
+            close_timeout_ms: 5,
+        }
+    }
+
+    #[test]
+    fn lifecycle_ordered_exchange_and_graceful_close_are_bounded() {
+        let mut r = SessionRuntime::new(SessionId(7), limits(), 0).unwrap();
+        assert_eq!(r.open_stream(StreamId(1), 1), Ok(()));
+        assert_eq!(r.queue_send(StreamId(1), b"ab", 2), Ok(0));
+        assert_eq!(r.pop_send(3).unwrap().unwrap().data, b"ab");
+        assert_eq!(
+            r.receive(
+                InboundRecord {
+                    stream: StreamId(1),
+                    offset: 0,
+                    data: b"xy".to_vec()
+                },
+                4
+            ),
+            Ok(())
+        );
+        assert_eq!(r.pop_receive(5).unwrap().unwrap().data, b"xy");
+        assert_eq!(r.close_graceful(6), Ok(()));
+        assert_eq!(r.state(), RuntimeState::Closing);
+        assert_eq!(r.close_graceful(7), Ok(()));
+        assert_eq!(r.tick(11), Ok(()));
+        assert_eq!(r.state(), RuntimeState::Closed);
+    }
+
+    #[test]
+    fn queue_limits_and_cancel_are_atomic_terminal_operations() {
+        let mut r = SessionRuntime::new(SessionId(1), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        assert_eq!(r.queue_send(StreamId(1), b"abcd", 1), Ok(0));
+        assert_eq!(
+            r.queue_send(StreamId(1), b"e", 2),
+            Err(RuntimeError::QueueFull)
+        );
+        assert_eq!(r.pop_send(3).unwrap().unwrap().data, b"abcd");
+        assert_eq!(r.cancel(4), Ok(()));
+        assert_eq!(r.state(), RuntimeState::Error);
+        assert_eq!(
+            r.queue_send(StreamId(1), b"x", 5),
+            Err(RuntimeError::Cancelled)
+        );
+        assert_eq!(r.pop_send(5), Err(RuntimeError::Cancelled));
+    }
+
+    #[test]
+    fn idle_deadline_prevents_post_timeout_mutation() {
+        let mut r = SessionRuntime::new(SessionId(1), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 1).unwrap();
+        assert_eq!(r.tick(11), Err(RuntimeError::IdleTimeout));
+        assert_eq!(r.state(), RuntimeState::Closed);
+        assert_eq!(
+            r.queue_send(StreamId(1), b"x", 12),
+            Err(RuntimeError::Terminal)
+        );
     }
 }

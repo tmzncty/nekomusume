@@ -865,3 +865,19 @@ claim is added.
 NK outer header and bounded SessionRecord frames on TCP/UDP port 40080. It is
 not an interoperability implementation, does not validate cryptographic
 integrity, and carries no security or production claim.
+
+
+## 2026-08-29 — D053：M3-alpha First Surviving Session contract
+
+**Status: Accepted design contract — implementation and WAN gates remain separate**
+
+M3-alpha is defined as a Session-owned bounded multi-exchange runtime over
+carrier-neutral interfaces. Its acceptance requires stable Session/stream
+lifecycle, atomic resource limits, virtual-clock deadlines/cancellation/idle and
+close behavior, exactly-once ordered application delivery, shared observable
+events, deterministic FaultInjectCarrier simulation, and only then an isolated
+authenticated UDP-primary/TCP-standby WAN experiment. The detailed seam audit and
+acceptance tests are recorded in
+[`docs/m3-runtime-contract-2026-08-29.md`](m3-runtime-contract-2026-08-29.md).
+0-RTT, multipath, FEC enablement, proxy/tunnel behavior and production/security
+claims remain excluded.
