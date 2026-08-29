@@ -52,3 +52,10 @@ A second bounded run used five repetitions for each IPv4/IPv6 × TCP/UDP × 32/1
 Negative paths failed closed: an unallowlisted client identity was rejected (`rc=2`, 52 ms) and a probe with no listener failed within the bounded client timeout (`rc=2`, 4120 ms). Raw evidence: [`docs/data/vps-wan-negative-2026-08-29.jsonl`](data/vps-wan-negative-2026-08-29.jsonl).
 
 The current public CLI performs one authenticated echo and exits. It therefore cannot honestly establish a long-lived Session, live WAN UDP→TCP failover, NAT rebinding, or continuous key-update stability. Those remain unchecked until a bounded multi-exchange Session runner exists. The existing deterministic and loopback failover evidence remains separate.
+
+
+## Authenticated multi-exchange WAN smoke — 2026-08-29
+
+The new bounded `--count 8` runner was deployed to the dedicated VPS. One Noise handshake carried eight sequential authenticated exchanges for each IPv4/IPv6 × TCP/UDP case; all four cases succeeded. This validates bounded multi-record use over one carrier, not cross-carrier failover. Raw summary: [`docs/data/vps-multiexchange-2026-08-29.jsonl`](data/vps-multiexchange-2026-08-29.jsonl).
+
+The First Surviving Session gate remains open: the present CLI still creates one transport-bound `SecureSession` per invocation, and does not yet preserve that cryptographic Session across a UDP-to-TCP carrier replacement. No claim of live WAN failover or DELIVERY_ACK is made.
