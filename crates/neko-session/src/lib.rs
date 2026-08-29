@@ -1113,6 +1113,40 @@ mod runtime_tests {
     }
 
     #[test]
+    fn duplicate_is_deduplicated_and_delivery_ack_advances_watermark() {
+        let duplicate_limits = RuntimeLimits {
+            max_queue_records: 4,
+            max_queue_bytes: 8,
+            ..limits()
+        };
+        let mut r = SessionRuntime::new(SessionId(12), duplicate_limits, 0).unwrap();
+        r.open_stream(StreamId(1), 1).unwrap();
+        let record = InboundRecord {
+            stream: StreamId(1),
+            offset: 0,
+            data: b"abc".to_vec(),
+        };
+        assert_eq!(r.receive(record.clone(), 2), Ok(()));
+        assert_eq!(r.receive(record, 3), Ok(()));
+        assert_eq!(r.pop_receive(4).unwrap().unwrap().data, b"abc");
+        assert!(r.pop_receive(5).unwrap().is_none());
+        assert_eq!(r.delivery_ack(StreamId(1), 0, 3, 6), Ok(()));
+        assert_eq!(r.confirmed_watermark(StreamId(1)), 3);
+        assert_eq!(
+            r.observable_events()
+                .filter(|e| e.kind == RuntimeEventKind::DuplicateDedup)
+                .count(),
+            1
+        );
+        assert_eq!(
+            r.observable_events()
+                .filter(|e| e.kind == RuntimeEventKind::DeliveryAck)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn virtual_clock_udp_death_preserves_order_after_tcp_recovery() {
         let sim_limits = RuntimeLimits {
             max_streams: 1,
