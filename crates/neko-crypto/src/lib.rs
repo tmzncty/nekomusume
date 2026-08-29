@@ -378,6 +378,11 @@ impl SecureSession {
         self.seal(payload)
     }
     pub fn open_unreliable(&mut self, record: &[u8]) -> Result<Vec<u8>, SessionRejected> {
+        // Reject oversized datagrams before authentication/replay mutation. The
+        // authenticated record has 8 bytes of sequence, context, payload and tag.
+        if record.len() > 8 + RECORD_CONTEXT_LEN + MAX_UNRELIABLE_DATAGRAM + 16 {
+            return Err(SessionRejected);
+        }
         self.open(record)
     }
 
@@ -667,6 +672,19 @@ mod preauth_tests {
         assert_eq!(a.open(&old), Err(SessionRejected));
         assert_eq!(b.key_phase(), 0);
     }
+    #[test]
+    fn unreliable_oversize_rejection_preserves_replay_state() {
+        let (mut a, mut b) = super::session_tests::pair();
+        let oversized = a.seal(&vec![0; MAX_UNRELIABLE_DATAGRAM + 1]).unwrap();
+        assert_eq!(b.open_unreliable(&oversized), Err(SessionRejected));
+        // The same sequence remains available to the generic bounded record API;
+        // the unreliable policy rejection did not advance replay state.
+        assert_eq!(
+            b.open(&oversized).unwrap().len(),
+            MAX_UNRELIABLE_DATAGRAM + 1
+        );
+    }
+
     #[test]
     fn unreliable_datagram_roundtrip_replay_and_size_are_bounded() {
         let (mut a, mut b) = super::session_tests::pair();

@@ -734,3 +734,14 @@ Near-maximum `u16` MTU arithmetic, `u64::MAX` path generation, stale ACKs and
 wrong-size ACKs are now deterministic regression cases. Rejected ACKs preserve
 the outstanding probe; checked probe-ID increment and max-probe admission remain
 fail-closed. No network behavior or ICMP trust is introduced.
+
+
+## 2026-08-29 — D048：Unreliable datagram oversize rejection is replay-atomic
+
+**Status: Candidate test hardening — no datagram API enablement**
+
+The unreliable open path now rejects oversized record envelopes before generic
+AEAD open and replay-window mutation. A regression proves a 1201-byte payload
+record is rejected by the unreliable policy without consuming its sequence; the
+generic bounded record path remains independently testable. Context binding and
+replay semantics are unchanged for accepted datagrams.
