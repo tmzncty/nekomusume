@@ -724,3 +724,13 @@ symbols or allocating parity. Zero and the configured maximum ID are accepted; t
 next ID and `u64::MAX` fail as `TooManyBlocks` with no block state. This
 keeps resource limits tied to identity as well as payload size without changing
 wire, Session, retransmission or carrier behavior.
+
+
+## 2026-08-29 — D047：PLPMTUD edge arithmetic remains bounded
+
+**Status: Candidate test hardening — no live probing**
+
+Near-maximum `u16` MTU arithmetic, `u64::MAX` path generation, stale ACKs and
+wrong-size ACKs are now deterministic regression cases. Rejected ACKs preserve
+the outstanding probe; checked probe-ID increment and max-probe admission remain
+fail-closed. No network behavior or ICMP trust is introduced.

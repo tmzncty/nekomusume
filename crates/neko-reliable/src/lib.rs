@@ -812,6 +812,32 @@ mod plpmtud_tests {
         assert_eq!(p.confirmed_mtu(), 1200);
     }
     #[test]
+    fn probe_arithmetic_and_rejection_are_bounded_at_u16_edges() {
+        let c = PlpmtudConfig {
+            base_mtu: 65_000,
+            max_mtu: 65_535,
+            attempts_per_size: 1,
+            max_probes: 1,
+            blackhole_threshold: 1,
+        };
+        let mut p = Plpmtud::new(c, u64::MAX).unwrap();
+        let q = p.start_probe().unwrap();
+        assert!(q.size > c.base_mtu && q.size <= c.max_mtu);
+        assert_eq!(
+            p.acknowledge(q.id, u64::MAX - 1, q.size),
+            Err(PlpmtudError::StaleAck)
+        );
+        assert_eq!(p.outstanding(), Some(q));
+        assert_eq!(
+            p.acknowledge(q.id, u64::MAX, q.size - 1),
+            Err(PlpmtudError::WrongSize)
+        );
+        assert_eq!(p.outstanding(), Some(q));
+        assert_eq!(p.timeout(), Ok(ProbeTimeout::ReducedUpperBound));
+        assert!(p.upper_bound() >= p.confirmed_mtu());
+    }
+
+    #[test]
     fn invalid_configurations_fail_closed() {
         for c in [
             PlpmtudConfig {

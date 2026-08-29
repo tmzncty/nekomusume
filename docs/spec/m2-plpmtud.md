@@ -24,3 +24,11 @@ configuration and blackhole fallback.
 No socket, DF bit, route, listener, ICMP parser, public endpoint or benchmark is
 introduced. Probe messages must later travel inside the authenticated carrier
 record before this model may be connected to a live path.
+
+
+## Edge-boundary audit
+
+The candidate uses checked probe-ID increment and bounded `u16` MTU arithmetic.
+The one-outstanding and max-probe checks occur before mutation; stale generation
+and wrong-size ACKs leave the outstanding probe untouched. Edge tests cover
+`u16`-near-maximum MTUs and `u64::MAX` path generation without live probing.
