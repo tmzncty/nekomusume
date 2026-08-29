@@ -29,3 +29,13 @@ is rejected as replay/rollback evidence, and the watermark is monotonic.
 Transport endpoint close is specified and tested in the carrier layer; M0 does
 not invent a second Session close protocol or claim application-level
 `Delivered`/`Closed` semantics.
+
+
+## Context migration rule
+
+A ledger context is not exact global identity. `key_phase` and
+`path_generation` may advance monotonically as independent migration evidence;
+`delivery_epoch` advances only at its explicit boundary. Regressions are
+`OldEpoch`, and a compound epoch change that also changes crypto/path context is
+rejected as `InvalidMigration`. Overlap merging must preserve interval evidence
+and cannot erase mixed delivery states.

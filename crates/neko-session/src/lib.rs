@@ -62,6 +62,7 @@ pub enum LedgerError {
     Conflict,
     OldEpoch,
     ContextMismatch,
+    InvalidMigration,
     InvalidTransition,
     RangeNotFound,
 }
@@ -97,14 +98,32 @@ impl DeliveryLedger {
     pub fn watermark(&self, stream: u64) -> u64 {
         self.streams.get(&stream).copied().unwrap_or(0)
     }
+    /// Context migration is component-wise monotonic. Delivery epochs and key
+    /// phases may advance only (never regress); a path generation may advance
+    /// independently for a Carrier change. A single operation cannot advance
+    /// delivery epoch while regressing either crypto or path context.
     fn context_ok(&mut self, context: SessionContext) -> Result<(), LedgerError> {
         match self.context {
-            Some(old) if old != context => Err(LedgerError::ContextMismatch),
             None => {
                 self.context = Some(context);
                 Ok(())
             }
-            _ => Ok(()),
+            Some(old) => {
+                if context.delivery_epoch.0 < old.delivery_epoch.0
+                    || context.key_phase.0 < old.key_phase.0
+                    || context.path_generation.0 < old.path_generation.0
+                {
+                    return Err(LedgerError::OldEpoch);
+                }
+                if context.delivery_epoch.0 > old.delivery_epoch.0
+                    && (context.key_phase.0 != old.key_phase.0
+                        || context.path_generation.0 != old.path_generation.0)
+                {
+                    return Err(LedgerError::InvalidMigration);
+                }
+                self.context = Some(context);
+                Ok(())
+            }
         }
     }
     pub fn insert(
@@ -175,7 +194,7 @@ impl DeliveryLedger {
         }
         let mut start = offset;
         let mut finish = end;
-        let mut state = DeliveryState::Unsent;
+        let mut state = None;
         let mut removed = 0usize;
         for key in &overlaps {
             let s = &self.segments[key];
@@ -185,7 +204,10 @@ impl DeliveryLedger {
                     .checked_add(s.data.len() as u64)
                     .ok_or(LedgerError::OffsetOverflow)?,
             );
-            state = s.state;
+            if state.is_some_and(|old| old != s.state) {
+                return Err(LedgerError::InvalidMigration);
+            }
+            state = Some(s.state);
             removed = removed
                 .checked_add(s.data.len())
                 .ok_or(LedgerError::ByteCountOverflow)?;
@@ -240,12 +262,12 @@ impl DeliveryLedger {
                 stream_id: stream,
                 offset: start,
                 data: merged,
-                state,
+                state: state.expect("overlaps is non-empty"),
                 context,
             },
         );
         self.bytes = new_total;
-        Ok(state)
+        Ok(state.expect("overlaps is non-empty"))
     }
     pub fn mark_in_flight(&mut self, s: u64, o: u64) -> Result<(), LedgerError> {
         self.transition(s, o, DeliveryState::InFlight)
@@ -278,12 +300,23 @@ impl DeliveryLedger {
             .segments
             .get_mut(&(s, o))
             .ok_or(LedgerError::RangeNotFound)?;
-        if x.context != context {
-            return if x.context.delivery_epoch != context.delivery_epoch {
-                Err(LedgerError::OldEpoch)
-            } else {
-                Err(LedgerError::ContextMismatch)
-            };
+        if context.delivery_epoch.0 < x.context.delivery_epoch.0
+            || context.key_phase.0 < x.context.key_phase.0
+            || context.path_generation.0 < x.context.path_generation.0
+        {
+            return Err(LedgerError::OldEpoch);
+        }
+        if context.delivery_epoch.0 == x.context.delivery_epoch.0
+            && context.key_phase.0 == x.context.key_phase.0
+            && context.path_generation.0 == x.context.path_generation.0
+        {
+        } else if context.delivery_epoch.0 > x.context.delivery_epoch.0
+            && (context.key_phase.0 != x.context.key_phase.0
+                || context.path_generation.0 != x.context.path_generation.0)
+        {
+            return Err(LedgerError::InvalidMigration);
+        } else {
+            x.context = context;
         }
         if !matches!(
             x.state,
@@ -332,6 +365,19 @@ mod tests {
         assert_eq!(x.watermark(1), 2)
     }
     #[test]
+    fn monotonic_path_and_key_migrations_are_allowed_but_regressions_rejected() {
+        let mut x = l();
+        x.insert(1, 0, b"a", c(1, 0, 1)).unwrap();
+        x.insert(1, 1, b"b", c(1, 1, 1)).unwrap();
+        x.insert(1, 2, b"c", c(1, 1, 2)).unwrap();
+        assert_eq!(x.insert(1, 3, b"d", c(1, 0, 2)), Err(LedgerError::OldEpoch));
+        assert_eq!(
+            x.insert(1, 4, b"e", c(2, 2, 2)),
+            Err(LedgerError::InvalidMigration)
+        );
+    }
+
+    #[test]
     fn overlap_merge_and_conflict() {
         let mut x = l();
         x.insert(1, 0, b"abcd", c(1, 0, 1)).unwrap();
@@ -344,10 +390,7 @@ mod tests {
     fn context_and_old_epoch_rejected() {
         let mut x = l();
         x.insert(1, 0, b"a", c(2, 0, 1)).unwrap();
-        assert_eq!(
-            x.insert(1, 1, b"b", c(2, 1, 1)),
-            Err(LedgerError::ContextMismatch)
-        );
+        assert_eq!(x.insert(1, 1, b"b", c(2, 1, 1)), Ok(DeliveryState::Unsent));
         x.mark_in_flight(1, 0).unwrap();
         assert_eq!(
             x.confirm_received(1, 0, c(1, 0, 1)),
@@ -399,6 +442,20 @@ mod tests {
             assert!(ledger.insert(stream, offset, data, c(1, 0, 1)).is_err());
             assert_eq!(ledger.context, None);
         }
+    }
+
+    #[test]
+    fn mixed_state_overlap_is_not_collapsed() {
+        let mut x = l();
+        x.insert(1, 0, b"ab", c(1, 0, 1)).unwrap();
+        x.insert(1, 2, b"cd", c(1, 0, 1)).unwrap();
+        x.mark_in_flight(1, 0).unwrap();
+        assert_eq!(
+            x.insert(1, 1, b"bc", c(1, 0, 1)),
+            Err(LedgerError::InvalidMigration)
+        );
+        let states: Vec<_> = x.segments().map(|s| s.state).collect();
+        assert_eq!(states, vec![DeliveryState::InFlight, DeliveryState::Unsent]);
     }
 
     #[test]

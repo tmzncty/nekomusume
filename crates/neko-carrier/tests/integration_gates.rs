@@ -121,9 +121,9 @@ fn old_generation_and_late_old_path_cannot_advance_watermark() {
                 path_generation: SessionPathGeneration(GENERATION.0),
             },
         ),
-        Err(neko_session::LedgerError::ContextMismatch)
+        Ok(())
     );
-    assert_eq!(ledger.watermark(1), 0);
+    assert_eq!(ledger.watermark(1), 1);
 }
 
 #[test]

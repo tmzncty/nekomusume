@@ -800,3 +800,15 @@ The generic `Carrier` contract now exposes only `CarrierLimits`, `CarrierError`,
 and opaque `IoObservation` vocabulary. Memory, UDP and TCP retain native
 adapter APIs and map their errors/limits at the generic boundary; no
 `MemoryLimits` or `MemoryPairError` appears in the trait.
+
+
+## 2026-08-29 — D054：Session context migration is monotonic
+
+**Status: Candidate architecture hardening — no wire change**
+
+DeliveryLedger now accepts component-wise non-regressing key-phase and path
+generation changes. Delivery epoch advancement is a separate migration boundary
+and cannot be combined with a crypto/path regression; old values fail closed.
+Overlapping segments with mixed delivery states are not collapsed into a
+misleading single state. Delivery watermark and evidence separation remain
+monotonic.
