@@ -648,6 +648,7 @@ mod tests {
         assert_eq!(clock.now_us(), 25);
     }
 
+    #[test]
     fn deterministic_loss_and_reorder_preserve_all_frames() {
         for drop_every in [0, 100, 20, 10] {
             for reorder in [false, true] {

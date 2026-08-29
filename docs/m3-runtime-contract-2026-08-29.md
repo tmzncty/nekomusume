@@ -43,6 +43,22 @@ ordering and delivery confirmation.
 - Runtime emits versioned events with a monotonic sequence and virtual timestamp;
   event emission is observational and cannot change protocol state.
 
+## Reliable/key audit (M3 gate)
+
+`neko-reliable` is a socket-free candidate and now exposes bounded deterministic
+`VirtualClock`/`FaultProfile` acceptance (periodic loss, contiguous burst loss,
+reordering and blackhole). Packet-number allocation, canonical ACK ranges,
+RTT/PTO, threshold/time loss, frame-level retransmission and resource limits
+remain carrier-local evidence; they never promote Session delivery ACK or path
+validation.
+
+Key update is implemented in `neko-crypto::SecureSession::update_key_phase`: it
+performs a synchronized one-step Noise rekey, resets the direction-local nonce
+and replay window, authenticates the new context phase, and rejects old-phase
+records. It is exercised by bounded synchronized/unsynchronized regressions,
+but remains a candidate M3 gate—not a production or security approval. HY2
+comparison and performance conclusions remain deferred.
+
 ## Acceptance tests before WAN
 
 1. Open/close lifecycle: session and one stream open, send/receive ordered
