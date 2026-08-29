@@ -623,3 +623,14 @@ mutation regression. The regression proves that missing, absolute, directory,
 and invalid-status mutations fail closed while a valid copied table passes. It
 uses a temporary directory and does not alter the audited status file or any
 protocol artifact.
+
+
+## 2026-08-29 — D038：Maintained shell scripts require syntax validation
+
+**Status: Accepted repository-harness hardening — no protocol change**
+
+`check-shell-syntax.sh` runs `bash -n` over every maintained `scripts/**/*.sh`
+file. Its isolated regression copies the script set to a temporary directory,
+adds malformed shell, verifies rejection, and asserts the repository porcelain
+status is unchanged. This catches accidental cron/check harness syntax drift
+without modifying network, protocol, fuzz corpus, or production state.
