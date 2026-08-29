@@ -1228,6 +1228,44 @@ impl<C: Carrier> FaultInjectCarrier<C> {
         self.policy
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaultEvent {
+    Insert,
+    Send,
+    Loss,
+    Uncertain,
+    GenerationChange,
+    Duplicate,
+    OldAck,
+    NewAck,
+    Drain,
+    Fail,
+    Activate,
+}
+pub fn generated_fault_sequence(seed: u64, length: usize) -> Vec<FaultEvent> {
+    let events = [
+        FaultEvent::Insert,
+        FaultEvent::Send,
+        FaultEvent::Loss,
+        FaultEvent::Uncertain,
+        FaultEvent::GenerationChange,
+        FaultEvent::Duplicate,
+        FaultEvent::OldAck,
+        FaultEvent::NewAck,
+        FaultEvent::Drain,
+        FaultEvent::Fail,
+        FaultEvent::Activate,
+    ];
+    let mut x = seed;
+    let n = length.min(4096);
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        x = x.wrapping_mul(6364136223846793005).wrapping_add(1);
+        out.push(events[((x >> 56) as usize) % events.len()]);
+    }
+    out
+}
+
 #[cfg(test)]
 mod fault_inject_tests {
     use super::*;

@@ -835,3 +835,13 @@ UDP active/PTO/uncertain, TCP validation/migration, duplicate de-duplication and
 recovery. Probe JSON output is also stable and retains fixed transport, port,
 byte and duration limits. These outputs describe candidate simulations and do
 not claim a production runtime or performance result.
+
+
+## 2026-08-29 — D057：Bounded deterministic fault sequence generation
+
+**Status: Candidate state-machine tooling**
+
+The carrier crate exposes a bounded seeded event generator for insert/send/loss,
+uncertain, generation change, duplicate, old/new ACK, drain, fail and activate
+scenarios. It is a deterministic test input source capped at 4096 events; it
+does not itself promote packet evidence to delivery or enable live fault injection.
