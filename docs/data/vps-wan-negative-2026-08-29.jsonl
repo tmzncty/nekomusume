@@ -1,0 +1,2 @@
+{"case": "wrong_client_identity", "expected": "reject", "rc": 2, "wall_ms": 52, "output": "neko: handshake response failed"}
+{"case": "no_listener", "expected": "reject", "rc": 2, "wall_ms": 4120, "output": "neko: handshake response failed"}

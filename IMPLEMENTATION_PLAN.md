@@ -97,7 +97,7 @@ Linux server <-> VPS：
 - [ ] 长连接稳定性
 - [ ] NAT / endpoint change（条件允许时）
 - [ ] 与 HY2 在同服务器、同线路、同 MTU、同安全等级、同应用流量下比较
-- [ ] 报告 median / P95 / failures，而不是只贴最好成绩
+- [x] 报告 median / P95 / failures（bounded authenticated baseline；非性能结论）
 
 ## Experimental Track A — Reachability Matrix
 

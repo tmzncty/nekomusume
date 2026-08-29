@@ -43,3 +43,12 @@ The dedicated client-to-VPS key path was used; no private key was copied between
 | IPv6 | UDP | 1/32/1200 | 9/9 | 42–43 |
 
 Raw machine-readable output: [`docs/data/vps-wan-baseline-2026-08-29.jsonl`](data/vps-wan-baseline-2026-08-29.jsonl). This is an authorized isolated observation, not a throughput result, broad reachability claim, interoperability claim, or production/security approval.
+
+
+## Repeated baseline and negative-path checks
+
+A second bounded run used five repetitions for each IPv4/IPv6 × TCP/UDP × 32/1200-byte combination: 40/40 authenticated echoes succeeded. Observed wall-clock medians/P95 were IPv4 TCP 91–96/93–98 ms, IPv4 UDP 50/52–53 ms, IPv6 TCP 83–84/85–86 ms, and IPv6 UDP 41–44/45–48 ms. These are small availability samples, not throughput or superiority evidence.
+
+Negative paths failed closed: an unallowlisted client identity was rejected (`rc=2`, 52 ms) and a probe with no listener failed within the bounded client timeout (`rc=2`, 4120 ms). Raw evidence: [`docs/data/vps-wan-negative-2026-08-29.jsonl`](data/vps-wan-negative-2026-08-29.jsonl).
+
+The current public CLI performs one authenticated echo and exits. It therefore cannot honestly establish a long-lived Session, live WAN UDP→TCP failover, NAT rebinding, or continuous key-update stability. Those remain unchecked until a bounded multi-exchange Session runner exists. The existing deterministic and loopback failover evidence remains separate.
