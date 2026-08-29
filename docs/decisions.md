@@ -856,3 +856,12 @@ UDP active → UDP uncertain → PTO → TCP active → TCP resend → delivery 
 Encrypted payload recovery remains DataId-deduplicated and byte-preserving. The
 sequence is bounded and local/loopback only; no WAN, performance or production
 claim is added.
+
+## 2026-08-29 — D059：Experimental Wireshark candidate dissector
+
+**Status: Non-authoritative research tool — non-frozen**
+
+`tools/wireshark/nekomusume_candidate.lua` can label the documented candidate
+NK outer header and bounded SessionRecord frames on TCP/UDP port 40080. It is
+not an interoperability implementation, does not validate cryptographic
+integrity, and carries no security or production claim.

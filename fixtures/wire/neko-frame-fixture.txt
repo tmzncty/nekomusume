@@ -1,0 +1,2 @@
+# Experimental candidate fixture: NK v0 outer header + DATA and DELIVERY_ACK frames
+# Not an interoperable or security-approved capture.
