@@ -6,7 +6,7 @@ use neko_crypto::{
 use std::{
     env, fs,
     io::{Read, Write},
-    net::{TcpListener, TcpStream, UdpSocket},
+    net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket},
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -134,7 +134,9 @@ fn server(args: &[String]) {
     let (t, p, max, d) = common(args);
     let idpath = PathBuf::from(parse(args, "--identity", Some("neko-server.identity")));
     let id = load_or_generate(&idpath);
-    println!("server_public_key={}", hex(id.public_key()));
+    if !json_mode(args) {
+        println!("server_public_key={}", hex(id.public_key()));
+    }
     let start = Instant::now();
     let client_hex = parse(args, "--client-key", None);
     let client_key = unhex(&client_hex);
@@ -145,7 +147,18 @@ fn server(args: &[String]) {
         status: TrustStatus::Active,
     }]);
     if t == "tcp" {
-        let l = TcpListener::bind(("0.0.0.0", p)).unwrap_or_else(|_| fail("bind failed"));
+        let bind_addr = parse(args, "--bind", Some("0.0.0.0:0"));
+        let bind: SocketAddr = if bind_addr == "0.0.0.0:0" {
+            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), p)
+        } else {
+            bind_addr
+                .parse()
+                .unwrap_or_else(|_| fail("bad bind address"))
+        };
+        if bind.port() != p {
+            fail("bind port must equal --port");
+        }
+        let l = TcpListener::bind(bind).unwrap_or_else(|_| fail("bind failed"));
         l.set_nonblocking(true).unwrap();
         while start.elapsed() < d {
             match l.accept() {
@@ -173,7 +186,18 @@ fn server(args: &[String]) {
             }
         }
     } else {
-        let u = UdpSocket::bind(("0.0.0.0", p)).unwrap_or_else(|_| fail("bind failed"));
+        let bind_addr = parse(args, "--bind", Some("0.0.0.0:0"));
+        let bind: SocketAddr = if bind_addr == "0.0.0.0:0" {
+            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), p)
+        } else {
+            bind_addr
+                .parse()
+                .unwrap_or_else(|_| fail("bad bind address"))
+        };
+        if bind.port() != p {
+            fail("bind port must equal --port");
+        }
+        let u = UdpSocket::bind(bind).unwrap_or_else(|_| fail("bind failed"));
         u.set_read_timeout(Some(Duration::from_millis(100)))
             .unwrap();
         let mut b = [0; 65536];
@@ -205,7 +229,9 @@ fn client(args: &[String]) {
     let sk = unhex(&parse(args, "--server-key", None));
     let idpath = PathBuf::from(parse(args, "--identity", Some("neko-client.identity")));
     let id = load_or_generate(&idpath);
-    println!("client_public_key={}", hex(id.public_key()));
+    if !json_mode(args) {
+        println!("client_public_key={}", hex(id.public_key()));
+    }
     let mut hs = InitiatorHandshake::new(&id, &sk, b"probe", DOMAIN)
         .unwrap_or_else(|_| fail("handshake setup failed"));
     let first = hs
@@ -225,9 +251,14 @@ fn client(args: &[String]) {
                 .unwrap_or_else(|_| fail("handshake finish failed")),
         ))
     } else {
-        let u = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let target: SocketAddr = addr.parse().unwrap_or_else(|_| fail("bad address"));
+        let local = match target.ip() {
+            IpAddr::V4(_) => SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0),
+            IpAddr::V6(_) => SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), 0),
+        };
+        let u = UdpSocket::bind(local).unwrap_or_else(|_| fail("UDP socket family unavailable"));
         u.set_read_timeout(Some(d)).unwrap();
-        u.send_to(&first, &addr).unwrap();
+        u.send_to(&first, target).unwrap();
         let mut b = [0; 65536];
         let (n, _) = u
             .recv_from(&mut b)
@@ -238,7 +269,7 @@ fn client(args: &[String]) {
         let rec = ss
             .seal_unreliable(&payload)
             .unwrap_or_else(|_| fail("payload too large"));
-        u.send_to(&rec, &addr).unwrap();
+        u.send_to(&rec, target).unwrap();
         let (n, _) = u.recv_from(&mut b).unwrap_or_else(|_| fail("echo timeout"));
         if ss
             .open_unreliable(&b[..n])
@@ -311,5 +342,22 @@ fn main() {
         }
         Some("--help") | None => println!("{USAGE}"),
         _ => fail("unknown command"),
+    }
+}
+
+#[cfg(test)]
+mod cli_regression_tests {
+    use super::*;
+    #[test]
+    fn json_mode_is_detected_without_affecting_address_family() {
+        assert!(json_mode(&["probe".into(), "--json".into()]));
+        assert_eq!(
+            "[::1]:40080".parse::<SocketAddr>().unwrap().ip(),
+            IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)
+        );
+        assert_eq!(
+            "127.0.0.1:40080".parse::<SocketAddr>().unwrap().ip(),
+            IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+        );
     }
 }
