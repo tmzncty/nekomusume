@@ -8,11 +8,14 @@ root=pathlib.Path(sys.argv[1]).resolve(); status=pathlib.Path(sys.argv[2]).resol
 allowed={'implemented','candidate','provisional','absent','blocked'}
 text=status.read_text(encoding='utf-8')
 rows=[]
+seen=set()
 for line in text.splitlines():
     if not line.startswith('|') or line.startswith('|---') or line.startswith('| ID '): continue
     cells=[x.strip() for x in line.strip().strip('|').split('|')]
     if len(cells)!=5: raise SystemExit(f'invalid status row: {line}')
     ident,area,state,evidence,boundary=cells
+    if not ident or ident in seen: raise SystemExit(f'duplicate or empty status ID: {ident}')
+    seen.add(ident)
     if state not in allowed: raise SystemExit(f'invalid status: {ident}: {state}')
     evidence=evidence.strip('`')
     if not evidence or evidence.startswith('/') or re.match(r'^[A-Za-z]:[\\/]',evidence) or '\\' in evidence:

@@ -24,4 +24,18 @@ from pathlib import Path
 p=Path(__import__('sys').argv[1]); s=p.read_text(); s=s.replace('| candidate |', '| invalid |', 1); p.write_text(s)
 PY
 if ./scripts/check-status-evidence.sh "$TMP/invalid.md" >/dev/null 2>&1; then exit 1; fi
+cp "$ROOT/docs/status.md" "$TMP/duplicate.md"
+python3 - "$TMP/duplicate.md" <<'PY2'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); lines=p.read_text().splitlines(); row=next(x for x in lines if x.startswith('| G0 |')); lines.insert(lines.index(row)+1,row); p.write_text('\n'.join(lines)+'\n')
+PY2
+if ./scripts/check-status-evidence.sh "$TMP/duplicate.md" >/dev/null 2>&1; then exit 1; fi
+cp "$ROOT/docs/status.md" "$TMP/malformed.md"
+python3 - "$TMP/malformed.md" <<'PY2'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); lines=p.read_text().splitlines(); i=next(i for i,x in enumerate(lines) if x.startswith('| G0 |')); lines[i]='| G0 | malformed | candidate | `docs/adr/m1-g0-research-authorization.md` |'; lines[i]=lines[i][:-2]; p.write_text('\n'.join(lines)+'\n')
+PY2
+if ./scripts/check-status-evidence.sh "$TMP/malformed.md" >/dev/null 2>&1; then exit 1; fi
 printf '%s\n' 'status evidence mutation tests passed'
