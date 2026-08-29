@@ -90,7 +90,7 @@ fn authenticated_tcp_and_udp_loopback_probe() {
             .output()
             .unwrap();
         let _ = server.kill();
-        let _ = server.wait();
+        let _server_out = server.wait_with_output().unwrap();
         let _ = fs::remove_file(sp);
         let _ = fs::remove_file(cp);
         assert!(
@@ -100,4 +100,75 @@ fn authenticated_tcp_and_udp_loopback_probe() {
         );
         assert!(String::from_utf8_lossy(&out.stdout).contains("probe_ok"));
     }
+}
+
+#[test]
+fn executable_loopback_udp_blackhole_tcp_resume() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("failover-server");
+    let cp = tmp("failover-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let udp = 40089u16;
+    let tcp = 40090u16;
+    let mut server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "5",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    thread::sleep(Duration::from_millis(150));
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "3",
+        ])
+        .output()
+        .unwrap();
+    let _ = server.wait();
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    assert!(
+        out.status.success(),
+        "status={:?} stdout={} stderr={}",
+        out.status,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("udp_blackhole=true"));
 }

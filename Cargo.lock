@@ -254,6 +254,7 @@ name = "neko-cli"
 version = "0.1.0"
 dependencies = [
  "neko-crypto",
+ "neko-session",
 ]
 
 [[package]]

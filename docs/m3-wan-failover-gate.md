@@ -1,16 +1,14 @@
 # M3 WAN failover CLI gate
 
 The `neko failover`, `neko failover-server`, and `neko failover-client`
-commands currently implement an explicit **bounded admission gate**, not a WAN
-runner. They validate `count` (1–64), payload size (1–1200 bytes), duration
-(1–30 seconds), and ports (40080–40100), then require `--loopback-only` and emit
-a machine-readable simulator-gate result. Without that flag they fail closed.
+commands now implement an executable **bounded loopback runner**. They validate `count` (1–64), payload size (1–1200 bytes), duration
+(1–30 seconds), and ports (40080–40100), and default to loopback-safe operation. The runner uses real UDP primary and TCP
+standby sockets; it is still a research candidate and must not be exposed publicly.
 
-This is intentional: the existing `server`/`client` commands each own one
-transport-bound `SecureSession`; they do not yet preserve one logical Session
-across two listeners or carry `ResumeBinding`/`DELIVERY_ACK` state between
-processes. Enabling WAN orchestration before that seam is implemented would
-create a misleading reachability claim and risk unbounded listener behavior.
+The runner preserves logical SessionId 7001, authenticates a fresh TCP Noise
+resume, validates `ResumeGuard`, ACKs duplicate data, and bounds all loops and
+frames. It binds only addresses explicitly supplied by the operator; public WAN
+use remains prohibited pending review.
 
 ## Next executable seam
 

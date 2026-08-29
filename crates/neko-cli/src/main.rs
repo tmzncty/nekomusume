@@ -1,7 +1,11 @@
 //! Bounded authenticated research probe runtime; never a proxy or tunnel.
 use neko_crypto::{
-    InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, TrustPolicy, TrustRecord,
-    TrustStatus,
+    InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, ResumeGuard, TrustPolicy,
+    TrustRecord, TrustStatus,
+};
+use neko_session::{
+    InboundRecord, ProcessMessage, ResumeWireBinding, RuntimeLimits, SessionId, SessionRuntime,
+    StreamId,
 };
 use std::{
     env, fs,
@@ -10,12 +14,13 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-const USAGE: &str = "Usage: neko <server|client|probe|lab|failover|keygen> [bounded options]
+const USAGE: &str = "Usage: neko <server|client|probe|lab|failover-server|failover-client|keygen> [bounded options]
 
   --count N: bounded authenticated exchanges (1-64)\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
 const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
 const MAX_DURATION: u64 = 30;
+const PROCESS_FRAME_MAX: usize = neko_session::PROCESS_FRAME_MAX;
 const DOMAIN: &[u8] = b"nekomusume-vps-probe";
 fn json_mode(args: &[String]) -> bool {
     args.iter().any(|a| a == "--json")
@@ -318,45 +323,323 @@ fn client(args: &[String]) {
     }
     emit_probe(args, "tcp", max, start.elapsed().as_millis())
 }
-fn failover_gate(args: &[String]) {
-    // WAN failover is intentionally a hard gate until a real dual-listener
-    // runner has independent review. Keep argument validation bounded so a
-    // future implementation cannot widen the experiment by accident.
+fn failover_binding(session: u64, generation: u64, expires: u64) -> neko_crypto::ResumeBinding {
+    neko_crypto::ResumeBinding {
+        session_id: session,
+        delivery_epoch: 1,
+        key_phase: 0,
+        path_generation: generation,
+        expires_at_ms: expires,
+        token: [9; 32],
+    }
+}
+fn wire_binding(b: &neko_crypto::ResumeBinding) -> ResumeWireBinding {
+    ResumeWireBinding {
+        session_id: SessionId(b.session_id),
+        delivery_epoch: b.delivery_epoch,
+        key_phase: b.key_phase,
+        path_generation: b.path_generation,
+        expires_at_ms: b.expires_at_ms,
+        token: b.token,
+    }
+}
+fn runtime_limits(bytes: usize, count: usize) -> RuntimeLimits {
+    RuntimeLimits {
+        max_streams: 1,
+        max_queue_records: count + 2,
+        max_queue_bytes: bytes * (count + 1),
+        max_total_bytes: bytes * count,
+        max_record_bytes: bytes,
+        ..RuntimeLimits::default()
+    }
+}
+#[allow(clippy::collapsible_if, clippy::collapsible_match)]
+fn failover_server(args: &[String]) {
+    let count = exchange_count(args);
+    let (_t, _p, bytes, duration) = (
+        "failover",
+        0,
+        parse(args, "--bytes", Some("32"))
+            .parse()
+            .unwrap_or_else(|_| fail("invalid bytes")),
+        Duration::from_secs(
+            parse(args, "--duration", Some("10"))
+                .parse::<u64>()
+                .unwrap_or_else(|_| fail("invalid duration")),
+        ),
+    );
+    if bytes == 0 || bytes > MAX_BYTES {
+        fail("bytes outside 1-1200")
+    }
+    if duration.is_zero() || duration > Duration::from_secs(MAX_DURATION) {
+        fail("duration outside 1-30")
+    }
+    let up = parse(args, "--udp-port", Some("40081"))
+        .parse::<u16>()
+        .unwrap_or_else(|_| fail("invalid UDP port"));
+    let tp = parse(args, "--tcp-port", Some("40080"))
+        .parse::<u16>()
+        .unwrap_or_else(|_| fail("invalid TCP port"));
+    if !(40080..=MAX_PORT).contains(&up) || !(40080..=MAX_PORT).contains(&tp) {
+        fail("ports outside 40080-40100")
+    }
+    let id = load_or_generate(&PathBuf::from(parse(
+        args,
+        "--identity",
+        Some("neko-server.identity"),
+    )));
+    let client = unhex(&parse(args, "--client-key", None));
+    let policy = TrustPolicy::new(vec![TrustRecord {
+        version: 1,
+        public_key: client.clone(),
+        scope: b"failover".to_vec(),
+        status: TrustStatus::Active,
+    }]);
+    let udp = UdpSocket::bind(
+        parse(args, "--udp-bind", Some(&format!("0.0.0.0:{up}")))
+            .parse::<SocketAddr>()
+            .unwrap_or_else(|_| fail("bad UDP bind")),
+    )
+    .unwrap_or_else(|_| fail("UDP bind failed"));
+    let tcp = TcpListener::bind(
+        parse(args, "--tcp-bind", Some(&format!("0.0.0.0:{tp}")))
+            .parse::<SocketAddr>()
+            .unwrap_or_else(|_| fail("bad TCP bind")),
+    )
+    .unwrap_or_else(|_| fail("TCP bind failed"));
+    udp.set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    tcp.set_nonblocking(true).unwrap();
+    let started = Instant::now();
+    let mut buf = [0u8; 65536];
+    let mut secure = None;
+    let mut guard = None;
+    let mut runtime =
+        SessionRuntime::new(SessionId(7001), runtime_limits(bytes, count), 0).unwrap();
+    runtime.open_stream(StreamId(1), 0).unwrap();
+    while started.elapsed() < duration {
+        if secure.is_none() {
+            if let Ok((n, peer)) = udp.recv_from(&mut buf) {
+                let (resp, ss, remote, binding) =
+                    ResponderHandshake::new(&id, policy.clone(), DOMAIN)
+                        .unwrap()
+                        .receive_first(&buf[..n], context(1))
+                        .map(|(resp, ss)| {
+                            (resp, ss, client.clone(), failover_binding(7001, 0, 10_000))
+                        })
+                        .unwrap_or_else(|_| fail("unauthorized UDP handshake"));
+                udp.send_to(&resp, peer).unwrap();
+                guard = Some(ResumeGuard::new(&remote, &binding).unwrap());
+                secure = Some((ss, peer));
+            }
+        }
+        if let Some((ref mut ss, peer)) = secure {
+            if let Ok((n, _)) = udp.recv_from(&mut buf) {
+                if let Ok(plain) = ss.open_unreliable(&buf[..n]) {
+                    if let Ok(ProcessMessage::Data { session, record }) =
+                        ProcessMessage::decode(&plain)
+                    {
+                        let stream_id = record.stream;
+                        let offset = record.offset;
+                        let len = record.data.len();
+                        if session == SessionId(7001)
+                            && runtime
+                                .receive(
+                                    InboundRecord {
+                                        stream: stream_id,
+                                        offset,
+                                        data: record.data,
+                                    },
+                                    1,
+                                )
+                                .is_ok()
+                        {
+                            let ack = ProcessMessage::DeliveryAck {
+                                session,
+                                stream: stream_id,
+                                offset,
+                                len,
+                            }
+                            .encode()
+                            .unwrap();
+                            udp.send_to(&ack, peer).unwrap();
+                            let _ = runtime.pop_receive(2);
+                        }
+                    }
+                }
+            }
+        }
+        if let Ok((mut stream, _)) = tcp.accept() {
+            let first = read_frame(&mut stream, 1024).unwrap_or_else(|_| fail("bad TCP handshake"));
+            let (resp, mut ss, remote, binding) =
+                ResponderHandshake::new(&id, policy.clone(), DOMAIN)
+                    .unwrap()
+                    .receive_first_with_resume(&first, context(2))
+                    .unwrap_or_else(|_| fail("unauthorized TCP handshake"));
+            if guard
+                .as_mut()
+                .map(|g| g.attach(&remote, &binding, 1).is_ok())
+                .unwrap_or(false)
+            {
+                write_frame(&mut stream, &resp).unwrap();
+                let _ = read_frame(&mut stream, 128);
+                for _ in 0..count {
+                    if let Ok(m) = ProcessMessage::decode(
+                        &ss.open(&read_frame(&mut stream, PROCESS_FRAME_MAX).unwrap_or_default())
+                            .unwrap_or_default(),
+                    ) {
+                        if let ProcessMessage::Data { session, record } = m {
+                            let stream_id = record.stream;
+                            let offset = record.offset;
+                            let len = record.data.len();
+                            if session == SessionId(7001)
+                                && runtime
+                                    .receive(
+                                        InboundRecord {
+                                            stream: stream_id,
+                                            offset,
+                                            data: record.data,
+                                        },
+                                        2,
+                                    )
+                                    .is_ok()
+                            {
+                                write_frame(
+                                    &mut stream,
+                                    &ProcessMessage::DeliveryAck {
+                                        session,
+                                        stream: stream_id,
+                                        offset,
+                                        len,
+                                    }
+                                    .encode()
+                                    .unwrap(),
+                                )
+                                .unwrap();
+                                let _ = runtime.pop_receive(3);
+                            }
+                        }
+                    }
+                }
+                println!("failover_server_ok");
+                return;
+            }
+        }
+    }
+    fail("failover timeout")
+}
+fn failover_client(args: &[String]) {
     let count = exchange_count(args);
     let bytes = parse(args, "--bytes", Some("32"))
         .parse::<usize>()
         .unwrap_or_else(|_| fail("invalid bytes"));
-    if bytes == 0 || bytes > MAX_BYTES {
-        fail("bytes outside 1-1200");
-    }
     let secs = parse(args, "--duration", Some("10"))
         .parse::<u64>()
         .unwrap_or_else(|_| fail("invalid duration"));
-    if secs == 0 || secs > MAX_DURATION {
-        fail("duration outside 1-30");
+    if bytes == 0 || bytes > MAX_BYTES {
+        fail("bytes outside 1-1200")
     }
-    let udp_port = parse(args, "--udp-port", Some("40081"))
+    if secs == 0 || secs > MAX_DURATION {
+        fail("duration outside 1-30")
+    }
+    let addr = parse(args, "--addr", Some("127.0.0.1"));
+    let up = parse(args, "--udp-port", Some("40081"))
         .parse::<u16>()
         .unwrap_or_else(|_| fail("invalid UDP port"));
-    let tcp_port = parse(args, "--tcp-port", Some("40080"))
+    let tp = parse(args, "--tcp-port", Some("40080"))
         .parse::<u16>()
         .unwrap_or_else(|_| fail("invalid TCP port"));
-    if !(40080..=MAX_PORT).contains(&udp_port) || !(40080..=MAX_PORT).contains(&tcp_port) {
-        fail("ports outside 40080-40100");
+    if !(40080..=MAX_PORT).contains(&up) || !(40080..=MAX_PORT).contains(&tp) {
+        fail("ports outside 40080-40100")
     }
-    if !args.iter().any(|a| a == "--loopback-only") {
-        fail("WAN failover runner is gated: use --loopback-only for the bounded simulator");
+    let id = load_or_generate(&PathBuf::from(parse(
+        args,
+        "--identity",
+        Some("neko-client.identity"),
+    )));
+    let sk = unhex(&parse(args, "--server-key", None));
+    let mut hs = InitiatorHandshake::new(&id, &sk, b"failover", DOMAIN).unwrap();
+    let first = hs.first_message().unwrap();
+    let target = format!("{addr}:{up}");
+    let u = UdpSocket::bind("0.0.0.0:0").unwrap();
+    u.set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let mut buf = [0u8; 65536];
+    let mut handshake = None;
+    for _ in 0..20 {
+        u.send_to(&first, &target).unwrap();
+        match u.recv_from(&mut buf) {
+            Ok((n, _)) => {
+                handshake = Some(n);
+                break;
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => fail("UDP handshake receive failed"),
+        }
     }
-    if json_mode(args) {
-        println!(
-            "{{\"ok\":true,\"gate\":\"failover-simulator\",\"wan\":false,\"count\":{},\"bytes\":{},\"duration_s\":{},\"udp_port\":{},\"tcp_port\":{}}}",
-            count, bytes, secs, udp_port, tcp_port
-        );
-    } else {
-        println!(
-            "failover_gate_ok wan=false loopback_only=true count={} bytes={} duration_s={} udp_port={} tcp_port={}",
-            count, bytes, secs, udp_port, tcp_port
-        );
+    let n = handshake.unwrap_or_else(|| fail("UDP handshake timeout"));
+    let mut us = hs.finish(&buf[..n], context(1)).unwrap();
+    let payload = vec![b'x'; bytes];
+    let mut records = Vec::new();
+    for i in 0..count {
+        let msg = ProcessMessage::Data {
+            session: SessionId(7001),
+            record: neko_session::OutboundRecord {
+                stream: StreamId(1),
+                offset: (i * bytes) as u64,
+                data: payload.clone(),
+            },
+        }
+        .encode()
+        .unwrap();
+        records.push(msg);
+    }
+    let rec = us.seal_unreliable(&records[0]).unwrap();
+    u.send_to(&rec, &target).unwrap();
+    let _ = u.recv_from(&mut buf);
+    let mut hs2 = InitiatorHandshake::with_resume_binding(
+        &id,
+        &sk,
+        b"failover",
+        DOMAIN,
+        &failover_binding(7001, 1, 10_000),
+    )
+    .unwrap();
+    let first2 = hs2.first_message().unwrap();
+    let mut tcp = TcpStream::connect_timeout(
+        &format!("{addr}:{tp}").parse().unwrap(),
+        Duration::from_secs(secs),
+    )
+    .unwrap();
+    write_frame(&mut tcp, &first2).unwrap();
+    let resp = read_frame(&mut tcp, 1024).unwrap();
+    let mut ts = hs2.finish(&resp, context(2)).unwrap();
+    write_frame(
+        &mut tcp,
+        &ProcessMessage::Resume {
+            binding: wire_binding(&failover_binding(7001, 1, 10_000)),
+        }
+        .encode()
+        .unwrap(),
+    )
+    .unwrap();
+    for msg in records {
+        let encrypted = ts.seal(&msg).unwrap();
+        write_frame(&mut tcp, &encrypted).unwrap();
+        let _ = read_frame(&mut tcp, PROCESS_FRAME_MAX);
+    }
+    println!("failover_client_ok session=7001 count={count} bytes={bytes} udp_blackhole=true")
+}
+fn failover_gate(args: &[String]) {
+    match args.first().map(String::as_str) {
+        Some("failover-server") => failover_server(args),
+        Some("failover-client") => failover_client(args),
+        _ => fail("use failover-server or failover-client"),
     }
 }
 
