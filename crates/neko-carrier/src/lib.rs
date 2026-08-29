@@ -1902,6 +1902,14 @@ pub enum MigrationError {
     ScoreMargin,
     HoldGate,
 }
+const SCORE_BASE: i64 = 10_000;
+const SCORE_RTT_WEIGHT: i64 = 1;
+const SCORE_LOSS_WEIGHT: i64 = 5;
+const SCORE_PTO_WEIGHT: i64 = 1_000;
+const SCORE_MAX_RTT_US: u64 = 10_000;
+const HEALTHY_MAX_LOSS_PER_MILLE: u16 = 500;
+const HEALTHY_MAX_PTO: u16 = 3;
+
 impl CarrierManager {
     pub fn new(limits: ManagerLimits) -> Result<Self, FlowError> {
         if limits.min_hold_events == 0 || limits.max_paths == 0 {
@@ -1924,14 +1932,19 @@ impl CarrierManager {
         self.samples.insert(path, sample);
         Ok(())
     }
+    /// Returns the deterministic local score: higher is better. RTT is
+    /// capped before conversion; loss and PTO are bounded integer penalties.
+    /// A path is eligible only when loss is below 500 per mille and PTO is
+    /// below 3.
     pub fn score(sample: HealthSample) -> CarrierScore {
-        let score = 10_000
-            - (sample.rtt_us.min(10_000) as i64)
-            - (sample.loss_per_mille as i64 * 5)
-            - (sample.pto as i64 * 1000);
+        let score = SCORE_BASE
+            - sample.rtt_us.min(SCORE_MAX_RTT_US) as i64 * SCORE_RTT_WEIGHT
+            - sample.loss_per_mille as i64 * SCORE_LOSS_WEIGHT
+            - sample.pto as i64 * SCORE_PTO_WEIGHT;
         CarrierScore {
             score,
-            healthy: sample.pto < 3 && sample.loss_per_mille < 500,
+            healthy: sample.pto < HEALTHY_MAX_PTO
+                && sample.loss_per_mille < HEALTHY_MAX_LOSS_PER_MILLE,
         }
     }
     pub fn active(&self) -> Option<PathId> {
@@ -2011,7 +2024,14 @@ impl CarrierManager {
                 let x = Self::score(*s);
                 x.healthy.then_some((*p, x.score))
             })
-            .max_by_key(|(_, score)| *score)
+            // BTreeMap gives stable traversal, but max_by_key keeps the
+            // later equal item. Compare explicitly so equal scores always
+            // prefer the smaller PathId.
+            .min_by(|(left_path, left_score), (right_path, right_score)| {
+                right_score
+                    .cmp(left_score)
+                    .then_with(|| left_path.cmp(right_path))
+            })
             .map(|(p, _)| p);
         let current_score = self
             .active
@@ -2052,6 +2072,56 @@ mod manager_tests {
         loss_per_mille: 500,
         pto: 0,
     };
+
+    #[test]
+    fn score_formula_and_health_boundary_are_deterministic() {
+        assert_eq!(
+            CarrierManager::score(HealthSample {
+                rtt_us: 12_000,
+                loss_per_mille: 100,
+                pto: 2,
+            }),
+            CarrierScore {
+                score: -2_500,
+                healthy: true,
+            }
+        );
+        assert!(
+            !CarrierManager::score(HealthSample {
+                rtt_us: 0,
+                loss_per_mille: 500,
+                pto: 0,
+            })
+            .healthy
+        );
+        assert!(
+            !CarrierManager::score(HealthSample {
+                rtt_us: 0,
+                loss_per_mille: 0,
+                pto: 3,
+            })
+            .healthy
+        );
+    }
+
+    #[test]
+    fn choose_prefers_lowest_path_id_on_equal_score() {
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 1,
+            switch_margin: 0,
+            max_paths: 2,
+        })
+        .unwrap();
+        let sample = HealthSample {
+            rtt_us: 100,
+            loss_per_mille: 2,
+            pto: 0,
+        };
+        m.observe(PathId(20), sample).unwrap();
+        m.observe(PathId(10), sample).unwrap();
+        assert_eq!(m.choose(), Some(PathId(10)));
+        assert_eq!(m.choose(), Some(PathId(10)));
+    }
 
     #[test]
     fn health_transitions_are_bounded_and_staged() {
