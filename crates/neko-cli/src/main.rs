@@ -10,7 +10,7 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-const USAGE: &str = "Usage: neko <server|client|probe|lab|keygen> [bounded options]
+const USAGE: &str = "Usage: neko <server|client|probe|lab|failover|keygen> [bounded options]
 
   --count N: bounded authenticated exchanges (1-64)\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
@@ -318,6 +318,48 @@ fn client(args: &[String]) {
     }
     emit_probe(args, "tcp", max, start.elapsed().as_millis())
 }
+fn failover_gate(args: &[String]) {
+    // WAN failover is intentionally a hard gate until a real dual-listener
+    // runner has independent review. Keep argument validation bounded so a
+    // future implementation cannot widen the experiment by accident.
+    let count = exchange_count(args);
+    let bytes = parse(args, "--bytes", Some("32"))
+        .parse::<usize>()
+        .unwrap_or_else(|_| fail("invalid bytes"));
+    if bytes == 0 || bytes > MAX_BYTES {
+        fail("bytes outside 1-1200");
+    }
+    let secs = parse(args, "--duration", Some("10"))
+        .parse::<u64>()
+        .unwrap_or_else(|_| fail("invalid duration"));
+    if secs == 0 || secs > MAX_DURATION {
+        fail("duration outside 1-30");
+    }
+    let udp_port = parse(args, "--udp-port", Some("40081"))
+        .parse::<u16>()
+        .unwrap_or_else(|_| fail("invalid UDP port"));
+    let tcp_port = parse(args, "--tcp-port", Some("40080"))
+        .parse::<u16>()
+        .unwrap_or_else(|_| fail("invalid TCP port"));
+    if !(40080..=MAX_PORT).contains(&udp_port) || !(40080..=MAX_PORT).contains(&tcp_port) {
+        fail("ports outside 40080-40100");
+    }
+    if !args.iter().any(|a| a == "--loopback-only") {
+        fail("WAN failover runner is gated: use --loopback-only for the bounded simulator");
+    }
+    if json_mode(args) {
+        println!(
+            "{{\"ok\":true,\"gate\":\"failover-simulator\",\"wan\":false,\"count\":{},\"bytes\":{},\"duration_s\":{},\"udp_port\":{},\"tcp_port\":{}}}",
+            count, bytes, secs, udp_port, tcp_port
+        );
+    } else {
+        println!(
+            "failover_gate_ok wan=false loopback_only=true count={} bytes={} duration_s={} udp_port={} tcp_port={}",
+            count, bytes, secs, udp_port, tcp_port
+        );
+    }
+}
+
 fn lab(args: &[String]) {
     let json = json_mode(args);
     let timeline = [
@@ -357,6 +399,7 @@ fn main() {
         Some("server") => server(&a),
         Some("client") | Some("probe") => client(&a),
         Some("lab") => lab(&a),
+        Some("failover") | Some("failover-server") | Some("failover-client") => failover_gate(&a),
         Some("keygen") => {
             let path = PathBuf::from(parse(&a, "--identity", Some("neko-client.identity")));
             let id = load_or_generate(&path);
@@ -381,5 +424,24 @@ mod cli_regression_tests {
             "127.0.0.1:40080".parse::<SocketAddr>().unwrap().ip(),
             IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
         );
+    }
+    #[test]
+    fn failover_gate_arguments_are_bounded_and_loopback_explicit() {
+        let args = vec![
+            "failover".into(),
+            "--count".into(),
+            "3".into(),
+            "--bytes".into(),
+            "16".into(),
+            "--duration".into(),
+            "2".into(),
+            "--udp-port".into(),
+            "40081".into(),
+            "--tcp-port".into(),
+            "40080".into(),
+            "--loopback-only".into(),
+        ];
+        assert_eq!(exchange_count(&args), 3);
+        assert!(args.iter().any(|a| a == "--loopback-only"));
     }
 }
