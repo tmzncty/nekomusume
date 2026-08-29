@@ -16,14 +16,18 @@ EXPERIMENT_ID=""
 ARTIFACT_ROOT="${TMPDIR:-/tmp}/nekomusume-experiments"
 MAX_SECONDS=30
 MAX_COUNT=8
-for arg in "$@"; do
-  case "$arg" in
-    --dry-run) DRY_RUN=1 ;;
-    --execute) DRY_RUN=0 ;;
-    --experiment-id=*) EXPERIMENT_ID=${arg#*=} ;;
-    --artifact-root=*) ARTIFACT_ROOT=${arg#*=} ;;
+while (($#)); do
+  case "$1" in
+    --dry-run) DRY_RUN=1; shift ;;
+    --execute) DRY_RUN=0; shift ;;
+    --experiment-id|--artifact-root)
+      [[ $# -ge 2 && -n "$2" && "$2" != -* ]] || { echo "missing value for $1" >&2; exit 2; }
+      if [[ "$1" == --experiment-id ]]; then EXPERIMENT_ID=$2; else ARTIFACT_ROOT=$2; fi
+      shift 2 ;;
+    --experiment-id=*) EXPERIMENT_ID=${1#*=}; shift ;;
+    --artifact-root=*) ARTIFACT_ROOT=${1#*=}; shift ;;
     --help|-h) usage; exit 0 ;;
-    *) printf 'unknown option: %s\n' "$arg" >&2; exit 2 ;;
+    *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
 
