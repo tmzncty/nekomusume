@@ -26,6 +26,8 @@ bash scripts/check-release-boundaries.sh
 bash scripts/check-release-boundaries-test.sh
 bash scripts/check-plan-sync.sh
 bash scripts/check-plan-sync-test.sh
+bash scripts/check-decision-index.sh
+bash scripts/check-decision-index-test.sh
 test -f docs/specs/nekomusume-session-v0.md
 test -f LICENSE-MIT
 test -f LICENSE-APACHE

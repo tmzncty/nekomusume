@@ -703,3 +703,13 @@ evidence path to be a unique, Git-tracked regular file. It deliberately does
 not require every planning or ADR document to appear in the status table: unused
 research/planning documents remain valid. Isolated mutations cover missing and
 duplicate scoped evidence.
+
+
+## 2026-08-29 — D045：Decision ledger headings are unique
+
+**Status: Accepted repository-harness hardening — no protocol change**
+
+The full checker validates numbered `D###` decision headings in this ledger and
+rejects duplicate IDs. The isolated regression duplicates a real decision heading
+and proves fail-closed behavior. Unnumbered historical notes remain outside the
+ledger index; no protocol, network or release boundary changes.
