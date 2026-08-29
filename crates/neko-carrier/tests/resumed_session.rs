@@ -124,6 +124,8 @@ fn fresh_tcp_noise_transport_resumes_one_logical_session_without_duplicate_deliv
             3,
         )
         .unwrap();
+    runtime.queue_send(StreamId(1), b"abc", 3).unwrap();
+    runtime.pop_send(3).unwrap();
     runtime.delivery_ack(StreamId(1), 0, 3, 4).unwrap();
     assert_eq!(runtime.pop_receive(5).unwrap().unwrap().data, b"abc");
     assert!(runtime.pop_receive(6).unwrap().is_none());
@@ -204,6 +206,11 @@ fn bounded_udp_blackhole_tcp_resume_preserves_order_and_exactly_once_bytes() {
     let (mut tcp_tx, mut tcp_rx, claim) = handshake(&client, &server, policy, Some(&next), 2);
     let (peer, claim) = claim.unwrap();
     guard.attach(&peer, &claim, 2).unwrap();
+    // Establish the receiver's corresponding send-inflight accounting before
+    // applying cumulative delivery ACKs for the resumed records.
+    for data in records {
+        receiver_runtime.queue_send(StreamId(1), data, 5).unwrap();
+    }
     // A fresh Noise transport resends every uncertain logical record. The
     // receiver's Session is the sole ordering/deduplication authority.
     for (id, record) in ids.iter().skip(1) {

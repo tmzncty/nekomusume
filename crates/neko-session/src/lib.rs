@@ -1145,6 +1145,15 @@ impl SessionRuntime {
         now_ms: u64,
     ) -> Result<(), RuntimeError> {
         self.check(now_ms)?;
+        if stream.0 > MAX_RUNTIME_STREAM_ID {
+            return Err(RuntimeError::InvalidStreamId);
+        }
+        if !self.streams.contains_key(&stream) {
+            return Err(RuntimeError::UnknownStream);
+        }
+        if len == 0 {
+            return Err(RuntimeError::Protocol);
+        }
         let end = offset
             .checked_add(len as u64)
             .ok_or(RuntimeError::TotalLimit)?;
@@ -1152,15 +1161,18 @@ impl SessionRuntime {
         if end < current {
             return Err(RuntimeError::Protocol);
         }
-        if end > current {
-            let delta = usize::try_from(end - current).map_err(|_| RuntimeError::TotalLimit)?;
-            if let Some(inflight) = self.send_inflight.get_mut(&stream) {
-                if delta > *inflight || delta > self.session_send_inflight {
-                    return Err(RuntimeError::Protocol);
-                }
-                *inflight -= delta;
-                self.session_send_inflight -= delta;
-            }
+        let delta = usize::try_from(end - current).map_err(|_| RuntimeError::TotalLimit)?;
+        let inflight = self
+            .send_inflight
+            .get(&stream)
+            .copied()
+            .ok_or(RuntimeError::Protocol)?;
+        if delta > inflight || delta > self.session_send_inflight {
+            return Err(RuntimeError::Protocol);
+        }
+        if delta > 0 {
+            *self.send_inflight.get_mut(&stream).unwrap() -= delta;
+            self.session_send_inflight -= delta;
             self.confirmed.insert(stream, end);
         }
         self.event(now_ms, RuntimeEventKind::DeliveryAck);
@@ -1468,6 +1480,7 @@ mod runtime_tests {
         };
         let mut r = SessionRuntime::new(SessionId(12), duplicate_limits, 0).unwrap();
         r.open_stream(StreamId(1), 1).unwrap();
+        r.queue_send(StreamId(1), b"abc", 1).unwrap();
         let record = InboundRecord {
             stream: StreamId(1),
             offset: 0,
@@ -1495,6 +1508,37 @@ mod runtime_tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn delivery_ack_rejects_unknown_stream_and_missing_inflight_atomically() {
+        let mut r = SessionRuntime::new(SessionId(13), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 1).unwrap();
+        let events_before = r.observable_events().count();
+        assert_eq!(
+            r.delivery_ack(StreamId(2), 0, 1, 2),
+            Err(RuntimeError::UnknownStream)
+        );
+        assert_eq!(
+            r.delivery_ack(StreamId(1), 0, 1, 3),
+            Err(RuntimeError::Protocol)
+        );
+        assert_eq!(r.confirmed_watermark(StreamId(1)), 0);
+        assert_eq!(r.observable_events().count(), events_before);
+    }
+
+    #[test]
+    fn zero_length_delivery_ack_is_rejected_without_event() {
+        let mut r = SessionRuntime::new(SessionId(14), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 1).unwrap();
+        r.queue_send(StreamId(1), b"a", 1).unwrap();
+        let events_before = r.observable_events().count();
+        assert_eq!(
+            r.delivery_ack(StreamId(1), 0, 0, 2),
+            Err(RuntimeError::Protocol)
+        );
+        assert_eq!(r.confirmed_watermark(StreamId(1)), 0);
+        assert_eq!(r.observable_events().count(), events_before);
     }
 
     #[test]
