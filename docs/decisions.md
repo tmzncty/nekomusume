@@ -634,3 +634,16 @@ file. Its isolated regression copies the script set to a temporary directory,
 adds malformed shell, verifies rejection, and asserts the repository porcelain
 status is unchanged. This catches accidental cron/check harness syntax drift
 without modifying network, protocol, fuzz corpus, or production state.
+
+
+## 2026-08-29 — D039：Release-readiness and real-WAN gate remains blocked
+
+**Status: Governance boundary — no public or production activity**
+
+Local/loopback candidate slices and isolated netem evidence do not establish
+public reachability, sustained WAN behavior, NAT/endpoint-change safety,
+interoperability, production resource safety, independent security review or
+HY2 superiority. Public listeners, VPS/WAN probes, production deployment and
+comparative claims remain blocked. A future release requires explicit scope,
+controlled endpoints, rollback, reproducible metadata, independent review,
+canonical vectors, repeated WAN evidence and abuse/resource limits.

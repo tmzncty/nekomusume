@@ -76,6 +76,8 @@ M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session
 
 ## Milestone 5 — Benchmark 与真实 WAN validation
 
+> Release-readiness gate remains blocked; see [`docs/spec/m5-release-readiness-gate.md`](docs/spec/m5-release-readiness-gate.md).
+
 ### 可控环境
 
 使用 QEMU / netns / veth / `tc netem`：

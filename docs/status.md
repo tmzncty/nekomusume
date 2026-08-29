@@ -26,7 +26,7 @@
 | manager | bounded multi-stream scheduler and Carrier Manager | candidate | `crates/neko-carrier/src/lib.rs` | Fair round-robin, stream/session limits, health score, hysteresis and validated migration-back gate tests; no production manager |
 | live-tcp | TCP carrier and resume | candidate | `crates/neko-carrier/tests/tcp_failover.rs` | Encrypted loopback UDP-blackhole recovery over bounded TCP framing with DataId dedup and metrics; no public/production listener |
 | reachability | probe / public-network experiments | blocked | `ROADMAP.md` | Explicitly out of scope; no public exposure |
-| production | production deployment/readiness | blocked | `SECURITY.md` | Research-only repository; no production or security approval |
+| production | production deployment/readiness | blocked | `docs/spec/m5-release-readiness-gate.md` | Research-only repository; WAN/reachability, independent review and release evidence absent; no production or security approval |
 
 ## Status vocabulary
 
