@@ -587,6 +587,8 @@ pub struct RuntimeLimits {
     pub max_queue_bytes: usize,
     pub max_total_bytes: usize,
     pub max_record_bytes: usize,
+    pub max_session_window: usize,
+    pub max_stream_window: usize,
     pub idle_timeout_ms: u64,
     pub close_timeout_ms: u64,
 }
@@ -598,6 +600,8 @@ impl Default for RuntimeLimits {
             max_queue_bytes: 64 * 1024,
             max_total_bytes: 1 << 20,
             max_record_bytes: 1200,
+            max_session_window: 1 << 20,
+            max_stream_window: 256 * 1024,
             idle_timeout_ms: 30_000,
             close_timeout_ms: 5_000,
         }
@@ -835,6 +839,10 @@ pub struct SessionRuntime {
     recv: VecDeque<InboundRecord>,
     received: BTreeMap<(StreamId, u64), Vec<u8>>,
     confirmed: BTreeMap<StreamId, u64>,
+    send_inflight: BTreeMap<StreamId, usize>,
+    recv_window_used: BTreeMap<StreamId, usize>,
+    session_send_inflight: usize,
+    session_recv_window_used: usize,
     queued_bytes: usize,
     total_bytes: usize,
     last_activity_ms: u64,
@@ -850,6 +858,8 @@ impl SessionRuntime {
             || limits.max_queue_bytes == 0
             || limits.max_total_bytes == 0
             || limits.max_record_bytes == 0
+            || limits.max_session_window == 0
+            || limits.max_stream_window == 0
             || limits.idle_timeout_ms == 0
             || limits.close_timeout_ms == 0
         {
@@ -864,6 +874,10 @@ impl SessionRuntime {
             recv: VecDeque::new(),
             received: BTreeMap::new(),
             confirmed: BTreeMap::new(),
+            send_inflight: BTreeMap::new(),
+            recv_window_used: BTreeMap::new(),
+            session_send_inflight: 0,
+            session_recv_window_used: 0,
             queued_bytes: 0,
             total_bytes: 0,
             last_activity_ms: now_ms,
@@ -900,6 +914,10 @@ impl SessionRuntime {
         self.recv.clear();
         self.received.clear();
         self.confirmed.clear();
+        self.send_inflight.clear();
+        self.recv_window_used.clear();
+        self.session_send_inflight = 0;
+        self.session_recv_window_used = 0;
         self.queued_bytes = 0;
         self.event(now_ms, RuntimeEventKind::SessionClosed);
         Ok(())
@@ -994,6 +1012,19 @@ impl SessionRuntime {
         {
             return Err(RuntimeError::TotalLimit);
         }
+        let stream_inflight = self.send_inflight.get(&stream).copied().unwrap_or(0);
+        if stream_inflight
+            .checked_add(data.len())
+            .ok_or(RuntimeError::TotalLimit)?
+            > self.limits.max_stream_window
+            || self
+                .session_send_inflight
+                .checked_add(data.len())
+                .ok_or(RuntimeError::TotalLimit)?
+                > self.limits.max_session_window
+        {
+            return Err(RuntimeError::QueueFull);
+        }
         let off = s.next_send;
         s.next_send = s
             .next_send
@@ -1001,6 +1032,8 @@ impl SessionRuntime {
             .ok_or(RuntimeError::TotalLimit)?;
         self.total_bytes += data.len();
         self.queued_bytes += data.len();
+        self.session_send_inflight += data.len();
+        *self.send_inflight.entry(stream).or_insert(0) += data.len();
         self.send.push_back(OutboundRecord {
             stream,
             offset: off,
@@ -1057,6 +1090,23 @@ impl SessionRuntime {
         {
             return Err(RuntimeError::TotalLimit);
         }
+        let stream_used = self
+            .recv_window_used
+            .get(&record.stream)
+            .copied()
+            .unwrap_or(0);
+        if stream_used
+            .checked_add(record.data.len())
+            .ok_or(RuntimeError::TotalLimit)?
+            > self.limits.max_stream_window
+            || self
+                .session_recv_window_used
+                .checked_add(record.data.len())
+                .ok_or(RuntimeError::TotalLimit)?
+                > self.limits.max_session_window
+        {
+            return Err(RuntimeError::QueueFull);
+        }
         if self.recv.len() >= self.limits.max_queue_records
             || self
                 .queued_bytes
@@ -1076,9 +1126,13 @@ impl SessionRuntime {
             .ok_or(RuntimeError::TotalLimit)?;
         self.received
             .insert((record.stream, record.offset), record.data.clone());
+        let received_stream = record.stream;
         self.recv.push_back(record);
-        self.queued_bytes += self.recv.back().unwrap().data.len();
-        self.total_bytes += self.recv.back().unwrap().data.len();
+        let received_len = self.recv.back().unwrap().data.len();
+        self.queued_bytes += received_len;
+        self.session_recv_window_used += received_len;
+        *self.recv_window_used.entry(received_stream).or_insert(0) += received_len;
+        self.total_bytes += received_len;
         self.touch(now_ms);
         self.event(now_ms, RuntimeEventKind::DataReceived);
         Ok(())
@@ -1099,6 +1153,14 @@ impl SessionRuntime {
             return Err(RuntimeError::Protocol);
         }
         if end > current {
+            let delta = usize::try_from(end - current).map_err(|_| RuntimeError::TotalLimit)?;
+            if let Some(inflight) = self.send_inflight.get_mut(&stream) {
+                if delta > *inflight || delta > self.session_send_inflight {
+                    return Err(RuntimeError::Protocol);
+                }
+                *inflight -= delta;
+                self.session_send_inflight -= delta;
+            }
             self.confirmed.insert(stream, end);
         }
         self.event(now_ms, RuntimeEventKind::DeliveryAck);
@@ -1113,6 +1175,10 @@ impl SessionRuntime {
         let x = self.recv.pop_front();
         if let Some(ref r) = x {
             self.queued_bytes -= r.data.len();
+            self.session_recv_window_used -= r.data.len();
+            if let Some(used) = self.recv_window_used.get_mut(&r.stream) {
+                *used -= r.data.len();
+            }
             self.touch(now_ms);
         }
         Ok(x)
@@ -1136,6 +1202,10 @@ impl SessionRuntime {
         self.recv.clear();
         self.received.clear();
         self.confirmed.clear();
+        self.send_inflight.clear();
+        self.recv_window_used.clear();
+        self.session_send_inflight = 0;
+        self.session_recv_window_used = 0;
         self.queued_bytes = 0;
         self.event(now_ms, RuntimeEventKind::Error);
         Ok(())
@@ -1314,6 +1384,8 @@ mod runtime_tests {
             max_queue_bytes: 4,
             max_total_bytes: 8,
             max_record_bytes: 4,
+            max_session_window: 8,
+            max_stream_window: 4,
             idle_timeout_ms: 10,
             close_timeout_ms: 5,
         }
@@ -1433,6 +1505,8 @@ mod runtime_tests {
             max_queue_bytes: 16,
             max_total_bytes: 16,
             max_record_bytes: 4,
+            max_session_window: 16,
+            max_stream_window: 8,
             idle_timeout_ms: 100,
             close_timeout_ms: 10,
         };
@@ -1498,6 +1572,8 @@ mod m4_multistream_tests {
             max_queue_bytes: 64,
             max_total_bytes: 128,
             max_record_bytes: 32,
+            max_session_window: 128,
+            max_stream_window: 64,
             idle_timeout_ms: 100,
             close_timeout_ms: 10,
         }

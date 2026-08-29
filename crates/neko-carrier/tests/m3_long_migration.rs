@@ -26,6 +26,8 @@ fn bounded_long_session_preserves_exact_order_through_uncertain_ack_and_close() 
         max_queue_bytes: N as usize,
         max_total_bytes: N as usize,
         max_record_bytes: 1,
+        max_session_window: 512,
+        max_stream_window: 512,
         idle_timeout_ms: 10_000,
         close_timeout_ms: 10,
     };

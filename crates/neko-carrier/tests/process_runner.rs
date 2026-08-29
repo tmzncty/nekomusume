@@ -21,6 +21,8 @@ fn limits() -> RuntimeLimits {
         max_queue_bytes: 128,
         max_total_bytes: 128,
         max_record_bytes: 32,
+        max_session_window: 128,
+        max_stream_window: 64,
         idle_timeout_ms: 1_000,
         close_timeout_ms: 20,
     }
