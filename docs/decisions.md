@@ -790,3 +790,13 @@ port 40081 from the controlled client. The server was stopped and cleaned after
 each exchange. No global IPv6 endpoint was present, and no IPv6 positive claim
 was made. Results and limits are recorded in
 [`docs/vps-experiment-2026-08-29.md`](vps-experiment-2026-08-29.md).
+
+
+## 2026-08-29 — D053：Carrier API is transport-neutral
+
+**Status: Candidate architecture hardening — no wire change**
+
+The generic `Carrier` contract now exposes only `CarrierLimits`, `CarrierError`,
+and opaque `IoObservation` vocabulary. Memory, UDP and TCP retain native
+adapter APIs and map their errors/limits at the generic boundary; no
+`MemoryLimits` or `MemoryPairError` appears in the trait.

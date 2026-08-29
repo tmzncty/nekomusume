@@ -136,7 +136,7 @@ pub struct PathSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CarrierError {
+pub enum PathError {
     ResourceLimit,
     PathExists,
     PathNotFound,
@@ -178,7 +178,7 @@ impl CarrierState {
         self.active
     }
 
-    pub fn apply(&mut self, event: CarrierEvent) -> Result<(), CarrierError> {
+    pub fn apply(&mut self, event: CarrierEvent) -> Result<(), PathError> {
         match event {
             CarrierEvent::PathAdded {
                 path,
@@ -186,10 +186,10 @@ impl CarrierState {
                 generation,
             } => {
                 if self.paths.contains_key(&path) {
-                    return Err(CarrierError::PathExists);
+                    return Err(PathError::PathExists);
                 }
                 if self.paths.len() >= self.limits.max_paths {
-                    return Err(CarrierError::ResourceLimit);
+                    return Err(PathError::ResourceLimit);
                 }
                 self.paths.insert(
                     path,
@@ -207,7 +207,7 @@ impl CarrierState {
                 let p = self.checked(path, generation)?;
                 if p.validation != PathValidationState::Candidate || p.state != PathState::Candidate
                 {
-                    return Err(CarrierError::InvalidTransition);
+                    return Err(PathError::InvalidTransition);
                 }
                 p.validation = PathValidationState::Validating;
                 p.state = PathState::Validating;
@@ -215,7 +215,7 @@ impl CarrierState {
             CarrierEvent::ChallengeValidated(v) => {
                 let p = self.checked(v.path, v.generation)?;
                 if p.validation != PathValidationState::Validating {
-                    return Err(CarrierError::InvalidTransition);
+                    return Err(PathError::InvalidTransition);
                 }
                 p.validation = PathValidationState::Validated;
                 p.state = PathState::Candidate;
@@ -253,14 +253,14 @@ impl CarrierState {
             CarrierEvent::BeginDrain { path, generation } => {
                 let p = self.checked(path, generation)?;
                 if p.state != PathState::Active {
-                    return Err(CarrierError::InvalidTransition);
+                    return Err(PathError::InvalidTransition);
                 }
                 p.state = PathState::Draining;
             }
             CarrierEvent::Fail { path, generation } => {
                 let p = self.checked(path, generation)?;
                 if p.state != PathState::Degraded && p.state != PathState::Draining {
-                    return Err(CarrierError::InvalidTransition);
+                    return Err(PathError::InvalidTransition);
                 }
                 p.state = PathState::Failed;
                 if self.active == Some((path, generation)) {
@@ -271,18 +271,18 @@ impl CarrierState {
                 let k_successes = self.limits.hysteresis.k_successes;
                 let min_dwell_events = self.limits.hysteresis.min_dwell_events;
                 if self.active.is_some() {
-                    return Err(CarrierError::ActivePathConflict);
+                    return Err(PathError::ActivePathConflict);
                 }
                 {
                     let p = self.checked(path, generation)?;
                     if p.validation != PathValidationState::Validated {
-                        return Err(CarrierError::ValidationRequired);
+                        return Err(PathError::ValidationRequired);
                     }
                     if p.state != PathState::Candidate {
-                        return Err(CarrierError::InvalidTransition);
+                        return Err(PathError::InvalidTransition);
                     }
                     if p.successes < k_successes || p.dwell_events < min_dwell_events {
-                        return Err(CarrierError::HysteresisGate);
+                        return Err(PathError::HysteresisGate);
                     }
                     p.state = PathState::Active;
                 }
@@ -304,16 +304,13 @@ impl CarrierState {
         &mut self,
         path: PathId,
         generation: PathGeneration,
-    ) -> Result<&mut PathRecord, CarrierError> {
-        let p = self
-            .paths
-            .get_mut(&path)
-            .ok_or(CarrierError::PathNotFound)?;
+    ) -> Result<&mut PathRecord, PathError> {
+        let p = self.paths.get_mut(&path).ok_or(PathError::PathNotFound)?;
         if generation != p.generation {
             return if generation.0 < p.generation.0 {
-                Err(CarrierError::OldGeneration)
+                Err(PathError::OldGeneration)
             } else {
-                Err(CarrierError::GenerationMismatch)
+                Err(PathError::GenerationMismatch)
             };
         }
         Ok(p)
@@ -394,14 +391,14 @@ mod tests {
                 path: P,
                 generation: PathGeneration(0)
             }),
-            Err(CarrierError::OldGeneration)
+            Err(PathError::OldGeneration)
         );
         assert_eq!(
             s.apply(CarrierEvent::SessionDelivery(SessionDelivery {
                 path: P,
                 generation: PathGeneration(0)
             })),
-            Err(CarrierError::OldGeneration)
+            Err(PathError::OldGeneration)
         );
     }
     #[test]
@@ -413,7 +410,7 @@ mod tests {
                 path: P,
                 generation: G
             }),
-            Err(CarrierError::HysteresisGate)
+            Err(PathError::HysteresisGate)
         );
         s.apply(CarrierEvent::PacketFeedback(PacketFeedback {
             path: P,
@@ -448,7 +445,7 @@ mod tests {
             generation: PathGeneration(1),
         };
         s.apply(event).unwrap();
-        assert_eq!(s.apply(event), Err(CarrierError::PathExists));
+        assert_eq!(s.apply(event), Err(PathError::PathExists));
     }
 
     #[test]
@@ -460,7 +457,7 @@ mod tests {
                 path: P,
                 generation: G
             })),
-            Err(CarrierError::InvalidTransition)
+            Err(PathError::InvalidTransition)
         );
         s.apply(CarrierEvent::PathAdded {
             path: PathId(2),
@@ -474,19 +471,51 @@ mod tests {
                 carrier: CarrierKind::Tcp,
                 generation: G
             }),
-            Err(CarrierError::ResourceLimit)
+            Err(PathError::ResourceLimit)
         );
     }
 }
 
-/// Synchronous, non-blocking opaque-byte carrier contract.
+/// Resource limits shared by all carrier adapters. Fields describe the
+/// opaque message boundary exposed to Session, not a particular transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CarrierLimits {
+    pub max_message_bytes: usize,
+    pub max_buffered_bytes: usize,
+}
+
+/// Carrier-neutral I/O failures. Native adapter errors are deliberately kept
+/// behind this boundary; callers can distinguish retryable absence from a
+/// terminal close without depending on Memory/TCP/UDP error enums.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarrierError {
+    InvalidLimits,
+    MessageTooLarge,
+    BufferFull,
+    Closed,
+    PeerClosed,
+    WouldBlock,
+    Truncated,
+    Io,
+    StatePoisoned,
+}
+
+/// Observation returned by an adapter when an operation has no payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IoObservation {
+    WouldBlock,
+    Closed,
+}
+
+/// Synchronous opaque-byte carrier contract. Memory, TCP and UDP are adapters
+/// behind this interface; their native limits/errors never appear here.
 pub trait Carrier {
     fn kind(&self) -> CarrierKind;
     fn properties(&self) -> CarrierProperties;
-    fn limits(&self) -> MemoryLimits;
-    fn send(&self, message: &[u8]) -> Result<(), MemoryPairError>;
-    fn recv(&self) -> Result<Option<Vec<u8>>, MemoryPairError>;
-    fn close(&self) -> Result<(), MemoryPairError>;
+    fn limits(&self) -> CarrierLimits;
+    fn send(&self, message: &[u8]) -> Result<(), CarrierError>;
+    fn recv(&self) -> Result<Option<Vec<u8>>, CarrierError>;
+    fn close(&self) -> Result<(), CarrierError>;
 }
 
 /// Local-only connected UDP datagrams. Kept separate from the cross-layer
@@ -567,6 +596,45 @@ impl UdpLoopbackEndpoint {
         Ok(*self.closed.lock().map_err(|_| UdpError::StatePoisoned)?)
     }
 }
+impl Carrier for UdpLoopbackEndpoint {
+    fn kind(&self) -> CarrierKind {
+        CarrierKind::Udp
+    }
+    fn properties(&self) -> CarrierProperties {
+        CarrierProperties {
+            message_boundaries: true,
+            reliable: false,
+            ordered: false,
+        }
+    }
+    fn limits(&self) -> CarrierLimits {
+        CarrierLimits {
+            max_message_bytes: self.limits.max_datagram_bytes,
+            max_buffered_bytes: self.limits.max_datagram_bytes,
+        }
+    }
+    fn send(&self, message: &[u8]) -> Result<(), CarrierError> {
+        self.send_datagram(message).map_err(Into::into)
+    }
+    fn recv(&self) -> Result<Option<Vec<u8>>, CarrierError> {
+        self.recv_datagram().map_err(Into::into)
+    }
+    fn close(&self) -> Result<(), CarrierError> {
+        UdpCarrier::close(self).map_err(Into::into)
+    }
+}
+impl From<UdpError> for CarrierError {
+    fn from(e: UdpError) -> Self {
+        match e {
+            UdpError::InvalidLimits => Self::InvalidLimits,
+            UdpError::MessageTooLarge => Self::MessageTooLarge,
+            UdpError::WouldBlock => Self::WouldBlock,
+            UdpError::StatePoisoned => Self::StatePoisoned,
+            UdpError::Io(_) => Self::Io,
+        }
+    }
+}
+
 impl UdpCarrier for UdpLoopbackEndpoint {
     fn send_datagram(&self, m: &[u8]) -> Result<(), UdpError> {
         if m.len() > self.limits.max_datagram_bytes {
@@ -694,45 +762,48 @@ impl Carrier for MemoryEndpoint {
             ordered: true,
         }
     }
-    fn limits(&self) -> MemoryLimits {
-        self.shared.limits
+    fn limits(&self) -> CarrierLimits {
+        CarrierLimits {
+            max_message_bytes: self.shared.limits.max_message_bytes,
+            max_buffered_bytes: self.shared.limits.max_queue_bytes,
+        }
     }
-    fn send(&self, message: &[u8]) -> Result<(), MemoryPairError> {
+    fn send(&self, message: &[u8]) -> Result<(), CarrierError> {
         let limits = self.shared.limits;
         if message.len() > limits.max_message_bytes {
-            return Err(MemoryPairError::MessageTooLarge);
+            return Err(CarrierError::MessageTooLarge);
         }
         // One pair mutex linearizes local close, peer close, capacity, and enqueue.
-        let mut state = self.lock()?;
+        let mut state = self.lock().map_err(|_| CarrierError::StatePoisoned)?;
         if state.closed[self.side] {
-            return Err(MemoryPairError::Closed);
+            return Err(CarrierError::Closed);
         }
         let peer = 1 - self.side;
         if state.closed[peer] {
-            return Err(MemoryPairError::PeerClosed);
+            return Err(CarrierError::PeerClosed);
         }
         let total = state.queue_bytes[peer]
             .checked_add(message.len())
-            .ok_or(MemoryPairError::ArithmeticOverflow)?;
+            .ok_or(CarrierError::BufferFull)?;
         if total > limits.max_queue_bytes {
-            return Err(MemoryPairError::QueueFull);
+            return Err(CarrierError::BufferFull);
         }
         state.queues[peer].push_back(message.to_vec());
         state.queue_bytes[peer] = total;
         Ok(())
     }
-    fn recv(&self) -> Result<Option<Vec<u8>>, MemoryPairError> {
-        let mut state = self.lock()?;
+    fn recv(&self) -> Result<Option<Vec<u8>>, CarrierError> {
+        let mut state = self.lock().map_err(|_| CarrierError::StatePoisoned)?;
         let message = state.queues[self.side].pop_front();
         if let Some(ref bytes) = message {
             state.queue_bytes[self.side] = state.queue_bytes[self.side]
                 .checked_sub(bytes.len())
-                .ok_or(MemoryPairError::ArithmeticOverflow)?;
+                .ok_or(CarrierError::Io)?;
         }
         Ok(message)
     }
-    fn close(&self) -> Result<(), MemoryPairError> {
-        let mut state = self.lock()?;
+    fn close(&self) -> Result<(), CarrierError> {
+        let mut state = self.lock().map_err(|_| CarrierError::StatePoisoned)?;
         // Close is idempotent; queued data remains available to the peer.
         state.closed[self.side] = true;
         Ok(())
@@ -797,10 +868,10 @@ mod memory_pair_tests {
         }
         let (a, b) = pair();
         a.send(b"1234").unwrap();
-        assert_eq!(a.send(b"567"), Err(MemoryPairError::QueueFull));
+        assert_eq!(a.send(b"567"), Err(CarrierError::BufferFull));
         assert_eq!(b.recv().unwrap(), Some(b"1234".to_vec()));
         assert_eq!(a.send(b"567"), Ok(()));
-        assert_eq!(a.send(b"12345"), Err(MemoryPairError::MessageTooLarge));
+        assert_eq!(a.send(b"12345"), Err(CarrierError::MessageTooLarge));
     }
 
     #[test]
@@ -809,17 +880,17 @@ mod memory_pair_tests {
         a.send(b"data").unwrap();
         a.close().unwrap();
         a.close().unwrap();
-        assert_eq!(a.send(b"x"), Err(MemoryPairError::Closed));
+        assert_eq!(a.send(b"x"), Err(CarrierError::Closed));
         // The peer drains data queued before close, then observes an empty queue.
         assert_eq!(b.recv().unwrap(), Some(b"data".to_vec()));
         assert_eq!(b.recv().unwrap(), None);
 
         b.close().unwrap();
         b.close().unwrap();
-        assert_eq!(b.send(b"x"), Err(MemoryPairError::Closed));
+        assert_eq!(b.send(b"x"), Err(CarrierError::Closed));
         let (open, closed_peer) = pair();
         closed_peer.close().unwrap();
-        assert_eq!(open.send(b"x"), Err(MemoryPairError::PeerClosed));
+        assert_eq!(open.send(b"x"), Err(CarrierError::PeerClosed));
         assert_eq!(open.recv().unwrap(), None);
     }
 
@@ -874,9 +945,9 @@ mod memory_pair_tests {
         );
         assert_eq!(
             a.limits(),
-            MemoryLimits {
+            CarrierLimits {
                 max_message_bytes: 4,
-                max_queue_bytes: 6
+                max_buffered_bytes: 6
             }
         );
     }
@@ -1011,6 +1082,46 @@ impl TcpLoopbackEndpoint {
         Ok(*self.closed.lock().map_err(|_| TcpError::StatePoisoned)?)
     }
 }
+impl Carrier for TcpLoopbackEndpoint {
+    fn kind(&self) -> CarrierKind {
+        CarrierKind::Tcp
+    }
+    fn properties(&self) -> CarrierProperties {
+        CarrierProperties {
+            message_boundaries: true,
+            reliable: true,
+            ordered: true,
+        }
+    }
+    fn limits(&self) -> CarrierLimits {
+        CarrierLimits {
+            max_message_bytes: self.limits.max_frame_bytes,
+            max_buffered_bytes: self.limits.max_frame_bytes,
+        }
+    }
+    fn send(&self, message: &[u8]) -> Result<(), CarrierError> {
+        self.send_frame(message).map_err(Into::into)
+    }
+    fn recv(&self) -> Result<Option<Vec<u8>>, CarrierError> {
+        self.recv_frame().map(Some).map_err(Into::into)
+    }
+    fn close(&self) -> Result<(), CarrierError> {
+        TcpCarrier::close(self).map_err(Into::into)
+    }
+}
+impl From<TcpError> for CarrierError {
+    fn from(e: TcpError) -> Self {
+        match e {
+            TcpError::InvalidLimits => Self::InvalidLimits,
+            TcpError::FrameTooLarge => Self::MessageTooLarge,
+            TcpError::Closed => Self::Closed,
+            TcpError::Truncated => Self::Truncated,
+            TcpError::StatePoisoned => Self::StatePoisoned,
+            TcpError::Io(_) => Self::Io,
+        }
+    }
+}
+
 impl TcpCarrier for TcpLoopbackEndpoint {
     fn send_frame(&self, frame: &[u8]) -> Result<(), TcpError> {
         use std::io::Write;
@@ -1247,8 +1358,8 @@ mod tcp_failover_tests {
             a.send_frame(b"123456789"),
             Err(TcpError::FrameTooLarge)
         ));
-        a.close().unwrap();
-        a.close().unwrap();
+        TcpCarrier::close(&a).unwrap();
+        TcpCarrier::close(&a).unwrap();
     }
     #[test]
     fn capabilities_do_not_duplicate_tcp_packet_ack() {
