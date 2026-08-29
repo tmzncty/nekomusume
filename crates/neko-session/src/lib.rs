@@ -834,6 +834,21 @@ impl SessionRuntime {
         if record.data.is_empty() || record.data.len() > self.limits.max_record_bytes {
             return Err(RuntimeError::RecordTooLarge);
         }
+        let next_receive = self
+            .streams
+            .get(&record.stream)
+            .ok_or(RuntimeError::UnknownStream)?
+            .next_receive;
+        if record.offset < next_receive {
+            if self.received.get(&(record.stream, record.offset)) == Some(&record.data) {
+                self.event(now_ms, RuntimeEventKind::DuplicateDedup);
+                return Ok(());
+            }
+            return Err(RuntimeError::Protocol);
+        }
+        if record.offset != next_receive {
+            return Err(RuntimeError::Protocol);
+        }
         if self.recv.len() >= self.limits.max_queue_records
             || self
                 .queued_bytes
@@ -847,16 +862,6 @@ impl SessionRuntime {
             .streams
             .get_mut(&record.stream)
             .ok_or(RuntimeError::UnknownStream)?;
-        if record.offset < s.next_receive {
-            if self.received.get(&(record.stream, record.offset)) == Some(&record.data) {
-                self.event(now_ms, RuntimeEventKind::DuplicateDedup);
-                return Ok(());
-            }
-            return Err(RuntimeError::Protocol);
-        }
-        if record.offset != s.next_receive {
-            return Err(RuntimeError::Protocol);
-        }
         s.next_receive += record.data.len() as u64;
         self.received
             .insert((record.stream, record.offset), record.data.clone());
@@ -1132,6 +1137,10 @@ mod runtime_tests {
         assert!(r.pop_receive(5).unwrap().is_none());
         assert_eq!(r.delivery_ack(StreamId(1), 0, 3, 6), Ok(()));
         assert_eq!(r.confirmed_watermark(StreamId(1)), 3);
+        assert_eq!(
+            r.delivery_ack(StreamId(1), 1, 1, 7),
+            Err(RuntimeError::Protocol)
+        );
         assert_eq!(
             r.observable_events()
                 .filter(|e| e.kind == RuntimeEventKind::DuplicateDedup)
