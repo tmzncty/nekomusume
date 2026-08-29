@@ -612,3 +612,14 @@ Signal/normal-exit cleanup removes both. A regression smoke asserts identical
 full porcelain status before and after execution. This prevents recurring CI or
 cron verification from dirtying or deleting audited seed vectors. Decoder and
 wire semantics are unchanged.
+
+
+## 2026-08-29 — D037：Status evidence mutation regression is part of the full checker
+
+**Status: Accepted governance-harness hardening — no protocol change**
+
+The repository checker now runs both status evidence validation and its isolated
+mutation regression. The regression proves that missing, absolute, directory,
+and invalid-status mutations fail closed while a valid copied table passes. It
+uses a temporary directory and does not alter the audited status file or any
+protocol artifact.
