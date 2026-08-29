@@ -881,6 +881,9 @@ impl FecConfig {
 impl FecBlock {
     pub fn encode(config: FecConfig, block_id: u64, symbols: &[Vec<u8>]) -> Result<Self, FecError> {
         config.validate()?;
+        if block_id > u64::from(config.max_blocks) {
+            return Err(FecError::TooManyBlocks);
+        }
         if symbols.len() != config.block_size as usize {
             return Err(FecError::InvalidConfig);
         }
@@ -994,6 +997,30 @@ mod fec_tests {
         b.mark_missing(3).unwrap();
         assert_eq!(b.recover_one(), Err(FecError::Unrecoverable));
     }
+    #[test]
+    fn fec_block_identity_is_bounded_and_rejection_is_atomic() {
+        let c = FecConfig {
+            block_size: 2,
+            symbol_size: 2,
+            max_blocks: 3,
+        };
+        assert!(FecBlock::encode(c, 0, &[b"aa".to_vec(), b"bb".to_vec()]).is_ok());
+        assert!(FecBlock::encode(c, 3, &[b"aa".to_vec(), b"bb".to_vec()]).is_ok());
+        assert_eq!(
+            FecBlock::encode(c, 4, &[b"aa".to_vec(), b"bb".to_vec()]),
+            Err(FecError::TooManyBlocks)
+        );
+        assert_eq!(
+            FecBlock::encode(c, u64::MAX, &[b"aa".to_vec(), b"bb".to_vec()]),
+            Err(FecError::TooManyBlocks)
+        );
+        // Bounds are checked before symbol cloning/allocation and return no block state.
+        assert_eq!(
+            FecBlock::encode(c, 4, &[vec![0; 2], vec![0; 2]]),
+            Err(FecError::TooManyBlocks)
+        );
+    }
+
     #[test]
     fn fec_limits_and_duplicate_boundaries_are_explicit() {
         let c = FecConfig {

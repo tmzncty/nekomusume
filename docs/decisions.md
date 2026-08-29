@@ -713,3 +713,14 @@ The full checker validates numbered `D###` decision headings in this ledger and
 rejects duplicate IDs. The isolated regression duplicates a real decision heading
 and proves fail-closed behavior. Unnumbered historical notes remain outside the
 ledger index; no protocol, network or release boundary changes.
+
+
+## 2026-08-29 — D046：FEC block identity is bounded
+
+**Status: Candidate test hardening — no FEC enablement**
+
+The bounded XOR candidate now enforces `block_id <= max_blocks` before cloning
+symbols or allocating parity. Zero and the configured maximum ID are accepted; the
+next ID and `u64::MAX` fail as `TooManyBlocks` with no block state. This
+keeps resource limits tied to identity as well as payload size without changing
+wire, Session, retransmission or carrier behavior.

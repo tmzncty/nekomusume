@@ -17,3 +17,12 @@ FEC remains separate from reliable recovery: parity does not acknowledge
 Session delivery, replace retransmission, alter packet ACK evidence, or bypass
 congestion control. No wire codec, negotiation, socket, runtime, WAN or
 production behavior is introduced.
+
+
+## Block identity bound
+
+`max_blocks` bounds the block identity space: valid IDs are `0..=max_blocks`,
+with the next ID rejected as `TooManyBlocks`. The identity check occurs
+before symbol cloning or parity allocation, so an out-of-range request produces
+no block state. This is a local candidate invariant; it introduces no wire field
+or runtime block table.
