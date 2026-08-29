@@ -658,3 +658,14 @@ Repository-relative targets must exist and may not be absolute, traverse outside
 the repository, contain backslashes, or include malformed backticks. An isolated
 mutation regression proves fail-closed behavior. External URLs are intentionally
 left to separate availability checks.
+
+
+## 2026-08-29 — D041：Release boundary invariants are checked automatically
+
+**Status: Accepted governance-harness hardening — no protocol change**
+
+The full checker now asserts that `reachability` and `production` status rows
+exist, remain `blocked`, and retain explicit prohibitions. An isolated mutation
+regression proves accidental unblocking and unsafe release wording fail closed.
+This guards the research-only boundary without probing networks or changing any
+protocol behavior.
