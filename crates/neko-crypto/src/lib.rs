@@ -709,3 +709,126 @@ mod preauth_tests {
         );
     }
 }
+
+/// Authenticated carrier-attachment claim. This is carried inside a fresh
+/// Noise handshake; the fresh transport keys avoid nonce reuse while these
+/// fields bind the new carrier to one existing logical Session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumeBinding {
+    pub session_id: u64,
+    pub delivery_epoch: u64,
+    pub key_phase: u8,
+    pub path_generation: u64,
+    pub expires_at_ms: u64,
+    pub token: [u8; 32],
+}
+impl ResumeBinding {
+    pub fn encode(&self) -> [u8; 65] {
+        let mut out = [0; 65];
+        out[0..8].copy_from_slice(&self.session_id.to_be_bytes());
+        out[8..16].copy_from_slice(&self.delivery_epoch.to_be_bytes());
+        out[16] = self.key_phase;
+        out[17..25].copy_from_slice(&self.path_generation.to_be_bytes());
+        out[25..33].copy_from_slice(&self.expires_at_ms.to_be_bytes());
+        out[33..65].copy_from_slice(&self.token);
+        out
+    }
+    pub fn decode(input: &[u8]) -> Result<Self, SessionRejected> {
+        if input.len() != 65 {
+            return Err(SessionRejected);
+        }
+        Ok(Self {
+            session_id: u64::from_be_bytes(input[0..8].try_into().map_err(|_| SessionRejected)?),
+            delivery_epoch: u64::from_be_bytes(
+                input[8..16].try_into().map_err(|_| SessionRejected)?,
+            ),
+            key_phase: input[16],
+            path_generation: u64::from_be_bytes(
+                input[17..25].try_into().map_err(|_| SessionRejected)?,
+            ),
+            expires_at_ms: u64::from_be_bytes(
+                input[25..33].try_into().map_err(|_| SessionRejected)?,
+            ),
+            token: input[33..65].try_into().map_err(|_| SessionRejected)?,
+        })
+    }
+}
+
+/// Single-peer, monotonic attachment guard. Peer authentication is supplied by
+/// the enclosing Noise IK handshake; this guard rejects cross-peer, replay,
+/// expiry and stale path generation without deriving transport keys itself.
+#[derive(Debug)]
+pub struct ResumeGuard {
+    peer_public: Vec<u8>,
+    session_id: u64,
+    delivery_epoch: u64,
+    key_phase: u8,
+    next_path_generation: u64,
+    token: [u8; 32],
+}
+impl ResumeGuard {
+    pub fn new(peer_public: &[u8], binding: &ResumeBinding) -> Result<Self, SessionRejected> {
+        if peer_public.is_empty() || binding.path_generation == u64::MAX {
+            return Err(SessionRejected);
+        }
+        Ok(Self {
+            peer_public: peer_public.to_vec(),
+            session_id: binding.session_id,
+            delivery_epoch: binding.delivery_epoch,
+            key_phase: binding.key_phase,
+            next_path_generation: binding.path_generation + 1,
+            token: binding.token,
+        })
+    }
+    pub fn attach(
+        &mut self,
+        peer_public: &[u8],
+        claim: &ResumeBinding,
+        now_ms: u64,
+    ) -> Result<(), SessionRejected> {
+        if peer_public != self.peer_public
+            || claim.session_id != self.session_id
+            || claim.delivery_epoch != self.delivery_epoch
+            || claim.key_phase != self.key_phase
+            || claim.path_generation != self.next_path_generation
+            || claim.token != self.token
+            || now_ms > claim.expires_at_ms
+        {
+            return Err(SessionRejected);
+        }
+        self.next_path_generation = self
+            .next_path_generation
+            .checked_add(1)
+            .ok_or(SessionRejected)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    fn claim(g: u64) -> ResumeBinding {
+        ResumeBinding {
+            session_id: 7,
+            delivery_epoch: 3,
+            key_phase: 1,
+            path_generation: g,
+            expires_at_ms: 100,
+            token: [9; 32],
+        }
+    }
+    #[test]
+    fn attachment_is_peer_bound_monotonic_expiring_and_single_use() {
+        let original = claim(4);
+        let mut guard = ResumeGuard::new(b"peer", &original).unwrap();
+        let next = claim(5);
+        assert_eq!(ResumeBinding::decode(&next.encode()).unwrap(), next);
+        assert_eq!(guard.attach(b"peer", &next, 99), Ok(()));
+        assert_eq!(guard.attach(b"peer", &next, 99), Err(SessionRejected));
+        let mut wrong = claim(6);
+        wrong.token = [8; 32];
+        assert_eq!(guard.attach(b"peer", &wrong, 99), Err(SessionRejected));
+        assert_eq!(guard.attach(b"other", &claim(6), 99), Err(SessionRejected));
+        assert_eq!(guard.attach(b"peer", &claim(6), 101), Err(SessionRejected));
+    }
+}
