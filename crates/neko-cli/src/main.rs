@@ -27,6 +27,36 @@ const DOMAIN: &[u8] = b"nekomusume-vps-probe";
 fn json_mode(args: &[String]) -> bool {
     args.iter().any(|a| a == "--json")
 }
+fn diagnostic_mode(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--diagnostic")
+}
+fn diagnostic_id(args: &[String]) -> String {
+    let id = args
+        .windows(2)
+        .find(|w| w[0] == "--experiment-id")
+        .map(|w| w[1].clone())
+        .unwrap_or_else(|| fail("--diagnostic requires --experiment-id"));
+    if !(8..=72).contains(&id.len())
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        fail("invalid experiment id");
+    }
+    id
+}
+fn emit_diagnostic(args: &[String], role: &str, event: &str, seq: usize, fields: &str) {
+    if diagnostic_mode(args) {
+        println!(
+            "{{\"experiment_id\":\"{}\",\"role\":\"{}\",\"event\":\"{}\",\"seq\":{}{} }}",
+            diagnostic_id(args),
+            role,
+            event,
+            seq,
+            fields
+        );
+    }
+}
 fn emit_probe(args: &[String], transport: &str, bytes: usize, elapsed_ms: u128) {
     if json_mode(args) {
         println!(
@@ -454,9 +484,17 @@ fn failover_server(args: &[String]) {
     let mut runtime =
         SessionRuntime::new(SessionId(7001), runtime_limits(bytes, count), 0).unwrap();
     runtime.open_stream(StreamId(1), 0).unwrap();
+    emit_diagnostic(
+        args,
+        "server",
+        "start",
+        0,
+        ",\"count\":8,\"payload_bytes\":64,\"udp_port\":40081,\"max_seconds\":15",
+    );
     while started.elapsed() < duration {
         if secure.is_none() {
             if let Ok((n, peer)) = udp.recv_from(&mut buf) {
+                emit_diagnostic(args, "server", "udp_hello_received", 0, "");
                 diag.event(args, "server_hello_received");
                 let (resp, ss, remote, binding) =
                     ResponderHandshake::new(&id, policy.clone(), DOMAIN)
@@ -467,6 +505,7 @@ fn failover_server(args: &[String]) {
                         })
                         .unwrap_or_else(|_| fail("unauthorized UDP handshake"));
                 udp.send_to(&resp, peer).unwrap();
+                emit_diagnostic(args, "server", "udp_hello_sent", 0, "");
                 diag.event(args, "server_response_sent");
                 guard = Some(ResumeGuard::new(&remote, &binding).unwrap());
                 secure = Some((ss, peer));
@@ -475,6 +514,13 @@ fn failover_server(args: &[String]) {
         }
         if let Some((ref mut ss, peer)) = secure {
             if let Ok((n, _)) = udp.recv_from(&mut buf) {
+                emit_diagnostic(
+                    args,
+                    "server",
+                    "udp_datagram_received",
+                    1,
+                    &format!(",\"bytes\":{}", n),
+                );
                 if let Ok(plain) = ss.open_unreliable(&buf[..n]) {
                     diag.event(args, "client_response_received");
                     diag.event(args, "authenticated");
@@ -505,6 +551,13 @@ fn failover_server(args: &[String]) {
                             .encode()
                             .unwrap();
                             udp.send_to(&ack, peer).unwrap();
+                            emit_diagnostic(
+                                args,
+                                "server",
+                                "udp_ack_sent",
+                                offset as usize / bytes.max(1),
+                                "",
+                            );
                             if let Some(delivered) = runtime.pop_receive(2).unwrap() {
                                 app.extend_from_slice(&delivered.data);
                             }
@@ -574,6 +627,13 @@ fn failover_server(args: &[String]) {
                     hex(&app),
                     duplicates
                 );
+                emit_diagnostic(
+                    args,
+                    "server",
+                    "summary",
+                    count,
+                    &format!(",\"classification\":\"A\",\"records\":{}", count),
+                );
                 return;
             }
         }
@@ -621,13 +681,22 @@ fn failover_client(args: &[String]) {
         .unwrap();
     let mut buf = [0u8; 65536];
     let mut handshake = None;
+    emit_diagnostic(
+        args,
+        "client",
+        "start",
+        0,
+        ",\"count\":8,\"payload_bytes\":64,\"udp_port\":40081,\"max_seconds\":15",
+    );
     for _ in 0..20 {
         u.send_to(&first, &target).unwrap();
         diag.event(args, "client_hello_sent");
+        emit_diagnostic(args, "client", "udp_hello_sent", 0, "");
         match u.recv_from(&mut buf) {
             Ok((n, _)) => {
                 diag.event(args, "server_hello_received");
                 handshake = Some(n);
+                emit_diagnostic(args, "client", "udp_hello_received", 0, "");
                 break;
             }
             Err(e)
@@ -666,7 +735,9 @@ fn failover_client(args: &[String]) {
     println!("carrier_event name=udp_authenticated session=7001 generation=0");
     let rec = us.seal_unreliable(&records[0]).unwrap();
     u.send_to(&rec, &target).unwrap();
+    emit_diagnostic(args, "client", "udp_datagram_sent", 1, ",\"bytes\":64");
     let _ = u.recv_from(&mut buf);
+    emit_diagnostic(args, "client", "udp_ack_observed", 1, "");
     println!("carrier_event name=udp_blackhole_injected session=7001 generation=0");
     let mut hs2 = InitiatorHandshake::with_resume_binding(
         &id,
@@ -702,6 +773,20 @@ fn failover_client(args: &[String]) {
     }
     println!(
         "carrier_event name=ordered_records_complete session=7001 count={count} bytes={bytes}"
+    );
+    emit_diagnostic(
+        args,
+        "client",
+        "summary",
+        count,
+        &format!(",\"classification\":\"A\",\"records\":{}", count),
+    );
+    emit_diagnostic(
+        args,
+        "client",
+        "capture_metadata",
+        count + 1,
+        ",\"capture\":\"metadata-only\",\"payload\":false,\"keys\":false,\"bounded\":true",
     );
     println!("failover_client_ok session=7001 count={count} bytes={bytes} udp_blackhole=true")
 }
