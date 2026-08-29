@@ -5,6 +5,7 @@ pub const DEFAULT_MAX_REORDER: u64 = 64;
 pub const DEFAULT_MAX_STREAMS: usize = 64;
 pub const DEFAULT_MAX_CONNECTION_BYTES: usize = 1 << 20;
 pub const DEFAULT_MAX_OFFSET_JUMP: u64 = 1 << 20;
+const MAX_RUNTIME_STREAM_ID: u64 = u64::MAX - 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeliveryEpoch(pub u64);
@@ -626,6 +627,7 @@ pub enum RuntimeError {
     TotalLimit,
     StreamLimit,
     UnknownStream,
+    InvalidStreamId,
     InvalidTransition,
     Deadline,
     IdleTimeout,
@@ -907,6 +909,9 @@ impl SessionRuntime {
     }
     pub fn open_stream(&mut self, stream: StreamId, now_ms: u64) -> Result<(), RuntimeError> {
         self.check(now_ms)?;
+        if stream.0 > MAX_RUNTIME_STREAM_ID {
+            return Err(RuntimeError::InvalidStreamId);
+        }
         if self.streams.contains_key(&stream) {
             return Err(RuntimeError::InvalidTransition);
         }
@@ -924,6 +929,31 @@ impl SessionRuntime {
         self.event(now_ms, RuntimeEventKind::StreamOpened);
         Ok(())
     }
+    pub fn close_stream(&mut self, stream: StreamId, now_ms: u64) -> Result<(), RuntimeError> {
+        self.check(now_ms)?;
+        if stream.0 > MAX_RUNTIME_STREAM_ID {
+            return Err(RuntimeError::InvalidStreamId);
+        }
+        let s = self
+            .streams
+            .get_mut(&stream)
+            .ok_or(RuntimeError::UnknownStream)?;
+        if s.state == StreamState::Closed {
+            return Ok(());
+        }
+        s.state = StreamState::Closed;
+        self.event(now_ms, RuntimeEventKind::StreamClosed);
+        Ok(())
+    }
+    pub fn stream_state(&self, stream: StreamId) -> Result<StreamState, RuntimeError> {
+        if stream.0 > MAX_RUNTIME_STREAM_ID {
+            return Err(RuntimeError::InvalidStreamId);
+        }
+        self.streams
+            .get(&stream)
+            .map(|s| s.state)
+            .ok_or(RuntimeError::UnknownStream)
+    }
     pub fn queue_send(
         &mut self,
         stream: StreamId,
@@ -931,6 +961,9 @@ impl SessionRuntime {
         now_ms: u64,
     ) -> Result<u64, RuntimeError> {
         self.check(now_ms)?;
+        if stream.0 > MAX_RUNTIME_STREAM_ID {
+            return Err(RuntimeError::InvalidStreamId);
+        }
         let s = self
             .streams
             .get_mut(&stream)
@@ -962,7 +995,10 @@ impl SessionRuntime {
             return Err(RuntimeError::TotalLimit);
         }
         let off = s.next_send;
-        s.next_send += data.len() as u64;
+        s.next_send = s
+            .next_send
+            .checked_add(data.len() as u64)
+            .ok_or(RuntimeError::TotalLimit)?;
         self.total_bytes += data.len();
         self.queued_bytes += data.len();
         self.send.push_back(OutboundRecord {
@@ -985,13 +1021,23 @@ impl SessionRuntime {
     }
     pub fn receive(&mut self, record: InboundRecord, now_ms: u64) -> Result<(), RuntimeError> {
         self.check(now_ms)?;
+        if record.stream.0 > MAX_RUNTIME_STREAM_ID {
+            return Err(RuntimeError::InvalidStreamId);
+        }
         if record.data.is_empty() || record.data.len() > self.limits.max_record_bytes {
             return Err(RuntimeError::RecordTooLarge);
         }
         let next_receive = self
             .streams
             .get(&record.stream)
-            .ok_or(RuntimeError::UnknownStream)?
+            .filter(|s| s.state == StreamState::Open || s.state == StreamState::HalfClosedLocal)
+            .ok_or_else(|| {
+                if self.streams.contains_key(&record.stream) {
+                    RuntimeError::InvalidTransition
+                } else {
+                    RuntimeError::UnknownStream
+                }
+            })?
             .next_receive;
         if record.offset < next_receive {
             if self.received.get(&(record.stream, record.offset)) == Some(&record.data) {
@@ -1002,6 +1048,14 @@ impl SessionRuntime {
         }
         if record.offset != next_receive {
             return Err(RuntimeError::Protocol);
+        }
+        if self
+            .total_bytes
+            .checked_add(record.data.len())
+            .ok_or(RuntimeError::TotalLimit)?
+            > self.limits.max_total_bytes
+        {
+            return Err(RuntimeError::TotalLimit);
         }
         if self.recv.len() >= self.limits.max_queue_records
             || self
@@ -1016,11 +1070,15 @@ impl SessionRuntime {
             .streams
             .get_mut(&record.stream)
             .ok_or(RuntimeError::UnknownStream)?;
-        s.next_receive += record.data.len() as u64;
+        s.next_receive = s
+            .next_receive
+            .checked_add(record.data.len() as u64)
+            .ok_or(RuntimeError::TotalLimit)?;
         self.received
             .insert((record.stream, record.offset), record.data.clone());
         self.recv.push_back(record);
         self.queued_bytes += self.recv.back().unwrap().data.len();
+        self.total_bytes += self.recv.back().unwrap().data.len();
         self.touch(now_ms);
         self.event(now_ms, RuntimeEventKind::DataReceived);
         Ok(())
@@ -1425,6 +1483,160 @@ mod runtime_tests {
                 .filter(|e| e.kind == RuntimeEventKind::DataReceived)
                 .count(),
             8
+        );
+    }
+}
+
+#[cfg(test)]
+mod m4_multistream_tests {
+    use super::*;
+
+    fn limits() -> RuntimeLimits {
+        RuntimeLimits {
+            max_streams: 3,
+            max_queue_records: 8,
+            max_queue_bytes: 64,
+            max_total_bytes: 128,
+            max_record_bytes: 32,
+            idle_timeout_ms: 100,
+            close_timeout_ms: 10,
+        }
+    }
+
+    #[test]
+    fn supports_stream_zero_one_and_two_plus_with_per_stream_ordering() {
+        let mut r = SessionRuntime::new(SessionId(1), limits(), 0).unwrap();
+        for id in [0, 1, 2] {
+            r.open_stream(StreamId(id), 1).unwrap();
+        }
+        assert_eq!(r.queue_send(StreamId(2), b"two-a", 2), Ok(0));
+        assert_eq!(r.queue_send(StreamId(0), b"zero", 2), Ok(0));
+        assert_eq!(r.queue_send(StreamId(2), b"two-b", 2), Ok(5));
+        assert_eq!(r.queue_send(StreamId(1), b"one", 2), Ok(0));
+        let records: Vec<_> = (0..4).map(|_| r.pop_send(3).unwrap().unwrap()).collect();
+        assert_eq!(
+            records.iter().map(|x| x.stream.0).collect::<Vec<_>>(),
+            vec![2, 0, 2, 1]
+        );
+        assert_eq!(records[2].offset, 5);
+        for record in records {
+            r.receive(
+                InboundRecord {
+                    stream: record.stream,
+                    offset: record.offset,
+                    data: record.data,
+                },
+                4,
+            )
+            .unwrap();
+        }
+        assert_eq!(r.pop_receive(5).unwrap().unwrap().stream, StreamId(2));
+        assert_eq!(r.pop_receive(5).unwrap().unwrap().stream, StreamId(0));
+        assert_eq!(r.pop_receive(5).unwrap().unwrap().stream, StreamId(2));
+        assert_eq!(r.pop_receive(5).unwrap().unwrap().stream, StreamId(1));
+    }
+
+    #[test]
+    fn streams_close_independently_and_invalid_or_exhausted_ids_are_bounded() {
+        let mut r = SessionRuntime::new(SessionId(2), limits(), 0).unwrap();
+        assert_eq!(r.open_stream(StreamId(0), 1), Ok(()));
+        assert_eq!(r.open_stream(StreamId(1), 1), Ok(()));
+        assert_eq!(r.open_stream(StreamId(2), 1), Ok(()));
+        assert_eq!(
+            r.open_stream(StreamId(3), 1),
+            Err(RuntimeError::StreamLimit)
+        );
+        assert_eq!(
+            r.open_stream(StreamId(u64::MAX), 1),
+            Err(RuntimeError::InvalidStreamId)
+        );
+        assert_eq!(
+            r.queue_send(StreamId(u64::MAX), b"x", 1),
+            Err(RuntimeError::InvalidStreamId)
+        );
+        assert_eq!(
+            r.receive(
+                InboundRecord {
+                    stream: StreamId(u64::MAX),
+                    offset: 0,
+                    data: b"x".to_vec()
+                },
+                1,
+            ),
+            Err(RuntimeError::InvalidStreamId)
+        );
+        assert_eq!(r.close_stream(StreamId(1), 2), Ok(()));
+        assert_eq!(r.stream_state(StreamId(1)), Ok(StreamState::Closed));
+        assert_eq!(
+            r.receive(
+                InboundRecord {
+                    stream: StreamId(1),
+                    offset: 0,
+                    data: b"x".to_vec()
+                },
+                3,
+            ),
+            Err(RuntimeError::InvalidTransition)
+        );
+        assert_eq!(
+            r.queue_send(StreamId(1), b"x", 3),
+            Err(RuntimeError::InvalidTransition)
+        );
+        assert_eq!(r.queue_send(StreamId(0), b"x", 3), Ok(0));
+        assert_eq!(r.queue_send(StreamId(2), b"y", 3), Ok(0));
+        assert_eq!(r.close_stream(StreamId(0), 4), Ok(()));
+        assert_eq!(r.stream_state(StreamId(2)), Ok(StreamState::Open));
+        assert_eq!(
+            r.close_stream(StreamId(99), 4),
+            Err(RuntimeError::UnknownStream)
+        );
+    }
+
+    #[test]
+    fn receive_ordering_and_session_resource_limits_apply_across_streams() {
+        let mut l = limits();
+        l.max_queue_bytes = 3;
+        l.max_total_bytes = 5;
+        let mut r = SessionRuntime::new(SessionId(3), l, 0).unwrap();
+        r.open_stream(StreamId(0), 1).unwrap();
+        r.open_stream(StreamId(1), 1).unwrap();
+        assert_eq!(
+            r.receive(
+                InboundRecord {
+                    stream: StreamId(1),
+                    offset: 1,
+                    data: b"x".to_vec()
+                },
+                2
+            ),
+            Err(RuntimeError::Protocol)
+        );
+        r.receive(
+            InboundRecord {
+                stream: StreamId(0),
+                offset: 0,
+                data: b"ab".to_vec(),
+            },
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            r.receive(
+                InboundRecord {
+                    stream: StreamId(1),
+                    offset: 0,
+                    data: b"cd".to_vec()
+                },
+                2
+            ),
+            Err(RuntimeError::QueueFull)
+        );
+        r.pop_receive(3).unwrap();
+        assert_eq!(r.queue_send(StreamId(1), b"ab", 3), Ok(0));
+        r.pop_send(4).unwrap();
+        assert_eq!(
+            r.queue_send(StreamId(0), b"xy", 4),
+            Err(RuntimeError::TotalLimit)
         );
     }
 }
