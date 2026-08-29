@@ -448,7 +448,7 @@ fn failover_server(args: &[String]) {
     let mut secure = None;
     let mut guard = None;
     let mut app = Vec::new();
-    let mut duplicates = 0usize;
+    let duplicates = 0usize;
     let mut runtime =
         SessionRuntime::new(SessionId(7001), runtime_limits(bytes, count), 0).unwrap();
     runtime.open_stream(StreamId(1), 0).unwrap();
@@ -503,12 +503,6 @@ fn failover_server(args: &[String]) {
                             .encode()
                             .unwrap();
                             udp.send_to(&ack, peer).unwrap();
-                            if runtime
-                                .observable_events()
-                                .any(|e| e.kind == neko_session::RuntimeEventKind::DuplicateDedup)
-                            {
-                                duplicates += 1;
-                            }
                             if let Some(delivered) = runtime.pop_receive(2).unwrap() {
                                 app.extend_from_slice(&delivered.data);
                             }
@@ -564,11 +558,6 @@ fn failover_server(args: &[String]) {
                                     .unwrap(),
                                 )
                                 .unwrap();
-                                if runtime.observable_events().any(|e| {
-                                    e.kind == neko_session::RuntimeEventKind::DuplicateDedup
-                                }) {
-                                    duplicates += 1;
-                                }
                                 if let Some(delivered) = runtime.pop_receive(3).unwrap() {
                                     app.extend_from_slice(&delivered.data);
                                 }

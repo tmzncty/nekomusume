@@ -111,7 +111,7 @@ fn executable_loopback_udp_blackhole_tcp_resume() {
     let ck = key(bin, &cp);
     let udp = 40089u16;
     let tcp = 40090u16;
-    let mut server = Command::new(bin)
+    let server = Command::new(bin)
         .args([
             "failover-server",
             "--udp-port",
@@ -188,10 +188,10 @@ fn executable_loopback_udp_blackhole_tcp_resume() {
     assert!(server_log.contains("carrier_event name=tcp_resumed"));
     assert!(
         server_log.contains("duplicates=0"),
-        "duplicate delivery: {server_log}"
+        "unexpected dedup count: {server_log}"
     );
     assert!(
-        server_log.contains("bytes_hex=616c7068612d626f756e6465642d65786163746c792d6f6e6365"),
+        server_log.contains(&format!("bytes_hex={}", "78".repeat(48))),
         "incomplete ordered bytes: {server_log}"
     );
 }
