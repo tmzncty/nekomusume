@@ -650,6 +650,8 @@ pub enum RuntimeEventKind {
     StreamOpened,
     DataQueued,
     DataReceived,
+    DuplicateDedup,
+    DeliveryAck,
     StreamClosed,
     CloseSent,
     SessionClosed,
@@ -675,6 +677,8 @@ pub struct SessionRuntime {
     streams: BTreeMap<StreamId, RuntimeStream>,
     send: VecDeque<OutboundRecord>,
     recv: VecDeque<InboundRecord>,
+    received: BTreeMap<(StreamId, u64), Vec<u8>>,
+    confirmed: BTreeMap<StreamId, u64>,
     queued_bytes: usize,
     total_bytes: usize,
     last_activity_ms: u64,
@@ -702,6 +706,8 @@ impl SessionRuntime {
             streams: BTreeMap::new(),
             send: VecDeque::new(),
             recv: VecDeque::new(),
+            received: BTreeMap::new(),
+            confirmed: BTreeMap::new(),
             queued_bytes: 0,
             total_bytes: 0,
             last_activity_ms: now_ms,
@@ -736,6 +742,8 @@ impl SessionRuntime {
         self.state = RuntimeState::Closed;
         self.send.clear();
         self.recv.clear();
+        self.received.clear();
+        self.confirmed.clear();
         self.queued_bytes = 0;
         self.event(now_ms, RuntimeEventKind::SessionClosed);
         Ok(())
@@ -839,16 +847,50 @@ impl SessionRuntime {
             .streams
             .get_mut(&record.stream)
             .ok_or(RuntimeError::UnknownStream)?;
+        if record.offset < s.next_receive {
+            if self.received.get(&(record.stream, record.offset)) == Some(&record.data) {
+                self.event(now_ms, RuntimeEventKind::DuplicateDedup);
+                return Ok(());
+            }
+            return Err(RuntimeError::Protocol);
+        }
         if record.offset != s.next_receive {
             return Err(RuntimeError::Protocol);
         }
         s.next_receive += record.data.len() as u64;
+        self.received
+            .insert((record.stream, record.offset), record.data.clone());
         self.recv.push_back(record);
         self.queued_bytes += self.recv.back().unwrap().data.len();
         self.touch(now_ms);
         self.event(now_ms, RuntimeEventKind::DataReceived);
         Ok(())
     }
+    pub fn delivery_ack(
+        &mut self,
+        stream: StreamId,
+        offset: u64,
+        len: usize,
+        now_ms: u64,
+    ) -> Result<(), RuntimeError> {
+        self.check(now_ms)?;
+        let end = offset
+            .checked_add(len as u64)
+            .ok_or(RuntimeError::TotalLimit)?;
+        let current = self.confirmed.get(&stream).copied().unwrap_or(0);
+        if end < current {
+            return Err(RuntimeError::Protocol);
+        }
+        if end > current {
+            self.confirmed.insert(stream, end);
+        }
+        self.event(now_ms, RuntimeEventKind::DeliveryAck);
+        Ok(())
+    }
+    pub fn confirmed_watermark(&self, stream: StreamId) -> u64 {
+        self.confirmed.get(&stream).copied().unwrap_or(0)
+    }
+
     pub fn pop_receive(&mut self, now_ms: u64) -> Result<Option<InboundRecord>, RuntimeError> {
         self.check(now_ms)?;
         let x = self.recv.pop_front();
@@ -875,6 +917,8 @@ impl SessionRuntime {
         self.state = RuntimeState::Error;
         self.send.clear();
         self.recv.clear();
+        self.received.clear();
+        self.confirmed.clear();
         self.queued_bytes = 0;
         self.event(now_ms, RuntimeEventKind::Error);
         Ok(())
@@ -947,6 +991,8 @@ impl RuntimeEventKind {
             Self::StreamOpened => "stream_opened",
             Self::DataQueued => "data_queued",
             Self::DataReceived => "data_received",
+            Self::DuplicateDedup => "duplicate_dedup",
+            Self::DeliveryAck => "delivery_ack",
             Self::StreamClosed => "stream_closed",
             Self::CloseSent => "close_sent",
             Self::SessionClosed => "session_closed",
