@@ -297,6 +297,32 @@ impl InitiatorHandshake {
             scope: scope.to_vec(),
         })
     }
+    pub fn with_resume_binding(
+        local: &LocalIdentity,
+        responder_public: &[u8],
+        scope: &[u8],
+        application_domain: &[u8],
+        binding: &ResumeBinding,
+    ) -> Result<Self, SessionRejected> {
+        if scope.is_empty() || scope.len() > 62 {
+            return Err(SessionRejected);
+        }
+        let mut payload = Vec::with_capacity(1 + scope.len() + 65);
+        payload.push(scope.len() as u8);
+        payload.extend_from_slice(scope);
+        payload.extend_from_slice(&binding.encode());
+        let p = prologue(application_domain)?;
+        let state = snow::Builder::new(noise_ik_params())
+            .local_private_key(&local.private)
+            .and_then(|b| b.remote_public_key(responder_public))
+            .and_then(|b| b.prologue(&p))
+            .and_then(snow::Builder::build_initiator)
+            .map_err(|_| SessionRejected)?;
+        Ok(Self {
+            state,
+            scope: payload,
+        })
+    }
     pub fn first_message(&mut self) -> Result<Vec<u8>, SessionRejected> {
         let mut out = vec![0; MAX_HANDSHAKE_MESSAGE];
         let n = self
@@ -336,6 +362,43 @@ impl ResponderHandshake {
             .and_then(snow::Builder::build_responder)
             .map_err(|_| SessionRejected)?;
         Ok(Self { state, policy })
+    }
+    pub fn receive_first_with_resume(
+        mut self,
+        message: &[u8],
+        context: RecordContext,
+    ) -> Result<(Vec<u8>, SecureSession, Vec<u8>, ResumeBinding), SessionRejected> {
+        if message.len() > MAX_HANDSHAKE_MESSAGE {
+            return Err(SessionRejected);
+        }
+        let mut payload = [0; 128];
+        let n = self
+            .state
+            .read_message(message, &mut payload)
+            .map_err(|_| SessionRejected)?;
+        if n < 67 {
+            return Err(SessionRejected);
+        }
+        let scope_len = payload[0] as usize;
+        if scope_len == 0 || 1 + scope_len + 65 != n {
+            return Err(SessionRejected);
+        }
+        let scope = payload[1..1 + scope_len].to_vec();
+        let binding = ResumeBinding::decode(&payload[1 + scope_len..n])?;
+        let remote = self
+            .state
+            .get_remote_static()
+            .ok_or(SessionRejected)?
+            .to_vec();
+        self.policy.authorize(&remote, &scope)?;
+        let mut response = vec![0; MAX_HANDSHAKE_MESSAGE];
+        let n = self
+            .state
+            .write_message(&[], &mut response)
+            .map_err(|_| SessionRejected)?;
+        response.truncate(n);
+        let session = SecureSession::from_handshake(self.state, context)?;
+        Ok((response, session, remote, binding))
     }
     pub fn receive_first(
         mut self,
@@ -830,5 +893,41 @@ mod resume_tests {
         assert_eq!(guard.attach(b"peer", &wrong, 99), Err(SessionRejected));
         assert_eq!(guard.attach(b"other", &claim(6), 99), Err(SessionRejected));
         assert_eq!(guard.attach(b"peer", &claim(6), 101), Err(SessionRejected));
+    }
+
+    #[test]
+    fn fresh_noise_transport_is_bound_to_existing_logical_session() {
+        let client = LocalIdentity::generate().unwrap();
+        let server = LocalIdentity::generate().unwrap();
+        let policy = TrustPolicy::new(vec![TrustRecord {
+            version: 1,
+            public_key: client.public_key().to_vec(),
+            scope: b"resume".to_vec(),
+            status: TrustStatus::Active,
+        }]);
+        let original = claim(4);
+        let next = claim(5);
+        let mut guard = ResumeGuard::new(client.public_key(), &original).unwrap();
+        let mut initiator = InitiatorHandshake::with_resume_binding(
+            &client,
+            server.public_key(),
+            b"resume",
+            b"resume-test",
+            &next,
+        )
+        .unwrap();
+        let first = initiator.first_message().unwrap();
+        let (response, mut responder_session, peer, received) =
+            ResponderHandshake::new(&server, policy, b"resume-test")
+                .unwrap()
+                .receive_first_with_resume(&first, session_tests::ctx(0))
+                .unwrap();
+        guard.attach(&peer, &received, 99).unwrap();
+        let mut initiator_session = initiator.finish(&response, session_tests::ctx(0)).unwrap();
+        let record = initiator_session.seal_unreliable(b"continued").unwrap();
+        assert_eq!(
+            responder_session.open_unreliable(&record).unwrap(),
+            b"continued"
+        );
     }
 }
