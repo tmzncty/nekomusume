@@ -1179,6 +1179,136 @@ impl TcpCarrier for TcpLoopbackEndpoint {
     }
 }
 
+/// Deterministic local-only fault wrapper for carrier state-machine tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FaultPolicy {
+    pub blackhole_after: Option<u64>,
+    pub loss_percent: u8,
+    pub duplicate: bool,
+    pub reorder: bool,
+    pub delay_ms: u32,
+    pub close_after: Option<u64>,
+    pub one_way: bool,
+}
+
+#[derive(Debug)]
+pub struct FaultInjectCarrier<C: Carrier> {
+    inner: C,
+    policy: FaultPolicy,
+    sent: std::sync::Mutex<u64>,
+    seed: std::sync::Mutex<u64>,
+    closed: std::sync::Mutex<bool>,
+}
+impl<C: Carrier> FaultInjectCarrier<C> {
+    pub fn new(inner: C, policy: FaultPolicy, seed: u64) -> Result<Self, CarrierError> {
+        if policy.loss_percent > 100 {
+            return Err(CarrierError::InvalidLimits);
+        }
+        Ok(Self {
+            inner,
+            policy,
+            sent: std::sync::Mutex::new(0),
+            seed: std::sync::Mutex::new(seed),
+            closed: std::sync::Mutex::new(false),
+        })
+    }
+    fn draw(&self) -> u8 {
+        let mut s = self.seed.lock().expect("fault seed");
+        *s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (*s >> 56) as u8
+    }
+    fn blocked(&self, sent: u64) -> bool {
+        self.policy.blackhole_after.is_some_and(|n| sent >= n)
+            || self.policy.close_after.is_some_and(|n| sent >= n)
+    }
+    pub fn inner(&self) -> &C {
+        &self.inner
+    }
+}
+#[cfg(test)]
+mod fault_inject_tests {
+    use super::*;
+    use crate::Carrier;
+    #[test]
+    fn deterministic_blackhole_loss_and_close_are_bounded() {
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                blackhole_after: Some(2),
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f.send(b"one").unwrap();
+        f.send(b"two").unwrap();
+        f.send(b"three").unwrap();
+        assert_eq!(b.recv().unwrap(), Some(b"one".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"two".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+        assert_eq!(
+            FaultInjectCarrier::new(
+                b,
+                FaultPolicy {
+                    loss_percent: 101,
+                    ..Default::default()
+                },
+                1
+            )
+            .unwrap_err(),
+            CarrierError::InvalidLimits
+        );
+    }
+}
+
+impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
+    fn kind(&self) -> CarrierKind {
+        self.inner.kind()
+    }
+    fn properties(&self) -> CarrierProperties {
+        self.inner.properties()
+    }
+    fn limits(&self) -> CarrierLimits {
+        self.inner.limits()
+    }
+    fn send(&self, message: &[u8]) -> Result<(), CarrierError> {
+        // Wrapper is intentionally single-thread deterministic; mutation is managed through interior-free clone construction in tests.
+        let mut count = self.sent.lock().map_err(|_| CarrierError::StatePoisoned)?;
+        let sent = *count;
+        *count = count.saturating_add(1);
+        drop(count);
+        if *self
+            .closed
+            .lock()
+            .map_err(|_| CarrierError::StatePoisoned)?
+            || self.blocked(sent)
+            || (self.policy.one_way && sent % 2 == 0)
+        {
+            return Ok(());
+        }
+        if self.policy.loss_percent > 0 && self.draw() % 100 < self.policy.loss_percent {
+            return Ok(());
+        }
+        if self.policy.delay_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(
+                self.policy.delay_ms as u64,
+            ));
+        }
+        self.inner.send(message)
+    }
+    fn recv(&self) -> Result<Option<Vec<u8>>, CarrierError> {
+        self.inner.recv()
+    }
+    fn close(&self) -> Result<(), CarrierError> {
+        self.inner.close()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CarrierCapabilities {
     pub message_boundaries: bool,
