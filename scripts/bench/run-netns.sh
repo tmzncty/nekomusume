@@ -4,8 +4,9 @@ set -euo pipefail
 # bearing this script's unique prefix and always removes them through trap.
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 RUN_ID="${NEKO_NETNS_RUN_ID:-$$}"
-A="neko-a-${RUN_ID}"; B="neko-b-${RUN_ID}"
-VA="nva-${RUN_ID}"; VB="nvb-${RUN_ID}"
+RUN_TAG="${RUN_ID:0:8}"
+A="nka-${RUN_TAG}"; B="nkb-${RUN_TAG}"
+VA="nva4-${RUN_TAG}"; VB="nvb4-${RUN_TAG}"
 OUT=${1:-"$ROOT/docs/bench/latest-netns.json"}
 cleanup() {
   sudo -n ip netns del "$A" 2>/dev/null || true
