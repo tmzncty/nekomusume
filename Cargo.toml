@@ -8,6 +8,7 @@ members = [
     "crates/neko-crypto",
     "crates/neko-reliable",
     "crates/neko-observe",
+    "crates/neko-bench",
 ]
 
 [workspace.package]
