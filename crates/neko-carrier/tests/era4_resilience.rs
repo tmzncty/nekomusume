@@ -59,7 +59,8 @@ fn repeated_failover_recovery_cycles_clear_uncertain_data() {
         let mut failover = FailoverController::new(2, 4, 64).unwrap();
         let id = DataId(cycle);
         failover.track_uncertain(id, b"replay-once").unwrap();
-        assert!(failover.udp_pto_at(20));
+        assert!(!failover.udp_pto_at(20));
+        assert!(failover.udp_pto_at(40));
         assert_eq!(
             failover.tcp_resend().unwrap(),
             vec![(id, b"replay-once".to_vec())]
