@@ -5,6 +5,12 @@ pub const DEFAULT_MAX_REORDER: u64 = 64;
 pub const DEFAULT_MAX_STREAMS: usize = 64;
 pub const DEFAULT_MAX_CONNECTION_BYTES: usize = 1 << 20;
 pub const DEFAULT_MAX_OFFSET_JUMP: u64 = 1 << 20;
+/// Process-wide ceilings keep per-session limits from becoming a memory DoS.
+pub const HARD_MAX_RUNTIME_STREAMS: usize = 4_096;
+pub const HARD_MAX_RUNTIME_QUEUE_RECORDS: usize = 65_536;
+pub const HARD_MAX_RUNTIME_QUEUE_BYTES: usize = 16 << 20;
+pub const HARD_MAX_RUNTIME_TOTAL_BYTES: usize = 64 << 20;
+pub const HARD_MAX_RUNTIME_RECORD_BYTES: usize = 1 << 20;
 const MAX_RUNTIME_STREAM_ID: u64 = u64::MAX - 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -857,10 +863,15 @@ pub struct SessionRuntime {
 impl SessionRuntime {
     pub fn new(id: SessionId, limits: RuntimeLimits, now_ms: u64) -> Result<Self, RuntimeError> {
         if limits.max_streams == 0
+            || limits.max_streams > HARD_MAX_RUNTIME_STREAMS
             || limits.max_queue_records == 0
+            || limits.max_queue_records > HARD_MAX_RUNTIME_QUEUE_RECORDS
             || limits.max_queue_bytes == 0
+            || limits.max_queue_bytes > HARD_MAX_RUNTIME_QUEUE_BYTES
             || limits.max_total_bytes == 0
+            || limits.max_total_bytes > HARD_MAX_RUNTIME_TOTAL_BYTES
             || limits.max_record_bytes == 0
+            || limits.max_record_bytes > HARD_MAX_RUNTIME_RECORD_BYTES
             || limits.max_session_window == 0
             || limits.max_stream_window == 0
             || limits.idle_timeout_ms == 0
@@ -1930,6 +1941,30 @@ mod bounded_window_fixture_tests {
         };
         assert!(matches!(
             SessionRuntime::new(SessionId(8), limits, 0),
+            Err(RuntimeError::InvalidLimits)
+        ));
+    }
+}
+
+#[cfg(test)]
+mod era4_resource_limit_tests {
+    use super::*;
+    #[test]
+    fn hostile_runtime_limits_are_rejected_before_allocation() {
+        let limits = RuntimeLimits {
+            max_queue_bytes: HARD_MAX_RUNTIME_QUEUE_BYTES + 1,
+            ..RuntimeLimits::default()
+        };
+        assert!(matches!(
+            SessionRuntime::new(SessionId(1), limits, 0),
+            Err(RuntimeError::InvalidLimits)
+        ));
+        let limits = RuntimeLimits {
+            max_record_bytes: HARD_MAX_RUNTIME_RECORD_BYTES + 1,
+            ..RuntimeLimits::default()
+        };
+        assert!(matches!(
+            SessionRuntime::new(SessionId(1), limits, 0),
             Err(RuntimeError::InvalidLimits)
         ));
     }

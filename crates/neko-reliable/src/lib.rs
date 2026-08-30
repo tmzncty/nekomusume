@@ -9,6 +9,10 @@ pub const DEFAULT_MSS: u64 = 1200;
 pub const DEFAULT_MAX_SENT_PACKETS: usize = 4096;
 pub const DEFAULT_MAX_FRAMES_PER_PACKET: usize = 64;
 pub const DEFAULT_MAX_ACK_RANGES: usize = 256;
+/// Hard ceilings prevent caller-controlled limits from creating unbounded state.
+pub const HARD_MAX_SENT_PACKETS: usize = 65_536;
+pub const HARD_MAX_FRAMES_PER_PACKET: usize = 1_024;
+pub const HARD_MAX_ACK_RANGES: usize = 4_096;
 pub const PERSISTENT_CONGESTION_PTO_THRESHOLD: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,7 +80,7 @@ pub struct AckRanges {
 }
 impl AckRanges {
     pub fn new(max_ranges: usize) -> Result<Self, Error> {
-        if max_ranges == 0 {
+        if max_ranges == 0 || max_ranges > HARD_MAX_ACK_RANGES {
             return Err(Error::InvalidLimit);
         }
         Ok(Self {
@@ -229,7 +233,11 @@ impl Default for Recovery {
 }
 impl Recovery {
     pub fn new(max_sent_packets: usize, max_frames_per_packet: usize) -> Result<Self, Error> {
-        if max_sent_packets == 0 || max_frames_per_packet == 0 {
+        if max_sent_packets == 0
+            || max_sent_packets > HARD_MAX_SENT_PACKETS
+            || max_frames_per_packet == 0
+            || max_frames_per_packet > HARD_MAX_FRAMES_PER_PACKET
+        {
             return Err(Error::InvalidLimit);
         }
         Ok(Self {
@@ -1351,5 +1359,25 @@ mod pmtu_runtime_tests {
         assert_eq!(v4.max_datagram_bytes(1500), 1472);
         assert_eq!(v6.max_datagram_bytes(1464), 1416);
         assert!(PathMtuLimits::new(IpVersion::V6, 1279, 1500).is_none());
+    }
+}
+
+#[cfg(test)]
+mod era4_resource_limit_tests {
+    use super::*;
+    #[test]
+    fn hostile_limits_are_rejected_before_allocation() {
+        assert_eq!(
+            AckRanges::new(HARD_MAX_ACK_RANGES + 1),
+            Err(Error::InvalidLimit)
+        );
+        assert!(matches!(
+            Recovery::new(HARD_MAX_SENT_PACKETS + 1, 1),
+            Err(Error::InvalidLimit)
+        ));
+        assert!(matches!(
+            Recovery::new(1, HARD_MAX_FRAMES_PER_PACKET + 1),
+            Err(Error::InvalidLimit)
+        ));
     }
 }
