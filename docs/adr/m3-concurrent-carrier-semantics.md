@@ -1,156 +1,210 @@
-# ADR M3: Concurrent carrier semantics — UDP primary, warm TCP fallback
+# ADR M3: UDP-primary carrier manager with warm TCP fallback
 
-- **Status:** Accepted design decision; implementation and WAN gates remain separate
+- **Status:** Accepted design contract; implementation, WAN and release gates remain separate
 - **Date:** 2026-08-30
-- **Scope:** Carrier Manager policy and Session safety semantics
+- **Scope:** carrier-manager concurrency, readiness, failover, migration, and Session-data safety
+- **Repository anchor:** `86a6b0956ee03fa49530239fabc58b62107151a9`
 
 ## Decision
 
-Use **single-active, multi-ready** operation. “Concurrent” means overlapping
-candidate establishment, authentication, probing, and standby maintenance—not
-striping application data across carriers.
+M3 uses **single-active, multi-ready** carrier semantics:
 
 ```text
-                 readiness / maintenance
-          UDP primary <------------> TCP fallback
-                 \                    /
-                  +-- Carrier Manager
-                           |
-                    one active Session path
+        readiness / maintenance (overlapped)
+ UDP primary  <---------------------------->  TCP fallback
+       |                                           |
+       +---------------- Carrier Manager ---------+
+                              |
+                    one active Session owner
 ```
 
-UDP is preferred. TCP may remain connected and `warm` while UDP is active, but
-warm/standby paths carry control/readiness only. At most one path owns new
-Session data. Per-packet TCP/UDP striping, aggregation, and multipath scheduling
-remain disabled by the existing M4 gate.
+UDP is preferred for new Session data. TCP may be established, authenticated,
+validated, flow-control-admitted, and maintained while UDP is active, but a TCP
+standby does not receive new application data. “Concurrent” means overlapped
+candidate preparation and probing; it does **not** mean per-packet striping,
+aggregation, or heterogeneous multipath scheduling. Those remain disabled by
+the M4 gate.
 
-A path identity is `(CarrierKind, PathId, PathGeneration)`; reconnect/address
-replacement creates a new generation. Session identity, delivery epoch, and
-logical stream offsets survive carrier changes.
+Carrier/path identity is `(CarrierKind, PathId, PathGeneration)`. Reconnect,
+address replacement, or a new validation attempt uses a new generation. Session
+identity, delivery epoch, and logical stream offsets survive carrier changes.
 
-## Operational states
+## Carrier Manager contract
 
-| State | Meaning | New Session data | Legal next states |
+The manager is the sole owner of active-path selection. Session owns logical
+delivery and ordering; carriers expose bounded I/O and path observations; the
+manager converts only explicitly permitted observations into path state. No
+carrier-local ACK, TCP write completion, or socket connection event may confirm
+Session delivery.
+
+### Operational states
+
+| State | Meaning | New Session data | Legal transitions |
 |---|---|---:|---|
 | `standby` | Candidate exists but is probing, backing off, or below hysteresis | No | `warm`, `failed` |
-| `warm` | Authenticated, validated, flow-control-admitted, bounded control exchange ready | No | `active`, `draining`, `failed` |
+| `warm` | Authenticated, independently validated, admitted, and ready for bounded control/resume | No | `active`, `draining`, `failed` |
 | `active` | Sole owner of new Session data | Yes | `draining`, `failed` |
-| `draining` | Retiring path; flushes assigned work only | No | `failed` or removed at deadline |
+| `draining` | Retiring owner; may finish already-assigned work only | No | `failed` or removal at deadline |
 
-`failed` is terminal for a generation and is not a fifth operational service
-state. A new generation starts at `standby`.
+`failed` is terminal for a path generation, not a service state. A replacement
+generation starts at `standby`.
 
-- New paths start `standby`.
-- `standby -> warm` requires authenticated readiness and resource admission.
-- Promotion requires readiness plus policy gates. During migration the old
-  active path enters `draining` before the new path becomes active; two active
-  owners never exist.
-- PTO/lost probes are health evidence only. A hard-failure detector may move
-  an active path to failure; one timeout alone cannot do so.
-- Draining never accepts new application data.
+Required invariants:
 
-## Readiness and anti-amplification
+1. There is at most one `active` path per Session active epoch.
+2. A new path starts `standby`; promotion requires readiness and policy gates.
+3. Migration is an ordered ownership change: old `active -> draining`, then new
+   `warm -> active`. The manager never exposes two active owners.
+4. `draining` rejects new application data. At its deadline, the old path is
+   closed and unresolved logical ranges are replayed on the current active path.
+5. A stale or mismatched generation is rejected before it can mutate active
+   state, switch counters, or Session evidence.
+6. Rejection is atomic. The only allowed non-activation mutation is a bounded
+   hold counter when the documented hysteresis gate explicitly requires it.
+
+### State-machine sketch
+
+```text
+new generation
+      |
+      v
+ standby --validated + k_ready--> warm --promotion--> active
+    |                                 |                 |
+    +--------------fail---------------+                 +--graceful--> draining
+                                                        |                 |
+                                                        +--hard fail------> failed
+```
+
+The existing migration-back contract remains a separate guarded transition:
+`TCP_ACTIVE -> TCP_HOLD -> UDP_ACTIVE`; it requires current-generation,
+independent validation, healthy samples, score margin, and hold events. It is
+not an implicit response to one successful probe.
+
+## Readiness probes and amplification bounds
 
 Readiness is a separate evidence domain from carrier packet feedback and Session
-delivery. The challenge/response must be authenticated and bound to Session
-identity, path generation, and delivery epoch. TCP connect/write completion and
-UDP packet ACK are not readiness or Session-delivery proof.
+delivery. A readiness exchange must be authenticated and bound to Session
+identity, path generation, and delivery epoch. TCP connect/write success and UDP
+packet ACK are insufficient. A timeout is `probe_timeout`, not peer-closed proof.
 
-Before address/path validation:
+Before address/path validation, the responder enforces:
 
 ```text
 bytes_sent_unvalidated <= 3 * bytes_received_unvalidated
 ```
 
-The responder additionally enforces absolute `max_unvalidated_bytes`,
-`max_probe_payload`, and `max_probe_rate` limits. Responses, errors, padding,
-and retry text all consume the same budget. Timeout yields `probe_timeout`, not
-peer-closed evidence. Promotion requires `k_ready` consecutive successful
-probes (default 3); probes cannot starve active Session data. Post-validation
-flow-control and rate limits still apply.
+Every response—including errors, retry text, padding, and challenge material—
+consumes that same budget. Absolute `max_unvalidated_bytes`,
+`max_probe_payload`, `max_probe_rate`, and in-flight probe limits apply as well.
+A rejected budget charge does not mutate probe, path, or Session state. After
+validation, normal per-path and Session flow-control/rate limits still apply;
+probe traffic cannot starve active data.
 
-## Recovery measurement
+A candidate enters `warm` only after resource admission and `k_ready` consecutive
+successful authenticated readiness observations (initial contract default:
+`k_ready = 3`). Consecutive failure and hard-close detection are distinct:
+one lost probe never switches the active path.
 
-Every switch records `failure_decided_at`, `new_active_at`, `recovery_class`,
-`switch_reason`, old/new path generations, `recovery_latency_ms`, and
-`uncertain_bytes`, `replayed_bytes`, `duplicate_bytes`, `confirmed_bytes`,
-`lost_bytes`, and `success`.
+## Recovery classes and measurement
 
-- **Warm recovery:** an eligible TCP path was already `warm`; latency starts at
-  failure decision and ends after resume exchange plus first accepted Session
-  data.
-- **Cold recovery:** no eligible warm path existed; latency includes candidate
-  creation, handshake, validation, resume, and first accepted data.
+Each switch is an immutable event with old/new path generations, active epoch,
+reason, timestamps, and bounded counters:
 
-Warm and cold results are reported separately (median/P95). If a warm candidate
-cannot resume, retain the failed warm-attempt record and classify the eventual
-new-generation recovery as cold.
+- `failure_decided_at`
+- `new_active_at`
+- `recovery_class`
+- `recovery_latency_ms`
+- `uncertain_bytes`, `replayed_bytes`, `duplicate_bytes`
+- `confirmed_bytes`, `lost_bytes`, `success`
+
+**Warm recovery** means an eligible TCP path was already `warm` before failure
+decision. The interval ends only after resume validation and the first accepted
+logical Session data on the new active path.
+
+**Cold recovery** means no eligible warm fallback existed. Its interval includes
+candidate creation, handshake, validation, resume, and first accepted logical
+data. Warm and cold distributions must be reported independently using median
+and P95. A failed warm resume is retained as a failed warm attempt; the eventual
+new-generation recovery is cold.
+
+These measurements are observations, not performance or production claims.
 
 ## Stable switch reason codes
 
-`udp_blackhole`, `udp_path_degraded`, `tcp_ready_preferred`, `address_change`,
-`operator_request`, `drain_deadline`, `resume_rejected`, `carrier_error`, and
-`shutdown`. A switch event includes `from`, `to`, reason, active epoch, and
-path-generation values. Unknown wire values are rejected or represented as an
-explicit `other(u16)` without weakening safety behavior.
+The manager emits one stable reason code per ownership switch:
 
-## Dwell and anti-flap defaults
+- `udp_blackhole`
+- `udp_path_degraded`
+- `tcp_ready_preferred`
+- `address_change`
+- `operator_request`
+- `drain_deadline`
+- `resume_rejected`
+- `carrier_error`
+- `shutdown`
 
-These are candidate policy defaults, not production tuning claims:
+The event also records `from`, `to`, active epoch, and generation values. Unknown
+external values are rejected or represented as explicit `other(u16)`; they must
+not weaken the safety policy.
+
+## Dwell and anti-flap
+
+Initial policy defaults are deterministic candidate values, not production tuning:
 
 - probe interval: 1 second;
 - `k_ready = 3` consecutive successes;
-- `k_failure = 3` consecutive failed probes;
+- `k_failure = 3` consecutive failed probes for degraded/failover suspicion;
 - minimum active dwell: 5 seconds;
-- post-switch cooldown: 10 seconds;
+- post-switch voluntary-migration cooldown: 10 seconds;
 - voluntary promotion requires candidate score at least 20% above active score.
 
-A hard close/failure may bypass dwell/cooldown. A single failed probe never
-switches. Cooldown suppresses voluntary reverse migration and a failed
- generation cannot be immediately promoted again.
+A hard close or independently established hard failure may bypass dwell and
+cooldown. A single probe failure may not. Cooldown suppresses voluntary reverse
+migration, and a failed generation cannot be immediately promoted again. Every
+counter and timer is bounded and checked for overflow.
 
-## Drain and uncertain Session data
+## Drain and uncertain Session-data safety
 
-Session delivery remains authoritative across carriers:
+Session delivery remains authoritative across carrier changes:
 
 ```text
 UNSENT -> IN_FLIGHT -> CONFIRMED
                   \\-> UNCERTAIN -> replay -> CONFIRMED
 ```
 
-Only explicit logical Session delivery proof is confirmation. At drain start,
-all assigned data without that proof becomes `UNCERTAIN`, regardless of TCP
-write acceptance or UDP packet ACK. The sender retains uncertain ranges under
-bounded bytes/ranges/age limits; exhaustion fails closed rather than dropping
-bytes. A drain deadline closes the old path and replays remaining uncertain
-ranges on the active path.
+At drain start, every assigned range without explicit logical Session delivery
+proof becomes `UNCERTAIN`, regardless of TCP write acceptance or UDP packet ACK.
+The sender retains uncertain ranges under byte, range-count, and age limits;
+capacity exhaustion fails closed rather than discarding data. At the drain
+deadline, all remaining uncertain ranges are replayed on the active path.
 
-Replay identity is stable authenticated Session/stream/offset (or the final
-approved DataId). Identical duplicates are idempotent; conflicting bytes at one
-identity are rejected. Watermarks never move backwards, and ordered consumers
-do not observe later offsets before preceding ranges are accepted according to
-the Session contract. If resume authentication, epoch, or receiver state is
-ambiguous, fail closed and replay; never infer delivery from carrier success.
+Replay identity is the authenticated stable Session/stream/offset tuple (or a
+later approved DataId contract). Exact duplicate bytes are idempotent; conflicting
+bytes at one identity are rejected. Delivery watermarks never decrease, and
+ordered consumers cannot observe a later offset before preceding ranges are
+accepted under the Session contract. Ambiguous resume authentication, epoch, or
+receiver state is a fail-closed replay decision—not an inference of delivery.
 Application side-effect idempotency remains above Session.
 
-## Alternatives and recommendation
+## Alternatives
 
-1. **Cold fallback only:** simplest and cheapest, but starts recovery after
-   failure and gives the worst outage latency. Rejected.
+1. **Cold fallback only:** lowest resource and implementation cost, but recovery
+   starts after failure and has the worst outage latency. Rejected for M3.
 2. **Single-active, warm standby (chosen):** overlaps TCP preparation with UDP
-   service, preserves one ordering owner, and keeps uncertain-data replay
-   auditable. It costs bounded idle resources and policy complexity.
-3. **Concurrent striping/aggregation:** potential capacity benefit, but requires
+   service, preserves one ordering owner, and makes replay auditable. It costs
+   bounded idle resources and explicit probe policy.
+3. **Concurrent striping/aggregation:** possible capacity benefit, but requires
    cross-path sequence/reordering, congestion coupling, retransmission ownership,
-   fairness, and stronger memory/safety contracts. Deferred behind the existing
-   M4 gate.
+   fairness, and stronger bounded-memory rules. Deferred behind the existing M4
+   gate until controlled evidence justifies the complexity.
 
 ## Implementation gates
 
-Before implementation is promoted: deterministic state/illegal-transition,
-generation, reason-code, dwell/cooldown tests; anti-amplification and absolute
-probe-budget tests; Session drain/uncertain/dedup/conflict/bounded-retention
-tests; and loopback/netns warm/cold recovery experiments with the metrics above.
+Before any broader implementation or WAN claim, add deterministic tests for all
+state/illegal transitions, generation checks, reason codes, readiness evidence,
+amplification and absolute probe budgets, dwell/cooldown, drain deadlines,
+uncertain replay, duplicate/conflict handling, and bounded retention. Run the
+loopback/process and netns warm/cold recovery experiments with the metrics above.
 Run `./scripts/check.sh`, `git diff --check`, and fuzz smoke when wire/parser
-fields change. This ADR adds no wire fields, crypto choice, runtime, listener,
-WAN authorization, or production threshold approval.
+fields change. This ADR adds no code, dependencies, wire fields, listeners,
+WAN authorization, or release/security approval.

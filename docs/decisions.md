@@ -132,17 +132,17 @@ Raw IP 实验号必须显式配置，默认不开启；不得把实验值当成�
 
 ---
 
-## 2026-08-30 — D064：Concurrent carrier semantics（UDP primary + warm TCP fallback）
+## 2026-08-30 — D064：UDP-primary + warm TCP fallback Carrier Manager contract
 
-**Status: Accepted design decision — implementation and WAN gates remain separate**
+**Status: Accepted design contract — implementation, WAN and release gates remain separate**
 
-M3 采用 **single-active, multi-ready**：UDP 是首选 active；TCP 可并发建立、认证、探测并保持 `warm`，但 warm/standby 仅承载 readiness/control，不承载新的 Session data。任一时刻只有一个 active owner；TCP/UDP per-packet striping、aggregation 与 multipath scheduler 继续由 M4 gate 禁止。路径状态契约为 `standby -> warm -> active -> draining`，generation-scoped `failed` 为终态；切换先 drain 旧 active，再提升新 active。
+M3 采用 **single-active, multi-ready**：UDP 负责新 Session data；TCP 可并发建立、认证、独立验证、资源准入并保持 `warm`，但 warm/standby 仅承载 readiness/control/resume，不承载新的 application data。任一 Session active epoch 至多一个 active owner；per-packet striping、aggregation 与 heterogeneous multipath 仍由 M4 gate 禁止。路径 operational states 固定为 `standby -> warm -> active -> draining`，generation-scoped `failed` 为终态；迁移先 drain 旧 active，再提升新 active。
 
-readiness 独立于 packet feedback 与 Session delivery：必须是绑定 Session identity、PathGeneration、DeliveryEpoch 的 authenticated challenge/response，默认 `k_ready=3` 连续成功。未验证路径严格满足 `bytes_sent <= 3 * bytes_received`，并受 absolute bytes/payload/rate caps；TCP connect/write 与 UDP packet ACK 不构成 readiness 或 Session delivery proof。
+readiness 独立于 carrier packet feedback 与 Session delivery，须绑定 Session identity、PathGeneration、DeliveryEpoch 的 authenticated challenge/response；TCP connect/write 与 UDP packet ACK 不能证明 readiness 或 logical delivery。未验证路径严格遵守 `bytes_sent <= 3 * bytes_received`，且受 absolute bytes/payload/rate/in-flight probe caps。默认 `k_ready=3`。
 
-恢复区分 warm/cold 并分开报告 median/P95：warm 从 failure decision 到 resume 后首个接受数据；cold 还包括 candidate、handshake、validation、resume。记录 recovery latency、switch reason、path generations、uncertain/replayed/duplicate/confirmed/lost bytes。reason codes 固定为 `udp_blackhole`、`udp_path_degraded`、`tcp_ready_preferred`、`address_change`、`operator_request`、`drain_deadline`、`resume_rejected`、`carrier_error`、`shutdown`。默认 probe 1s、`k_failure=3`、active dwell 5s、cooldown 10s、voluntary score margin 20%。
+恢复分为 warm/cold，分别报告 median/P95；记录 failure/new-active timestamps、class、reason、generations、active epoch、uncertain/replayed/duplicate/confirmed/lost bytes 与 success。reason codes 固定为 `udp_blackhole`、`udp_path_degraded`、`tcp_ready_preferred`、`address_change`、`operator_request`、`drain_deadline`、`resume_rejected`、`carrier_error`、`shutdown`。默认 probe 1s、`k_failure=3`、active dwell 5s、voluntary cooldown 10s、score margin 20%。
 
-draining 不接新数据；无明确 logical Session proof 的 assigned data 转 `UNCERTAIN`，按稳定 Session/stream/offset（或最终 DataId）有界保留、幂等去重、冲突 fail-closed；deadline 到期重放，不猜测已交付。完整契约、方案比较和实现 gates 见 [`docs/adr/m3-concurrent-carrier-semantics.md`](adr/m3-concurrent-carrier-semantics.md)。
+draining 不接新数据；无明确 logical Session delivery proof 的 assigned ranges 转为 `UNCERTAIN`，按稳定 Session/stream/offset（或后续批准的 DataId）有界保留、幂等去重、冲突 fail-closed；deadline 到期重放，不猜测已交付。完整 manager contract、方案比较及实现 gates 见 [`docs/adr/m3-concurrent-carrier-semantics.md`](adr/m3-concurrent-carrier-semantics.md)。
 
 ## 未决事项
 
