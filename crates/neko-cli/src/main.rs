@@ -2,6 +2,7 @@
 mod multistream;
 mod reachability;
 
+use neko_carrier::{FairScheduler, FlowLimits, StreamId as CarrierStreamId, StreamPriority};
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, ResumeGuard, TrustPolicy,
     TrustRecord, TrustStatus,
@@ -839,6 +840,105 @@ fn lab(args: &[String]) {
     }
 }
 
+/// Deterministic, socket-free fairness fixture for authorized local/VPS validation.
+fn scheduler_fairness(args: &[String]) {
+    let rounds = parse(args, "--rounds", Some("8"))
+        .parse::<usize>()
+        .unwrap_or_else(|_| fail("invalid rounds"));
+    let bytes = parse(args, "--bytes", Some("16"))
+        .parse::<usize>()
+        .unwrap_or_else(|_| fail("invalid bytes"));
+    if !(1..=64).contains(&rounds) {
+        fail("rounds outside 1-64");
+    }
+    if !(1..=256).contains(&bytes) {
+        fail("bytes outside 1-256");
+    }
+    let frames = rounds
+        .checked_mul(4)
+        .unwrap_or_else(|| fail("rounds overflow"));
+    let mut scheduler = FairScheduler::new(FlowLimits {
+        max_streams: 2,
+        max_session_bytes: frames * bytes,
+        max_stream_bytes: frames * bytes,
+    })
+    .unwrap_or_else(|_| fail("scheduler limits invalid"));
+    let interactive =
+        neko_session::SessionRuntime::new(SessionId(9101), runtime_limits(bytes, frames), 0)
+            .unwrap_or_else(|_| fail("interactive runtime limits invalid"));
+    let bulk = neko_session::SessionRuntime::new(SessionId(9102), runtime_limits(bytes, frames), 0)
+        .unwrap_or_else(|_| fail("bulk runtime limits invalid"));
+    let mut runtimes = [interactive, bulk];
+    runtimes[0]
+        .open_stream(StreamId(1), 0)
+        .unwrap_or_else(|_| fail("interactive stream failed"));
+    runtimes[1]
+        .open_stream(StreamId(1), 0)
+        .unwrap_or_else(|_| fail("bulk stream failed"));
+    let ids = [CarrierStreamId(1), CarrierStreamId(2)];
+    scheduler
+        .open(ids[0], StreamPriority::Interactive)
+        .unwrap_or_else(|_| fail("interactive open failed"));
+    scheduler
+        .open(ids[1], StreamPriority::Bulk)
+        .unwrap_or_else(|_| fail("bulk open failed"));
+    let mut interactive_sent = 0usize;
+    let mut bulk_sent = 0usize;
+    let mut max_interactive_burst = 0usize;
+    let mut current_interactive_burst = 0usize;
+    let mut forced_bulk_services = 0usize;
+    for round in 0..rounds {
+        for _ in 0..3 {
+            scheduler
+                .enqueue(ids[0], &vec![b'i'; bytes])
+                .unwrap_or_else(|_| fail("interactive enqueue failed"));
+        }
+        scheduler
+            .enqueue(ids[1], &vec![b'b'; bytes])
+            .unwrap_or_else(|_| fail("bulk enqueue failed"));
+        for _ in 0..4 {
+            let (id, data) = scheduler
+                .next_frame()
+                .unwrap_or_else(|| fail("scheduler produced no frame"));
+            let index = usize::from(id == ids[1]);
+            if index == 0 {
+                current_interactive_burst += 1;
+                max_interactive_burst = max_interactive_burst.max(current_interactive_burst);
+                interactive_sent += 1;
+            } else {
+                if current_interactive_burst >= 3 {
+                    forced_bulk_services += 1;
+                }
+                current_interactive_burst = 0;
+                bulk_sent += 1;
+            }
+            let offset = runtimes[index]
+                .queue_send(StreamId(1), &data, (round * 4) as u64)
+                .unwrap_or_else(|_| fail("runtime queue failed"));
+            let record = runtimes[index]
+                .pop_send((round * 4 + 1) as u64)
+                .unwrap_or_else(|_| fail("runtime pop failed"))
+                .unwrap_or_else(|| fail("runtime record missing"));
+            if record.offset != offset {
+                fail("runtime offset mismatch");
+            }
+        }
+    }
+    if max_interactive_burst > 3 || forced_bulk_services != rounds {
+        fail("fairness bound violated");
+    }
+    let report = format!(
+        "{{\"ok\":true,\"fixture\":\"scheduler-fairness\",\"transport\":\"loopback\",\"rounds\":{rounds},\"interactive_frames\":{interactive_sent},\"bulk_frames\":{bulk_sent},\"max_interactive_burst\":{max_interactive_burst},\"forced_bulk_services\":{forced_bulk_services},\"bound_interactive_burst\":3}}"
+    );
+    if json_mode(args) {
+        println!("{report}");
+    } else {
+        println!(
+            "scheduler_fairness_ok rounds={rounds} interactive_frames={interactive_sent} bulk_frames={bulk_sent} max_interactive_burst={max_interactive_burst} forced_bulk_services={forced_bulk_services}"
+        );
+    }
+}
+
 /// Run independent Session runtimes for a bounded interval. This local fixture exercises queueing, delivery ACKs and cleanup without opening sockets.
 fn workload(args: &[String]) {
     let duration = parse(args, "--duration", Some("5"))
@@ -1052,6 +1152,7 @@ fn main() {
         Some("client") | Some("probe") => client(&a),
         Some("lab") => lab(&a),
         Some("workload") => workload(&a),
+        Some("scheduler-fairness") => scheduler_fairness(&a),
         Some("key-update") => key_update_fixture(&a),
         Some("multistream") => multistream::run(&a),
         Some("failover") | Some("failover-server") | Some("failover-client") => failover_gate(&a),
