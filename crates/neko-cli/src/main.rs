@@ -21,9 +21,9 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-const USAGE: &str = "Usage: neko <server|client|probe|lab|failover-server|workload|failover-client|keygen> [bounded options]
+const USAGE: &str = "Usage: neko <server|client|probe|lab|failover-server|workload|failover-client|keygen|capabilities> [bounded options]
 
-  --count N: bounded authenticated exchanges (1-64)\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
+  --count N: bounded authenticated exchanges (1-64)\n  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
 const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
 const MAX_DURATION: u64 = 30;
@@ -32,6 +32,56 @@ const PROCESS_FRAME_MAX: usize = neko_session::PROCESS_FRAME_MAX;
 const DOMAIN: &[u8] = b"nekomusume-vps-probe";
 fn json_mode(args: &[String]) -> bool {
     args.iter().any(|a| a == "--json")
+}
+fn capabilities(args: &[String]) {
+    if args.iter().skip(1).any(|arg| arg != "--json") {
+        fail("capabilities accepts only --json");
+    }
+    if json_mode(args) {
+        println!(
+            concat!(
+                "{{\"schema\":\"nekomusume.capabilities.v1\",",
+                "\"package_version\":\"{}\",\"target_os\":\"{}\",\"target_arch\":\"{}\",",
+                "\"secret_free\":true,",
+                "\"defaults\":{{\"bytes\":32,\"count\":1,\"duration_seconds\":10}},",
+                "\"limits\":{{\"bytes_max\":{},\"count_max\":64,\"duration_seconds_max\":{},",
+                "\"workload_duration_seconds_max\":{},\"port_min\":40080,\"port_max\":{}}},",
+                "\"commands\":[",
+                "{{\"name\":\"client\",\"maturity\":\"research\"}},",
+                "{{\"name\":\"server\",\"maturity\":\"research\"}},",
+                "{{\"name\":\"probe\",\"maturity\":\"research\"}},",
+                "{{\"name\":\"health-observe\",\"maturity\":\"experimental\"}},",
+                "{{\"name\":\"failover\",\"maturity\":\"experimental\"}},",
+                "{{\"name\":\"multistream\",\"maturity\":\"experimental\"}},",
+                "{{\"name\":\"scheduler-fairness\",\"maturity\":\"fixture\"}},",
+                "{{\"name\":\"key-update\",\"maturity\":\"fixture\"}}",
+                "]}}"
+            ),
+            env!("CARGO_PKG_VERSION"),
+            env::consts::OS,
+            env::consts::ARCH,
+            MAX_BYTES,
+            MAX_DURATION,
+            MAX_WORKLOAD_DURATION,
+            MAX_PORT
+        );
+    } else {
+        println!(
+            "nekomusume {} ({}/{})",
+            env!("CARGO_PKG_VERSION"),
+            env::consts::OS,
+            env::consts::ARCH
+        );
+        println!("defaults bytes=32 count=1 duration_seconds=10");
+        println!(
+            "limits bytes=1-{} count=1-64 duration_seconds=1-{} workload_duration_seconds=1-{} ports=40080-{}",
+            MAX_BYTES, MAX_DURATION, MAX_WORKLOAD_DURATION, MAX_PORT
+        );
+        println!(
+            "commands research=client,server,probe experimental=health-observe,failover,multistream fixtures=scheduler-fairness,key-update"
+        );
+        println!("report_secret_free=true");
+    }
 }
 fn diagnostic_mode(args: &[String]) -> bool {
     args.iter().any(|a| a == "--diagnostic")
@@ -1206,6 +1256,7 @@ fn main() {
         Some("scheduler-fairness") => scheduler_fairness(&a),
         Some("key-update") => key_update_fixture(&a),
         Some("health-observe") => health_observe(&a),
+        Some("capabilities") => capabilities(&a),
         Some("multistream") => multistream::run(&a),
         Some("failover") | Some("failover-server") | Some("failover-client") => failover_gate(&a),
         Some("keygen") => {
