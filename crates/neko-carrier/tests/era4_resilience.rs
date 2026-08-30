@@ -5,7 +5,9 @@
 //! restart/reconnect protocol is present in this repository.
 
 use neko_carrier::{DataId, FailoverController};
-use neko_session::{InboundRecord, RuntimeLimits, RuntimeState, SessionId, SessionRuntime, StreamId};
+use neko_session::{
+    InboundRecord, RuntimeLimits, RuntimeState, SessionId, SessionRuntime, StreamId,
+};
 
 fn limits() -> RuntimeLimits {
     RuntimeLimits {
@@ -58,7 +60,10 @@ fn repeated_failover_recovery_cycles_clear_uncertain_data() {
         let id = DataId(cycle);
         failover.track_uncertain(id, b"replay-once").unwrap();
         assert!(failover.udp_pto_at(20));
-        assert_eq!(failover.tcp_resend().unwrap(), vec![(id, b"replay-once".to_vec())]);
+        assert_eq!(
+            failover.tcp_resend().unwrap(),
+            vec![(id, b"replay-once".to_vec())]
+        );
         failover.confirm(id).unwrap();
         assert!(failover.tcp_resend().unwrap().is_empty());
         assert!(!failover.udp_pto_at(21));
