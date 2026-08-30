@@ -816,6 +816,9 @@ pub enum RuntimeEventKind {
     CloseSent,
     SessionClosed,
     Error,
+    WindowExhausted,
+    AckReleased,
+    Resumed,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeEvent {
@@ -1023,6 +1026,7 @@ impl SessionRuntime {
                 .ok_or(RuntimeError::TotalLimit)?
                 > self.limits.max_session_window
         {
+            self.event(now_ms, RuntimeEventKind::WindowExhausted);
             return Err(RuntimeError::QueueFull);
         }
         let off = s.next_send;
@@ -1174,6 +1178,8 @@ impl SessionRuntime {
             *self.send_inflight.get_mut(&stream).unwrap() -= delta;
             self.session_send_inflight -= delta;
             self.confirmed.insert(stream, end);
+            self.event(now_ms, RuntimeEventKind::AckReleased);
+            self.event(now_ms, RuntimeEventKind::Resumed);
         }
         self.event(now_ms, RuntimeEventKind::DeliveryAck);
         Ok(())
@@ -1296,6 +1302,9 @@ impl RuntimeEventKind {
             Self::CloseSent => "close_sent",
             Self::SessionClosed => "session_closed",
             Self::Error => "error",
+            Self::WindowExhausted => "window_exhausted",
+            Self::AckReleased => "ack_released",
+            Self::Resumed => "resumed",
         }
     }
 }
@@ -1758,5 +1767,52 @@ mod m4_multistream_tests {
             r.queue_send(StreamId(0), b"xy", 4),
             Err(RuntimeError::TotalLimit)
         );
+    }
+}
+
+#[cfg(test)]
+mod bounded_window_fixture_tests {
+    use super::*;
+
+    #[test]
+    fn send_window_exhaustion_ack_release_and_resume_are_atomic_and_observable() {
+        let limits = RuntimeLimits {
+            max_streams: 2,
+            max_queue_records: 8,
+            max_queue_bytes: 64,
+            max_total_bytes: 128,
+            max_record_bytes: 8,
+            max_session_window: 8,
+            max_stream_window: 4,
+            idle_timeout_ms: 100,
+            close_timeout_ms: 10,
+        };
+        let mut r = SessionRuntime::new(SessionId(7), limits, 0).unwrap();
+        r.open_stream(StreamId(1), 1).unwrap();
+        r.open_stream(StreamId(2), 1).unwrap();
+        assert_eq!(r.queue_send(StreamId(1), b"abcd", 2), Ok(0));
+        assert_eq!(
+            r.queue_send(StreamId(1), b"efgh", 2),
+            Err(RuntimeError::QueueFull)
+        );
+        assert_eq!(r.queued_bytes(), 4);
+        assert_eq!(r.delivery_ack(StreamId(1), 0, 4, 3), Ok(()));
+        assert_eq!(r.queue_send(StreamId(1), b"efgh", 4), Ok(4));
+        let names: Vec<_> = r.observable_events().map(|e| e.kind.name()).collect();
+        assert!(names.contains(&"window_exhausted"));
+        assert!(names.contains(&"ack_released"));
+        assert!(names.contains(&"resumed"));
+    }
+
+    #[test]
+    fn invalid_window_limits_are_rejected_without_state() {
+        let limits = RuntimeLimits {
+            max_session_window: 0,
+            ..RuntimeLimits::default()
+        };
+        assert!(matches!(
+            SessionRuntime::new(SessionId(8), limits, 0),
+            Err(RuntimeError::InvalidLimits)
+        ));
     }
 }

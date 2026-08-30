@@ -148,15 +148,21 @@ fn frame_write(s: &mut TcpStream, b: &[u8]) -> Result<(), String> {
     s.write_all(b).map_err(|e| e.to_string())?;
     s.flush().map_err(|e| e.to_string())
 }
-fn limits(streams: usize, records: usize, bytes: usize) -> RuntimeLimits {
+fn limits(
+    streams: usize,
+    records: usize,
+    bytes: usize,
+    session_window: usize,
+    stream_window: usize,
+) -> RuntimeLimits {
     RuntimeLimits {
         max_streams: streams,
         max_queue_records: streams * records + 1,
         max_queue_bytes: 1 << 20,
         max_total_bytes: streams * records * bytes,
         max_record_bytes: bytes,
-        max_session_window: 1 << 20,
-        max_stream_window: records * bytes,
+        max_session_window: session_window,
+        max_stream_window: stream_window,
         ..RuntimeLimits::default()
     }
 }
@@ -164,11 +170,13 @@ fn fail(e: String) -> ! {
     eprintln!("neko: {e}");
     std::process::exit(2)
 }
-fn config(args: &[String]) -> (usize, usize, usize) {
+fn config(args: &[String]) -> (usize, usize, usize, usize, usize) {
     let v = (
         arg(args, "--streams", 2),
         arg(args, "--records", 3),
         arg(args, "--bytes", 32),
+        arg(args, "--session-window", 1 << 20),
+        arg(args, "--stream-window", 3 * arg(args, "--bytes", 32)),
     );
     bounds(v.0, v.1, v.2).unwrap_or_else(|e| fail(e.into()));
     v
@@ -179,7 +187,7 @@ pub fn run(args: &[String]) {
         .find(|x| x[0] == "--mode")
         .map(|x| x[1].as_str())
         .unwrap_or("client");
-    let (streams, records, bytes) = config(args);
+    let (streams, records, bytes, session_window, stream_window) = config(args);
     let port = arg(args, "--port", 40082);
     if !(40080..=40100).contains(&(port as u16)) {
         fail("port outside 40080-40100".into());
@@ -201,7 +209,12 @@ pub fn run(args: &[String]) {
         )
         .unwrap_or_else(|e| fail(e));
         let mut secure = server_handshake(&mut socket, identity(args), client_key);
-        let mut runtime = SessionRuntime::new(SESSION, limits(streams, records, bytes), 0).unwrap();
+        let mut runtime = SessionRuntime::new(
+            SESSION,
+            limits(streams, records, bytes, session_window, stream_window),
+            0,
+        )
+        .unwrap();
         for stream in 0..streams {
             runtime.open_stream(StreamId(stream as u64 + 1), 0).unwrap();
         }
@@ -231,6 +244,9 @@ pub fn run(args: &[String]) {
                 len: record.data.len(),
             };
             secure_write(&mut socket, &mut secure, &ack);
+            runtime
+                .pop_receive(received as u64 + 1)
+                .unwrap_or_else(|_| fail("receive release failed".into()));
             received += 1;
         }
         let json = format!(
@@ -247,7 +263,12 @@ pub fn run(args: &[String]) {
         )
         .unwrap_or_else(|e| fail(e));
         let mut secure = client_handshake(&mut socket, identity(args), server_key);
-        let mut runtime = SessionRuntime::new(SESSION, limits(streams, records, bytes), 0).unwrap();
+        let mut runtime = SessionRuntime::new(
+            SESSION,
+            limits(streams, records, bytes, session_window, stream_window),
+            0,
+        )
+        .unwrap();
         for stream in 0..streams {
             runtime.open_stream(StreamId(stream as u64 + 1), 0).unwrap();
         }
@@ -286,9 +307,19 @@ pub fn run(args: &[String]) {
                 sent += 1;
             }
         }
+        let events: Vec<_> = runtime.observable_events().map(|e| e.kind.name()).collect();
+        let count = |name: &str| events.iter().filter(|kind| **kind == name).count();
         println!(
-            "{{\"ok\":true,\"role\":\"client\",\"streams\":{},\"records_per_stream\":{},\"bytes_per_record\":{},\"records\":{},\"payload_bytes\":{}}}",
-            streams, records, bytes, sent, total
+            "{{\"ok\":true,\"role\":\"client\",\"streams\":{},\"records_per_stream\":{},\"bytes_per_record\":{},\"records\":{},\"payload_bytes\":{},\"window_exhausted\":{},\"ack_released\":{},\"resumed\":{},\"events\":\"{}\"}}",
+            streams,
+            records,
+            bytes,
+            sent,
+            total,
+            count("window_exhausted"),
+            count("ack_released"),
+            count("resumed"),
+            events.join(",")
         );
     } else {
         fail("mode must be client or server".into());
