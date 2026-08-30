@@ -567,6 +567,9 @@ pub struct VersionNegotiator {
     role: NegotiationRole,
     supported: Vec<u16>,
     state: NegotiationState,
+    // The accepted hello and response are retained for loss recovery.
+    accepted_hello: Option<Vec<u8>>,
+    accepted_response: Option<Vec<u8>>,
 }
 impl VersionNegotiator {
     pub fn new(role: NegotiationRole, supported: &[u16]) -> Result<Self, NegotiationError> {
@@ -589,6 +592,8 @@ impl VersionNegotiator {
             role,
             supported: supported.to_vec(),
             state: NegotiationState::Awaiting,
+            accepted_hello: None,
+            accepted_response: None,
         })
     }
     pub fn state(&self) -> NegotiationState {
@@ -619,6 +624,11 @@ impl VersionNegotiator {
             return Err(NegotiationError::UnexpectedMessage);
         }
         if self.state != NegotiationState::Awaiting {
+            if matches!(self.state, NegotiationState::Established(_))
+                && self.accepted_hello.as_deref() == Some(input)
+            {
+                return Ok(self.accepted_response.clone().expect("accepted response"));
+            }
             return Err(NegotiationError::LateMessage);
         }
         let offered = match decode_hello(input) {
@@ -639,7 +649,10 @@ impl VersionNegotiator {
             return Err(NegotiationError::NoCompatibleVersion);
         };
         self.state = NegotiationState::Established(selected);
-        Ok(encode_response(selected))
+        let response = encode_response(selected);
+        self.accepted_hello = Some(input.to_vec());
+        self.accepted_response = Some(response.clone());
+        Ok(response)
     }
     /// Client consumes exactly one server response.
     pub fn client_accept_response(&mut self, input: &[u8]) -> Result<u16, NegotiationError> {
@@ -778,6 +791,29 @@ mod negotiation_tests {
             s.server_accept_hello(&oversized),
             Err(NegotiationError::TooManyOffered)
         );
+    }
+    #[test]
+    fn established_server_replays_exact_response_for_duplicate_hello_only() {
+        let mut s = VersionNegotiator::new(NegotiationRole::Server, &[0, 1]).unwrap();
+        let hello = encode_hello(&[0, 1]).unwrap();
+        let response = s.server_accept_hello(&hello).unwrap();
+        assert_eq!(response, encode_response(1));
+        assert_eq!(s.server_accept_hello(&hello), Ok(response.clone()));
+        assert_eq!(s.state(), NegotiationState::Established(1));
+        assert_eq!(s.admit_data(), Ok(1));
+
+        for late in [
+            encode_hello(&[0]).unwrap(),
+            vec![b'N', b'1', 1, 1, 0],
+            encode_response(1),
+            vec![0xff],
+        ] {
+            assert_eq!(
+                s.server_accept_hello(&late),
+                Err(NegotiationError::LateMessage)
+            );
+            assert_eq!(s.state(), NegotiationState::Established(1));
+        }
     }
     #[test]
     fn duplicate_supported_future_response_and_late_messages_reject() {

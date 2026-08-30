@@ -49,7 +49,9 @@ versions[count]:u16be`, with strictly increasing unique versions and
 `1..=16` entries. A server response is `N1 || 0x02 || 0x00 || selected:u16be`.
 The server deterministically selects the highest common version. No overlap,
 unknown/future-only offers, malformed, duplicate, oversized, unexpected, and
-late messages fail closed; received invalid input makes that negotiator
+late messages fail closed. After establishment, an exact byte-for-byte duplicate
+of the accepted hello replays the exact prior response; contradictory, malformed,
+unsupported, and other late messages remain rejected without changing state; received invalid input makes that negotiator
 terminal. `admit_data` cannot succeed until selection has completed. This is a
 bounded standalone wire/session-boundary primitive, not integration into the
 current live carrier/handshake and not a security-closure claim.

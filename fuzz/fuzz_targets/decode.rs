@@ -24,7 +24,12 @@ fuzz_target!(|input: &[u8]| {
     // establish within the fixed version-count/resource bounds without panic.
     let result = std::panic::catch_unwind(|| {
         let mut server = VersionNegotiator::new(NegotiationRole::Server, &[0, 1]).unwrap();
-        let _ = server.server_accept_hello(input);
+        let first = server.server_accept_hello(input);
+        if let Ok(response) = first {
+            let state = server.state();
+            assert_eq!(server.server_accept_hello(input), Ok(response));
+            assert_eq!(server.state(), state);
+        }
     });
     assert!(result.is_ok(), "negotiation parser panicked on fuzz input");
 });
