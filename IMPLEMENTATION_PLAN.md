@@ -29,7 +29,8 @@ M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session
 - [x] 单个双向 stream
 - [x] CLOSE
 - [x] 本机 loopback 稳定回显；QEMU / 局域网待独立授权实验
-- [x] VPS 真实 WAN 基础连通（IPv4 TCP/UDP authenticated echo；IPv6 基础路由与端口已验证）
+- [x] VPS isolated bounded baseline（历史 IPv4/IPv6 echo rows；非 sustained、非 failover、非 production）
+- [ ] 真实 WAN failover / long-lived / NAT / production validation（blocked；需新的授权、changed instrumentation 与可复核 evidence）
 
 ## Milestone 2 — UDP reliable packet engine
 

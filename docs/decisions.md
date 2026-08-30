@@ -895,3 +895,16 @@ health、score margin 和 hold gates，但此前没有单独记录拒绝原子�
 递进，拒绝不得改变 active/generation/switches，hold rejection 仅允许递增有界
 hold counter。该文档不新增代码、wire、socket、WAN 或生产/安全批准；loopback
 实现和 process-level gate 仍需单独验证。
+
+
+## 2026-08-30 — D063：Previous/current 与 soak 任务边界
+
+**Status: Accepted planning boundary — execution remains gated**
+
+Previous/current interoperability is `unavailable/not-applicable` until a
+formal previous protocol release and frozen compatibility contract exist. The
+standing research authorization ends at 10 minutes; medium/long soaks require
+fresh explicit authorization. `docs/vps-soak-plan-2026-08-30.md` defines a
+non-executable 5/10-minute plan, 1-second resource sampling, abort guards,
+redacted retention and cleanup verification. This decision does not authorize
+WAN/VPS execution or production exposure.
