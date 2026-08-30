@@ -276,6 +276,7 @@ dependencies = [
  "neko-carrier",
  "neko-crypto",
  "neko-session",
+ "neko-wire",
  "signal-hook",
 ]
 
