@@ -24,6 +24,8 @@ bash scripts/check-markdown-links.sh
 bash scripts/check-markdown-links-test.sh
 bash scripts/check-release-boundaries.sh
 bash scripts/check-release-boundaries-test.sh
+bash scripts/check-era3-capabilities.sh
+bash scripts/check-era3-capabilities-test.sh
 bash scripts/check-plan-sync.sh
 bash scripts/check-plan-sync-test.sh
 bash scripts/check-decision-index.sh

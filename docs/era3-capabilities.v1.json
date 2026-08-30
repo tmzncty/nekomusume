@@ -1,0 +1,20 @@
+{
+  "schema": "nekomusume.era3-capabilities.v1",
+  "parent_commit": "7d259af1829a45ace7bffe551834e49ced37193a",
+  "scope": "bounded research evidence at parent; no protocol, security, production, or new experiment approval",
+  "capabilities": [
+    {"id":"m3-surviving-session-udp-tcp-failover","supported":true,"evidence_class":"live_vps_verified","evidence":"docs/vps-failover-success-2026-08-30.md","limits":"authorized dedicated VPS; 8 records; 64-byte payload; 15-second bound; exact candidate and route"},
+    {"id":"m3-vps-ordered-delivery","supported":true,"evidence_class":"live_vps_verified","evidence":"docs/vps-failover-success-2026-08-30.md","limits":"same bounded run; zero reported duplicates is an observation, not a universal guarantee"},
+    {"id":"m3-session-delivery-and-migration","supported":true,"evidence_class":"deterministic_local","evidence":"crates/neko-carrier/tests/m3_long_migration.rs","limits":"socket-free deterministic tests"},
+    {"id":"m4-authenticated-multistream-flow-control","supported":true,"evidence_class":"deterministic_local","evidence":"crates/neko-cli/tests/multistream.rs","limits":"bounded local/process tests; no public listener or production workload"},
+    {"id":"m4-carrier-manager-migration-back","supported":true,"evidence_class":"deterministic_local","evidence":"docs/adr/m4-migration-back-state-machine.md","limits":"state-machine and deterministic test evidence; no WAN migration-back"},
+    {"id":"m4-carrier-health-observation","supported":true,"evidence_class":"deterministic_local","evidence":"crates/neko-cli/src/main.rs","limits":"bounded supplied observations; not an independent remote measurement"},
+    {"id":"zero-rtt","supported":false,"evidence_class":"negative_or_inconclusive","evidence":"docs/spec/m4-0rtt-gate.md","limits":"explicitly disabled; no early data"},
+    {"id":"concurrent-heterogeneous-multipath","supported":false,"evidence_class":"negative_or_inconclusive","evidence":"docs/spec/m4-concurrent-multipath-gate.md","limits":"explicitly disabled; no striping or aggregation"},
+    {"id":"production-readiness","supported":false,"evidence_class":"negative_or_inconclusive","evidence":"docs/spec/m5-release-readiness-gate.md","limits":"blocked"},
+    {"id":"nat-endpoint-change","supported":false,"evidence_class":"negative_or_inconclusive","evidence":"ROADMAP.md","limits":"inconclusive; validation absent"},
+    {"id":"ipv6-surviving-session-failover","supported":false,"evidence_class":"negative_or_inconclusive","evidence":"docs/vps-failover-success-2026-08-30.md","limits":"inconclusive; retained run does not establish IPv6 failover"},
+    {"id":"long-soak","supported":false,"evidence_class":"negative_or_inconclusive","evidence":"docs/vps-soak-plan-2026-08-30.md","limits":"plan only; execution not established by this closure"},
+    {"id":"performance-superiority","supported":false,"evidence_class":"negative_or_inconclusive","evidence":"docs/bench/hy2-comparison-workload.md","limits":"inconclusive; no superiority claim"}
+  ]
+}
