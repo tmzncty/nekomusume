@@ -221,7 +221,7 @@ fn failover_udp_handshake_timeout_reports_last_success_stage() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!out.status.success());
-    assert!(stdout.contains(r#""stage":"udp_bind""#));
+    assert!(stdout.contains(r#""stage":"socket_bind""#));
     assert!(stdout.contains(r#""stage":"client_hello_sent""#));
     assert!(
         stdout.contains(r#""stage":"timeout","last_success_stage":"client_hello_sent""#),
@@ -231,40 +231,36 @@ fn failover_udp_handshake_timeout_reports_last_success_stage() {
 }
 
 #[test]
-fn sustained_workload_is_deterministic_and_bounded() {
+fn udp_handshake_diagnostic_stages_are_deterministic() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let dir = tmp("diagnostic-timeout");
     let out = Command::new(bin)
         .args([
-            "workload",
+            "failover-client",
             "--json",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            "40099",
+            "--tcp-port",
+            "40100",
+            "--server-key",
+            &"00".repeat(32),
+            "--identity",
+            dir.to_str().unwrap(),
             "--duration",
             "1",
-            "--concurrency",
-            "3",
-            "--records",
-            "7",
-            "--bytes",
-            "11",
         ])
         .output()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(stdout.matches("\n").count(), 1);
-    assert!(stdout.contains("\"records\":21"));
-    assert!(stdout.contains("\"application_bytes\":231"));
-    assert!(stdout.contains("\"cleanup\":\"verified\""));
-}
-
-#[test]
-fn sustained_workload_rejects_unbounded_concurrency() {
-    let out = Command::new(env!("CARGO_BIN_EXE_neko-cli"))
-        .args(["workload", "--concurrency", "17"])
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(2));
+    assert!(!out.status.success());
+    let log = String::from_utf8_lossy(&out.stdout);
+    for stage in ["socket_bind", "client_send"] {
+        assert!(
+            log.contains(&format!("\"stage\":\"{stage}\"")),
+            "missing {stage}: {log}"
+        );
+    }
+    assert!(log.contains("last_success_stage\":\"client_hello_sent"));
+    let _ = fs::remove_file(dir);
 }

@@ -474,7 +474,7 @@ fn failover_server(args: &[String]) {
     udp.set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap();
     tcp.set_nonblocking(true).unwrap();
-    diag.event(args, "udp_bind");
+    diag.event(args, "socket_bind");
     let started = Instant::now();
     let mut buf = [0u8; 65536];
     let mut secure = None;
@@ -494,8 +494,10 @@ fn failover_server(args: &[String]) {
     while started.elapsed() < duration {
         if secure.is_none() {
             if let Ok((n, peer)) = udp.recv_from(&mut buf) {
+                diag.event(args, "server_recv");
+                diag.event(args, "demux");
                 emit_diagnostic(args, "server", "udp_hello_received", 0, "");
-                diag.event(args, "server_hello_received");
+                diag.event(args, "client_recv");
                 let (resp, ss, remote, binding) =
                     ResponderHandshake::new(&id, policy.clone(), DOMAIN)
                         .unwrap()
@@ -504,7 +506,9 @@ fn failover_server(args: &[String]) {
                             (resp, ss, client.clone(), failover_binding(7001, 0, 10_000))
                         })
                         .unwrap_or_else(|_| fail("unauthorized UDP handshake"));
+                diag.event(args, "parse_auth");
                 udp.send_to(&resp, peer).unwrap();
+                diag.event(args, "reply_send");
                 emit_diagnostic(args, "server", "udp_hello_sent", 0, "");
                 diag.event(args, "server_response_sent");
                 guard = Some(ResumeGuard::new(&remote, &binding).unwrap());
@@ -676,7 +680,7 @@ fn failover_client(args: &[String]) {
     let first = hs.first_message().unwrap();
     let target = format!("{addr}:{up}");
     let u = UdpSocket::bind("0.0.0.0:0").unwrap();
-    diag.event(args, "udp_bind");
+    diag.event(args, "socket_bind");
     u.set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap();
     let mut buf = [0u8; 65536];
@@ -689,12 +693,13 @@ fn failover_client(args: &[String]) {
         ",\"count\":8,\"payload_bytes\":64,\"udp_port\":40081,\"max_seconds\":15",
     );
     for _ in 0..20 {
+        diag.event(args, "client_send");
         u.send_to(&first, &target).unwrap();
         diag.event(args, "client_hello_sent");
         emit_diagnostic(args, "client", "udp_hello_sent", 0, "");
         match u.recv_from(&mut buf) {
             Ok((n, _)) => {
-                diag.event(args, "server_hello_received");
+                diag.event(args, "client_recv");
                 handshake = Some(n);
                 emit_diagnostic(args, "client", "udp_hello_received", 0, "");
                 break;
@@ -716,6 +721,7 @@ fn failover_client(args: &[String]) {
         }
     };
     let mut us = hs.finish(&buf[..n], context(1)).unwrap();
+    diag.event(args, "parse_auth");
     let payload = vec![b'x'; bytes];
     let mut records = Vec::new();
     for i in 0..count {
@@ -737,6 +743,7 @@ fn failover_client(args: &[String]) {
     u.send_to(&rec, &target).unwrap();
     emit_diagnostic(args, "client", "udp_datagram_sent", 1, ",\"bytes\":64");
     let _ = u.recv_from(&mut buf);
+    diag.event(args, "client_recv");
     emit_diagnostic(args, "client", "udp_ack_observed", 1, "");
     println!("carrier_event name=udp_blackhole_injected session=7001 generation=0");
     let mut hs2 = InitiatorHandshake::with_resume_binding(
