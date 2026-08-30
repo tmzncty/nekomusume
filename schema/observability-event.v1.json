@@ -7,7 +7,7 @@
   "properties":{
     "schema":{"const":"nekomusume.observability-event.v1"},
     "schema_version":{"const":1},
-    "event":{"enum":["session.started","session.stopped","stream.opened","stream.closed","carrier.health_sample","carrier.health_transition","carrier.switch_started","carrier.switch_completed","carrier.switch_failed","recovery.rtt_updated","recovery.loss_detected","recovery.pto_fired","recovery.frame_retransmitted","flow.blocked","flow.resumed","scheduler.dequeued","scheduler.starvation_guard","migration.started","migration.validated","migration.completed","migration.rejected","crypto.key_update_started","crypto.key_update_completed","crypto.key_update_rejected","resource.limit_hit","diagnostic.events_dropped"]},
+    "event":{"enum":["session.started","session.stopped","stream.opened","stream.closed","carrier.health_sample","carrier.health_transition","carrier.switch_started","carrier.switch_completed","carrier.switch_failed","recovery.rtt_updated","recovery.loss_detected","recovery.pto_fired","recovery.frame_retransmitted","flow.blocked","flow.resumed","scheduler.dequeued","scheduler.starvation_guard","migration.started","migration.validated","migration.completed","migration.rejected","crypto.key_update_started","crypto.key_update_completed","crypto.key_update_rejected","resource.limit_hit","diagnostic.events_dropped","datagram.admitted","datagram.dropped"]},
     "sequence":{"type":"integer","minimum":0},
     "observed_at_ms":{"type":"integer","minimum":0},
     "severity":{"enum":["debug","info","warn","error"]},

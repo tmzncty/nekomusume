@@ -266,6 +266,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "neko-observe"
+version = "0.1.0"
+dependencies = [
+ "neko-carrier",
+ "neko-reliable",
+ "neko-session",
+]
+
+[[package]]
 name = "neko-reliable"
 version = "0.1.0"
 dependencies = [

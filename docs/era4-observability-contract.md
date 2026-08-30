@@ -50,6 +50,7 @@ Forbidden everywhere in emitted documents: private/identity key material, PSKs, 
 | `crypto.key_update_started`, `crypto.key_update_completed`, `crypto.key_update_rejected` | old/new numeric key phase and fail-closed result; never key bytes |
 | `resource.limit_hit` | stable resource name, configured limit, observed value |
 | `diagnostic.events_dropped` | bounded-buffer eviction count and retained sequence floor |
+| `datagram.admitted`, `datagram.dropped` | bounded Session datagram admission and drop decisions; no payload evidence |
 
 ### Switch reasons
 
