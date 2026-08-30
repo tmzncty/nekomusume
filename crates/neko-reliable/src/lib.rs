@@ -203,7 +203,8 @@ pub struct RecoveryResult {
 #[derive(Debug)]
 pub struct Recovery {
     sent: BTreeMap<u64, SentPacket>,
-    outstanding_frames: BTreeSet<FrameId>,
+    // Count copies: original and retransmission may overlap in flight.
+    outstanding_frames: BTreeMap<FrameId, usize>,
     max_sent_packets: usize,
     max_frames_per_packet: usize,
     pub rtt: RttEstimator,
@@ -222,7 +223,7 @@ impl Recovery {
         }
         Ok(Self {
             sent: BTreeMap::new(),
-            outstanding_frames: BTreeSet::new(),
+            outstanding_frames: BTreeMap::new(),
             max_sent_packets,
             max_frames_per_packet,
             rtt: RttEstimator::default(),
@@ -239,8 +240,14 @@ impl Recovery {
         if p.bytes == 0 || (p.ack_eliciting && p.frames.is_empty()) {
             return Err(Error::EmptyPacket);
         }
+        let mut packet_frames = BTreeSet::new();
         for f in &p.frames {
-            self.outstanding_frames.insert(*f);
+            if !packet_frames.insert(*f) {
+                return Err(Error::InvalidRange);
+            }
+        }
+        for f in packet_frames {
+            *self.outstanding_frames.entry(f).or_default() += 1;
         }
         self.sent.insert(p.number, p);
         Ok(())
@@ -273,7 +280,7 @@ impl Recovery {
             out.acked_bytes = out.acked_bytes.saturating_add(p.bytes);
             out.acked_packets.push(n);
             for f in p.frames {
-                self.outstanding_frames.remove(&f);
+                Self::release_frame(&mut self.outstanding_frames, f);
             }
         }
         let delay = self.rtt.loss_delay_us();
@@ -292,7 +299,7 @@ impl Recovery {
             out.lost_bytes = out.lost_bytes.saturating_add(p.bytes);
             out.lost_packets.push(n);
             for f in p.frames {
-                if self.outstanding_frames.remove(&f) {
+                if Self::release_frame(&mut self.outstanding_frames, f) {
                     frames.insert(f);
                 }
             }
@@ -303,6 +310,19 @@ impl Recovery {
         }
         Ok(out)
     }
+    fn release_frame(frames: &mut BTreeMap<FrameId, usize>, frame: FrameId) -> bool {
+        match frames.get_mut(&frame) {
+            Some(count) if *count > 1 => {
+                *count -= 1;
+                false
+            }
+            Some(_) => {
+                frames.remove(&frame);
+                true
+            }
+            None => false,
+        }
+    }
     /// PTO schedules at most `max_probe_frames` oldest outstanding frames. It
     /// does not declare packets lost and does not create Session delivery evidence.
     pub fn on_pto(&mut self, max_probe_frames: usize) -> Result<Vec<FrameId>, Error> {
@@ -312,7 +332,7 @@ impl Recovery {
         self.pto_count = self.pto_count.saturating_add(1);
         Ok(self
             .outstanding_frames
-            .iter()
+            .keys()
             .copied()
             .take(max_probe_frames)
             .collect())
@@ -355,7 +375,7 @@ impl Reno {
     }
     pub fn lost(&mut self, b: u64) {
         self.bytes_in_flight = self.bytes_in_flight.saturating_sub(b);
-        self.ssthresh = (self.cwnd / 2).max(2 * self.mss);
+        self.ssthresh = (self.cwnd / 2).max(self.mss.saturating_mul(2));
         self.cwnd = self.ssthresh
     }
     pub fn pacing_interval_us(&self, rtt_us: u64, bytes: u64) -> u64 {
@@ -570,6 +590,22 @@ mod tests {
         assert_eq!(x.retransmit_frames, vec![FrameId(0)]);
         assert_eq!(r.in_flight(), 2);
     }
+    #[test]
+    fn overlapping_retransmission_keeps_frame_outstanding_until_all_copies_ack() {
+        let mut r = Recovery::new(4, 1).unwrap();
+        r.on_sent(packet(1, 0, 9)).unwrap();
+        r.on_sent(packet(2, 1, 9)).unwrap();
+        let mut ack = AckRanges::new(1).unwrap();
+        ack.insert(1).unwrap();
+        let first = r.on_ack(&ack, 2, 0).unwrap();
+        assert_eq!(first.retransmit_frames, Vec::<FrameId>::new());
+        assert_eq!(r.on_pto(1).unwrap(), vec![FrameId(9)]);
+        ack.insert(2).unwrap();
+        let second = r.on_ack(&ack, 3, 0).unwrap();
+        assert_eq!(second.acked_packets, vec![2]);
+        assert!(r.on_pto(1).unwrap().is_empty());
+    }
+
     #[test]
     fn reorder_inside_threshold_is_not_loss() {
         let mut r = Recovery::default();
