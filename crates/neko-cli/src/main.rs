@@ -951,6 +951,98 @@ fn matrix_probe(args: &[String]) -> ! {
     });
 }
 
+fn key_update_fixture(args: &[String]) {
+    const EXCHANGES: usize = 6;
+    let initiator =
+        LocalIdentity::generate().unwrap_or_else(|_| fail("identity generation failed"));
+    let responder =
+        LocalIdentity::generate().unwrap_or_else(|_| fail("identity generation failed"));
+    let policy = TrustPolicy::new(vec![TrustRecord {
+        version: 1,
+        public_key: initiator.public_key().to_vec(),
+        scope: b"echo".to_vec(),
+        status: TrustStatus::Active,
+    }]);
+    let mut handshake =
+        InitiatorHandshake::new(&initiator, responder.public_key(), b"echo", DOMAIN)
+            .unwrap_or_else(|_| fail("handshake setup failed"));
+    let first = handshake
+        .first_message()
+        .unwrap_or_else(|_| fail("handshake failed"));
+    let responder_handshake = ResponderHandshake::new(&responder, policy, DOMAIN)
+        .unwrap_or_else(|_| fail("handshake setup failed"));
+    let (response, mut receiver) = responder_handshake
+        .receive_first(&first, context(0))
+        .unwrap_or_else(|_| fail("handshake failed"));
+    let mut sender = handshake
+        .finish(&response, context(0))
+        .unwrap_or_else(|_| fail("handshake failed"));
+    let mut events = vec!["session_opened", "key_phase_0"];
+    for index in 0..EXCHANGES {
+        let payload = format!("exchange-{index}");
+        let record = sender
+            .seal(payload.as_bytes())
+            .unwrap_or_else(|_| fail("seal failed"));
+        if receiver
+            .open(&record)
+            .unwrap_or_else(|_| fail("open failed"))
+            != payload.as_bytes()
+        {
+            fail("payload mismatch");
+        }
+        events.push("exchange");
+    }
+    let stale = sender
+        .seal(b"stale-phase")
+        .unwrap_or_else(|_| fail("seal failed"));
+    sender
+        .update_key_phase()
+        .unwrap_or_else(|_| fail("key update failed"));
+    receiver
+        .update_key_phase()
+        .unwrap_or_else(|_| fail("key update failed"));
+    events.push("key_update_committed");
+    if receiver.open(&stale).is_ok() {
+        fail("old phase accepted");
+    }
+    events.push("old_phase_rejected");
+    for index in EXCHANGES..(EXCHANGES * 2) {
+        let payload = format!("exchange-{index}");
+        let record = sender
+            .seal(payload.as_bytes())
+            .unwrap_or_else(|_| fail("seal failed"));
+        if receiver
+            .open(&record)
+            .unwrap_or_else(|_| fail("open failed"))
+            != payload.as_bytes()
+        {
+            fail("payload mismatch");
+        }
+        events.push("exchange");
+    }
+    if sender.key_phase() != 1 || receiver.key_phase() != 1 {
+        fail("key phase desynchronized");
+    }
+    events.push("session_complete");
+    if json_mode(args) {
+        println!(
+            "{{\"ok\":true,\"fixture\":\"secure-session-key-update\",\"exchanges\":{},\"key_phase\":1,\"events\":[{}]}}",
+            EXCHANGES * 2,
+            events
+                .iter()
+                .map(|e| format!("\"{e}\""))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    } else {
+        println!(
+            "key_update_ok exchanges={} key_phase=1 events={}",
+            EXCHANGES * 2,
+            events.join(",")
+        );
+    }
+}
+
 fn main() {
     let a: Vec<String> = env::args().skip(1).collect();
     match a.first().map(String::as_str) {
@@ -959,6 +1051,7 @@ fn main() {
         Some("client") | Some("probe") => client(&a),
         Some("lab") => lab(&a),
         Some("workload") => workload(&a),
+        Some("key-update") => key_update_fixture(&a),
         Some("failover") | Some("failover-server") | Some("failover-client") => failover_gate(&a),
         Some("keygen") => {
             let path = PathBuf::from(parse(&a, "--identity", Some("neko-client.identity")));
