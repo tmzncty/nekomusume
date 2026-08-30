@@ -941,3 +941,16 @@ ordering、fairness、throughput、congestion 或 application-effect 证据。CL
 `docs/spec/m2-unreliable-datagram.md` 和
 `docs/specs/nekomusume-session-v0.md` 只记录语义边界，不授权 wire/API/code/
 runtime/WAN 变更或生产暴露。
+
+
+## 2026-08-30 — D066：Era-4 L protocol release/versioning candidate boundary
+
+**Status: Candidate release process — non-frozen, unreleased**
+
+`docs/era4-protocol-release-v1.md` defines the first formal release criteria,
+authenticated capability negotiation and explicit downgrade rules, plus
+per-feature mixed-conformance boundaries. `docs/era4-capabilities.v1.json` is
+a conservative candidate-process manifest: all release gates are false. This
+slice adds no wire negotiation implementation and does not establish
+previous/current interoperability, security review, WAN evidence, production,
+public exposure, 0-RTT, FEC or multipath.

@@ -1,0 +1,17 @@
+{
+  "schema": "nekomusume.era4-capabilities.v1",
+  "release_id": "era4-l-candidate-1",
+  "parent_commit": "9a03d6b7125a0e04c05d6f3ba154d1004308749e",
+  "status": "candidate-process-only",
+  "freeze": false,
+  "released": false,
+  "capabilities": [
+    {"id":"base-session","state":"supported","evidence_class":"E1","limits":"bounded candidate session; no interop claim"},
+    {"id":"reliable-delivery","state":"supported","evidence_class":"E1","limits":"bounded deterministic/local evidence"},
+    {"id":"unreliable-datagram","state":"experimental","evidence_class":"E1","limits":"separate domain; no ACK/retransmission/ordering"},
+    {"id":"0-rtt","state":"blocked","evidence_class":"E0","limits":"disabled pending replay/security review"},
+    {"id":"fec","state":"blocked","evidence_class":"E0","limits":"not enabled"},
+    {"id":"multipath","state":"blocked","evidence_class":"E0","limits":"not enabled"}
+  ],
+  "release_gates": {"canonical_vectors":false,"authenticated_negotiation":false,"independent_security_review":false,"previous_current_interop":false,"authorized_wan_evidence":false}
+}
