@@ -1,0 +1,4 @@
+tcp cycle=1 same_port=40086 PASS
+tcp cycle=2 same_port=40086 PASS
+udp cycle=1 same_port=40087 PASS
+udp cycle=2 same_port=40087 PASS

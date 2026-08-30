@@ -1,0 +1,3 @@
+server_public_key=9c00e47eb0b87ec08de3d11a91b6726ccf06163aef65026a4e697813227bf66d
+lifecycle_state=FAILED readiness=false
+lifecycle_state=STOPPED readiness=false

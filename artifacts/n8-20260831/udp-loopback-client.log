@@ -1,0 +1,2 @@
+client_public_key=9a1e30be703deebde5ca482074f3dd23189b33c273322fe280e6ea4f9ea39e49
+probe_ok transport=udp bytes=32 elapsed_ms=1

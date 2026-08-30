@@ -1,0 +1,3 @@
+parent=5e2ac795747582f5f1f36ad537234305c300b47f
+head=5e2ac795747582f5f1f36ad537234305c300b47f
+worktree=/tmp/nekomusume-n8

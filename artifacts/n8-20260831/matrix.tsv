@@ -1,0 +1,4 @@
+tcp-loopback	transport=tcp	host=127.0.0.1	port=40080	count=4	PASS
+udp-loopback	transport=udp	host=127.0.0.1	port=40081	count=4	PASS
+tcp-vps	transport=tcp	host=192.168.122.1	port=40082	count=4	PASS
+udp-vps	transport=udp	host=192.168.122.1	port=40083	count=4	PASS
