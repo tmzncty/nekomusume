@@ -9,14 +9,17 @@
 1. `README.md`
 2. `ROADMAP.md`
 3. `SECURITY.md`
-4. `IMPLEMENTATION_PLAN.md`
-5. `docs/decisions.md`
-6. `docs/carrier-architecture.md`
-7. `docs/m0-spec-plan.md`
-8. `docs/specs/nekomusume-session-v0.md`
-9. 与当前任务直接相关的 `docs/research/`、crate 和测试
+4. `docs/standing-vps-lab-authorization.md`
+5. `IMPLEMENTATION_PLAN.md`
+6. `docs/decisions.md`
+7. `docs/carrier-architecture.md`
+8. `docs/m0-spec-plan.md`
+9. `docs/specs/nekomusume-session-v0.md`
+10. 与当前任务直接相关的 `docs/research/`、crate 和测试
 
 `docs/design-handoff.md` 是历史交接材料，不是当前最高优先级规范。
+
+`docs/standing-vps-lab-authorization.md` 是维护者已经给出的持续有效 VPS/WAN 实验授权。只要实验处于该文件的范围和边界内，就不得再把“需要逐次 WAN 授权”“需要重新批准 40080/40081 listener”或“缺 count/bytes/duration/port”当作外部 blocker。
 
 ## 1. 不可破坏的架构边界
 
@@ -35,12 +38,15 @@
 发生冲突时，优先级默认是：
 
 1. 已提交的明确安全约束与 `SECURITY.md`
-2. `docs/decisions.md` 中仍有效的决定
-3. `docs/specs/` 下当前规范
-4. `docs/carrier-architecture.md`
-5. `ROADMAP.md` / `IMPLEMENTATION_PLAN.md`
-6. 研究笔记
-7. 历史 handoff
+2. `docs/standing-vps-lab-authorization.md` 中的实验授权边界
+3. `docs/decisions.md` 中仍有效的决定
+4. `docs/specs/` 下当前规范
+5. `docs/carrier-architecture.md`
+6. `ROADMAP.md` / `IMPLEMENTATION_PLAN.md`
+7. 研究笔记
+8. 历史 handoff
+
+Standing authorization 只解决“管理员已经允许哪些自有 VPS 实验”的问题，不覆盖 `SECURITY.md`，也不能授权第三方目标、生产网络修改或该文件明确要求重新批准的高权限/长时/高流量实验。
 
 如果无法判断某条决定是否仍有效，先通过仓库历史和现有实现核对，不要自行拼接两个互相冲突的设计。
 
@@ -59,6 +65,8 @@
 9. 在没有真正 blocker 时继续下一切片。
 
 不要把“写了计划”“加了 TODO”“建了空 crate”当完成。
+
+当一个 WAN 节点失败或 blocked 时，必须继续检查所有不依赖该节点的 READY 工作。不得把单个 WAN failure、缺少 previous release、缺少 native ARM host 或外部 review 自动升级为整个项目停止条件。
 
 ## 4. 本地验证门禁
 
@@ -82,16 +90,21 @@
 2. loopback；
 3. netns/veth；
 4. QEMU/局域网；
-5. 只有任务明确需要且安全边界满足时才做真实 WAN。
+5. 真实 WAN。
+
+第 5 层是否可直接执行，以 `docs/standing-vps-lab-authorization.md` 为准。处于 standing authorization 范围内的自有客户端 ↔ 自有 VPS 普通 bounded TCP/UDP 实验已经获得明确授权，无需再次逐次询问。
 
 ## 5. 网络实验安全
 
 - 默认不修改宿主机生产路由、防火墙、代理、隧道或系统服务。
 - netns/veth 实验必须有清理路径；失败后也应尽量恢复。
 - 不提交真实生产密钥、cookie、token、私网拓扑、无必要公网地址。
-- Raw IP、ICMP、SCTP、DCCP、GRE、ESP 等 reachability 测试必须是**显式实验任务**，不得作为普通 test suite 的隐式副作用。
+- Raw IP、ICMP carrier、SCTP、DCCP、GRE、ESP 等高权限/非常规 reachability 测试必须符合 `docs/standing-vps-lab-authorization.md`；其中要求单独授权的项目不得作为普通 test suite 的隐式副作用。
 - 不扫描第三方地址段，不做规避访问控制的实验。
 - 公网 benchmark 只能针对自己控制或明确授权的端点。
+- 自有客户端 ↔ 自有 VPS 的普通 bounded TCP/UDP listener、Session、diagnostic、benchmark、HY2 comparison、bounded capture、package rehearsal 和 cleanup 已由 `docs/standing-vps-lab-authorization.md` 持续授权。
+- 同一失败实验不得在 instrumentation/code/configuration/hypothesis/capture coverage 等均无变化时机械重跑；有新的诊断变量且仍在 standing authorization 边界内时，可以直接继续，不需要重新请求许可。
+- 实验结束必须清理本轮产生的 listener/process/temp runtime，并尽量验证无残留。
 
 ## 6. Wire / parser 规则
 
@@ -177,7 +190,14 @@ M3 的核心验收不是“TCP 也能传数据”，而是：
 - 未解决资源上限就准备暴露公网服务；
 - benchmark 条件无法做到基本公平；
 - 真实网络实验需要影响非授权第三方；
-- fuzz/测试发现 parser correctness 问题但下一任务只是加功能。
+- fuzz/测试发现 parser correctness 问题但下一任务只是加功能；
+- 当前动作超出 `docs/standing-vps-lab-authorization.md` 的持续授权边界，且确实需要新的维护者许可。
+
+以下内容**不是** stop condition：
+
+- standing authorization 已覆盖的普通自有 VPS TCP/UDP 实验缺少再次确认；
+- standing authorization 已提供默认 profile 时缺少逐次 `count/bytes/duration/port`；
+- 一个独立 WAN 节点失败但仍存在不依赖它的 READY 工作。
 
 ## 13. 完成定义
 
