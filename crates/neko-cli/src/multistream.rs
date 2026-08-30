@@ -273,40 +273,61 @@ pub fn run(args: &[String]) {
             runtime.open_stream(StreamId(stream as u64 + 1), 0).unwrap();
         }
         let mut sent = 0usize;
-        for round in 0..records {
-            for stream in 0..streams {
-                let id = StreamId(stream as u64 + 1);
-                let data = vec![(stream + round) as u8; bytes];
-                runtime.queue_send(id, &data, sent as u64).unwrap();
-                let record = runtime.pop_send(sent as u64).unwrap().unwrap();
+        let flush = |runtime: &mut SessionRuntime,
+                     socket: &mut TcpStream,
+                     secure: &mut SecureSession,
+                     sent: &mut usize| {
+            while let Some(record) = runtime.pop_send(*sent as u64).unwrap() {
+                let stream = record.stream;
+                let offset = record.offset;
+                let len = record.data.len();
                 secure_write(
-                    &mut socket,
-                    &mut secure,
+                    socket,
+                    secure,
                     &ProcessMessage::Data {
                         session: SESSION,
-                        record: record.clone(),
+                        record,
                     },
                 );
-                let ack = secure_read(&mut socket, &mut secure);
+                let ack = secure_read(socket, secure);
                 let ProcessMessage::DeliveryAck {
                     session,
                     stream: ack_stream,
-                    offset,
-                    len,
+                    offset: ack_offset,
+                    len: ack_len,
                 } = ack
                 else {
                     fail("expected acknowledgement".into())
                 };
-                if session != SESSION || ack_stream != id || offset != record.offset || len != bytes
+                if session != SESSION
+                    || ack_stream != stream
+                    || ack_offset != offset
+                    || ack_len != len
                 {
                     fail("acknowledgement mismatch".into());
                 }
                 runtime
-                    .delivery_ack(id, record.offset, bytes, sent as u64)
+                    .delivery_ack(stream, offset, len, *sent as u64)
                     .unwrap();
-                sent += 1;
+                *sent += 1;
+            }
+        };
+        for round in 0..records {
+            for stream in 0..streams {
+                let id = StreamId(stream as u64 + 1);
+                let data = vec![(stream + round) as u8; bytes];
+                loop {
+                    match runtime.queue_send(id, &data, sent as u64) {
+                        Ok(_) => break,
+                        Err(neko_session::RuntimeError::QueueFull) => {
+                            flush(&mut runtime, &mut socket, &mut secure, &mut sent);
+                        }
+                        Err(error) => fail(format!("queue failed: {error:?}")),
+                    }
+                }
             }
         }
+        flush(&mut runtime, &mut socket, &mut secure, &mut sent);
         let events: Vec<_> = runtime.observable_events().map(|e| e.kind.name()).collect();
         let count = |name: &str| events.iter().filter(|kind| **kind == name).count();
         println!(

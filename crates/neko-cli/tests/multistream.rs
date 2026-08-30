@@ -42,6 +42,10 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
             "4",
             "--bytes",
             "17",
+            "--session-window",
+            "17",
+            "--stream-window",
+            "17",
             "--identity",
             server_identity.to_str().unwrap(),
             "--client-key",
@@ -62,6 +66,10 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
             "--records",
             "4",
             "--bytes",
+            "17",
+            "--session-window",
+            "17",
+            "--stream-window",
             "17",
             "--identity",
             client_identity.to_str().unwrap(),
@@ -86,6 +94,20 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
     assert!(evidence.contains("\"streams\":3"));
     assert!(evidence.contains("\"records\":12"));
     assert!(evidence.contains("\"payload_bytes\":204"));
+    fn counter(evidence: &str, name: &str) -> u64 {
+        evidence
+            .split(&format!("\"{name}\":"))
+            .nth(1)
+            .unwrap()
+            .split([',', '}'])
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+    assert!(counter(&evidence, "window_exhausted") > 0);
+    assert_eq!(counter(&evidence, "ack_released"), 12);
+    assert_eq!(counter(&evidence, "resumed"), 12);
     let _ = fs::remove_file(server_identity);
     let _ = fs::remove_file(client_identity);
 }
