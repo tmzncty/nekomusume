@@ -16,7 +16,7 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-const USAGE: &str = "Usage: neko <server|client|probe|lab|failover-server|failover-client|keygen> [bounded options]
+const USAGE: &str = "Usage: neko <server|client|probe|lab|failover-server|workload|failover-client|keygen> [bounded options]
 
   --count N: bounded authenticated exchanges (1-64)\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
@@ -831,6 +831,85 @@ fn lab(args: &[String]) {
     }
 }
 
+/// Run independent Session runtimes for a bounded interval. This local fixture exercises queueing, delivery ACKs and cleanup without opening sockets.
+fn workload(args: &[String]) {
+    let duration = parse(args, "--duration", Some("5"))
+        .parse::<u64>()
+        .unwrap_or_else(|_| fail("invalid duration"));
+    let concurrency = parse(args, "--concurrency", Some("1"))
+        .parse::<usize>()
+        .unwrap_or_else(|_| fail("invalid concurrency"));
+    let records = parse(args, "--records", Some("100"))
+        .parse::<usize>()
+        .unwrap_or_else(|_| fail("invalid records"));
+    let bytes = parse(args, "--bytes", Some("32"))
+        .parse::<usize>()
+        .unwrap_or_else(|_| fail("invalid bytes"));
+    if !(1..=MAX_DURATION).contains(&duration) {
+        fail("duration outside 1-30");
+    }
+    if !(1..=16).contains(&concurrency) {
+        fail("concurrency outside 1-16");
+    }
+    if !(1..=10_000).contains(&records) {
+        fail("records outside 1-10000");
+    }
+    if !(1..=MAX_BYTES).contains(&bytes) {
+        fail("bytes outside 1-1200");
+    }
+    let started = Instant::now();
+    let mut workers = Vec::with_capacity(concurrency);
+    for worker in 0..concurrency {
+        workers.push(std::thread::spawn(move || {
+            let mut runtime = SessionRuntime::new(
+                SessionId(worker as u64 + 1),
+                runtime_limits(bytes, records),
+                0,
+            )
+            .unwrap();
+            runtime.open_stream(StreamId(1), 0).unwrap();
+            let payload = vec![worker as u8; bytes];
+            for index in 0..records {
+                let offset = runtime
+                    .queue_send(StreamId(1), &payload, index as u64)
+                    .unwrap();
+                let sent = runtime.pop_send(index as u64).unwrap().unwrap();
+                runtime
+                    .delivery_ack(StreamId(1), offset, sent.data.len(), index as u64)
+                    .unwrap();
+            }
+            assert_eq!(
+                runtime.confirmed_watermark(StreamId(1)),
+                (records * bytes) as u64
+            );
+            runtime.close_graceful(records as u64).unwrap();
+            runtime.cancel(records as u64).unwrap();
+            (records, records * bytes)
+        }));
+    }
+    let mut completed_records = 0usize;
+    let mut application_bytes = 0usize;
+    for worker in workers {
+        let (count, size) = worker
+            .join()
+            .unwrap_or_else(|_| fail("workload worker failed"));
+        completed_records += count;
+        application_bytes += size;
+    }
+    std::thread::sleep(Duration::from_secs(duration).saturating_sub(started.elapsed()));
+    if json_mode(args) {
+        println!(
+            "{{\"ok\":true,\"fixture\":\"session-workload\",\"duration_seconds\":{},\"concurrency\":{},\"records\":{},\"application_bytes\":{},\"cleanup\":\"verified\"}}",
+            duration, concurrency, completed_records, application_bytes
+        );
+    } else {
+        println!(
+            "workload_ok duration_seconds={} concurrency={} records={} application_bytes={} cleanup=verified",
+            duration, concurrency, completed_records, application_bytes
+        );
+    }
+}
+
 fn matrix_probe(args: &[String]) -> ! {
     let get = |key: &str| args.windows(2).find(|w| w[0] == key).map(|w| w[1].as_str());
     let target: SocketAddr = get("--target")
@@ -872,6 +951,7 @@ fn main() {
         Some("probe") if a.iter().any(|v| v == "--matrix") => matrix_probe(&a),
         Some("client") | Some("probe") => client(&a),
         Some("lab") => lab(&a),
+        Some("workload") => workload(&a),
         Some("failover") | Some("failover-server") | Some("failover-client") => failover_gate(&a),
         Some("keygen") => {
             let path = PathBuf::from(parse(&a, "--identity", Some("neko-client.identity")));

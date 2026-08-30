@@ -229,3 +229,42 @@ fn failover_udp_handshake_timeout_reports_last_success_stage() {
     );
     let _ = fs::remove_file(dir);
 }
+
+#[test]
+fn sustained_workload_is_deterministic_and_bounded() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let out = Command::new(bin)
+        .args([
+            "workload",
+            "--json",
+            "--duration",
+            "1",
+            "--concurrency",
+            "3",
+            "--records",
+            "7",
+            "--bytes",
+            "11",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout.matches("\n").count(), 1);
+    assert!(stdout.contains("\"records\":21"));
+    assert!(stdout.contains("\"application_bytes\":231"));
+    assert!(stdout.contains("\"cleanup\":\"verified\""));
+}
+
+#[test]
+fn sustained_workload_rejects_unbounded_concurrency() {
+    let out = Command::new(env!("CARGO_BIN_EXE_neko-cli"))
+        .args(["workload", "--concurrency", "17"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}
