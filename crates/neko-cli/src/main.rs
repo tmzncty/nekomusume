@@ -24,6 +24,7 @@ const USAGE: &str = "Usage: neko <server|client|probe|lab|failover-server|worklo
 const MAX_PORT: u16 = 40100;
 const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
 const MAX_DURATION: u64 = 30;
+const MAX_WORKLOAD_DURATION: u64 = 600;
 const PROCESS_FRAME_MAX: usize = neko_session::PROCESS_FRAME_MAX;
 const DOMAIN: &[u8] = b"nekomusume-vps-probe";
 fn json_mode(args: &[String]) -> bool {
@@ -940,6 +941,10 @@ fn scheduler_fairness(args: &[String]) {
 }
 
 /// Run independent Session runtimes for a bounded interval. This local fixture exercises queueing, delivery ACKs and cleanup without opening sockets.
+fn workload_duration_valid(duration: u64) -> bool {
+    (1..=MAX_WORKLOAD_DURATION).contains(&duration)
+}
+
 fn workload(args: &[String]) {
     let duration = parse(args, "--duration", Some("5"))
         .parse::<u64>()
@@ -953,8 +958,8 @@ fn workload(args: &[String]) {
     let bytes = parse(args, "--bytes", Some("32"))
         .parse::<usize>()
         .unwrap_or_else(|_| fail("invalid bytes"));
-    if !(1..=MAX_DURATION).contains(&duration) {
-        fail("duration outside 1-30");
+    if !workload_duration_valid(duration) {
+        fail("duration outside 1-600");
     }
     if !(1..=16).contains(&concurrency) {
         fail("concurrency outside 1-16");
@@ -1181,6 +1186,16 @@ mod cli_regression_tests {
             IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
         );
     }
+    #[test]
+    fn workload_duration_boundary_is_strictly_bounded() {
+        assert!(!workload_duration_valid(0));
+        assert!(workload_duration_valid(1));
+        assert!(workload_duration_valid(300));
+        assert!(workload_duration_valid(600));
+        assert!(!workload_duration_valid(601));
+        assert!(!workload_duration_valid(u64::MAX));
+    }
+
     #[test]
     fn failover_gate_arguments_are_bounded_and_loopback_explicit() {
         let args = vec![
