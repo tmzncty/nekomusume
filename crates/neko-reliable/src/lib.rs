@@ -774,6 +774,54 @@ pub struct Plpmtud {
     outstanding: Option<Probe>,
     base_loss_run: u8,
 }
+/// IP version used for packet-size accounting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IpVersion {
+    V4,
+    V6,
+}
+
+/// Runtime packetization limits for one concrete path. Values are IP packet sizes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PathMtuLimits {
+    pub ip_version: IpVersion,
+    pub interface_mtu: u16,
+    pub protocol_ceiling: u16,
+}
+impl PathMtuLimits {
+    pub fn new(ip_version: IpVersion, interface_mtu: u16, protocol_ceiling: u16) -> Option<Self> {
+        let min = match ip_version {
+            IpVersion::V4 => 576,
+            IpVersion::V6 => 1280,
+        };
+        (interface_mtu >= min && protocol_ceiling >= min).then_some(Self {
+            ip_version,
+            interface_mtu,
+            protocol_ceiling,
+        })
+    }
+    pub const fn header_bytes(self) -> u16 {
+        match self.ip_version {
+            IpVersion::V4 => 28,
+            IpVersion::V6 => 48,
+        }
+    }
+    pub fn max_datagram_bytes(self, confirmed_packet_mtu: u16) -> u16 {
+        self.interface_mtu
+            .min(self.protocol_ceiling)
+            .min(confirmed_packet_mtu)
+            .saturating_sub(self.header_bytes())
+    }
+}
+
+/// Local EMSGSIZE feedback lowers only this path's packetization ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PmtuSendOutcome {
+    Sent,
+    RetryAt(u16),
+    BaseIncompatible,
+}
+
 impl Plpmtud {
     pub fn new(config: PlpmtudConfig, generation: u64) -> Result<Self, PlpmtudError> {
         if config.base_mtu < 576
@@ -887,6 +935,20 @@ impl Plpmtud {
         self.base_loss_run = 0;
         true
     }
+    pub fn on_emsgsize(
+        &mut self,
+        attempted_packet_size: u16,
+        reported_mtu: Option<u16>,
+    ) -> PmtuSendOutcome {
+        let ceiling = reported_mtu.unwrap_or_else(|| attempted_packet_size.saturating_sub(1));
+        self.upper = self.upper.min(ceiling.max(self.confirmed));
+        if attempted_packet_size <= self.config.base_mtu {
+            PmtuSendOutcome::BaseIncompatible
+        } else {
+            PmtuSendOutcome::RetryAt(self.confirmed)
+        }
+    }
+
     pub fn observe_progress(&mut self) {
         self.base_loss_run = 0;
     }
@@ -1256,5 +1318,38 @@ mod fec_tests {
         let b = FecBlock::encode(c, 1, &vec![vec![0; 1200]; 8]).unwrap();
         assert_eq!(b.parity.len(), 1200);
         assert_eq!(b.data.len(), 8);
+    }
+}
+
+#[cfg(test)]
+mod pmtu_runtime_tests {
+    use super::*;
+    fn config() -> PlpmtudConfig {
+        PlpmtudConfig {
+            base_mtu: 1200,
+            max_mtu: 1500,
+            attempts_per_size: 2,
+            max_probes: 32,
+            blackhole_threshold: 3,
+        }
+    }
+    #[test]
+    fn emsgsize_reduces_ceiling_without_failure() {
+        let mut p = Plpmtud::new(config(), 1).unwrap();
+        let q = p.start_probe().unwrap();
+        assert_eq!(
+            p.on_emsgsize(q.size, Some(1300)),
+            PmtuSendOutcome::RetryAt(1200)
+        );
+        assert_eq!(p.upper_bound(), 1300);
+        assert_eq!(p.on_emsgsize(1200, None), PmtuSendOutcome::BaseIncompatible);
+    }
+    #[test]
+    fn ipv4_ipv6_packet_size_accounting_is_deterministic() {
+        let v4 = PathMtuLimits::new(IpVersion::V4, 1500, 1500).unwrap();
+        let v6 = PathMtuLimits::new(IpVersion::V6, 1464, 1500).unwrap();
+        assert_eq!(v4.max_datagram_bytes(1500), 1472);
+        assert_eq!(v6.max_datagram_bytes(1464), 1416);
+        assert!(PathMtuLimits::new(IpVersion::V6, 1279, 1500).is_none());
     }
 }
