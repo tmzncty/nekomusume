@@ -8,6 +8,8 @@ pub const LOSS_TIME_DENOMINATOR: u64 = 8;
 pub const DEFAULT_MSS: u64 = 1200;
 pub const DEFAULT_MAX_SENT_PACKETS: usize = 4096;
 pub const DEFAULT_MAX_FRAMES_PER_PACKET: usize = 64;
+pub const DEFAULT_MAX_ACK_RANGES: usize = 256;
+pub const PERSISTENT_CONGESTION_PTO_THRESHOLD: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
@@ -32,6 +34,12 @@ impl PacketNumbers {
             next: first,
             exhausted: false,
         }
+    }
+    pub const fn exhausted(&self) -> bool {
+        self.exhausted
+    }
+    pub const fn next(&self) -> u64 {
+        self.next
     }
     pub fn allocate(&mut self) -> Result<u64, Error> {
         if self.exhausted {
@@ -199,6 +207,7 @@ pub struct RecoveryResult {
     pub retransmit_frames: Vec<FrameId>,
     pub acked_bytes: u64,
     pub lost_bytes: u64,
+    pub retransmit_bytes: u64,
 }
 #[derive(Debug)]
 pub struct Recovery {
@@ -209,6 +218,8 @@ pub struct Recovery {
     max_frames_per_packet: usize,
     pub rtt: RttEstimator,
     pub pto_count: u32,
+    pub persistent_congestion_events: u64,
+    largest_sent: Option<u64>,
 }
 impl Default for Recovery {
     fn default() -> Self {
@@ -228,10 +239,15 @@ impl Recovery {
             max_frames_per_packet,
             rtt: RttEstimator::default(),
             pto_count: 0,
+            persistent_congestion_events: 0,
+            largest_sent: None,
         })
     }
     pub fn on_sent(&mut self, p: SentPacket) -> Result<(), Error> {
         if self.sent.contains_key(&p.number) {
+            return Err(Error::InvalidRange);
+        }
+        if self.largest_sent.is_some_and(|largest| p.number <= largest) {
             return Err(Error::InvalidRange);
         }
         if self.sent.len() >= self.max_sent_packets || p.frames.len() > self.max_frames_per_packet {
@@ -249,6 +265,7 @@ impl Recovery {
         for f in packet_frames {
             *self.outstanding_frames.entry(f).or_default() += 1;
         }
+        self.largest_sent = Some(p.number);
         self.sent.insert(p.number, p);
         Ok(())
     }
@@ -297,6 +314,7 @@ impl Recovery {
         for n in lost {
             let p = self.sent.remove(&n).ok_or(Error::UnknownPacket)?;
             out.lost_bytes = out.lost_bytes.saturating_add(p.bytes);
+            out.retransmit_bytes = out.retransmit_bytes.saturating_add(p.bytes);
             out.lost_packets.push(n);
             for f in p.frames {
                 if Self::release_frame(&mut self.outstanding_frames, f) {
@@ -330,6 +348,9 @@ impl Recovery {
             return Err(Error::InvalidLimit);
         }
         self.pto_count = self.pto_count.saturating_add(1);
+        if self.pto_count == PERSISTENT_CONGESTION_PTO_THRESHOLD {
+            self.persistent_congestion_events = self.persistent_congestion_events.saturating_add(1);
+        }
         Ok(self
             .outstanding_frames
             .keys()
@@ -378,6 +399,14 @@ impl Reno {
         self.ssthresh = (self.cwnd / 2).max(self.mss.saturating_mul(2));
         self.cwnd = self.ssthresh
     }
+    pub fn on_persistent_congestion(&mut self) {
+        self.ssthresh = self.mss.saturating_mul(2);
+        self.cwnd = self.ssthresh;
+    }
+    pub fn persistent_congestion(&self, pto_count: u32) -> bool {
+        pto_count >= PERSISTENT_CONGESTION_PTO_THRESHOLD
+    }
+
     pub fn pacing_interval_us(&self, rtt_us: u64, bytes: u64) -> u64 {
         rtt_us.saturating_mul(bytes).div_ceil(self.cwnd.max(1))
     }

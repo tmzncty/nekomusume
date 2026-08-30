@@ -63,3 +63,40 @@ fn loopback_drop_then_retransmit_preserves_recovery_evidence() {
     assert!(second.retransmit_frames.is_empty());
     assert_eq!(recovery.in_flight(), 0);
 }
+
+#[test]
+fn packet_numbers_fail_closed_at_lifetime_boundary() {
+    let mut numbers = neko_reliable::PacketNumbers::new(u64::MAX - 1);
+    assert_eq!(numbers.allocate(), Ok(u64::MAX - 1));
+    assert_eq!(numbers.allocate(), Ok(u64::MAX));
+    assert!(numbers.exhausted());
+    assert_eq!(numbers.allocate(), Err(neko_reliable::Error::Exhausted));
+}
+
+#[test]
+fn loss_bytes_and_persistent_congestion_are_observable_and_bounded() {
+    let mut recovery = Recovery::new(8, 1).unwrap();
+    for n in 0..=3 {
+        recovery
+            .on_sent(SentPacket {
+                number: n,
+                sent_at_us: 0,
+                bytes: 100,
+                ack_eliciting: true,
+                frames: vec![FrameId(n)],
+            })
+            .unwrap();
+    }
+    let mut ack = AckRanges::new(1).unwrap();
+    ack.insert(3).unwrap();
+    let result = recovery.on_ack(&ack, 10_000, 0).unwrap();
+    assert_eq!(result.retransmit_bytes, 100);
+    for _ in 0..3 {
+        recovery.on_pto(1).unwrap();
+    }
+    assert_eq!(recovery.persistent_congestion_events, 1);
+    let mut congestion = neko_reliable::Reno::new(1200).unwrap();
+    congestion.on_persistent_congestion();
+    assert_eq!(congestion.cwnd, 2400);
+    assert!(congestion.persistent_congestion(3));
+}
