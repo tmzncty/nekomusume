@@ -1336,6 +1336,124 @@ impl SessionRuntime {
     }
 }
 
+/// Bounded unreliable Session datagram queue. It deliberately has no ACK,
+/// retransmission, ordering, or flow/congestion-control semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DatagramCounters {
+    pub offered: u64,
+    pub admitted: u64,
+    pub opened: u64,
+    pub dropped: u64,
+    pub rejected_oversize: u64,
+    pub queue_dropped: u64,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionDatagram {
+    pub payload: Vec<u8>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatagramError {
+    Terminal,
+    Oversize,
+    QueueFull,
+}
+#[derive(Debug)]
+pub struct DatagramRuntime {
+    max_queue: usize,
+    max_payload: usize,
+    queue: VecDeque<SessionDatagram>,
+    counters: DatagramCounters,
+    closed: bool,
+}
+impl DatagramRuntime {
+    pub fn new(max_queue: usize, max_payload: usize) -> Result<Self, DatagramError> {
+        if max_queue == 0 || max_payload == 0 {
+            return Err(DatagramError::QueueFull);
+        }
+        Ok(Self {
+            max_queue,
+            max_payload,
+            queue: VecDeque::new(),
+            counters: DatagramCounters::default(),
+            closed: false,
+        })
+    }
+    pub fn counters(&self) -> DatagramCounters {
+        self.counters
+    }
+    pub fn queued(&self) -> usize {
+        self.queue.len()
+    }
+    pub fn close(&mut self) {
+        self.closed = true;
+        self.queue.clear();
+    }
+    pub fn send(&mut self, payload: &[u8]) -> Result<(), DatagramError> {
+        self.counters.offered = self.counters.offered.saturating_add(1);
+        if self.closed {
+            self.counters.dropped = self.counters.dropped.saturating_add(1);
+            return Err(DatagramError::Terminal);
+        }
+        if payload.len() > self.max_payload {
+            self.counters.rejected_oversize = self.counters.rejected_oversize.saturating_add(1);
+            return Err(DatagramError::Oversize);
+        }
+        if self.queue.len() >= self.max_queue {
+            self.counters.queue_dropped = self.counters.queue_dropped.saturating_add(1);
+            self.counters.dropped = self.counters.dropped.saturating_add(1);
+            return Err(DatagramError::QueueFull);
+        }
+        self.queue.push_back(SessionDatagram {
+            payload: payload.to_vec(),
+        });
+        self.counters.admitted = self.counters.admitted.saturating_add(1);
+        Ok(())
+    }
+    pub fn receive(&mut self) -> Result<Option<SessionDatagram>, DatagramError> {
+        if self.closed {
+            return Err(DatagramError::Terminal);
+        }
+        let item = self.queue.pop_front();
+        if item.is_some() {
+            self.counters.opened = self.counters.opened.saturating_add(1);
+        }
+        Ok(item)
+    }
+}
+
+#[cfg(test)]
+mod datagram_runtime_tests {
+    use super::*;
+    #[test]
+    fn admission_send_receive_and_drop_are_bounded() {
+        let mut r = DatagramRuntime::new(1, 4).unwrap();
+        assert_eq!(r.send(b"abcd"), Ok(()));
+        assert_eq!(r.send(b"e"), Err(DatagramError::QueueFull));
+        assert_eq!(r.send(b"12345"), Err(DatagramError::Oversize));
+        assert_eq!(r.receive().unwrap().unwrap().payload, b"abcd");
+        assert_eq!(r.receive().unwrap(), None);
+        assert_eq!(
+            r.counters(),
+            DatagramCounters {
+                offered: 3,
+                admitted: 1,
+                opened: 1,
+                dropped: 1,
+                rejected_oversize: 1,
+                queue_dropped: 1
+            }
+        );
+    }
+    #[test]
+    fn close_drops_without_ack_or_retransmission() {
+        let mut r = DatagramRuntime::new(2, 1200).unwrap();
+        r.send(b"x").unwrap();
+        r.close();
+        assert_eq!(r.receive(), Err(DatagramError::Terminal));
+        assert_eq!(r.counters().opened, 0);
+    }
+}
+
 #[cfg(test)]
 mod process_boundary_tests {
     use super::*;

@@ -47,6 +47,7 @@ pub struct Record {
 const FRAME_IGNORABLE: u8 = 0x01;
 const FRAME_RESERVED_MASK: u8 = 0xf0;
 const FRAME_DATA: u8 = 0x00;
+const FRAME_DATAGRAM: u8 = 0x0c;
 const FRAME_DELIVERY_ACK: u8 = 0x02;
 const FRAME_CLOSE: u8 = 0x04;
 const FRAME_PATH_CHALLENGE: u8 = 0x06;
@@ -57,6 +58,7 @@ const MAX_FRAME_PAYLOAD_LEN: usize = 1024;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Frame {
     Data(Vec<u8>),
+    Datagram(Vec<u8>),
     DeliveryAck(Vec<u8>),
     Close(Vec<u8>),
     PathChallenge([u8; 8]),
@@ -78,6 +80,7 @@ pub enum FrameError {
 fn frame_type(frame: &Frame) -> u8 {
     match frame {
         Frame::Data(_) => FRAME_DATA,
+        Frame::Datagram(_) => FRAME_DATAGRAM,
         Frame::DeliveryAck(_) => FRAME_DELIVERY_ACK,
         Frame::Close(_) => FRAME_CLOSE,
         Frame::PathChallenge(_) => FRAME_PATH_CHALLENGE,
@@ -87,7 +90,7 @@ fn frame_type(frame: &Frame) -> u8 {
 }
 fn frame_payload(frame: &Frame) -> &[u8] {
     match frame {
-        Frame::Data(p) | Frame::DeliveryAck(p) | Frame::Close(p) => p,
+        Frame::Data(p) | Frame::Datagram(p) | Frame::DeliveryAck(p) | Frame::Close(p) => p,
         Frame::PathChallenge(p) | Frame::PathResponse(p) => p,
         Frame::UnknownIgnorable { payload, .. } => payload,
     }
@@ -97,7 +100,7 @@ fn validate_frame_type(t: u8, len: usize) -> Result<(), FrameError> {
         return Err(FrameError::ReservedType(t));
     }
     match t & !FRAME_IGNORABLE {
-        FRAME_DATA | FRAME_DELIVERY_ACK | FRAME_CLOSE => {
+        FRAME_DATA | FRAME_DATAGRAM | FRAME_DELIVERY_ACK | FRAME_CLOSE => {
             if len > MAX_FRAME_PAYLOAD_LEN {
                 Err(FrameError::LengthTooLarge(len))
             } else {
@@ -170,6 +173,7 @@ pub fn decode_frames(mut input: &[u8]) -> Result<Vec<Frame>, FrameError> {
         let base = t & !FRAME_IGNORABLE;
         let frame = match base {
             FRAME_DATA => Frame::Data(payload.to_vec()),
+            FRAME_DATAGRAM => Frame::Datagram(payload.to_vec()),
             FRAME_DELIVERY_ACK => Frame::DeliveryAck(payload.to_vec()),
             FRAME_CLOSE => Frame::Close(payload.to_vec()),
             FRAME_PATH_CHALLENGE => {
@@ -501,5 +505,24 @@ mod frame_tests {
             encode_frames(&[Frame::Data(vec![0; MAX_FRAME_PAYLOAD_LEN + 1])]),
             Err(FrameError::LengthTooLarge(MAX_FRAME_PAYLOAD_LEN + 1))
         );
+    }
+}
+
+#[cfg(test)]
+mod datagram_frame_tests {
+    use super::*;
+    #[test]
+    fn datagram_vector_is_deterministic_and_bounded() {
+        let encoded = encode_frames(&[Frame::Datagram(b"ping".to_vec())]).unwrap();
+        assert_eq!(encoded, vec![0x0c, 0, 4, b'p', b'i', b'n', b'g']);
+        assert_eq!(
+            decode_frames(&encoded),
+            Ok(vec![Frame::Datagram(b"ping".to_vec())])
+        );
+        assert!(encode_frames(&[Frame::Datagram(vec![0; 1025])]).is_err());
+    }
+    #[test]
+    fn datagram_truncation_is_rejected() {
+        assert_eq!(decode_frames(&[0x0c, 0, 4, 1]), Err(FrameError::Truncated));
     }
 }
