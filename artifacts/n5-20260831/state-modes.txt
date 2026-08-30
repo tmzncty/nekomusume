@@ -1,0 +1,4 @@
+700 tmzn:tmzn /var/lib/nekomusume-n5
+600 root:root /var/lib/nekomusume-n5/marker
+600 tmzn:tmzn /var/lib/nekomusume-n5/client.identity
+600 tmzn:tmzn /var/lib/nekomusume-n5/server.identity

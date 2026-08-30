@@ -1,0 +1,2 @@
+d6c9fdd12e3d719b58c260dbbe49d4da685ca5b8fbd3bc4455ac06a83a45847e  /opt/nekomusume-n5/releases/nekomusume-0.1.0-x86_64-unknown-linux-gnu/bin/neko-cli
+c16a026b0e186175db895a0a991673b05df9b8ca5db0cc6885771d2de9cd4c3b  /opt/nekomusume-n5/releases/nekomusume-0.1.1-x86_64-unknown-linux-gnu/bin/neko-cli

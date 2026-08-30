@@ -1,0 +1,5 @@
+./bin/neko-cli: OK
+./share/doc/nekomusume/LICENSE-APACHE: OK
+./share/doc/nekomusume/LICENSE-MIT: OK
+./share/doc/nekomusume/README.txt: OK
+package_smoke_ok target=x86_64-unknown-linux-gnu

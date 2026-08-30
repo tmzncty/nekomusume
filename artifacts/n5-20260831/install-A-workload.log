@@ -1,0 +1,1 @@
+workload_ok duration_seconds=1 concurrency=2 records=24 application_bytes=768 cleanup=verified

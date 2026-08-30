@@ -1,0 +1,1 @@
+/opt/nekomusume-n5/releases/nekomusume-0.1.0-x86_64-unknown-linux-gnu
