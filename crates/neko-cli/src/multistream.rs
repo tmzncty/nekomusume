@@ -6,6 +6,7 @@ use neko_crypto::{
 use neko_session::{
     InboundRecord, ProcessMessage, RuntimeLimits, SessionId, SessionRuntime, StreamId,
 };
+use neko_wire::{NEGOTIATION_VERSION, NegotiationRole, VersionNegotiator};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 
@@ -15,6 +16,7 @@ const MAX_BYTES: usize = 1024;
 const MAX_FRAME: usize = neko_session::PROCESS_FRAME_MAX + 8 + neko_crypto::RECORD_CONTEXT_LEN + 16;
 const DOMAIN: &[u8] = b"nekomusume/neko-cli/multistream/v1";
 const SCOPE: &[u8] = b"neko-cli/multistream";
+const SUPPORTED_VERSIONS: &[u16] = &[NEGOTIATION_VERSION];
 const SESSION: SessionId = SessionId(0x4e454b4f);
 
 fn option(args: &[String], name: &str) -> Option<String> {
@@ -72,19 +74,32 @@ fn server_handshake(
     id: LocalIdentity,
     client_key: Vec<u8>,
 ) -> SecureSession {
+    let mut negotiation = VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
+        .unwrap_or_else(|_| fail("handshake setup failed".into()));
+    let hello = frame_read(socket).unwrap_or_else(|_| fail("handshake rejected".into()));
+    let response = negotiation
+        .server_accept_hello(&hello)
+        .unwrap_or_else(|_| fail("handshake rejected".into()));
+    frame_write(socket, &response).unwrap_or_else(|_| fail("handshake rejected".into()));
+    let binding = negotiation
+        .authenticated_binding()
+        .unwrap_or_else(|_| fail("handshake rejected".into()));
     let policy = TrustPolicy::new(vec![TrustRecord {
         version: 1,
         public_key: client_key,
         scope: SCOPE.to_vec(),
         status: TrustStatus::Active,
     }]);
-    let hs = ResponderHandshake::new(&id, policy, DOMAIN)
+    let hs = ResponderHandshake::new_with_prologue_binding(&id, policy, DOMAIN, binding.as_bytes())
         .unwrap_or_else(|_| fail("handshake setup failed".into()));
-    let first = frame_read(socket).unwrap_or_else(|e| fail(e));
+    let first = frame_read(socket).unwrap_or_else(|_| fail("handshake rejected".into()));
     let (response, session) = hs
         .receive_first(&first, context())
-        .unwrap_or_else(|_| fail("unauthorized client".into()));
-    frame_write(socket, &response).unwrap_or_else(|e| fail(e));
+        .unwrap_or_else(|_| fail("handshake rejected".into()));
+    frame_write(socket, &response).unwrap_or_else(|_| fail("handshake rejected".into()));
+    negotiation
+        .admit_data()
+        .unwrap_or_else(|_| fail("handshake rejected".into()));
     session
 }
 fn client_handshake(
@@ -92,17 +107,41 @@ fn client_handshake(
     id: LocalIdentity,
     server_key: Vec<u8>,
 ) -> SecureSession {
-    let mut hs = InitiatorHandshake::new(&id, &server_key, SCOPE, DOMAIN)
+    let mut negotiation = VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS)
         .unwrap_or_else(|_| fail("handshake setup failed".into()));
+    let hello = negotiation
+        .client_hello()
+        .unwrap_or_else(|_| fail("handshake rejected".into()));
+    frame_write(socket, &hello).unwrap_or_else(|_| fail("handshake rejected".into()));
+    let response = frame_read(socket).unwrap_or_else(|_| fail("handshake rejected".into()));
+    negotiation
+        .client_accept_response(&response)
+        .unwrap_or_else(|_| fail("handshake rejected".into()));
+    let binding = negotiation
+        .authenticated_binding()
+        .unwrap_or_else(|_| fail("handshake rejected".into()));
+    let mut hs = InitiatorHandshake::new_with_prologue_binding(
+        &id,
+        &server_key,
+        SCOPE,
+        DOMAIN,
+        binding.as_bytes(),
+    )
+    .unwrap_or_else(|_| fail("handshake setup failed".into()));
     frame_write(
         socket,
         &hs.first_message()
-            .unwrap_or_else(|_| fail("handshake failed".into())),
+            .unwrap_or_else(|_| fail("handshake rejected".into())),
     )
-    .unwrap_or_else(|e| fail(e));
-    let response = frame_read(socket).unwrap_or_else(|e| fail(e));
-    hs.finish(&response, context())
-        .unwrap_or_else(|_| fail("handshake rejected".into()))
+    .unwrap_or_else(|_| fail("handshake rejected".into()));
+    let response = frame_read(socket).unwrap_or_else(|_| fail("handshake rejected".into()));
+    let session = hs
+        .finish(&response, context())
+        .unwrap_or_else(|_| fail("handshake rejected".into()));
+    negotiation
+        .admit_data()
+        .unwrap_or_else(|_| fail("handshake rejected".into()));
+    session
 }
 
 fn arg(args: &[String], name: &str, default: usize) -> usize {

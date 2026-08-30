@@ -532,6 +532,8 @@ mod datagram_frame_tests {
 pub const MAX_NEGOTIATION_VERSIONS: usize = 16;
 /// The first explicitly negotiated protocol version.
 pub const NEGOTIATION_VERSION: u16 = 0;
+/// Domain separator for the exact authenticated negotiation transcript.
+pub const NEGOTIATION_BINDING_DOMAIN: &[u8] = b"nekomusume/version-negotiation/v1\0";
 const NEGOTIATION_MAGIC: [u8; 2] = *b"N1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -570,6 +572,13 @@ pub struct VersionNegotiator {
     // The accepted hello and response are retained for loss recovery.
     accepted_hello: Option<Vec<u8>>,
     accepted_response: Option<Vec<u8>>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NegotiationBinding(Vec<u8>);
+impl NegotiationBinding {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
 }
 impl VersionNegotiator {
     pub fn new(role: NegotiationRole, supported: &[u16]) -> Result<Self, NegotiationError> {
@@ -674,11 +683,34 @@ impl VersionNegotiator {
             return Err(NegotiationError::UnsupportedSelected(selected));
         }
         self.state = NegotiationState::Established(selected);
+        self.accepted_hello = Some(encode_hello(&self.supported)?);
+        self.accepted_response = Some(input.to_vec());
         Ok(selected)
     }
     /// Admission guard for the wire/session boundary: data is forbidden pre-negotiation.
     pub fn admit_data(&self) -> Result<u16, NegotiationError> {
         self.selected().ok_or(NegotiationError::UnexpectedMessage)
+    }
+    /// Exact canonical transcript committed to the authenticated transport.
+    pub fn authenticated_binding(&self) -> Result<NegotiationBinding, NegotiationError> {
+        let selected = self.admit_data()?;
+        let hello = self
+            .accepted_hello
+            .as_deref()
+            .ok_or(NegotiationError::UnexpectedMessage)?;
+        let response = self
+            .accepted_response
+            .as_deref()
+            .ok_or(NegotiationError::UnexpectedMessage)?;
+        let mut out =
+            Vec::with_capacity(NEGOTIATION_BINDING_DOMAIN.len() + 6 + hello.len() + response.len());
+        out.extend_from_slice(NEGOTIATION_BINDING_DOMAIN);
+        out.extend_from_slice(&(hello.len() as u16).to_be_bytes());
+        out.extend_from_slice(hello);
+        out.extend_from_slice(&(response.len() as u16).to_be_bytes());
+        out.extend_from_slice(response);
+        out.extend_from_slice(&selected.to_be_bytes());
+        Ok(NegotiationBinding(out))
     }
 }
 fn encode_hello(versions: &[u16]) -> Result<Vec<u8>, NegotiationError> {
@@ -747,6 +779,31 @@ mod negotiation_tests {
             VersionNegotiator::new(NegotiationRole::Client, &[0, 2]).unwrap(),
             VersionNegotiator::new(NegotiationRole::Server, &[0, 1]).unwrap(),
         )
+    }
+    #[test]
+    fn established_peers_produce_identical_exact_bindings() {
+        let (mut c, mut s) = pair();
+        assert!(c.authenticated_binding().is_err());
+        let hello = c.client_hello().unwrap();
+        let response = s.server_accept_hello(&hello).unwrap();
+        c.client_accept_response(&response).unwrap();
+        let cb = c.authenticated_binding().unwrap();
+        let sb = s.authenticated_binding().unwrap();
+        assert_eq!(cb, sb);
+        assert!(cb.as_bytes().windows(hello.len()).any(|w| w == hello));
+        assert!(cb.as_bytes().windows(response.len()).any(|w| w == response));
+    }
+    #[test]
+    fn same_selection_with_different_offer_has_different_binding() {
+        let mut a = VersionNegotiator::new(NegotiationRole::Client, &[0]).unwrap();
+        let mut b = VersionNegotiator::new(NegotiationRole::Client, &[0, 2]).unwrap();
+        let response = encode_response(0);
+        a.client_accept_response(&response).unwrap();
+        b.client_accept_response(&response).unwrap();
+        assert_ne!(
+            a.authenticated_binding().unwrap(),
+            b.authenticated_binding().unwrap()
+        );
     }
     #[test]
     fn compatible_selects_highest_and_establishes_only_after_both_messages() {

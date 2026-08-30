@@ -265,6 +265,25 @@ fn prologue(application_domain: &[u8]) -> Result<Vec<u8>, SessionRejected> {
     p.extend_from_slice(application_domain);
     Ok(p)
 }
+fn bound_prologue(application_domain: &[u8], binding: &[u8]) -> Result<Vec<u8>, SessionRejected> {
+    if binding.len() > 256 {
+        return Err(SessionRejected);
+    }
+    if binding.is_empty() {
+        return prologue(application_domain);
+    }
+    if application_domain.is_empty() || application_domain.len() > 128 {
+        return Err(SessionRejected);
+    }
+    let mut p =
+        Vec::with_capacity(PROLOGUE_PREFIX.len() + 4 + application_domain.len() + binding.len());
+    p.extend_from_slice(PROLOGUE_PREFIX);
+    p.extend_from_slice(&(application_domain.len() as u16).to_be_bytes());
+    p.extend_from_slice(application_domain);
+    p.extend_from_slice(&(binding.len() as u16).to_be_bytes());
+    p.extend_from_slice(binding);
+    Ok(p)
+}
 
 pub struct InitiatorHandshake {
     state: snow::HandshakeState,
@@ -276,6 +295,28 @@ pub struct ResponderHandshake {
 }
 
 impl InitiatorHandshake {
+    pub fn new_with_prologue_binding(
+        local: &LocalIdentity,
+        responder_public: &[u8],
+        scope: &[u8],
+        application_domain: &[u8],
+        binding: &[u8],
+    ) -> Result<Self, SessionRejected> {
+        if scope.is_empty() || scope.len() > 128 {
+            return Err(SessionRejected);
+        }
+        let p = bound_prologue(application_domain, binding)?;
+        let state = snow::Builder::new(noise_ik_params())
+            .local_private_key(&local.private)
+            .and_then(|b| b.remote_public_key(responder_public))
+            .and_then(|b| b.prologue(&p))
+            .and_then(snow::Builder::build_initiator)
+            .map_err(|_| SessionRejected)?;
+        Ok(Self {
+            state,
+            scope: scope.to_vec(),
+        })
+    }
     pub fn new(
         local: &LocalIdentity,
         responder_public: &[u8],
@@ -350,6 +391,20 @@ impl InitiatorHandshake {
 }
 
 impl ResponderHandshake {
+    pub fn new_with_prologue_binding(
+        local: &LocalIdentity,
+        policy: TrustPolicy,
+        application_domain: &[u8],
+        binding: &[u8],
+    ) -> Result<Self, SessionRejected> {
+        let p = bound_prologue(application_domain, binding)?;
+        let state = snow::Builder::new(noise_ik_params())
+            .local_private_key(&local.private)
+            .and_then(|b| b.prologue(&p))
+            .and_then(snow::Builder::build_responder)
+            .map_err(|_| SessionRejected)?;
+        Ok(Self { state, policy })
+    }
     pub fn new(
         local: &LocalIdentity,
         policy: TrustPolicy,
@@ -550,6 +605,62 @@ mod session_tests {
         let (response, rs) = r.receive_first(&first, ctx(0)).unwrap();
         let is = i.finish(&response, ctx(0)).unwrap();
         (is, rs)
+    }
+    #[test]
+    fn authenticated_binding_matches_and_one_bit_mismatch_fails_before_session() {
+        let initiator = LocalIdentity::generate().unwrap();
+        let responder = LocalIdentity::generate().unwrap();
+        let policy = || {
+            TrustPolicy::new(vec![TrustRecord {
+                version: 1,
+                public_key: initiator.public_key().to_vec(),
+                scope: b"echo".to_vec(),
+                status: TrustStatus::Active,
+            }])
+        };
+        let binding = b"exact transcript";
+        let mut i = InitiatorHandshake::new_with_prologue_binding(
+            &initiator,
+            responder.public_key(),
+            b"echo",
+            b"bound",
+            binding,
+        )
+        .unwrap();
+        let first = i.first_message().unwrap();
+        let r =
+            ResponderHandshake::new_with_prologue_binding(&responder, policy(), b"bound", binding)
+                .unwrap();
+        let (response, mut receiver) = r.receive_first(&first, ctx(0)).unwrap();
+        let mut sender = i.finish(&response, ctx(0)).unwrap();
+        assert_eq!(
+            receiver.open(&sender.seal(b"admitted").unwrap()).unwrap(),
+            b"admitted"
+        );
+        let mut i = InitiatorHandshake::new_with_prologue_binding(
+            &initiator,
+            responder.public_key(),
+            b"echo",
+            b"bound",
+            binding,
+        )
+        .unwrap();
+        let first = i.first_message().unwrap();
+        let mut bad = binding.to_vec();
+        bad[0] ^= 1;
+        let r = ResponderHandshake::new_with_prologue_binding(&responder, policy(), b"bound", &bad)
+            .unwrap();
+        assert!(r.receive_first(&first, ctx(0)).is_err());
+        assert!(
+            InitiatorHandshake::new_with_prologue_binding(
+                &initiator,
+                responder.public_key(),
+                b"echo",
+                b"bound",
+                &[0; 257]
+            )
+            .is_err()
+        );
     }
     #[test]
     fn ik_handshake_and_bidirectional_records() {

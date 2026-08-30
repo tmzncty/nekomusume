@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 neko-crypto = { path = "../neko-crypto" }
+neko-wire = { path = "../neko-wire" }
 neko-carrier = { path = "../neko-carrier" }
 neko-session = { path = "../neko-session" }
 signal-hook = "0.3"
