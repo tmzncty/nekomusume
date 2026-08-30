@@ -1863,6 +1863,115 @@ impl CarrierHealth {
     }
 }
 
+/// Bounded, local-only health evidence for later workload correlation.
+/// Samples and transitions are retained in insertion order up to the same
+/// explicit bound, and JSON output is deterministic and timestamp-free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HealthEvidenceLimits {
+    pub max_samples: usize,
+}
+impl Default for HealthEvidenceLimits {
+    fn default() -> Self {
+        Self { max_samples: 128 }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HealthSampleEvidence {
+    pub path: PathId,
+    pub sample: HealthSample,
+    pub state: HealthState,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HealthTransitionEvidence {
+    pub path: PathId,
+    pub from: HealthState,
+    pub to: HealthState,
+}
+#[derive(Debug)]
+pub struct CarrierHealthEvidence {
+    health: CarrierHealth,
+    limits: HealthEvidenceLimits,
+    samples: Vec<HealthSampleEvidence>,
+    transitions: Vec<HealthTransitionEvidence>,
+}
+impl CarrierHealthEvidence {
+    pub fn new(
+        health_limits: HealthLimits,
+        evidence_limits: HealthEvidenceLimits,
+    ) -> Result<Self, HealthError> {
+        if evidence_limits.max_samples == 0 {
+            return Err(HealthError::InvalidLimit);
+        }
+        Ok(Self {
+            health: CarrierHealth::new(health_limits)?,
+            limits: evidence_limits,
+            samples: Vec::new(),
+            transitions: Vec::new(),
+        })
+    }
+    pub fn observe(
+        &mut self,
+        path: PathId,
+        sample: HealthSample,
+    ) -> Result<HealthState, HealthError> {
+        let previous = self.health.path(path).map(|record| record.state);
+        let state = self.health.observe(path, sample)?;
+        if self.samples.len() == self.limits.max_samples {
+            self.samples.remove(0);
+        }
+        self.samples.push(HealthSampleEvidence {
+            path,
+            sample,
+            state,
+        });
+        if let Some(from) = previous.filter(|from| *from != state) {
+            if self.transitions.len() == self.limits.max_samples {
+                self.transitions.remove(0);
+            }
+            self.transitions.push(HealthTransitionEvidence {
+                path,
+                from,
+                to: state,
+            });
+        }
+        Ok(state)
+    }
+    pub fn samples(&self) -> &[HealthSampleEvidence] {
+        &self.samples
+    }
+    pub fn transitions(&self) -> &[HealthTransitionEvidence] {
+        &self.transitions
+    }
+    pub fn json(&self) -> String {
+        let samples = self.samples.iter().map(|e| format!("{{\"path\":{},\"rtt_us\":{},\"loss_per_mille\":{},\"pto\":{},\"state\":\"{}\"}}", e.path.0, e.sample.rtt_us, e.sample.loss_per_mille, e.sample.pto, health_state_name(e.state))).collect::<Vec<_>>().join(",");
+        let transitions = self
+            .transitions
+            .iter()
+            .map(|e| {
+                format!(
+                    "{{\"path\":{},\"from\":\"{}\",\"to\":\"{}\"}}",
+                    e.path.0,
+                    health_state_name(e.from),
+                    health_state_name(e.to)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"samples\":[{}],\"transitions\":[{}]}}",
+            samples, transitions
+        )
+    }
+}
+fn health_state_name(state: HealthState) -> &'static str {
+    match state {
+        HealthState::Unknown => "unknown",
+        HealthState::Healthy => "healthy",
+        HealthState::Degraded => "degraded",
+        HealthState::Failed => "failed",
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CarrierScore {
     pub score: i64,
@@ -2409,5 +2518,62 @@ mod manager_tests {
         assert_eq!(m.active(), Some(PathId(20)));
         assert_eq!(m.switches, 1);
         assert_eq!(m.migrate_back_to_udp(base), Err(MigrationError::NotTcp));
+    }
+}
+
+#[cfg(test)]
+mod health_evidence_tests {
+    use super::*;
+
+    #[test]
+    fn evidence_is_bounded_and_json_is_deterministic() {
+        let mut evidence = CarrierHealthEvidence::new(
+            HealthLimits {
+                degrade_after: 2,
+                fail_after: 4,
+                recover_after: 2,
+                max_paths: 2,
+            },
+            HealthEvidenceLimits { max_samples: 2 },
+        )
+        .unwrap();
+        let good = HealthSample {
+            rtt_us: 1200,
+            loss_per_mille: 0,
+            pto: 0,
+        };
+        let bad = HealthSample {
+            rtt_us: 9000,
+            loss_per_mille: 500,
+            pto: 3,
+        };
+        assert_eq!(evidence.observe(PathId(7), good), Ok(HealthState::Healthy));
+        assert_eq!(evidence.observe(PathId(7), bad), Ok(HealthState::Healthy));
+        assert_eq!(evidence.observe(PathId(7), bad), Ok(HealthState::Degraded));
+        assert_eq!(evidence.samples().len(), 2);
+        assert_eq!(
+            evidence.transitions(),
+            &[HealthTransitionEvidence {
+                path: PathId(7),
+                from: HealthState::Healthy,
+                to: HealthState::Degraded
+            }]
+        );
+        assert_eq!(
+            evidence.json(),
+            "{\"samples\":[{\"path\":7,\"rtt_us\":9000,\"loss_per_mille\":500,\"pto\":3,\"state\":\"healthy\"},{\"path\":7,\"rtt_us\":9000,\"loss_per_mille\":500,\"pto\":3,\"state\":\"degraded\"}],\"transitions\":[{\"path\":7,\"from\":\"healthy\",\"to\":\"degraded\"}]}"
+        );
+    }
+
+    #[test]
+    fn evidence_rejects_zero_bound_without_mutation() {
+        assert_eq!(
+            CarrierHealthEvidence::new(
+                HealthLimits::default(),
+                HealthEvidenceLimits { max_samples: 0 }
+            )
+            .unwrap_err(),
+            HealthError::InvalidLimit
+        );
     }
 }
