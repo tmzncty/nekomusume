@@ -1,4 +1,5 @@
 //! Bounded authenticated research probe runtime; never a proxy or tunnel.
+mod multistream;
 mod reachability;
 
 use neko_crypto::{
@@ -1052,6 +1053,7 @@ fn main() {
         Some("lab") => lab(&a),
         Some("workload") => workload(&a),
         Some("key-update") => key_update_fixture(&a),
+        Some("multistream") => multistream::run(&a),
         Some("failover") | Some("failover-server") | Some("failover-client") => failover_gate(&a),
         Some("keygen") => {
             let path = PathBuf::from(parse(&a, "--identity", Some("neko-client.identity")));
