@@ -267,6 +267,9 @@ dependencies = [
 [[package]]
 name = "neko-reliable"
 version = "0.1.0"
+dependencies = [
+ "neko-carrier",
+]
 
 [[package]]
 name = "neko-session"
