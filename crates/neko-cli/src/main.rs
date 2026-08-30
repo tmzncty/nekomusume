@@ -1,4 +1,5 @@
 //! Bounded authenticated research probe runtime; never a proxy or tunnel.
+mod lifecycle;
 mod multistream;
 mod reachability;
 
@@ -14,11 +15,19 @@ use neko_session::{
     InboundRecord, ProcessMessage, ResumeWireBinding, RuntimeLimits, SessionId, SessionRuntime,
     StreamId,
 };
+use signal_hook::{
+    consts::{SIGINT, SIGTERM},
+    flag,
+};
 use std::{
     env, fs,
     io::{Read, Write},
     net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket},
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 const USAGE: &str = "Usage: neko <server|client|probe|lab|failover-server|workload|failover-client|keygen|capabilities> [bounded options]
@@ -309,7 +318,12 @@ fn write_frame(s: &mut TcpStream, b: &[u8]) -> std::io::Result<()> {
     s.flush()
 }
 fn server(args: &[String]) {
+    let lifecycle = lifecycle::Lifecycle::new();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    flag::register(SIGTERM, Arc::clone(&shutdown)).unwrap_or_else(|_| fail("signal setup failed"));
+    flag::register(SIGINT, Arc::clone(&shutdown)).unwrap_or_else(|_| fail("signal setup failed"));
     let (t, p, max, d) = common(args);
+    lifecycle.mark_ready(); // configuration parsed
     let count = exchange_count(args);
     let idpath = PathBuf::from(parse(args, "--identity", Some("neko-server.identity")));
     let id = load_or_generate(&idpath);
@@ -325,6 +339,7 @@ fn server(args: &[String]) {
         scope: b"probe".to_vec(),
         status: TrustStatus::Active,
     }]);
+    lifecycle.mark_ready(); // trust policy/state initialized
     if t == "tcp" {
         let bind_addr = parse(args, "--bind", Some("0.0.0.0:0"));
         let bind: SocketAddr = if bind_addr == "0.0.0.0:0" {
@@ -339,7 +354,15 @@ fn server(args: &[String]) {
         }
         let l = TcpListener::bind(bind).unwrap_or_else(|_| fail("bind failed"));
         l.set_nonblocking(true).unwrap();
-        while start.elapsed() < d {
+        lifecycle.mark_ready();
+        lifecycle.mark_ready();
+        lifecycle.finalize_readiness();
+        println!(
+            "lifecycle_state={} readiness={}",
+            lifecycle.state().as_str(),
+            lifecycle.readiness()
+        );
+        while start.elapsed() < d && !shutdown.load(Ordering::Acquire) {
             match l.accept() {
                 Ok((mut s, _)) => {
                     let first = read_frame(&mut s, 1024).unwrap_or_else(|_| fail("bad handshake"));
@@ -359,6 +382,8 @@ fn server(args: &[String]) {
                             .unwrap_or_else(|_| fail("seal failure"));
                         write_frame(&mut s, &reply).unwrap();
                     }
+                    lifecycle.stopped();
+                    println!("lifecycle_state=STOPPED readiness=false");
                     return;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -380,10 +405,18 @@ fn server(args: &[String]) {
             fail("bind port must equal --port");
         }
         let u = UdpSocket::bind(bind).unwrap_or_else(|_| fail("bind failed"));
+        lifecycle.mark_ready();
+        lifecycle.mark_ready();
+        lifecycle.finalize_readiness();
+        println!(
+            "lifecycle_state={} readiness={}",
+            lifecycle.state().as_str(),
+            lifecycle.readiness()
+        );
         u.set_read_timeout(Some(Duration::from_millis(100)))
             .unwrap();
         let mut b = [0; 65536];
-        while start.elapsed() < d {
+        while start.elapsed() < d && !shutdown.load(Ordering::Acquire) {
             if let Ok((n, peer)) = u.recv_from(&mut b) {
                 let first = &b[..n];
                 let (resp, mut ss) = ResponderHandshake::new(&id, policy.clone(), DOMAIN)
@@ -401,10 +434,19 @@ fn server(args: &[String]) {
                         .unwrap_or_else(|_| fail("seal failure"));
                     u.send_to(&reply, peer).unwrap();
                 }
+                lifecycle.stopped();
+                println!("lifecycle_state=STOPPED readiness=false");
                 return;
             }
         }
     }
+    if shutdown.load(Ordering::Acquire) {
+        lifecycle.drain();
+        lifecycle.stopped();
+        println!("lifecycle_state=STOPPED readiness=false");
+        return;
+    }
+    lifecycle.failed();
     fail("duration expired")
 }
 fn client(args: &[String]) {

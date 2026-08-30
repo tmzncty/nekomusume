@@ -8,6 +8,7 @@ license.workspace = true
 neko-crypto = { path = "../neko-crypto" }
 neko-carrier = { path = "../neko-carrier" }
 neko-session = { path = "../neko-session" }
+signal-hook = "0.3"
 
 [lints]
 workspace = true
