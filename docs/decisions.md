@@ -920,3 +920,24 @@ fresh explicit authorization. `docs/vps-soak-plan-2026-08-30.md` defines a
 non-executable 5/10-minute plan, 1-second resource sampling, abort guards,
 redacted retention and cleanup verification. This decision does not authorize
 WAN/VPS execution or production exposure.
+
+
+## 2026-08-30 — D064：Unreliable Session datagram semantic contract
+
+**Status: Candidate/provisional — no wire/API/code/runtime/WAN change**
+
+确认本决策的 parent 尾号为 D063。现有 `seal_unreliable`/`open_unreliable`
+仅是 authenticated record API；它们不能把内层可靠的
+`ProcessMessage::Data` 降级为 unreliable Session message。1200 是 payload
+cap，必须与 authenticated envelope 和 carrier/path packetization limit
+区分。该候选语义明确 drop/admission、无 retransmission/ACK、无 ordering，且
+不自行提供 flow/congestion control；mixed reliable/unreliable traffic 必须
+分别记录结果并避免 unreliable traffic 造成 reliable delivery starvation。
+
+`offered`、`admitted`、`opened`、`dropped`、各类 rejection、carrier
+unadmitted 和 queue dropped 等仅可作为候选诊断 counters，不构成 receipt、
+ordering、fairness、throughput、congestion 或 application-effect 证据。CLI
+决定为保留现有 bounded probe，暂不新增用户级 datagram CLI。本文档、
+`docs/spec/m2-unreliable-datagram.md` 和
+`docs/specs/nekomusume-session-v0.md` 只记录语义边界，不授权 wire/API/code/
+runtime/WAN 变更或生产暴露。

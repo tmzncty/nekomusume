@@ -52,3 +52,23 @@ not an approval. No `Accepted` record implicitly escalates a candidate. If this
 entry point conflicts with an ADR or research record, G0 is **STOP**; an
 explicit new ADR (or explicit reviewed amendment) is required before any
 selection, freeze, implementation, merge, or security claim.
+
+## Unreliable datagram boundary (provisional)
+
+The existing `seal_unreliable`/`open_unreliable` APIs are authenticated record
+operations, not a downgrade switch for Session semantics. They do not turn an
+inner reliable `ProcessMessage::Data` into an unreliable message: reliable
+Session delivery retains its ordering, retransmission, flow-control and
+independent delivery-evidence contract. An opened unreliable record is not an
+application delivery receipt.
+
+For an eventual datagram-shaped Session message, the candidate semantics are:
+a payload cap of 1200 bytes distinct from authenticated envelope and
+carrier/path limits; bounded drop/admission with no retransmission or ACK;
+no ordering guarantee; no independent flow/congestion algorithm; and explicit
+separation of mixed reliable/unreliable queues so unreliable traffic cannot
+starve reliable delivery. Candidate counters may describe offered/admitted/
+opened/drop/rejection outcomes, but are diagnostic only and do not promote
+packet or carrier observations to `delivered` or `effect`. This paragraph is
+provisional and introduces no wire/API/code/runtime/WAN change. The existing
+bounded probe remains the CLI surface; no user-level datagram CLI is added.
