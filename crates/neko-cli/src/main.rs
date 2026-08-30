@@ -2,7 +2,10 @@
 mod multistream;
 mod reachability;
 
-use neko_carrier::{FairScheduler, FlowLimits, StreamId as CarrierStreamId, StreamPriority};
+use neko_carrier::{
+    CarrierHealthEvidence, FairScheduler, FlowLimits, HealthEvidenceLimits, HealthLimits,
+    HealthSample, PathId, StreamId as CarrierStreamId, StreamPriority,
+};
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, ResumeGuard, TrustPolicy,
     TrustRecord, TrustStatus,
@@ -73,6 +76,49 @@ fn emit_probe(args: &[String], transport: &str, bytes: usize, elapsed_ms: u128) 
         );
     }
 }
+fn health_observe(args: &[String]) {
+    let path = parse(args, "--path", None)
+        .parse::<u64>()
+        .unwrap_or_else(|_| fail("invalid path"));
+    let rtt_us = parse(args, "--rtt-us", None)
+        .parse::<u64>()
+        .unwrap_or_else(|_| fail("invalid rtt-us"));
+    let loss_per_mille = parse(args, "--loss-per-mille", None)
+        .parse::<u16>()
+        .unwrap_or_else(|_| fail("invalid loss-per-mille"));
+    let pto = parse(args, "--pto", None)
+        .parse::<u16>()
+        .unwrap_or_else(|_| fail("invalid pto"));
+    if loss_per_mille > 1000 {
+        fail("loss-per-mille outside 0-1000");
+    }
+    let count = exchange_count(args);
+    let mut evidence = CarrierHealthEvidence::new(
+        HealthLimits::default(),
+        HealthEvidenceLimits { max_samples: 64 },
+    )
+    .unwrap_or_else(|_| fail("health limits invalid"));
+    let sample = HealthSample {
+        rtt_us,
+        loss_per_mille,
+        pto,
+    };
+    for _ in 0..count {
+        evidence
+            .observe(PathId(path), sample)
+            .unwrap_or_else(|_| fail("health path limit exceeded"));
+    }
+    if !json_mode(args) {
+        println!(
+            "health_observe_ok samples={} path={}",
+            evidence.samples().len(),
+            path
+        );
+    } else {
+        println!("{}", evidence.json());
+    }
+}
+
 fn fail(msg: &str) -> ! {
     eprintln!("neko: {msg}");
     std::process::exit(2)
@@ -1159,6 +1205,7 @@ fn main() {
         Some("workload") => workload(&a),
         Some("scheduler-fairness") => scheduler_fairness(&a),
         Some("key-update") => key_update_fixture(&a),
+        Some("health-observe") => health_observe(&a),
         Some("multistream") => multistream::run(&a),
         Some("failover") | Some("failover-server") | Some("failover-client") => failover_gate(&a),
         Some("keygen") => {
@@ -1174,6 +1221,26 @@ fn main() {
 #[cfg(test)]
 mod cli_regression_tests {
     use super::*;
+    #[test]
+    fn health_observe_arguments_are_bounded_and_parseable() {
+        let args = vec![
+            "health-observe".into(),
+            "--path".into(),
+            "7".into(),
+            "--rtt-us".into(),
+            "1200".into(),
+            "--loss-per-mille".into(),
+            "0".into(),
+            "--pto".into(),
+            "0".into(),
+            "--count".into(),
+            "2".into(),
+            "--json".into(),
+        ];
+        assert_eq!(exchange_count(&args), 2);
+        assert!(json_mode(&args));
+    }
+
     #[test]
     fn json_mode_is_detected_without_affecting_address_family() {
         assert!(json_mode(&["probe".into(), "--json".into()]));
