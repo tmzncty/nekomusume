@@ -526,3 +526,278 @@ mod datagram_frame_tests {
         assert_eq!(decode_frames(&[0x0c, 0, 4, 1]), Err(FrameError::Truncated));
     }
 }
+
+/// Maximum number of versions in a negotiation message. This is deliberately
+/// small: peer-controlled counts must never drive unbounded allocation.
+pub const MAX_NEGOTIATION_VERSIONS: usize = 16;
+/// The first explicitly negotiated protocol version.
+pub const NEGOTIATION_VERSION: u16 = 0;
+const NEGOTIATION_MAGIC: [u8; 2] = *b"N1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NegotiationRole {
+    Client,
+    Server,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NegotiationState {
+    Awaiting,
+    Established(u16),
+    Rejected,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NegotiationError {
+    EmptySupported,
+    TooManySupported,
+    UnsortedSupported,
+    DuplicateSupported(u16),
+    Malformed,
+    TooManyOffered,
+    DuplicateOffered(u16),
+    NoCompatibleVersion,
+    UnexpectedMessage,
+    LateMessage,
+    UnsupportedSelected(u16),
+}
+
+/// A bounded, explicit version handshake. It is transport-independent and is
+/// intended to run before any Session data is accepted or emitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionNegotiator {
+    role: NegotiationRole,
+    supported: Vec<u16>,
+    state: NegotiationState,
+}
+impl VersionNegotiator {
+    pub fn new(role: NegotiationRole, supported: &[u16]) -> Result<Self, NegotiationError> {
+        if supported.is_empty() {
+            return Err(NegotiationError::EmptySupported);
+        }
+        if supported.len() > MAX_NEGOTIATION_VERSIONS {
+            return Err(NegotiationError::TooManySupported);
+        }
+        for pair in supported.windows(2) {
+            if pair[0] >= pair[1] {
+                return Err(if pair[0] == pair[1] {
+                    NegotiationError::DuplicateSupported(pair[0])
+                } else {
+                    NegotiationError::UnsortedSupported
+                });
+            }
+        }
+        Ok(Self {
+            role,
+            supported: supported.to_vec(),
+            state: NegotiationState::Awaiting,
+        })
+    }
+    pub fn state(&self) -> NegotiationState {
+        self.state
+    }
+    pub fn is_established(&self) -> bool {
+        matches!(self.state, NegotiationState::Established(_))
+    }
+    pub fn selected(&self) -> Option<u16> {
+        match self.state {
+            NegotiationState::Established(v) => Some(v),
+            _ => None,
+        }
+    }
+    /// Client's first flight. Calling it after negotiation is a deterministic rejection.
+    pub fn client_hello(&self) -> Result<Vec<u8>, NegotiationError> {
+        if self.role != NegotiationRole::Client {
+            return Err(NegotiationError::UnexpectedMessage);
+        }
+        if self.state != NegotiationState::Awaiting {
+            return Err(NegotiationError::LateMessage);
+        }
+        encode_hello(&self.supported)
+    }
+    /// Server consumes exactly one client hello and returns a selected-version response.
+    pub fn server_accept_hello(&mut self, input: &[u8]) -> Result<Vec<u8>, NegotiationError> {
+        if self.role != NegotiationRole::Server {
+            return Err(NegotiationError::UnexpectedMessage);
+        }
+        if self.state != NegotiationState::Awaiting {
+            return Err(NegotiationError::LateMessage);
+        }
+        let offered = match decode_hello(input) {
+            Ok(offered) => offered,
+            Err(error) => {
+                self.state = NegotiationState::Rejected;
+                return Err(error);
+            }
+        };
+        let selected = self
+            .supported
+            .iter()
+            .rev()
+            .find(|v| offered.binary_search(v).is_ok())
+            .copied();
+        let Some(selected) = selected else {
+            self.state = NegotiationState::Rejected;
+            return Err(NegotiationError::NoCompatibleVersion);
+        };
+        self.state = NegotiationState::Established(selected);
+        Ok(encode_response(selected))
+    }
+    /// Client consumes exactly one server response.
+    pub fn client_accept_response(&mut self, input: &[u8]) -> Result<u16, NegotiationError> {
+        if self.role != NegotiationRole::Client {
+            return Err(NegotiationError::UnexpectedMessage);
+        }
+        if self.state != NegotiationState::Awaiting {
+            return Err(NegotiationError::LateMessage);
+        }
+        let selected = match decode_response(input) {
+            Ok(selected) => selected,
+            Err(error) => {
+                self.state = NegotiationState::Rejected;
+                return Err(error);
+            }
+        };
+        if self.supported.binary_search(&selected).is_err() {
+            self.state = NegotiationState::Rejected;
+            return Err(NegotiationError::UnsupportedSelected(selected));
+        }
+        self.state = NegotiationState::Established(selected);
+        Ok(selected)
+    }
+    /// Admission guard for the wire/session boundary: data is forbidden pre-negotiation.
+    pub fn admit_data(&self) -> Result<u16, NegotiationError> {
+        self.selected().ok_or(NegotiationError::UnexpectedMessage)
+    }
+}
+fn encode_hello(versions: &[u16]) -> Result<Vec<u8>, NegotiationError> {
+    if versions.is_empty() || versions.len() > MAX_NEGOTIATION_VERSIONS {
+        return Err(NegotiationError::TooManyOffered);
+    }
+    let mut out = Vec::with_capacity(4 + versions.len() * 2);
+    out.extend_from_slice(&NEGOTIATION_MAGIC);
+    out.push(1);
+    out.push(versions.len() as u8);
+    for v in versions {
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    Ok(out)
+}
+fn decode_hello(input: &[u8]) -> Result<Vec<u16>, NegotiationError> {
+    if input.len() < 4 || input[..2] != NEGOTIATION_MAGIC || input[2] != 1 {
+        return Err(NegotiationError::Malformed);
+    }
+    let count = input[3] as usize;
+    if count == 0 || count > MAX_NEGOTIATION_VERSIONS || input.len() != 4 + count * 2 {
+        return Err(if count > MAX_NEGOTIATION_VERSIONS {
+            NegotiationError::TooManyOffered
+        } else {
+            NegotiationError::Malformed
+        });
+    }
+    let mut versions = Vec::with_capacity(count);
+    let bytes = &input[4..];
+    let mut index = 0;
+    while index < bytes.len() {
+        let v = u16::from_be_bytes([bytes[index], bytes[index + 1]]);
+        index += 2;
+        if versions.last().is_some_and(|last| *last == v) {
+            return Err(NegotiationError::DuplicateOffered(v));
+        }
+        if versions.last().is_some_and(|last| *last > v) {
+            return Err(NegotiationError::Malformed);
+        }
+        versions.push(v);
+    }
+    Ok(versions)
+}
+fn encode_response(version: u16) -> Vec<u8> {
+    vec![
+        NEGOTIATION_MAGIC[0],
+        NEGOTIATION_MAGIC[1],
+        2,
+        0,
+        (version >> 8) as u8,
+        version as u8,
+    ]
+}
+fn decode_response(input: &[u8]) -> Result<u16, NegotiationError> {
+    if input.len() != 6 || input[..2] != NEGOTIATION_MAGIC || input[2] != 2 || input[3] != 0 {
+        return Err(NegotiationError::Malformed);
+    }
+    Ok(u16::from_be_bytes([input[4], input[5]]))
+}
+
+#[cfg(test)]
+mod negotiation_tests {
+    use super::*;
+    fn pair() -> (VersionNegotiator, VersionNegotiator) {
+        (
+            VersionNegotiator::new(NegotiationRole::Client, &[0, 2]).unwrap(),
+            VersionNegotiator::new(NegotiationRole::Server, &[0, 1]).unwrap(),
+        )
+    }
+    #[test]
+    fn compatible_selects_highest_and_establishes_only_after_both_messages() {
+        let (mut c, mut s) = pair();
+        assert_eq!(c.admit_data(), Err(NegotiationError::UnexpectedMessage));
+        let hello = c.client_hello().unwrap();
+        let response = s.server_accept_hello(&hello).unwrap();
+        assert_eq!(s.selected(), Some(0));
+        assert_eq!(c.client_accept_response(&response), Ok(0));
+        assert_eq!(c.admit_data(), Ok(0));
+    }
+    #[test]
+    fn no_overlap_is_terminal_and_future_is_not_accepted() {
+        let mut s = VersionNegotiator::new(NegotiationRole::Server, &[7]).unwrap();
+        let h = encode_hello(&[8]).unwrap();
+        assert_eq!(
+            s.server_accept_hello(&h),
+            Err(NegotiationError::NoCompatibleVersion)
+        );
+        assert_eq!(s.state(), NegotiationState::Rejected);
+        assert_eq!(
+            s.server_accept_hello(&encode_hello(&[7]).unwrap()),
+            Err(NegotiationError::LateMessage)
+        );
+    }
+    #[test]
+    fn malformed_and_duplicate_are_deterministic_and_bounded() {
+        let duplicate = [b'N', b'1', 1, 2, 0, 0, 0, 0];
+        let truncated = [b'N', b'1', 1, 1, 0];
+        for (input, expected) in [
+            (&duplicate[..], NegotiationError::DuplicateOffered(0)),
+            (&truncated[..], NegotiationError::Malformed),
+        ] {
+            let mut s = VersionNegotiator::new(NegotiationRole::Server, &[0]).unwrap();
+            assert_eq!(s.server_accept_hello(input), Err(expected));
+            assert_eq!(s.state(), NegotiationState::Rejected);
+        }
+        let mut oversized = vec![b'N', b'1', 1, 17];
+        oversized.extend([0; 34]);
+        let mut s = VersionNegotiator::new(NegotiationRole::Server, &[0]).unwrap();
+        assert_eq!(
+            s.server_accept_hello(&oversized),
+            Err(NegotiationError::TooManyOffered)
+        );
+    }
+    #[test]
+    fn duplicate_supported_future_response_and_late_messages_reject() {
+        assert_eq!(
+            VersionNegotiator::new(NegotiationRole::Client, &[1, 1]),
+            Err(NegotiationError::DuplicateSupported(1))
+        );
+        let (mut c, mut s) = pair();
+        let h = c.client_hello().unwrap();
+        let r = s.server_accept_hello(&h).unwrap();
+        assert_eq!(c.client_accept_response(&r), Ok(0));
+        assert_eq!(
+            c.client_accept_response(&r),
+            Err(NegotiationError::LateMessage)
+        );
+        assert_eq!(
+            VersionNegotiator::new(NegotiationRole::Client, &[0])
+                .unwrap()
+                .client_accept_response(&encode_response(9)),
+            Err(NegotiationError::UnsupportedSelected(9))
+        );
+    }
+}

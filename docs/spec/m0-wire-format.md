@@ -40,3 +40,16 @@ PATH_CHALLENGE (`0x06`) and PATH_RESPONSE (`0x08`) are candidate known types.
 Unknown critical and `0xf0..=0xff` reserved types fail closed; unknown
 ignorable types are retained and skipped by higher layers. This is candidate,
 non-frozen syntax and does not define authentication/AAD placement.
+
+## Explicit pre-Session version negotiation (N1 candidate)
+
+The opt-in `VersionNegotiator` API runs before Session data admission; existing
+record APIs remain unchanged. A client hello is `N1 || 0x01 || count:u8 ||
+versions[count]:u16be`, with strictly increasing unique versions and
+`1..=16` entries. A server response is `N1 || 0x02 || 0x00 || selected:u16be`.
+The server deterministically selects the highest common version. No overlap,
+unknown/future-only offers, malformed, duplicate, oversized, unexpected, and
+late messages fail closed; received invalid input makes that negotiator
+terminal. `admit_data` cannot succeed until selection has completed. This is a
+bounded standalone wire/session-boundary primitive, not integration into the
+current live carrier/handshake and not a security-closure claim.

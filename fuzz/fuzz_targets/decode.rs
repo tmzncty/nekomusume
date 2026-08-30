@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use neko_wire::{decode, encode};
+use neko_wire::{decode, encode, NegotiationRole, VersionNegotiator};
 
 fuzz_target!(|input: &[u8]| {
     // The decoder owns its bounded payload copy. The fuzz oracle is that every
@@ -19,4 +19,12 @@ fuzz_target!(|input: &[u8]| {
         }
     });
     assert!(result.is_ok(), "decoder panicked on fuzz input");
+
+    // Negotiation input is peer-controlled. Every byte string must reject or
+    // establish within the fixed version-count/resource bounds without panic.
+    let result = std::panic::catch_unwind(|| {
+        let mut server = VersionNegotiator::new(NegotiationRole::Server, &[0, 1]).unwrap();
+        let _ = server.server_accept_hello(input);
+    });
+    assert!(result.is_ok(), "negotiation parser panicked on fuzz input");
 });
