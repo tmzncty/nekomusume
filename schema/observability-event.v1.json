@@ -1,0 +1,32 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://nekomusume.dev/schema/observability-event.v1.json",
+  "title":"Nekomusume secret-free observability event v1",
+  "type":"object",
+  "required":["schema","schema_version","event","sequence","observed_at_ms","severity","correlation","data"],
+  "properties":{
+    "schema":{"const":"nekomusume.observability-event.v1"},
+    "schema_version":{"const":1},
+    "event":{"enum":["session.started","session.stopped","stream.opened","stream.closed","carrier.health_sample","carrier.health_transition","carrier.switch_started","carrier.switch_completed","carrier.switch_failed","recovery.rtt_updated","recovery.loss_detected","recovery.pto_fired","recovery.frame_retransmitted","flow.blocked","flow.resumed","scheduler.dequeued","scheduler.starvation_guard","migration.started","migration.validated","migration.completed","migration.rejected","crypto.key_update_started","crypto.key_update_completed","crypto.key_update_rejected","resource.limit_hit","diagnostic.events_dropped"]},
+    "sequence":{"type":"integer","minimum":0},
+    "observed_at_ms":{"type":"integer","minimum":0},
+    "severity":{"enum":["debug","info","warn","error"]},
+    "correlation":{"$ref":"#/$defs/correlation"},
+    "data":{"$ref":"#/$defs/data"}
+  },
+  "additionalProperties":false,
+  "$defs":{
+    "opaqueId":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9._:-]+$"},
+    "correlation":{"type":"object","required":["session_id"],"properties":{"session_id":{"$ref":"#/$defs/opaqueId"},"stream_id":{"$ref":"#/$defs/opaqueId"},"carrier_id":{"$ref":"#/$defs/opaqueId"},"path_id":{"$ref":"#/$defs/opaqueId"},"connection_id":{"$ref":"#/$defs/opaqueId"},"trace_id":{"$ref":"#/$defs/opaqueId"}},"additionalProperties":false},
+    "counter":{"type":"integer","minimum":0},
+    "nullableCounter":{"type":["integer","null"],"minimum":0},
+    "data":{"type":"object","properties":{
+      "carrier_kind":{"enum":["udp","tcp","icmp","raw_ip","other"]},"from_carrier_id":{"$ref":"#/$defs/opaqueId"},"to_carrier_id":{"$ref":"#/$defs/opaqueId"},"from_path_id":{"$ref":"#/$defs/opaqueId"},"to_path_id":{"$ref":"#/$defs/opaqueId"},
+      "switch_reason":{"enum":["pto_threshold","health_failed","path_unavailable","carrier_error","migration_preferred","probe_validated","operator_requested","resource_pressure","recovery_hysteresis"]},"outcome":{"enum":["started","succeeded","failed","rejected","cancelled"]},"health_state":{"enum":["unknown","healthy","degraded","failed"]},"previous_health_state":{"enum":["unknown","healthy","degraded","failed"]},
+      "latest_rtt_us":{"$ref":"#/$defs/nullableCounter"},"min_rtt_us":{"$ref":"#/$defs/nullableCounter"},"smoothed_rtt_us":{"$ref":"#/$defs/nullableCounter"},"rtt_variance_us":{"$ref":"#/$defs/nullableCounter"},"loss_per_mille":{"type":["integer","null"],"minimum":0,"maximum":1000},"lost_packets":{"$ref":"#/$defs/counter"},"lost_bytes":{"$ref":"#/$defs/counter"},"pto_count":{"$ref":"#/$defs/counter"},"pto_total":{"$ref":"#/$defs/counter"},"probe_frames":{"$ref":"#/$defs/counter"},"retransmit_frames":{"$ref":"#/$defs/counter"},"retransmit_bytes":{"$ref":"#/$defs/counter"},
+      "queued_bytes":{"$ref":"#/$defs/counter"},"session_queued_bytes":{"$ref":"#/$defs/counter"},"queue_limit_bytes":{"$ref":"#/$defs/counter"},"priority":{"enum":["interactive","bulk"]},"block_reason":{"enum":["stream_limit","session_limit","congestion_window","carrier_unavailable","scheduler_backlog"]},"wait_us":{"$ref":"#/$defs/counter"},
+      "path_generation":{"$ref":"#/$defs/counter"},"delivery_epoch":{"$ref":"#/$defs/counter"},"old_key_phase":{"$ref":"#/$defs/counter"},"new_key_phase":{"$ref":"#/$defs/counter"},"rejection_reason":{"enum":["unvalidated","old_generation","hold_gate","wrong_carrier","nonce_exhausted","phase_exhausted","peer_rejected","resource_limit","invalid_state"]},"recovery_latency_us":{"$ref":"#/$defs/nullableCounter"},"duplicate_bytes":{"$ref":"#/$defs/counter"},"delivered_bytes":{"$ref":"#/$defs/counter"},
+      "resource":{"enum":["event_buffer","sent_packets","frames_per_packet","uncertain_entries","uncertain_bytes","health_paths","streams","stream_queue_bytes","session_queue_bytes","diagnostic_bundle_bytes","memory_bytes"]},"limit":{"$ref":"#/$defs/counter"},"observed":{"$ref":"#/$defs/counter"},"dropped_total":{"$ref":"#/$defs/counter"},"oldest_sequence":{"$ref":"#/$defs/counter"},"error_code":{"type":"string","pattern":"^[a-z0-9_]{1,64}$"}
+    },"additionalProperties":false}
+  }
+}
