@@ -2577,3 +2577,718 @@ mod health_evidence_tests {
         );
     }
 }
+
+/// D064's single-active, multi-ready runtime state. `Failed` is terminal for a
+/// path generation; registering a greater generation creates a fresh standby.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConcurrentPathState {
+    Standby,
+    Warm,
+    Active,
+    Draining,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ConcurrentPathKey {
+    pub path: PathId,
+    pub generation: PathGeneration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwitchReason {
+    UdpBlackhole,
+    UdpPathDegraded,
+    TcpReadyPreferred,
+    AddressChange,
+    OperatorRequest,
+    DrainDeadline,
+    ResumeRejected,
+    CarrierError,
+    Shutdown,
+    Other(u16),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryClass {
+    Warm,
+    Cold,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConcurrentSwitchEvent {
+    pub from: Option<ConcurrentPathKey>,
+    pub to: Option<ConcurrentPathKey>,
+    pub active_epoch: u64,
+    pub reason: SwitchReason,
+    pub recovery_class: Option<RecoveryClass>,
+    pub decided_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConcurrentLimits {
+    pub k_ready: u32,
+    pub min_active_dwell_ms: u64,
+    pub voluntary_cooldown_ms: u64,
+    pub drain_timeout_ms: u64,
+    pub max_paths: usize,
+    pub max_uncertain_ranges: usize,
+    pub max_uncertain_bytes: usize,
+    pub max_switch_events: usize,
+}
+
+impl Default for ConcurrentLimits {
+    fn default() -> Self {
+        Self {
+            k_ready: 3,
+            min_active_dwell_ms: 5_000,
+            voluntary_cooldown_ms: 10_000,
+            drain_timeout_ms: 3_000,
+            max_paths: 4,
+            max_uncertain_ranges: 128,
+            max_uncertain_bytes: 1 << 20,
+            max_switch_events: 128,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConcurrentError {
+    InvalidLimit,
+    Capacity,
+    UnknownPath,
+    OldGeneration,
+    GenerationMismatch,
+    IllegalState,
+    NotReady,
+    Dwell,
+    Cooldown,
+    NoActive,
+    Conflict,
+    NotFound,
+    DrainPending,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LogicalRangeId {
+    pub stream: u64,
+    pub offset: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayRange {
+    pub id: LogicalRangeId,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ConcurrentPathRecord {
+    key: ConcurrentPathKey,
+    kind: CarrierKind,
+    state: ConcurrentPathState,
+    ready: u32,
+    warm_at_ms: Option<u64>,
+    drain_deadline_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct AssignedRange {
+    bytes: Vec<u8>,
+    owner: ConcurrentPathKey,
+    uncertain: bool,
+}
+
+/// A deterministic clock-injected policy core. It owns path selection only;
+/// Session delivery remains explicit through `confirm` and stable range IDs.
+#[derive(Debug)]
+pub struct ConcurrentCarrierManager {
+    limits: ConcurrentLimits,
+    paths: BTreeMap<PathId, ConcurrentPathRecord>,
+    active: Option<ConcurrentPathKey>,
+    active_since_ms: Option<u64>,
+    last_switch_ms: Option<u64>,
+    last_failure_ms: Option<u64>,
+    active_epoch: u64,
+    ranges: BTreeMap<LogicalRangeId, AssignedRange>,
+    retained_bytes: usize,
+    events: Vec<ConcurrentSwitchEvent>,
+}
+
+impl ConcurrentCarrierManager {
+    pub fn new(limits: ConcurrentLimits) -> Result<Self, ConcurrentError> {
+        if limits.k_ready == 0
+            || limits.drain_timeout_ms == 0
+            || limits.max_paths == 0
+            || limits.max_uncertain_ranges == 0
+            || limits.max_uncertain_bytes == 0
+            || limits.max_switch_events == 0
+        {
+            return Err(ConcurrentError::InvalidLimit);
+        }
+        Ok(Self {
+            limits,
+            paths: BTreeMap::new(),
+            active: None,
+            active_since_ms: None,
+            last_switch_ms: None,
+            last_failure_ms: None,
+            active_epoch: 0,
+            ranges: BTreeMap::new(),
+            retained_bytes: 0,
+            events: Vec::new(),
+        })
+    }
+
+    pub fn register(
+        &mut self,
+        key: ConcurrentPathKey,
+        kind: CarrierKind,
+    ) -> Result<(), ConcurrentError> {
+        if let Some(old) = self.paths.get(&key.path) {
+            if key.generation.0 < old.key.generation.0 {
+                return Err(ConcurrentError::OldGeneration);
+            }
+            if key.generation == old.key.generation {
+                return Err(ConcurrentError::GenerationMismatch);
+            }
+            if old.state != ConcurrentPathState::Failed {
+                return Err(ConcurrentError::IllegalState);
+            }
+        } else if self.paths.len() == self.limits.max_paths {
+            return Err(ConcurrentError::Capacity);
+        }
+        self.paths.insert(
+            key.path,
+            ConcurrentPathRecord {
+                key,
+                kind,
+                state: ConcurrentPathState::Standby,
+                ready: 0,
+                warm_at_ms: None,
+                drain_deadline_ms: None,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn state(&self, key: ConcurrentPathKey) -> Result<ConcurrentPathState, ConcurrentError> {
+        Ok(self.path(key)?.state)
+    }
+
+    pub fn active(&self) -> Option<ConcurrentPathKey> {
+        self.active
+    }
+
+    pub fn active_epoch(&self) -> u64 {
+        self.active_epoch
+    }
+
+    pub fn events(&self) -> &[ConcurrentSwitchEvent] {
+        &self.events
+    }
+
+    /// Readiness is authenticated evidence, deliberately separate from packet
+    /// feedback. Failure resets the bounded consecutive-success counter.
+    pub fn observe_readiness(
+        &mut self,
+        key: ConcurrentPathKey,
+        authenticated: bool,
+        admitted: bool,
+        now_ms: u64,
+    ) -> Result<ConcurrentPathState, ConcurrentError> {
+        let k_ready = self.limits.k_ready;
+        let path = self.path_mut(key)?;
+        if path.state == ConcurrentPathState::Failed
+            || path.state == ConcurrentPathState::Draining
+            || path.state == ConcurrentPathState::Active
+        {
+            return Err(ConcurrentError::IllegalState);
+        }
+        if !authenticated || !admitted {
+            path.ready = 0;
+            return Ok(path.state);
+        }
+        path.ready = path.ready.saturating_add(1).min(k_ready);
+        if path.ready == k_ready {
+            path.state = ConcurrentPathState::Warm;
+            path.warm_at_ms.get_or_insert(now_ms);
+        }
+        Ok(path.state)
+    }
+
+    pub fn activate(
+        &mut self,
+        to: ConcurrentPathKey,
+        reason: SwitchReason,
+        now_ms: u64,
+        hard: bool,
+    ) -> Result<ConcurrentSwitchEvent, ConcurrentError> {
+        let target = *self.path(to)?;
+        if target.state != ConcurrentPathState::Warm {
+            return Err(ConcurrentError::NotReady);
+        }
+        let from = self.active;
+        if let Some(active_since) = self.active_since_ms
+            && !hard
+            && now_ms.saturating_sub(active_since) < self.limits.min_active_dwell_ms
+        {
+            return Err(ConcurrentError::Dwell);
+        }
+        if let Some(last_switch) = self.last_switch_ms
+            && !hard
+            && now_ms.saturating_sub(last_switch) < self.limits.voluntary_cooldown_ms
+        {
+            return Err(ConcurrentError::Cooldown);
+        }
+        if let Some(old) = from {
+            self.ensure_uncertain_capacity(old)?;
+        }
+
+        if let Some(old) = from {
+            self.mark_owner_uncertain(old);
+            let timeout = self.limits.drain_timeout_ms;
+            let old_path = self.path_mut(old)?;
+            old_path.state = ConcurrentPathState::Draining;
+            old_path.drain_deadline_ms = Some(now_ms.saturating_add(timeout));
+        }
+        self.path_mut(to)?.state = ConcurrentPathState::Active;
+        self.active = Some(to);
+        self.active_since_ms = Some(now_ms);
+        self.last_switch_ms = Some(now_ms);
+        self.active_epoch = self.active_epoch.saturating_add(1);
+        let recovery_class = self.last_failure_ms.map(|failure| {
+            if target.warm_at_ms.is_some_and(|warm| warm <= failure) {
+                RecoveryClass::Warm
+            } else {
+                RecoveryClass::Cold
+            }
+        });
+        let event = ConcurrentSwitchEvent {
+            from,
+            to: Some(to),
+            active_epoch: self.active_epoch,
+            reason,
+            recovery_class,
+            decided_at_ms: now_ms,
+        };
+        self.record_event(event);
+        Ok(event)
+    }
+
+    /// Hard failure removes ownership immediately. Unproved assigned ranges are
+    /// retained as uncertain; capacity rejection is atomic and fail-closed.
+    pub fn fail(
+        &mut self,
+        key: ConcurrentPathKey,
+        reason: SwitchReason,
+        now_ms: u64,
+    ) -> Result<Option<ConcurrentSwitchEvent>, ConcurrentError> {
+        self.path(key)?;
+        let was_active = self.active == Some(key);
+        if was_active {
+            self.ensure_uncertain_capacity(key)?;
+            self.mark_owner_uncertain(key);
+            self.active = None;
+            self.active_since_ms = None;
+            self.last_failure_ms = Some(now_ms);
+        }
+        self.path_mut(key)?.state = ConcurrentPathState::Failed;
+        if !was_active {
+            return Ok(None);
+        }
+        let event = ConcurrentSwitchEvent {
+            from: Some(key),
+            to: None,
+            active_epoch: self.active_epoch,
+            reason,
+            recovery_class: None,
+            decided_at_ms: now_ms,
+        };
+        self.record_event(event);
+        Ok(Some(event))
+    }
+
+    pub fn assign(&mut self, id: LogicalRangeId, bytes: &[u8]) -> Result<(), ConcurrentError> {
+        let owner = self.active.ok_or(ConcurrentError::NoActive)?;
+        if let Some(existing) = self.ranges.get(&id) {
+            return if existing.bytes == bytes {
+                Ok(())
+            } else {
+                Err(ConcurrentError::Conflict)
+            };
+        }
+        let total = self
+            .retained_bytes
+            .checked_add(bytes.len())
+            .ok_or(ConcurrentError::Capacity)?;
+        if self.ranges.len() == self.limits.max_uncertain_ranges
+            || total > self.limits.max_uncertain_bytes
+        {
+            return Err(ConcurrentError::Capacity);
+        }
+        self.ranges.insert(
+            id,
+            AssignedRange {
+                bytes: bytes.to_vec(),
+                owner,
+                uncertain: false,
+            },
+        );
+        self.retained_bytes = total;
+        Ok(())
+    }
+
+    pub fn confirm(&mut self, id: LogicalRangeId) -> Result<(), ConcurrentError> {
+        let range = self.ranges.remove(&id).ok_or(ConcurrentError::NotFound)?;
+        self.retained_bytes = self.retained_bytes.saturating_sub(range.bytes.len());
+        Ok(())
+    }
+
+    pub fn uncertain_ranges(&self) -> usize {
+        self.ranges.values().filter(|range| range.uncertain).count()
+    }
+
+    /// Reassign uncertain ranges left by a hard-failed generation to the new
+    /// sole active owner. Confirmation is still required before retention ends.
+    pub fn replay_uncertain(&mut self) -> Result<Vec<ReplayRange>, ConcurrentError> {
+        let active = self.active.ok_or(ConcurrentError::NoActive)?;
+        let mut replay = Vec::new();
+        for (id, range) in &mut self.ranges {
+            if range.uncertain {
+                replay.push(ReplayRange {
+                    id: *id,
+                    bytes: range.bytes.clone(),
+                });
+                range.owner = active;
+                range.uncertain = false;
+            }
+        }
+        Ok(replay)
+    }
+
+    /// At deadline, replay every still-unconfirmed old-owner range on the sole
+    /// active path. Returned bytes keep stable stream/offset identities.
+    pub fn finish_drain(
+        &mut self,
+        old: ConcurrentPathKey,
+        now_ms: u64,
+    ) -> Result<Vec<ReplayRange>, ConcurrentError> {
+        let deadline = {
+            let path = self.path(old)?;
+            if path.state != ConcurrentPathState::Draining {
+                return Err(ConcurrentError::IllegalState);
+            }
+            path.drain_deadline_ms
+                .ok_or(ConcurrentError::DrainPending)?
+        };
+        if now_ms < deadline {
+            return Err(ConcurrentError::DrainPending);
+        }
+        let active = self.active.ok_or(ConcurrentError::NoActive)?;
+        let mut replay = Vec::new();
+        for (id, range) in &mut self.ranges {
+            if range.owner == old && range.uncertain {
+                replay.push(ReplayRange {
+                    id: *id,
+                    bytes: range.bytes.clone(),
+                });
+                range.owner = active;
+                range.uncertain = false;
+            }
+        }
+        self.path_mut(old)?.state = ConcurrentPathState::Failed;
+        Ok(replay)
+    }
+
+    fn record_event(&mut self, event: ConcurrentSwitchEvent) {
+        if self.events.len() == self.limits.max_switch_events {
+            self.events.remove(0);
+        }
+        self.events.push(event);
+    }
+
+    fn ensure_uncertain_capacity(&self, owner: ConcurrentPathKey) -> Result<(), ConcurrentError> {
+        let count = self
+            .ranges
+            .values()
+            .filter(|range| range.owner == owner)
+            .count();
+        let bytes = self
+            .ranges
+            .values()
+            .filter(|range| range.owner == owner)
+            .try_fold(0usize, |sum, range| sum.checked_add(range.bytes.len()))
+            .ok_or(ConcurrentError::Capacity)?;
+        if count > self.limits.max_uncertain_ranges || bytes > self.limits.max_uncertain_bytes {
+            Err(ConcurrentError::Capacity)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn mark_owner_uncertain(&mut self, owner: ConcurrentPathKey) {
+        for range in self
+            .ranges
+            .values_mut()
+            .filter(|range| range.owner == owner)
+        {
+            range.uncertain = true;
+        }
+    }
+
+    fn path(&self, key: ConcurrentPathKey) -> Result<&ConcurrentPathRecord, ConcurrentError> {
+        let path = self
+            .paths
+            .get(&key.path)
+            .ok_or(ConcurrentError::UnknownPath)?;
+        if key.generation.0 < path.key.generation.0 {
+            Err(ConcurrentError::OldGeneration)
+        } else if key.generation != path.key.generation {
+            Err(ConcurrentError::GenerationMismatch)
+        } else {
+            Ok(path)
+        }
+    }
+
+    fn path_mut(
+        &mut self,
+        key: ConcurrentPathKey,
+    ) -> Result<&mut ConcurrentPathRecord, ConcurrentError> {
+        let path = self
+            .paths
+            .get_mut(&key.path)
+            .ok_or(ConcurrentError::UnknownPath)?;
+        if key.generation.0 < path.key.generation.0 {
+            Err(ConcurrentError::OldGeneration)
+        } else if key.generation != path.key.generation {
+            Err(ConcurrentError::GenerationMismatch)
+        } else {
+            Ok(path)
+        }
+    }
+
+    pub fn kind(&self, key: ConcurrentPathKey) -> Result<CarrierKind, ConcurrentError> {
+        Ok(self.path(key)?.kind)
+    }
+}
+
+#[cfg(test)]
+mod concurrent_manager_tests {
+    use super::*;
+
+    const UDP: ConcurrentPathKey = ConcurrentPathKey {
+        path: PathId(10),
+        generation: PathGeneration(1),
+    };
+    const TCP: ConcurrentPathKey = ConcurrentPathKey {
+        path: PathId(20),
+        generation: PathGeneration(1),
+    };
+    const R: LogicalRangeId = LogicalRangeId {
+        stream: 7,
+        offset: 0,
+    };
+
+    fn manager() -> ConcurrentCarrierManager {
+        ConcurrentCarrierManager::new(ConcurrentLimits {
+            k_ready: 2,
+            min_active_dwell_ms: 5,
+            voluntary_cooldown_ms: 10,
+            drain_timeout_ms: 3,
+            max_paths: 3,
+            max_uncertain_ranges: 2,
+            max_uncertain_bytes: 8,
+            max_switch_events: 8,
+        })
+        .unwrap()
+    }
+
+    fn warm(m: &mut ConcurrentCarrierManager, key: ConcurrentPathKey, now: u64) {
+        assert_eq!(
+            m.observe_readiness(key, true, true, now).unwrap(),
+            ConcurrentPathState::Standby
+        );
+        assert_eq!(
+            m.observe_readiness(key, true, true, now + 1).unwrap(),
+            ConcurrentPathState::Warm
+        );
+    }
+
+    #[test]
+    fn readiness_is_bounded_consecutive_and_generation_scoped() {
+        let mut m = manager();
+        m.register(UDP, CarrierKind::Udp).unwrap();
+        m.observe_readiness(UDP, true, true, 0).unwrap();
+        assert_eq!(
+            m.observe_readiness(UDP, false, true, 1).unwrap(),
+            ConcurrentPathState::Standby
+        );
+        warm(&mut m, UDP, 2);
+        assert_eq!(m.kind(UDP), Ok(CarrierKind::Udp));
+        assert_eq!(
+            m.observe_readiness(
+                ConcurrentPathKey {
+                    generation: PathGeneration(0),
+                    ..UDP
+                },
+                true,
+                true,
+                5
+            ),
+            Err(ConcurrentError::OldGeneration)
+        );
+    }
+
+    #[test]
+    fn warm_switch_is_reason_coded_dwell_guarded_and_drains_uncertain() {
+        let mut m = manager();
+        m.register(UDP, CarrierKind::Udp).unwrap();
+        m.register(TCP, CarrierKind::Tcp).unwrap();
+        warm(&mut m, UDP, 0);
+        m.activate(UDP, SwitchReason::OperatorRequest, 2, false)
+            .unwrap();
+        m.assign(R, b"cat").unwrap();
+        warm(&mut m, TCP, 3);
+        assert_eq!(
+            m.activate(TCP, SwitchReason::TcpReadyPreferred, 6, false),
+            Err(ConcurrentError::Dwell)
+        );
+        let event = m
+            .activate(TCP, SwitchReason::UdpBlackhole, 7, true)
+            .unwrap();
+        assert_eq!(event.from, Some(UDP));
+        assert_eq!(event.to, Some(TCP));
+        assert_eq!(event.reason, SwitchReason::UdpBlackhole);
+        assert_eq!(m.state(UDP), Ok(ConcurrentPathState::Draining));
+        assert_eq!(m.uncertain_ranges(), 1);
+        assert_eq!(m.finish_drain(UDP, 9), Err(ConcurrentError::DrainPending));
+        assert_eq!(
+            m.finish_drain(UDP, 10).unwrap(),
+            vec![ReplayRange {
+                id: R,
+                bytes: b"cat".to_vec()
+            }]
+        );
+        assert_eq!(m.state(UDP), Ok(ConcurrentPathState::Failed));
+        assert_eq!(m.uncertain_ranges(), 0);
+        assert_eq!(m.assign(R, b"dog"), Err(ConcurrentError::Conflict));
+        m.confirm(R).unwrap();
+    }
+
+    #[test]
+    fn warm_and_cold_recovery_are_classified_by_failure_order() {
+        let mut warm_case = manager();
+        warm_case.register(UDP, CarrierKind::Udp).unwrap();
+        warm_case.register(TCP, CarrierKind::Tcp).unwrap();
+        warm(&mut warm_case, UDP, 0);
+        warm_case
+            .activate(UDP, SwitchReason::OperatorRequest, 2, false)
+            .unwrap();
+        warm(&mut warm_case, TCP, 3);
+        warm_case.assign(R, b"cat").unwrap();
+        warm_case.fail(UDP, SwitchReason::CarrierError, 8).unwrap();
+        assert_eq!(warm_case.uncertain_ranges(), 1);
+        let event = warm_case
+            .activate(TCP, SwitchReason::UdpBlackhole, 9, true)
+            .unwrap();
+        assert_eq!(event.recovery_class, Some(RecoveryClass::Warm));
+        assert_eq!(
+            warm_case.replay_uncertain().unwrap(),
+            vec![ReplayRange {
+                id: R,
+                bytes: b"cat".to_vec()
+            }]
+        );
+
+        let mut cold_case = manager();
+        cold_case.register(UDP, CarrierKind::Udp).unwrap();
+        cold_case.register(TCP, CarrierKind::Tcp).unwrap();
+        warm(&mut cold_case, UDP, 0);
+        cold_case
+            .activate(UDP, SwitchReason::OperatorRequest, 2, false)
+            .unwrap();
+        cold_case.fail(UDP, SwitchReason::CarrierError, 8).unwrap();
+        warm(&mut cold_case, TCP, 9);
+        let event = cold_case
+            .activate(TCP, SwitchReason::UdpBlackhole, 11, true)
+            .unwrap();
+        assert_eq!(event.recovery_class, Some(RecoveryClass::Cold));
+    }
+
+    #[test]
+    fn both_fail_then_new_generation_recovers_in_readiness_order() {
+        let mut m = manager();
+        m.register(UDP, CarrierKind::Udp).unwrap();
+        m.register(TCP, CarrierKind::Tcp).unwrap();
+        warm(&mut m, UDP, 0);
+        m.activate(UDP, SwitchReason::OperatorRequest, 2, false)
+            .unwrap();
+        m.fail(TCP, SwitchReason::CarrierError, 3).unwrap();
+        m.fail(UDP, SwitchReason::CarrierError, 4).unwrap();
+        assert_eq!(m.active(), None);
+        let tcp2 = ConcurrentPathKey {
+            generation: PathGeneration(2),
+            ..TCP
+        };
+        let udp2 = ConcurrentPathKey {
+            generation: PathGeneration(2),
+            ..UDP
+        };
+        m.register(tcp2, CarrierKind::Tcp).unwrap();
+        m.register(udp2, CarrierKind::Udp).unwrap();
+        m.observe_readiness(udp2, true, true, 5).unwrap();
+        warm(&mut m, tcp2, 5);
+        m.activate(tcp2, SwitchReason::CarrierError, 7, true)
+            .unwrap();
+        assert_eq!(m.active(), Some(tcp2));
+        assert_eq!(m.state(udp2), Ok(ConcurrentPathState::Standby));
+        assert_eq!(
+            m.observe_readiness(TCP, true, true, 8),
+            Err(ConcurrentError::OldGeneration)
+        );
+    }
+
+    #[test]
+    fn cooldown_and_uncertain_capacity_rejections_are_atomic() {
+        let mut m = manager();
+        m.register(UDP, CarrierKind::Udp).unwrap();
+        m.register(TCP, CarrierKind::Tcp).unwrap();
+        warm(&mut m, UDP, 0);
+        warm(&mut m, TCP, 0);
+        m.activate(UDP, SwitchReason::OperatorRequest, 2, false)
+            .unwrap();
+        m.assign(R, b"12345678").unwrap();
+        assert_eq!(
+            m.assign(
+                LogicalRangeId {
+                    stream: 7,
+                    offset: 8
+                },
+                b"x"
+            ),
+            Err(ConcurrentError::Capacity)
+        );
+        assert_eq!(m.active(), Some(UDP));
+        m.activate(TCP, SwitchReason::CarrierError, 7, true)
+            .unwrap();
+        // UDP is draining rather than eligible for an immediate reverse flap.
+        assert_eq!(
+            m.activate(UDP, SwitchReason::TcpReadyPreferred, 8, false),
+            Err(ConcurrentError::NotReady)
+        );
+        assert_eq!(m.active(), Some(TCP));
+
+        let third = ConcurrentPathKey {
+            path: PathId(30),
+            generation: PathGeneration(1),
+        };
+        m.register(third, CarrierKind::Tcp).unwrap();
+        warm(&mut m, third, 8);
+        assert_eq!(
+            m.activate(third, SwitchReason::OperatorRequest, 12, false),
+            Err(ConcurrentError::Cooldown)
+        );
+        assert_eq!(m.active(), Some(TCP));
+        assert_eq!(m.state(third), Ok(ConcurrentPathState::Warm));
+    }
+}
