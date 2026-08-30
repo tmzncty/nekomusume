@@ -922,7 +922,7 @@ redacted retention and cleanup verification. This decision does not authorize
 WAN/VPS execution or production exposure.
 
 
-## 2026-08-30 — D064：Unreliable Session datagram semantic contract
+## 2026-08-30 — D065：Unreliable Session datagram semantic contract
 
 **Status: Candidate/provisional — no wire/API/code/runtime/WAN change**
 
