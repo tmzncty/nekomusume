@@ -37,3 +37,21 @@
 - **blocked** — deliberately prohibited by the current governance boundary until named gates and review pass.
 
 A status change must update this table and the evidence links in the same commit. `implemented` never means “production-ready”, “secure”, “interoperable”, or “publicly deployable”.
+
+## N0 governance decision vector
+
+These flags are independent governance facts for this exact commit. They must not
+be collapsed into one readiness bit:
+
+- `IMPLEMENTATION_COMPLETE=true` — The bounded research implementation slice recorded above is complete for this baseline.
+- `RELEASE_CANDIDATE=false` — RC status is not granted; the release-readiness and independent-review gates remain incomplete.
+- `PRODUCTION_READY=false` — Production readiness is not granted; production remains blocked.
+- `FREEZE=false` — No protocol or release freeze is declared.
+- `RELEASED=false` — No release is declared.
+
+`PRODUCTION_AUTHORIZATION` is **not** an RC prerequisite. It is a separate,
+later production gate: its absence does not explain or prevent the RC decision;
+the RC remains `false` because the independent release-readiness criteria are
+incomplete. Conversely, `IMPLEMENTATION_COMPLETE=true` does not imply RC,
+release, freeze, reachability, security approval, or production readiness.
+The `reachability` and `production` rows above remain `blocked`.

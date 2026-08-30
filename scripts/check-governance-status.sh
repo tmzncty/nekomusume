@@ -52,3 +52,17 @@ test -f docs/adr/m1-g0-research-authorization.md
 grep -q 'external security audit' docs/adr/m1-g0-research-authorization.md
 grep -q 'public, non-loopback listeners' docs/adr/m1-g0-research-authorization.md
 grep -q 'research-authorized / not-security-approved' docs/adr/m1-g0-research-authorization.md
+
+# N0 governance vector: implementation completion is deliberately independent
+# from RC, release, freeze, reachability, and production authorization.
+for expected in \
+  'IMPLEMENTATION_COMPLETE=true' \
+  'RELEASE_CANDIDATE=false' \
+  'PRODUCTION_READY=false' \
+  'FREEZE=false' \
+  'RELEASED=false'; do
+  grep -F "$expected" "$status" >/dev/null || { echo "N0 governance vector mismatch: $expected"; exit 1; }
+done
+grep -F '`PRODUCTION_AUTHORIZATION` is **not** an RC prerequisite.' "$status" >/dev/null || {
+  echo 'N0 governance policy missing production-authorization independence'; exit 1;
+}

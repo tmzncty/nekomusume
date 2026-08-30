@@ -85,3 +85,21 @@ expect_rejection 'CLI checkbox drift'
 # Keep the file-only contract explicit in the regression test itself.
 grep -F 'test -f' "$ROOT/scripts/check-governance-status.sh" >/dev/null
 printf '%s\n' 'governance checker regression tests passed'
+
+# N0 vector mutations must be rejected, and production authorization must remain
+# explicitly independent from the RC prerequisite set.
+for mutation in \
+  'IMPLEMENTATION_COMPLETE=true|IMPLEMENTATION_COMPLETE=false' \
+  'RELEASE_CANDIDATE=false|RELEASE_CANDIDATE=true' \
+  'PRODUCTION_READY=false|PRODUCTION_READY=true' \
+  'FREEZE=false|FREEZE=true' \
+  'RELEASED=false|RELEASED=true'; do
+  old=${mutation%%|*}; new=${mutation#*|}
+  cp "$ROOT/docs/status.md" "$TMP/docs/status.md"
+  sed -i "s/${old}/${new}/" "$TMP/docs/status.md"
+  expect_rejection "N0 vector ${old}"
+done
+cp "$ROOT/docs/status.md" "$TMP/docs/status.md"
+sed -i 's/`PRODUCTION_AUTHORIZATION` is \*\*not\*\* an RC prerequisite./`PRODUCTION_AUTHORIZATION` is an RC prerequisite./' "$TMP/docs/status.md"
+expect_rejection 'N0 authorization coupling'
+printf '%s\n' 'N0 governance vector regression tests passed'
