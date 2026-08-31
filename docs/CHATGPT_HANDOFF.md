@@ -1,163 +1,205 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-01 03:01 Asia/Shanghai
-Repository HEAD: `1d4905eea2137290d768564728ec1c6181f43ddc`
-Previous checked implementation HEAD: `d65e3fbd2230799a1734ee29f2e40f02746bceb1`
-Previous reviewer handoff commit: `16677fd0219bc7cfde058e6b2f3adc0b3bb9d7c0`
+Checked at: 2026-09-01 03:16 Asia/Shanghai
+Reviewed implementation HEAD: `1d4905eea2137290d768564728ec1c6181f43ddc`
+Reviewer base HEAD: `712cc61bd4f3f75d12610fb4121168ba2119e63f`
+Previous reviewed implementation HEAD: `d65e3fbd2230799a1734ee29f2e40f02746bceb1`
 
 ## What changed
 
-One new coding-agent commit is visible after the previous reviewer handoff:
+The repository is not globally blocked. The current implementation plan still has a real release-engineering queue after N9: negotiation-path completion, bounded release evidence, independent release/security review, then a separate RC decision. The present short-cycle bottleneck is narrower: N9's executable canonical corpus still has a semantic-oracle enforcement defect.
 
-- `1d4905e` — **test/fixture/validator/documentation repair; no production runtime change**. It replaces the candidate corpus's mutable `parent_commit` provenance with a deterministic `schema_revision + corpus_sha256` content identity, makes required domains an explicit validator-owned set, gives `close` its own required domain while routing it through the existing real frame codec adapter, adds mutation tests for stale identity and missing required-domain coverage, and wires both canonical-vector validators into the repository-wide `scripts/check.sh` gate.
+`1d4905e` materially improved the candidate corpus infrastructure by making corpus identity content-addressed/self-verifying, defining validator-owned required domains, adding mutation tests for stale identity/missing coverage, and wiring the corpus validators into `scripts/check.sh`. It did not change production wire/runtime semantics.
 
-This is a useful evidence-contract improvement. The content-addressed identity is materially stronger than tying the corpus to a moving implementation-parent field, and the new mutation tests make accidental fixture drift easier to detect.
+The remaining defect is visible in `crates/neko-wire/tests/canonical_vectors.rs`: successful frame/close decodes still prove frame count rather than complete decoded semantics, and the negotiation hello adapter does not enforce every semantic field declared by `expected.value`.
 
-However, `1d4905e` did **not** close the Primary repair from the previous handoff. The current `crates/neko-wire/tests/canonical_vectors.rs` still verifies successful frame decodes only by `decoded.len() == expected.frame_count`, and `negotiation.hello.v0-v2` still verifies only the selected version while leaving the declared `expected.value.versions` field unchecked.
-
-No GitHub commit-status/CI checks are attached to the current HEAD. Repository-local checks may be valid coding-environment evidence, but they are not independent CI attestation.
+The previous handoff was too narrow operationally: it could be completed quickly and then forced the coding agent to wait for another reviewer turn. This handoff therefore keeps the same correctness boundary but expands N9 into a complete closure batch with sequential work that is all genuinely relevant to the freeze decision.
 
 ## Review verdict
 
-**needs repair — N9 semantic oracle Primary remains open**
+**needs repair — N9 is READY as a full closure batch; project is not otherwise stuck**
 
-Do not freeze the candidate corpus yet. The new corpus identity work is accepted as supporting evidence infrastructure, but it does not satisfy the current N9 completion gate because successful `decode_bytes_equals_expected=true` rows can still carry declared semantic fields that the executable adapter never checks.
+Do not freeze yet. Close the semantic oracle, harden the corpus contract against future silent semantic drift, audit executable coverage, repair known authorization/status wording drift, and run the complete local gate. These are one dependency-ordered N9 batch, not separate reviewer round-trips.
 
-This remains an evidence/oracle enforcement defect, not evidence of a production codec bug. Do not change protocol bytes or production semantics merely to satisfy the fixture.
-
-The next coding-agent slice should close this exact semantic-oracle gap before doing any more corpus-identity work or asking for an N9 freeze decision.
+No production wire change is currently requested. If this batch discovers a real codec/parser mismatch, switch to the correctness fallback and keep `freeze=false`.
 
 ## Evidence boundaries
 
-- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain correct.
-- `1d4905e` changes corpus identity/validation/test infrastructure, not production wire/runtime behavior.
-- `corpus_sha256` is now recomputed over deterministic JSON content with the hash field omitted, and required coverage is a fixed validator-owned domain set rather than inferred from whatever fixture rows survive.
-- `scripts/check.sh` now includes both the canonical corpus validator and its mutation tests. This improves the local repository gate but does not create independent GitHub CI evidence.
-- The Rust executable-oracle harness still does not enforce all successful declared semantics:
-  - frame/close rows compare only decoded frame count, not decoded frame identity/payload semantics;
-  - `frame.datagram-max-1024` still declares `payload_bytes: 1024` without the current harness directly asserting that declared field;
-  - `negotiation.hello.v0-v2` still declares `expected.value.versions: [0,2]` while the current decode path checks only `selected: 2`.
-- Standing self-owned VPS authorization remains active and is not an N9 blocker.
-- `ROADMAP.md` and `docs/status.md` still contain authorization wording that is narrower/staler than `docs/standing-vps-lab-authorization.md`; this remains a documentation/governance repair, not a capability PASS.
-- Independent release/security review remains a later RC gate and is not a prerequisite for this N9 corpus repair.
+- `IMPLEMENTATION_COMPLETE=true` remains repository status for the bounded research implementation baseline.
+- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain correct.
+- `1d4905e` is test/fixture/validator/documentation infrastructure, not runtime behavior.
+- No GitHub CI attestation is attached to the current implementation HEAD; local gates remain coding-environment evidence, not independent review.
+- Standing self-owned VPS authorization is active. It is not the current N9 blocker.
+- `docs/status.md` still contains stale/narrow reachability wording relative to `docs/standing-vps-lab-authorization.md`; repair the wording without promoting capability/release status.
+- The release plan after N9 remains real work, but do not cross the N9 freeze-review boundary until this closure batch is complete and pushed.
 
-## Work Package
+## Work Package — N9 Full Closure Batch
 
-### Primary — Close successful decode-oracle semantic enforcement
+### Primary A — Make successful decode semantics fully executable
 
 **Goal**
 
-Make every successful `decode_bytes_equals_expected=true` claim fully machine-enforced, without changing wire semantics and without setting `freeze=true`.
+Every semantic field declared by a successful `decode_bytes_equals_expected=true` vector must be machine-enforced against real implementation output. No declared semantic field may be decorative.
 
-**Why now**
-
-The corpus now has stronger identity and coverage validation, so the remaining N9 defect is narrowly defined: the executable adapter must not silently ignore semantic fields declared by `expected.value`.
-
-**Likely files**
+**Files**
 
 - `crates/neko-wire/tests/canonical_vectors.rs`;
-- `fixtures/canonical-vectors.v1.json` only if an expected field is genuinely not part of the intended decode oracle and should be truthfully removed;
-- `scripts/validate-canonical-vectors.py` or its mutation test only if needed to prevent future unchecked expected-value fields structurally.
+- `fixtures/canonical-vectors.v1.json` only when the truthful contract requires removing a field that the public decode operation does not expose;
+- validator/schema files only as required for structural enforcement.
 
 **Required behavior**
 
-1. For every successful frame/close row, compare the decoded `Frame` sequence against the declared/input frame semantics, not only the count. A direct `decoded == input_frames(&v)`-style assertion is acceptable if it truly exercises the fixture bytes through `decode_frames` first.
-2. Enforce every declared successful frame expected field. In particular, if `payload_bytes` remains in `expected.value`, compute/assert it from the real decoded value. Do not leave it as unchecked decoration.
-3. Prevent future silent expected-field drift: for each executable operation, either compare a complete typed semantic value or enforce an operation-specific allowed/required `expected.value` key set before reading it. Adding a new expected field must not be able to pass without a corresponding oracle assertion.
-4. For `negotiation.hello.v0-v2`, make the oracle contract truthful. Either:
-   - explicitly verify every declared decode semantic, including the offered-version list through real implementation-observable behavior; or
-   - remove `expected.value.versions` if the current public decode operation does not expose that semantic and document that offered-version bytes are covered by the encode oracle while the decode oracle covers negotiated selection.
-   Do not add a new production API solely to make the fixture convenient unless there is an independent protocol/API reason.
-5. Keep expected-failure rows consuming the fixture's actual `bytes_hex` and comparing real implementation errors.
-6. Keep `state_only` rows byte-null/non-executable.
-7. Keep `freeze=false` in the coding-agent repair commit.
+1. Frame and close rows: decode fixture `bytes_hex` through real `decode_frames`, then compare complete decoded `Frame` semantics, not only `decoded.len()`.
+2. If `frame_count` remains declared, assert it from the decoded sequence as an additional explicit boundary, not as the sole semantic oracle.
+3. If `payload_bytes` remains declared (including the 1024-byte datagram boundary), derive/assert it from decoded output.
+4. Negotiation hello: make `expected.value` truthful. Either prove every declared field via real implementation-observable behavior, or remove fields that the decode operation does not expose and document which semantic belongs to encode vs negotiated-selection evidence. Do not add a production API only to please the fixture.
+5. Failure vectors must continue consuming fixture `bytes_hex` and comparing actual implementation error classes.
+6. State-only rows remain byte-null and non-executable.
+7. Do not alter candidate protocol bytes merely to make tests pass.
 
-**Validation**
+### Follow-up B — Enforce operation-specific expected-value contracts
 
-Run at minimum:
+**Dependency:** A green.
 
-- targeted `neko-wire` canonical-vector integration test;
-- `python3 scripts/validate-canonical-vectors.py fixtures/canonical-vectors.v1.json`;
-- `python3 scripts/validate-canonical-vectors-test.py`;
-- `bash scripts/check.sh`;
-- `git diff --check`.
+Prevent this class of bug from returning.
 
-Run fuzz smoke only if production parser/decoder behavior changes. A pure test/fixture/validator semantic-enforcement repair does not need a fake fuzz claim.
+For each executable operation/domain adapter, define the allowed/required successful `expected.value` key set or deserialize into a complete typed expected semantic value. A new successful expected field must not be silently ignored.
 
-**Completion definition**
+At minimum cover the currently executable families:
 
-Every successful declared decode semantic is actually asserted against real implementation output; no operation can silently accept an unknown/unasserted `expected.value` field; all local gates pass; and the candidate remains `freeze=false` for the next independent reviewer decision.
+- negotiation client hello / response;
+- record decode;
+- frame/close decode;
+- varint decode;
+- any other executable corpus adapters already present at current HEAD.
 
-**Do not expand into**
+Add mutation/regression tests that demonstrate rejection/failure when:
 
-- additional corpus identity schemes;
-- changing production wire bytes;
-- RC declaration or RC manifest work;
-- new negotiation runtime integration;
-- WAN/benchmark reruns;
-- previous-release interoperability.
+- an unknown successful expected key is injected;
+- a required expected key is removed;
+- a declared semantic is changed while bytes remain unchanged;
+- `payload_bytes`, frame identity/payload, selected version, record flags/type/payload, or equivalent asserted values become stale.
 
-### Follow-up 1 — Repair standing-authorization status/navigation drift
+Keep the validator and Rust executable harness responsibilities clear: JSON/schema/coverage shape validation is not a substitute for implementation semantic assertions.
 
-**Dependency:** Primary complete and green.
+### Follow-up C — Produce an executable corpus coverage audit
 
-The previous reviewer finding remains unresolved:
+**Dependency:** B green.
 
-1. `ROADMAP.md` Milestone 1 still says real WAN failover/long-lived/NAT validation is blocked because it “需新的授权”. Ordinary bounded self-owned TCP/UDP execution is already authorized by `docs/standing-vps-lab-authorization.md`. Rewrite the blocker as missing evidence/environment/release scope where appropriate; do not mark the capability PASS.
-2. `docs/status.md` reachability still says “Only isolated authorized observation is permitted”. This is too narrow. Bounded self-owned VPS TCP/UDP execution is permitted; broader/public/general reachability claims and production exposure remain blocked.
+Create or update a small review-oriented artifact under `docs/spec/` or an equivalent existing release-evidence location that makes the N9 review mechanically inspectable.
 
-Preserve the exact distinction:
+For every vector (or every distinct operation plus explicit exceptional rows if a generated table is used), record/derive:
+
+- vector/domain/operation;
+- classification;
+- whether bytes exist;
+- encode oracle;
+- decode oracle;
+- roundtrip oracle;
+- exact implementation function/path exercised;
+- exact successful semantic fields asserted, or expected error asserted;
+- state-only/non-wire status.
+
+Prefer generation/validation from the corpus and adapter contract over a manually drifting prose list. The artifact must not become a second normative protocol spec.
+
+Add a gate or consistency check if necessary so an executable vector cannot exist without a mapped adapter/coverage entry.
+
+**Purpose:** the next reviewer must be able to answer “what exactly is frozen if we freeze this corpus?” without manually reverse-engineering hundreds of lines of test code.
+
+### Follow-up D — Repair standing-authorization/status navigation drift
+
+**Dependency:** A/B complete; may be done before C if it avoids unnecessary conflicts.
+
+Repair the already identified governance wording drift:
+
+1. `ROADMAP.md`: remove wording that treats ordinary bounded self-owned WAN execution as awaiting new per-run authorization. Replace it with the actual remaining evidence/environment/release boundary. Do not mark WAN/failover/long-lived capability PASS without evidence.
+2. `docs/status.md`: replace “Only isolated authorized observation is permitted” or equivalent stale wording with the current fact: bounded self-owned VPS TCP/UDP execution is authorized, while broader/public/general reachability, sustained release evidence, third-party targets and production exposure remain blocked.
+3. Keep the distinction explicit:
 
 ```text
 execution authorization exists
 != release/public-reachability evidence exists
 ```
 
-This is documentation/governance repair only. Do not alter capability status merely because execution is authorized.
+This is documentation/governance repair only.
 
-### Follow-up 2 — Return the repaired candidate for N9 freeze review
+### Follow-up E — N9 local release-gate rehearsal (still unfrozen)
 
-**Dependency:** Primary complete; Follow-up 1 complete or demonstrably not applicable.
+**Dependency:** A-D green.
 
-After the repair commits are pushed, stop changing candidate wire bytes and let the next hourly ChatGPT reviewer inspect the exact candidate. The coding agent must not self-freeze the corpus.
+Run a full candidate rehearsal while preserving `freeze=false`:
 
-The next reviewer should either:
+- targeted `neko-wire` canonical-vector integration tests;
+- canonical corpus validator;
+- canonical validator mutation tests;
+- any new expected-key/coverage mutation tests;
+- `cargo fmt --all -- --check`;
+- `cargo check --workspace --locked`;
+- `cargo test --workspace --all-targets --locked --no-fail-fast`;
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`;
+- `bash scripts/check.sh`;
+- `git diff --check`.
 
-- identify a concrete remaining corpus defect and keep `freeze=false`; or
-- authorize/perform a separate N9 governance freeze change if the candidate really satisfies the current gate.
+Run fuzz smoke only if production parser/decoder behavior changes or the normal repository gate requires it. Do not manufacture a fuzz claim for pure test/validator changes.
 
-If there is no new reviewer handoff yet, it is correct to stop after the real READY repairs rather than invent unrelated work. The hourly cadence is intended to keep this wait short.
+Record enough evidence in the ordinary repository evidence location/commit message for the next reviewer to distinguish targeted tests from the full local gate.
 
-### Fallback
-
-If full semantic comparison exposes a real production codec/parser mismatch rather than a test-oracle defect:
-
-- keep `freeze=false`;
-- preserve a minimal reproducer;
-- make the production correctness repair the next Primary;
-- run the parser/fuzz gates required by `AGENTS.md`;
-- do not continue to freeze or negotiation-path work until correctness is closed.
+After E passes, push all N9 closure commits. Then stop changing canonical bytes unless a newly discovered correctness defect requires it. Do **not** self-set `freeze=true`; the freeze decision remains reviewer/governance work.
 
 ## Completion gates
 
-- Successful frame/close decodes prove decoded frame identity and payload semantics, not only frame count.
-- `frame.datagram-max-1024` proves the declared 1024-byte decoded payload boundary if that field remains declared.
-- Negotiation hello declares only semantics the executable decode oracle actually proves.
-- No successful `expected.value` field can be added and silently ignored by the executable adapter.
-- Failure rows still prove real implementation errors from fixture bytes.
-- State-only rows remain unmistakably non-wire.
-- Canonical identity/mutation validator, targeted Rust integration test, full repository gate, and `git diff --check` pass locally.
-- Authorization/status wording no longer recreates a nonexistent per-run self-owned VPS permission blocker.
-- `FREEZE=false`, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, and `RELEASED=false` remain unchanged pending later reviewed decisions.
+The entire N9 closure batch is complete only when all are true:
+
+- successful frame/close vectors assert complete decoded frame identity/payload semantics;
+- declared payload boundaries such as 1024-byte datagram payload are actually checked if they remain declared;
+- negotiation expected semantics are truthful and fully enforced;
+- operation-specific successful expected fields cannot be added/removed/changed silently;
+- expected-failure rows still prove real errors from fixture bytes;
+- state-only rows remain non-wire;
+- corpus coverage is reviewable without relying on prose claims alone;
+- standing VPS authorization wording no longer recreates a fake per-run permission blocker;
+- full local repository gate passes;
+- `FREEZE=false`, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `RELEASED=false` remain unchanged.
+
+## After this batch
+
+The next hourly reviewer should perform the actual N9 candidate review. If no concrete corpus defect remains, the reviewer may make/authorize the separate N9 governance freeze decision. Once N9 is closed, the repository's next real engineering queue is already defined in `IMPLEMENTATION_PLAN.md`:
+
+```text
+N9 review/freeze decision
+  ↓
+authenticated negotiation path completion for probe/UDP/failover-resume
+  ↓
+bounded release evidence matrix under standing authorization
+  ↓
+independent release/security review
+  ↓
+separate RC decision
+```
+
+Do not invent new experimental features to fill time; there is already legitimate release work after N9.
+
+## Fallback
+
+If A/B exposes a real production codec/parser mismatch rather than an oracle defect:
+
+1. keep `freeze=false`;
+2. preserve a minimal fixture-backed reproducer;
+3. repair production correctness first;
+4. run the parser/fuzz gates required by `AGENTS.md`;
+5. rerun A-E against the corrected implementation;
+6. do not continue toward freeze until correctness is closed.
+
+If an item is inapplicable because the corpus does not declare that semantic, document why rather than inventing a new API/field.
 
 ## Do not expand into
 
+- changing protocol bytes merely to satisfy fixtures;
 - RC/production/security approval;
-- changing candidate bytes merely to satisfy fixtures;
 - previous/current interoperability before a real prior frozen release exists;
-- 0-RTT, FEC enablement, striping/aggregation or exotic carriers without an observed-problem gate;
-- third-party targets, scanning or production network changes;
-- experiments outside standing authorization.
+- WAN/benchmark reruns before N9 closure;
+- 0-RTT, enabled FEC, striping/aggregation or exotic carriers without an observed-problem gate;
+- third-party targets, scanning, production network changes, or experiments outside standing authorization.
 
 ## Questions requiring maintainer decision
 
