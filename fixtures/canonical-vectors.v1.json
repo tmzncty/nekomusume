@@ -1,7 +1,7 @@
 {
   "schema": "nekomusume.canonical-vector.v1",
   "schema_version": 1,
-  "parent_commit": "5e2ac795747582f5f1f36ad537234305c300b47f",
+  "parent_commit": "16458f6dbe818e3ecbba83ef2982c1d5e0aafac5",
   "freeze": false,
   "vectors": [
     {
@@ -21,7 +21,8 @@
           "versions": [
             0,
             2
-          ]
+          ],
+          "selected": 2
         }
       },
       "oracle": {
@@ -38,8 +39,8 @@
       "domain": "negotiation",
       "operation": "server_accept_hello",
       "input": {
-        "versions": [
-          8
+        "server_versions": [
+          0
         ]
       },
       "bytes_hex": "4e3101010008",
@@ -62,8 +63,7 @@
       "domain": "negotiation",
       "operation": "server_accept_hello",
       "input": {
-        "versions": [
-          0,
+        "server_versions": [
           0
         ]
       },
@@ -83,6 +83,83 @@
       ]
     },
     {
+      "id": "negotiation.response.selected-0",
+      "domain": "negotiation",
+      "operation": "server_response",
+      "input": {
+        "client_versions": [
+          0,
+          2
+        ],
+        "server_versions": [
+          0
+        ]
+      },
+      "bytes_hex": "4e3102000000",
+      "expected": {
+        "ok": true,
+        "value": {
+          "selected": 0
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid"
+      ]
+    },
+    {
+      "id": "negotiation.response.malformed",
+      "domain": "negotiation",
+      "operation": "server_response",
+      "input": {
+        "client_versions": [
+          0
+        ]
+      },
+      "bytes_hex": "4e3102010000",
+      "expected": {
+        "ok": false,
+        "error": "Malformed"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "malformed",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "negotiation.response.unsupported",
+      "domain": "negotiation",
+      "operation": "server_response",
+      "input": {
+        "client_versions": [
+          0
+        ]
+      },
+      "bytes_hex": "4e3102000009",
+      "expected": {
+        "ok": false,
+        "error": "UnsupportedSelected"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "unknown_version",
+        "expected_failure"
+      ]
+    },
+    {
       "id": "wire.record-data",
       "domain": "wire",
       "operation": "record",
@@ -98,6 +175,60 @@
           "type": "Data",
           "flags": 0,
           "payload_hex": "6869"
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid"
+      ]
+    },
+    {
+      "id": "wire.record-ack",
+      "domain": "wire",
+      "operation": "record",
+      "input": {
+        "type": "Ack",
+        "flags": 0,
+        "payload_hex": "00"
+      },
+      "bytes_hex": "4e4b0002000000000100",
+      "expected": {
+        "ok": true,
+        "value": {
+          "type": "Ack",
+          "flags": 0,
+          "payload_hex": "00"
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid"
+      ]
+    },
+    {
+      "id": "wire.record-path-challenge",
+      "domain": "wire",
+      "operation": "record",
+      "input": {
+        "type": "PathChallenge",
+        "flags": 0,
+        "payload_hex": "0102030405060708"
+      },
+      "bytes_hex": "4e4b000300000000080102030405060708",
+      "expected": {
+        "ok": true,
+        "value": {
+          "type": "PathChallenge",
+          "flags": 0,
+          "payload_hex": "0102030405060708"
         }
       },
       "oracle": {
@@ -132,7 +263,76 @@
       ]
     },
     {
-      "id": "frame.datagram-max",
+      "id": "wire.truncated",
+      "domain": "wire",
+      "operation": "record",
+      "input": {},
+      "bytes_hex": "4e4b00010000000002aa",
+      "expected": {
+        "ok": false,
+        "error": "LengthMismatch"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "truncated",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "error.trailing",
+      "domain": "error",
+      "operation": "decode",
+      "input": {},
+      "bytes_hex": "4e4b0001000000000000",
+      "expected": {
+        "ok": false,
+        "error": "TrailingBytes"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "trailing",
+        "malformed",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "frame.data",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {
+        "frames": [
+          {
+            "type": "Data",
+            "payload_hex": "6869"
+          }
+        ]
+      },
+      "bytes_hex": "0000026869",
+      "expected": {
+        "ok": true,
+        "value": {
+          "frame_count": 1
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid"
+      ]
+    },
+    {
+      "id": "frame.datagram-small",
       "domain": "frame",
       "operation": "frames",
       "input": {
@@ -161,13 +361,245 @@
       ]
     },
     {
+      "id": "frame.datagram-max-1024",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {
+        "frames": [
+          {
+            "type": "Datagram",
+            "payload_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+          }
+        ]
+      },
+      "bytes_hex": "0c040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": {
+        "ok": true,
+        "value": {
+          "frame_count": 1,
+          "payload_bytes": 1024
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid",
+        "integer_max"
+      ]
+    },
+    {
+      "id": "frame.delivery-ack",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {
+        "frames": [
+          {
+            "type": "DeliveryAck",
+            "payload_hex": "0102"
+          }
+        ]
+      },
+      "bytes_hex": "0200020102",
+      "expected": {
+        "ok": true,
+        "value": {
+          "frame_count": 1
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid"
+      ]
+    },
+    {
+      "id": "close.empty",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {
+        "frames": [
+          {
+            "type": "Close",
+            "payload_hex": ""
+          }
+        ]
+      },
+      "bytes_hex": "040000",
+      "expected": {
+        "ok": true,
+        "value": {
+          "frame_count": 1
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid"
+      ]
+    },
+    {
+      "id": "frame.path-challenge",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {
+        "frames": [
+          {
+            "type": "PathChallenge",
+            "payload_hex": "0102030405060708"
+          }
+        ]
+      },
+      "bytes_hex": "0600080102030405060708",
+      "expected": {
+        "ok": true,
+        "value": {
+          "frame_count": 1
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid"
+      ]
+    },
+    {
+      "id": "frame.path-response",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {
+        "frames": [
+          {
+            "type": "PathResponse",
+            "payload_hex": "0807060504030201"
+          }
+        ]
+      },
+      "bytes_hex": "0800080807060504030201",
+      "expected": {
+        "ok": true,
+        "value": {
+          "frame_count": 1
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid"
+      ]
+    },
+    {
+      "id": "frame.unknown-ignorable",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {
+        "frames": [
+          {
+            "type": "UnknownIgnorable",
+            "frame_type": 11,
+            "payload_hex": "aa"
+          }
+        ]
+      },
+      "bytes_hex": "0b0001aa",
+      "expected": {
+        "ok": true,
+        "value": {
+          "frame_count": 1
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid",
+        "unknown_enum"
+      ]
+    },
+    {
+      "id": "frame.unknown-critical",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {},
+      "bytes_hex": "0a0000",
+      "expected": {
+        "ok": false,
+        "error": "UnknownCritical"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "unknown_enum",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "frame.reserved",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {},
+      "bytes_hex": "f00000",
+      "expected": {
+        "ok": false,
+        "error": "ReservedType"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "unknown_enum",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "frame.truncated",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {},
+      "bytes_hex": "0c000401",
+      "expected": {
+        "ok": false,
+        "error": "Truncated"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "truncated",
+        "expected_failure"
+      ]
+    },
+    {
       "id": "frame.oversized",
       "domain": "frame",
       "operation": "frames",
       "input": {
         "payload_bytes": 1025
       },
-      "bytes_hex": "00040101",
+      "bytes_hex": "0c0401",
       "expected": {
         "ok": false,
         "error": "LengthTooLarge"
@@ -183,14 +615,273 @@
       ]
     },
     {
+      "id": "frame.count-max-64",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {
+        "repeat": {
+          "type": "Close",
+          "count": 64
+        }
+      },
+      "bytes_hex": "040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000",
+      "expected": {
+        "ok": true,
+        "value": {
+          "frame_count": 64
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid",
+        "integer_max"
+      ]
+    },
+    {
+      "id": "frame.count-overflow-65",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {
+        "repeat": {
+          "type": "Close",
+          "count": 65
+        }
+      },
+      "bytes_hex": "040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000040000",
+      "expected": {
+        "ok": false,
+        "error": "TooManyFrames"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "oversized",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "varint.boundary-0",
+      "domain": "wire",
+      "operation": "varint",
+      "input": {
+        "value": 0
+      },
+      "bytes_hex": "00",
+      "expected": {
+        "ok": true,
+        "value": {
+          "value": 0
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid",
+        "integer_min"
+      ]
+    },
+    {
+      "id": "varint.boundary-1",
+      "domain": "wire",
+      "operation": "varint",
+      "input": {
+        "value": 1
+      },
+      "bytes_hex": "01",
+      "expected": {
+        "ok": true,
+        "value": {
+          "value": 1
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid",
+        "integer_max"
+      ]
+    },
+    {
+      "id": "varint.boundary-2",
+      "domain": "wire",
+      "operation": "varint",
+      "input": {
+        "value": 127
+      },
+      "bytes_hex": "7f",
+      "expected": {
+        "ok": true,
+        "value": {
+          "value": 127
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid",
+        "integer_max"
+      ]
+    },
+    {
+      "id": "varint.boundary-3",
+      "domain": "wire",
+      "operation": "varint",
+      "input": {
+        "value": 128
+      },
+      "bytes_hex": "8001",
+      "expected": {
+        "ok": true,
+        "value": {
+          "value": 128
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid",
+        "integer_max"
+      ]
+    },
+    {
+      "id": "varint.boundary-4",
+      "domain": "wire",
+      "operation": "varint",
+      "input": {
+        "value": 16384
+      },
+      "bytes_hex": "808001",
+      "expected": {
+        "ok": true,
+        "value": {
+          "value": 16384
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid",
+        "integer_max"
+      ]
+    },
+    {
+      "id": "varint.boundary-5",
+      "domain": "wire",
+      "operation": "varint",
+      "input": {
+        "value": "u64::MAX"
+      },
+      "bytes_hex": "ffffffffffffffffff01",
+      "expected": {
+        "ok": true,
+        "value": {
+          "value": "u64::MAX"
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid",
+        "integer_max"
+      ]
+    },
+    {
+      "id": "varint.noncanonical",
+      "domain": "wire",
+      "operation": "varint",
+      "input": {
+        "value": 0
+      },
+      "bytes_hex": "8000",
+      "expected": {
+        "ok": false,
+        "error": "NonCanonicalInteger"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "noncanonical_integer",
+        "malformed",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "varint.truncated",
+      "domain": "wire",
+      "operation": "varint",
+      "input": {},
+      "bytes_hex": "80",
+      "expected": {
+        "ok": false,
+        "error": "Truncated"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "truncated",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "varint.overflow",
+      "domain": "wire",
+      "operation": "varint",
+      "input": {},
+      "bytes_hex": "ffffffffffffffffffff",
+      "expected": {
+        "ok": false,
+        "error": "IntegerOverflow"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "integer_overflow",
+        "expected_failure"
+      ]
+    },
+    {
       "id": "ack.range-max",
       "domain": "ack",
       "operation": "ack_range",
       "input": {
         "start": 0,
-        "end": 18446744073709551615
+        "end": "u64::MAX"
       },
-      "bytes_hex": "00ffffffffffffffff",
+      "bytes_hex": null,
       "expected": {
         "ok": true,
         "value": {
@@ -217,7 +908,7 @@
       "input": {
         "next": "u64::MAX"
       },
-      "bytes_hex": "",
+      "bytes_hex": null,
       "expected": {
         "ok": false,
         "error": "PacketNumberExhausted"
@@ -239,7 +930,7 @@
       "input": {
         "payload_bytes": 1201
       },
-      "bytes_hex": "",
+      "bytes_hex": null,
       "expected": {
         "ok": false,
         "error": "Oversized"
@@ -262,7 +953,7 @@
         "from": 0,
         "to": 1
       },
-      "bytes_hex": "01",
+      "bytes_hex": null,
       "expected": {
         "ok": true,
         "value": {
@@ -288,7 +979,7 @@
         "from": 0,
         "to": 2
       },
-      "bytes_hex": "02",
+      "bytes_hex": null,
       "expected": {
         "ok": false,
         "error": "InvalidKeyPhase"
@@ -312,7 +1003,7 @@
         "path": 1,
         "generation": 2
       },
-      "bytes_hex": "0102",
+      "bytes_hex": null,
       "expected": {
         "ok": true,
         "value": {
@@ -337,7 +1028,7 @@
       "input": {
         "authenticated": false
       },
-      "bytes_hex": "",
+      "bytes_hex": null,
       "expected": {
         "ok": false,
         "error": "Unauthenticated"
@@ -350,76 +1041,6 @@
       "classification": [
         "unauthenticated",
         "state_only"
-      ]
-    },
-    {
-      "id": "close.empty",
-      "domain": "close",
-      "operation": "close",
-      "input": {
-        "reason_hex": ""
-      },
-      "bytes_hex": "040000",
-      "expected": {
-        "ok": true,
-        "value": {
-          "closed": true
-        }
-      },
-      "oracle": {
-        "encode_equals_bytes": false,
-        "decode_bytes_equals_expected": false,
-        "roundtrip_equals_bytes": false
-      },
-      "classification": [
-        "valid",
-        "state_only"
-      ]
-    },
-    {
-      "id": "error.trailing",
-      "domain": "error",
-      "operation": "decode",
-      "input": {
-        "payload_hex": ""
-      },
-      "bytes_hex": "4e4b0001000000000000",
-      "expected": {
-        "ok": false,
-        "error": "TrailingBytes"
-      },
-      "oracle": {
-        "encode_equals_bytes": false,
-        "decode_bytes_equals_expected": true,
-        "roundtrip_equals_bytes": false
-      },
-      "classification": [
-        "trailing",
-        "malformed",
-        "expected_failure"
-      ]
-    },
-    {
-      "id": "varint.noncanonical",
-      "domain": "wire",
-      "operation": "varint",
-      "input": {
-        "value": 0
-      },
-      "bytes_hex": "8000",
-      "expected": {
-        "ok": false,
-        "error": "NonCanonicalInteger"
-      },
-      "oracle": {
-        "encode_equals_bytes": false,
-        "decode_bytes_equals_expected": true,
-        "roundtrip_equals_bytes": false
-      },
-      "classification": [
-        "noncanonical_integer",
-        "malformed",
-        "expected_failure"
       ]
     }
   ]

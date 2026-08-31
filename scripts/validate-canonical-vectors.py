@@ -9,7 +9,7 @@ than silently treating them as evidence.
 import json, re, sys
 from pathlib import Path
 
-DOMAINS = {"negotiation","wire","frame","ack","reliable_udp","datagram","key_update","carrier_transition","close","error"}
+DOMAINS = {"negotiation","wire","frame","ack","reliable_udp","datagram","key_update","carrier_transition","error"}
 CLASSES = {"valid","malformed","truncated","trailing","oversized","unknown_enum","unknown_version","unauthenticated","out_of_range","integer_min","integer_max","integer_overflow","noncanonical_integer","duplicate","late","expected_failure","conceptual","state_only"}
 HEX = re.compile(r"^(?:[0-9a-f]{2})*$")
 ID = re.compile(r"^[a-z0-9][a-z0-9._-]{2,95}$")
@@ -40,15 +40,19 @@ def check(path, expected_parent=None):
         if not re.fullmatch(r"^[a-z0-9][a-z0-9._-]{1,63}$", v["operation"]): fail(p+" operation")
         if not isinstance(v["input"], dict): fail(p+" input")
         b=v["bytes_hex"]
-        if not isinstance(b,str) or len(b)>8192 or not HEX.fullmatch(b): fail(p+" bytes_hex")
+        state_only = "state_only" in v["classification"]
+        if state_only:
+            if b is not None: fail(p+" state_only bytes_hex must be null")
+        elif not isinstance(b,str) or len(b)>32768 or not HEX.fullmatch(b): fail(p+" bytes_hex")
         e=v["expected"]
         if not isinstance(e,dict) or set(e)-{"ok","value","error"} or not isinstance(e.get("ok"),bool): fail(p+" expected")
         if e["ok"] != ("value" in e and "error" not in e): fail(p+" expected polarity")
         if not e["ok"] and ("error" not in e or not ERR.fullmatch(e["error"])): fail(p+" error")
         o=v["oracle"]
         if set(o) != {"encode_equals_bytes","decode_bytes_equals_expected","roundtrip_equals_bytes"} or any(not isinstance(o[k], bool) for k in o): fail(p+" oracle booleans")
-        if any(o.values()) and "expected_failure" not in v["classification"] and "conceptual" not in v["classification"] and "state_only" not in v["classification"]:
-            pass
+        if state_only and any(o.values()): fail(p+" state_only oracle")
+        if not state_only and not any(o.values()): fail(p+" executable wire row has no oracle")
+        if o["roundtrip_equals_bytes"] and (not e["ok"] or not o["encode_equals_bytes"] or not o["decode_bytes_equals_expected"]): fail(p+" roundtrip prerequisites")
         c=v["classification"]
         if not isinstance(c,list) or not c or len(set(c)) != len(c) or any(x not in CLASSES for x in c): fail(p+" classification")
     missing=DOMAINS-domains
