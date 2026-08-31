@@ -1,173 +1,156 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-01 01:02 Asia/Shanghai
-Repository HEAD reviewed: `ee555e2874420b7cf92a4c088a617daa94b8b23c`
-Previous checked HEAD: `23008e904fd7a5ab258349e4679e973c5eb41555`
+Checked at: 2026-09-01 01:58 Asia/Shanghai
+Repository HEAD: `d65e3fbd2230799a1734ee29f2e40f02746bceb1`
+Previous checked implementation HEAD: `ee555e2874420b7cf92a4c088a617daa94b8b23c`
+Previous reviewer handoff commit: `16458f6dbe818e3ecbba83ef2982c1d5e0aafac5`
 
 ## What changed
 
-The previous repair package was substantially completed and pushed as four reviewable commits after the prior handoff:
+One new coding-agent commit is visible after the previous reviewer handoff:
 
-- `4dcb871` — **implementation + tests + bounded local evidence**: replaces anonymous lifecycle readiness counting with named idempotent prerequisites, makes readiness finalization fail closed, and adds process-level READY / invalid-bind / SIGTERM / listener-rebind evidence. The historical N8 raw logs are preserved and only their readiness subclaim is superseded.
-- `53c1497` — **tests**: adds executable malicious-peer coverage for the TCP multistream authenticated-admission path. A one-byte negotiation-binding mismatch fails during Noise before `SecureSession`/Session data admission; unsupported-only negotiation is rejected before Noise/data admission with the existing uniform external error surface.
-- `b6d3cd6` — **test harness + fixture repair**: adds a Rust integration test that loads `fixtures/canonical-vectors.v1.json`, exercises current wire/negotiation code for a subset of entries, and changes several fixture oracle flags/classifications so expected-failure/state-only entries are no longer universally self-described as byte-roundtrippable.
-- `ee555e2` — **documentation/navigation**: reconciles README/release-boundary text and converts `IMPLEMENTATION_PLAN.md` back into an actual current N/RC execution queue rather than a duplicate roadmap.
+- `d65e3fb` — **test/fixture/validator/documentation only; no production runtime implementation**. It materially repairs the N9 candidate corpus: every non-`state_only` row is routed through an executable adapter; fixture bytes are consumed for decode/error oracles; state-only rows use `bytes_hex: null`; `close.empty` is promoted to a real frame vector; the old misleading datagram-max row is split into a truthful small vector plus a real 1024-byte maximum vector; negotiation response/error, frame boundary/error, outer-record, and canonical-varint coverage is expanded; and `docs/spec/canonical-vector-corpus-scope.md` explicitly documents executed coverage and deliberate exclusions.
 
-The repository-local full validation log committed with the N4 repair shows format/check/workspace tests/clippy and repository gates passing. GitHub still has no independent commit-status checks attached to `ee555e2`; this remains coding-environment evidence rather than an independent CI attestation.
+The current corpus still has `freeze=false`, which is correct. No GitHub commit-status/CI checks are attached to `d65e3fb`; this review therefore treats repository code/fixture content as reviewable evidence, not independent CI attestation.
 
 ## Review verdict
 
-**needs repair, but the previous correctness blockers are closed. N9 is READY and is not blocked by the later independent security-review gate.**
+**needs one bounded repair before N9 freeze review**
 
-The previous handoff's N4 and N7-11 blockers are satisfactorily repaired within their stated bounded scope:
+The seven concrete defects from the prior handoff are substantially addressed. The candidate corpus is much closer to being truthfully executable and the scope note now makes the wire/state boundary explicit.
 
-1. Current `server()` explicitly marks five named readiness prerequisites and exits on incomplete readiness before entering the accept/receive loop. The previous “serve while FAILED” defect is closed.
-2. The TCP multistream path now has process-level negative tests for exact negotiation-transcript mismatch and unsupported-only negotiation before Session data admission. The N7-11 bounded TCP admission claim is supportable.
+However, one evidence-contract defect remains in `crates/neko-wire/tests/canonical_vectors.rs`: the test named `every_claimed_oracle_executes_real_implementation_code` does execute every claimed wire adapter, but some successful `decode_bytes_equals_expected=true` rows do **not compare the full declared `expected.value` semantics**.
 
-However, N9 candidate-corpus freeze is **not ready to PASS yet**. This reviewer run is the independent corpus review required by the current `IMPLEMENTATION_PLAN.md`, and it found concrete remaining corpus/oracle defects below. Therefore the coding agent must not keep N9 blocked waiting for an “external reviewer handoff”: this handoff is that independent N9 review. The separate **independent release/security review** remains a later release gate and must not be collapsed into N9.
+Concrete examples:
 
-Also reconcile any stale task label such as `N9 Freeze RC manifest`. The authoritative current plan defines N9 as **candidate-corpus review and freeze decision** and explicitly says N9 must not imply RC, security approval, or release. Full RC/release evidence is a later dependency.
+1. Positive frame rows only assert `decoded.len() == expected.frame_count`. They do not assert the decoded `Frame` values equal the fixture/input semantics. In particular `frame.datagram-max-1024` declares `expected.value.payload_bytes = 1024`, but the current harness never checks that field.
+2. `negotiation.hello.v0-v2` consumes the fixture hello bytes and verifies the selected version, but the declared `expected.value.versions` field is not itself checked. Encode equality currently makes a mismatch unlikely, but an oracle named `decode_bytes_equals_expected` must not rely on that implication.
+
+This is an evidence/oracle enforcement issue, not a wire-semantics bug. Do **not** change protocol bytes to make the test convenient.
+
+N9 therefore remains `freeze=false`. The next independent ChatGPT review should make the actual freeze decision after this narrow repair and green validation evidence. The coding agent must not set `freeze=true` in the repair commit.
 
 ## Evidence boundaries
 
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain correct.
-- N4 repair evidence is bounded loopback/process-lifecycle evidence, not WAN or production service evidence.
-- N7-11 coverage is **TCP multistream only**. Ordinary `server/client` probe, UDP, and failover/resume still do not thereby gain version negotiation.
-- The candidate vector corpus remains `freeze=false` and must stay so during the repair below.
-- The new Rust canonical-vector test is real executable evidence for several entries, but it still does not enforce every `oracle.*=true` claim against the fixture's actual `bytes_hex`.
-- State-only/conceptual contract fixtures are useful, but they are not canonical wire bytes and must not look like frozen interoperability bytes.
-- Standing self-owned VPS authorization remains active. Missing ordinary per-run approval is not a blocker for later bounded TCP/UDP release-evidence work.
-- Independent release/security review is still required before RC, but it is **not** a prerequisite for performing N9 corpus repair/review.
+- `d65e3fb` changes corpus/test evidence, not production wire/runtime behavior.
+- The scope note correctly limits the candidate interoperability corpus to public `neko-wire` record/frame/negotiation bytes; ACK/reliable-UDP/datagram-policy/key-update/carrier-transition rows are explicitly state-only and non-wire.
+- The current corpus covers all `Frame` variants presently visible in `neko-wire`, outer `RecordType::{Data,Ack,PathChallenge}`, negotiation hello/response/failure cases, frame count/payload boundaries, and canonical varint boundaries. Additional malformed permutations remain ordinary unit/fuzz coverage by explicit scope decision.
+- No independent GitHub CI attestation exists for the current HEAD. Local gate claims must remain local evidence unless separately published/checked.
+- Standing self-owned VPS authorization remains active and is not an N9 blocker.
+- Independent release/security review is a later RC gate, not a prerequisite for this corpus repair/freeze review.
 
 ## Work Package
 
-### Primary — Close N9 corpus/oracle defects and return it for freeze review
+### Primary — Make successful decode oracles compare their full declared semantics
 
 **Goal**
 
-Make `fixtures/canonical-vectors.v1.json` truthful and fully machine-enforced wherever it claims canonical bytes or executable decode/round-trip behavior. Do not freeze it in the same implementation commit; return the repaired candidate (`freeze=false`) for the next independent reviewer decision.
+Close the final N9 executable-oracle gap without changing wire semantics or freezing the corpus.
 
 **Why now**
 
-`IMPLEMENTATION_PLAN.md` correctly names N9 as the first READY release-engineering task. The current harness is a strong improvement over structural validation, but several oracle claims are still partially self-attested and the corpus mixes actual wire vectors with pseudo-byte state fixtures. Freezing now would turn those ambiguities into a compatibility contract.
-
-**Concrete review findings to repair**
-
-1. `negotiation.hello.v0-v2` asserts emitted bytes equal `bytes_hex`, but does not actually feed the fixture bytes through a server-side negotiation operation to prove the claimed decoded semantic versions. If `decode_bytes_equals_expected=true`, the test must exercise the fixture bytes, not only a freshly generated equivalent.
-2. `negotiation.no-overlap` and `negotiation.duplicate` build fresh hello bytes from `input` and execute those; they do not require the fixture's `bytes_hex` to be the bytes that produced the expected error. Enforce fixture-byte equality/consumption directly.
-3. `frame.oversized` proves that constructing an oversized `Frame::Datagram` fails encoding, but it does not decode the fixture `bytes_hex` even though `decode_bytes_equals_expected=true`. Execute `decode_frames(bytes_hex)` and verify the expected `LengthTooLarge` path.
-4. `frame.datagram-max` is semantically misnamed: it contains a one-byte payload (`0c000100`), not the 1024-byte frame payload boundary. Rename it to a truthful minimum/small vector and add a real max-boundary vector, or change the payload to the actual maximum with a deterministic byte oracle.
-5. Several `state_only` entries carry non-empty `bytes_hex` despite all byte oracles being false (`ack.range-max`, key-update entries, carrier transition, etc.). A freeze corpus must not make invented/pseudo bytes look canonical. Either move state-only cases to a separate state-contract fixture, allow an explicit `bytes_hex: null`/absent representation, or otherwise make the schema unmistakably non-wire for those rows.
-6. `close.empty` is currently classified `state_only`, but `Frame::Close` has a real wire codec (`04 0000`). Promote this row to an actually executed frame vector and enforce encode/decode/round-trip bytes, rather than leaving a real wire surface untested in the canonical corpus.
-7. Review the rest of the version-sensitive public wire surface for freeze coverage. At minimum decide explicitly whether the frozen corpus covers or intentionally excludes: outer `RecordType::{Data,Ack,PathChallenge}`, `Frame::{Data,Datagram,DeliveryAck,Close,PathChallenge,PathResponse}`, unknown-ignorable/unknown-critical/reserved frame behavior, negotiation response bytes, malformed/unsupported selected-version response, truncation, max frame count/payload, and canonical varint boundaries. Do not add dozens of rows merely for volume; every omission must be deliberate and documented.
+N9 is the first READY release-engineering gate. The corpus is now structurally strong enough that the remaining issue is narrow: `decode_bytes_equals_expected=true` must mean exactly what it says for successful rows, not merely “the decoder returned something of the expected count.”
 
 **Likely files**
 
-- `fixtures/canonical-vectors.v1.json`;
 - `crates/neko-wire/tests/canonical_vectors.rs`;
-- `scripts/validate-canonical-vectors.py` if schema semantics change;
-- a small `docs/` corpus-scope note only if needed to state what is and is not frozen.
+- `fixtures/canonical-vectors.v1.json` only if an `expected.value` field is redundant/incorrect and should be truthfully simplified;
+- `scripts/validate-canonical-vectors.py` only if a general structural invariant is added.
 
-**Minimum behavior / tests**
+**Required behavior**
 
-- Every row with `oracle.encode_equals_bytes=true` executes the real encoder and compares with fixture bytes.
-- Every row with `oracle.decode_bytes_equals_expected=true` consumes the fixture's actual `bytes_hex` through real implementation logic and verifies the expected value/error.
-- Every row with `oracle.roundtrip_equals_bytes=true` performs the actual decode/encode (or protocol-equivalent) round trip.
-- State-only rows never masquerade as canonical bytes.
-- Expected failures remain failures; no “PASS” is manufactured by changing expected semantics to match bugs.
-- `freeze` remains `false` in the coding-agent repair commit.
+1. For successful frame rows, compare the decoded semantic `Frame` sequence against the fixture/input semantics (for example, `decoded == input_frames(&v)`), not only `decoded.len()`.
+2. If `expected.value` carries additional fields such as `payload_bytes`, either assert them from the real decoded value or remove them only if they are not actually part of the intended oracle contract. Do not leave declared expected fields unchecked.
+3. For successful negotiation hello rows, explicitly enforce every declared expected semantic field, including the offered-version list if it remains in `expected.value`.
+4. Keep expected-failure rows consuming the fixture's actual `bytes_hex` and comparing the real implementation error.
+5. Keep `state_only` rows byte-null/non-executable.
+6. Keep corpus `freeze=false` in the coding-agent repair commit.
 
 **Validation**
 
-Run targeted `neko-wire` canonical-vector tests, the structural validator, the full repository gate, and fuzz smoke if parser/decoder/schema-adapter code changes in a way covered by the fuzz policy.
+Run at minimum:
+
+- targeted `neko-wire` canonical-vector integration test;
+- `python3 scripts/validate-canonical-vectors.py fixtures/canonical-vectors.v1.json` (with the repository's expected-parent convention if required);
+- `bash scripts/check.sh`;
+- `git diff --check`.
+
+Run fuzz smoke only if production parser/decoder behavior or a fuzz-covered parser adapter is changed; a pure test/fixture assertion repair does not need a fake fuzz claim.
+
+Because GitHub currently has no independent status checks, record local validation truthfully in the normal repository/commit evidence convention; do not call it independent CI.
 
 **Completion definition**
 
-The candidate corpus is internally truthful, executable oracles are implementation-backed rather than boolean self-attestation, conceptual/state fixtures are clearly separated from byte interoperability, coverage/exclusions are explicit, and the corpus is ready for the next ChatGPT independent freeze review while still `freeze=false`.
+Every successful `decode_bytes_equals_expected=true` row verifies every semantic field it declares, every failure row verifies the real error from fixture bytes, all local gates pass, and `freeze=false` remains unchanged for independent reviewer freeze decision.
 
 **Do not expand into**
 
-- RC declaration or RC manifest freeze;
-- changing wire semantics just to make fixture bytes convenient;
-- inventing previous-release interoperability;
-- new carriers or unrelated performance work.
+- changing wire semantics;
+- RC declaration or RC manifest work;
+- negotiation runtime integration;
+- WAN/benchmark reruns;
+- previous-release interoperability.
 
-### Follow-up 1 — Complete authenticated negotiation for ordinary TCP/UDP probe paths
+### Follow-up 1 — Repair standing-authorization status/navigation drift
 
-**Dependency:** Primary complete and full gate green. If the next reviewer freezes/accepts the corpus first, consume that handoff before changing frozen bytes; otherwise this slice must preserve the repaired candidate wire semantics.
+**Dependency:** Primary complete and green.
 
-The current N1 primitive and TCP multistream transcript binding are not global runtime negotiation. Integrate the same bounded negotiation-before-Noise rule into the ordinary `neko server/client` TCP and UDP authenticated probe paths.
+Two repository-status texts still contradict the already accepted standing authorization:
 
-Required contract:
+1. `ROADMAP.md` Milestone 1 says real WAN failover/long-lived/NAT validation is blocked because it “needs new authorization”. Ordinary bounded self-owned TCP/UDP work is already authorized; the real missing pieces are evidence/environment/release scope, not repeated permission.
+2. `docs/status.md` reachability says “Only isolated authorized observation is permitted”. This is too narrow after `docs/standing-vps-lab-authorization.md`; bounded self-owned VPS execution is permitted, while **public/general reachability claims** remain blocked.
 
-1. N1 negotiation completes before the first Noise/session-data message is accepted.
-2. The exact accepted hello + selected response are bound into the Noise prologue/authenticated transcript exactly as in the reviewed multistream design; same selected version with a different offer must not authenticate as the same negotiation.
-3. Unsupported-only, malformed, duplicate/late, and transcript-mismatch peers fail before Session data admission.
-4. TCP framing remains bounded.
-5. UDP negotiation response must stay within the existing anti-amplification/resource boundary; duplicate hello may replay the exact accepted response, but changed/late unauthenticated messages must not mutate established state.
-6. Preserve current uniform external failure behavior unless a documented operator-only diagnostic is already allowed.
-7. Do not add 0-RTT or early application data.
+Correct those words without changing any capability claim to PASS. Preserve the distinction:
 
-Add positive and malicious-peer process/integration tests for both TCP and UDP. If wire/parser code changes, run fuzz smoke in addition to the full gate.
+```text
+execution authorization exists
+!= release/public-reachability evidence exists
+```
 
-### Follow-up 2 — Extend negotiation binding through failover/resume without weakening Session/Carrier separation
+This is documentation/governance repair only.
 
-**Dependency:** Follow-up 1 complete.
+### Follow-up 2 — Wait for independent N9 freeze decision before changing candidate wire bytes
 
-Specify and implement the version-binding rule for the failover/resume path. The selected protocol version and exact negotiation context must not be lost when the logical Session moves from UDP to TCP fallback/resume.
+**Dependency:** Primary complete; status drift repair complete or not applicable.
 
-Minimum acceptance questions/tests:
+Do not self-freeze the corpus and do not start a wire-changing negotiation slice while the repaired candidate is awaiting the next reviewer pass. The next ChatGPT review should inspect the exact repair commit and either:
 
-- Can a fallback carrier negotiate a different unsupported/downgraded version and still resume the same logical Session? It must fail closed unless the documented compatibility contract explicitly permits the transition.
-- Is the negotiation/version context bound to the authenticated resume material/generation so replay from an old carrier generation cannot advance the resumed Session?
-- Do uncertain resend/dedup and Session delivery evidence remain independent of carrier packet ACK/readiness evidence?
-- Does duplicate/loss recovery remain bounded without turning negotiation messages into application delivery proof?
+- record another concrete defect and keep `freeze=false`; or
+- make/authorize the separate N9 freeze governance change.
 
-Keep single-active/multi-ready semantics and the existing no-striping decision. Record any genuinely new architecture choice in `docs/decisions.md` before implementation if the current accepted decisions do not already determine it.
+If no new handoff exists yet, it is acceptable to stop after the two real READY repairs rather than invent unrelated work. The hourly reviewer cadence is intended to keep this wait short.
 
-### Follow-up 3 — Start the standing-authorized bounded release-evidence matrix
+### Fallback
 
-**Dependency:** Follow-up 2 complete and full local gate green.
+If the Primary unexpectedly reveals a real production codec/parser defect rather than a test-oracle defect:
 
-Use `docs/standing-vps-lab-authorization.md` directly; do not ask again for ordinary self-owned VPS TCP/UDP permission or count/bytes/duration/port. Start with the smallest reproducible rows that exercise the newly negotiated runtime:
-
-1. independently controlled self-owned VPS TCP authenticated negotiated session;
-2. self-owned VPS UDP authenticated negotiated session;
-3. bounded UDP degradation -> TCP fallback/resume with exact Session continuity/dedup evidence;
-4. bounded short soak within the standing <=10-minute limit if the first three rows pass.
-
-For each row record experiment ID, exact git/binary identity, actual parameters, endpoint-ownership classification, client/server result, structured events, capture metadata if used, and cleanup verification. Negative results remain evidence. Do not call self-owned same-host/host-address observations “public Internet reachability”, NAT evidence, or production readiness.
-
-If IPv6 is unavailable in the actual environment, classify that row `BLOCKED_ENVIRONMENT`; do not invent failure or stop IPv4-independent work. NAT/endpoint-change work should only be attempted when a controllable path actually exists and remains within standing authorization.
-
-### Fallback — Repair authorization/status/navigation drift only if a runtime dependency blocks the main path
-
-There is still one concrete navigation inconsistency: `ROADMAP.md` Milestone 1 says real WAN failover/long-lived/NAT validation is blocked because it “needs new authorization”, while `AGENTS.md` and `docs/standing-vps-lab-authorization.md` explicitly grant ordinary bounded self-owned VPS execution. Correct that wording so the remaining blockers are evidence/environment/release scope, not nonexistent per-run authorization.
-
-Also review `docs/status.md` reachability wording for the same distinction: execution authorization can be present while release/public-reachability claims remain blocked. Do not turn those claims into PASS.
-
-This fallback is documentation/governance repair only; it must not replace the Primary corpus work when the Primary is executable.
+- keep `freeze=false`;
+- stop N9 freeze work;
+- preserve a minimal reproducer;
+- make correctness repair the next Primary;
+- run the full parser/fuzz gates required by `AGENTS.md`;
+- do not continue into negotiation runtime integration until the codec defect is closed.
 
 ## Completion gates
 
-- N9 corpus-review defects above are repaired with `freeze=false` and returned for independent freeze review.
-- No `oracle.*=true` remains self-attested without exercising the fixture bytes/real implementation semantics it claims.
-- State-only pseudo-bytes are not presented as canonical interoperability bytes.
-- Ordinary TCP/UDP probe paths negotiate before Noise and cryptographically bind the exact accepted negotiation transcript before Session data.
-- Failover/resume cannot silently downgrade or lose the negotiated-version context across carrier transition.
-- Standing-authorized release-evidence rows preserve exact experiment parameters, endpoint ownership, negative results and cleanup.
-- Full repository gates remain green after each behavior-changing slice.
-- Release/production/freeze flags remain truthful until separate decisions actually pass.
+- Every claimed successful decode oracle checks its complete declared semantics.
+- Frame vectors prove decoded frame identity/payload semantics, not only frame count.
+- `frame.datagram-max-1024` really proves the declared 1024-byte decoded boundary.
+- Negotiation hello expected fields are all enforced or truthfully simplified.
+- State-only rows remain unmistakably non-wire.
+- Targeted canonical-vector test, structural validator, full repository gate and `git diff --check` pass locally.
+- Authorization/status wording no longer creates a nonexistent per-run WAN permission blocker.
+- `FREEZE=false`, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, and `RELEASED=false` remain unchanged pending later decisions.
 
 ## Do not expand into
 
-- RC/production/security approval before their later gates;
-- previous/current interop before a real prior frozen release exists;
-- 0-RTT, FEC enablement, concurrent striping, heterogeneous aggregation or exotic carriers without a new observed-problem gate;
-- third-party targets or scanning;
-- production firewall/route/DNS/proxy/tunnel/qdisc changes;
-- >10-minute, >256 MiB, >32-session or other experiments outside standing authorization;
-- treating one bounded self-owned VPS result as general public reachability or performance superiority.
+- RC/production/security approval;
+- changing candidate bytes merely to satisfy fixtures;
+- previous/current interoperability before a real prior frozen release exists;
+- 0-RTT, FEC enablement, striping/aggregation or exotic carriers without an observed-problem gate;
+- third-party targets, scanning or production network changes;
+- experiments outside standing authorization.
 
 ## Questions requiring maintainer decision
 
