@@ -166,12 +166,25 @@ fn every_claimed_oracle_executes_real_implementation_code() {
                     let mut server =
                         VersionNegotiator::new(NegotiationRole::Server, &offered).unwrap();
                     let response = server.server_accept_hello(&bytes).unwrap();
+                    let expected = v.expected.value.as_ref().unwrap();
+                    assert_eq!(
+                        versions(expected, "versions"),
+                        offered,
+                        "{} offered versions",
+                        v.id
+                    );
                     assert_eq!(
                         server.selected().unwrap() as u64,
-                        v.expected.value.as_ref().unwrap()["selected"]
-                            .as_u64()
-                            .unwrap()
+                        expected["selected"].as_u64().unwrap()
                     );
+                    let expected_hello = VersionNegotiator::new(
+                        NegotiationRole::Client,
+                        &versions(expected, "versions"),
+                    )
+                    .unwrap()
+                    .client_hello()
+                    .unwrap();
+                    assert_eq!(expected_hello, bytes, "{} decoded hello semantics", v.id);
                     if v.oracle.roundtrip_equals_bytes {
                         assert_eq!(
                             server.server_accept_hello(&bytes).unwrap(),
@@ -290,12 +303,43 @@ fn every_claimed_oracle_executes_real_implementation_code() {
                     match decode_frames(&bytes) {
                         Ok(decoded) => {
                             assert!(v.expected.ok, "{} unexpectedly succeeded", v.id);
+                            let expected = v.expected.value.as_ref().unwrap();
                             assert_eq!(
                                 decoded.len() as u64,
-                                v.expected.value.as_ref().unwrap()["frame_count"]
-                                    .as_u64()
-                                    .unwrap()
+                                expected["frame_count"].as_u64().unwrap(),
+                                "{} frame count",
+                                v.id
                             );
+                            let expected_frames = expected["frames"]
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .map(frame_from)
+                                .collect::<Vec<_>>();
+                            assert_eq!(
+                                decoded, expected_frames,
+                                "{} decoded frame semantics",
+                                v.id
+                            );
+                            if let Some(payload_bytes) = expected.get("payload_bytes") {
+                                let actual_payload_bytes: usize = decoded
+                                    .iter()
+                                    .map(|frame| match frame {
+                                        Frame::Data(p)
+                                        | Frame::Datagram(p)
+                                        | Frame::DeliveryAck(p)
+                                        | Frame::Close(p) => p.len(),
+                                        Frame::PathChallenge(p) | Frame::PathResponse(p) => p.len(),
+                                        Frame::UnknownIgnorable { payload, .. } => payload.len(),
+                                    })
+                                    .sum();
+                                assert_eq!(
+                                    actual_payload_bytes as u64,
+                                    payload_bytes.as_u64().unwrap(),
+                                    "{} payload bytes",
+                                    v.id
+                                );
+                            }
                             if v.oracle.roundtrip_equals_bytes {
                                 assert_eq!(
                                     encode_frames(&decoded).unwrap(),
