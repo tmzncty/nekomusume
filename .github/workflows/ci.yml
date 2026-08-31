@@ -25,7 +25,10 @@ jobs:
         with:
           components: rust-src
       - name: Install pinned cargo-fuzz
-        run: cargo install cargo-fuzz --version 0.12.0 --locked
+        run: |
+          . scripts/fuzz-toolchain.sh
+          cargo install cargo-fuzz --version "$CARGO_FUZZ_VERSION" --locked
+          require_cargo_fuzz_version
       - run: test -f docs/specs/nekomusume-session-v0.md
       - run: test -f LICENSE-MIT && test -f LICENSE-APACHE
       - run: grep -q 'license = "MIT OR Apache-2.0"' fuzz/Cargo.toml

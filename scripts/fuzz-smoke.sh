@@ -7,21 +7,16 @@ if [ -f "$HOME/.cargo/env" ]; then
     # shellcheck disable=SC1090
     . "$HOME/.cargo/env"
 fi
+# shellcheck source=scripts/fuzz-toolchain.sh
+. "$ROOT/scripts/fuzz-toolchain.sh"
 
 FUZZ_TIME=${FUZZ_TIME:-30}
 FUZZ_MAX_LEN=${FUZZ_MAX_LEN:-8192}
 SEED_CORPUS="$ROOT/fuzz/corpus/decode"
 
-if ! command -v cargo-fuzz >/dev/null 2>&1; then
-    printf '%s\n' 'error: cargo-fuzz is required; install it with cargo install cargo-fuzz --version 0.12.0 --locked' >&2
-    exit 1
-fi
+require_cargo_fuzz_version
 if ! rustup run nightly rustc --version >/dev/null 2>&1; then
     printf '%s\n' 'error: the nightly Rust toolchain is required; install it with rustup toolchain install nightly --profile minimal' >&2
-    exit 1
-fi
-if ! cargo fuzz --version >/dev/null 2>&1; then
-    printf '%s\n' 'error: cargo-fuzz is not executable' >&2
     exit 1
 fi
 if [ ! -d "$SEED_CORPUS" ]; then
@@ -37,7 +32,8 @@ trap cleanup EXIT INT TERM
 mkdir -p "$WORK/corpus" "$WORK/artifacts"
 cp -a "$SEED_CORPUS/." "$WORK/corpus/"
 
-printf 'running isolated nightly cargo-fuzz decode smoke: time=%s max_len=%s\n' "$FUZZ_TIME" "$FUZZ_MAX_LEN"
+printf 'running isolated nightly cargo-fuzz %s decode smoke: time=%s max_len=%s\n' \
+    "$CARGO_FUZZ_VERSION" "$FUZZ_TIME" "$FUZZ_MAX_LEN"
 RUSTUP_TOOLCHAIN=nightly cargo fuzz build decode
 RUSTUP_TOOLCHAIN=nightly cargo fuzz run decode -- \
     -artifact_prefix="$WORK/artifacts/" \
