@@ -11,22 +11,35 @@ reachability, sustained WAN operation, NAT/endpoint-change behavior, production
 resource safety, protocol interoperability, security approval, or superiority
 against Hysteria2.
 
-The following remain deliberately blocked:
+Standing authorization in `docs/standing-vps-lab-authorization.md` already
+permits bounded, temporary execution between administrator-controlled clients
+and VPS endpoints, including ordinary TCP/UDP listeners, probes, failover,
+benchmarks and cleanup within its limits. Such an experiment needs no repeated
+per-run permission. Authorization to execute is not release evidence, security
+approval, permission for third-party targets, or production authorization.
 
-- public or non-loopback listeners;
-- VPS IPv4/IPv6 reachability and sustained bidirectional WAN tests;
-- NAT/endpoint-change experiments outside an isolated authorized lab;
-- same-server/same-route/same-MTU/same-load HY2 comparison;
+The following release-evidence and deployment claims remain deliberately
+blocked:
+
+- treating a temporary self-owned listener or one bounded run as a public
+  service, global reachability result, or sustained bidirectional WAN proof;
+- complete independently controlled IPv4/IPv6, failover, long-lived and
+  NAT/endpoint-change evidence across the declared release matrix;
+- reviewed same-server/same-route/same-MTU/same-load HY2 comparison evidence;
+- experiments outside the standing authorization boundary without new explicit
+  authorization;
 - production tunnel/proxy deployment, migration or replacement;
 - any claim of security audit, production readiness, protocol freeze or
   performance superiority.
 
-A future release gate requires an explicit scope decision, isolated test
-accounts/endpoints, reproducible metadata and rollback, independent security
-review, canonical interoperability vectors, sustained repeated WAN results,
-resource/abuse limits, and a reviewed comparison protocol. Until all are
-present, `docs/status.md` `reachability` and `production` rows remain blocked.
-No command in this repository should silently widen that boundary.
+A future release gate requires an explicit scope decision, reproducible
+metadata and rollback, independent security review, canonical interoperability
+vectors, sustained repeated WAN results, resource/abuse limits, and a reviewed
+comparison protocol. Standing authorization allows the bounded work needed to
+collect some of that evidence; it does not satisfy those criteria by itself.
+Until all are present, `docs/status.md` `reachability` and `production` rows
+remain blocked. No command in this repository should silently widen that
+boundary.
 
 
 ## Bounded probe runtime boundary

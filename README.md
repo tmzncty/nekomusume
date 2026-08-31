@@ -26,7 +26,7 @@ Hysteria2 仍然是重要 benchmark competitor，但“超过 HY2”不是项目
 
 ## 当前状态
 
-**Research bootstrap / pre-Milestone 0**。权威状态表见 [`docs/status.md`](docs/status.md)；其中 `implemented` 仅表示仓库证据存在，不表示安全、协议冻结、互操作或生产就绪。当前发布门禁见 [`docs/spec/m5-release-readiness-gate.md`](docs/spec/m5-release-readiness-gate.md)，仍为 blocked。
+**Bounded research implementation complete; release gates remain blocked.** 权威状态表见 [`docs/status.md`](docs/status.md)；`IMPLEMENTATION_COMPLETE=true` 只表示当前有界研究实现与仓库证据存在，不表示 release candidate、安全批准、协议冻结、公开互操作或生产就绪。当前发布门禁见 [`docs/spec/m5-release-readiness-gate.md`](docs/spec/m5-release-readiness-gate.md)：`RELEASE_CANDIDATE=false`、`PRODUCTION_READY=false`、`FREEZE=false`、`RELEASED=false`。
 
 已形成的主要方向：
 
@@ -100,7 +100,7 @@ Hysteria2 仍然是重要 benchmark competitor，但“超过 HY2”不是项目
 
 ## Research and M0 planning
 
-The standards, threat model and recovery studies are indexed in [`docs/m0-spec-plan.md`](docs/m0-spec-plan.md), with the provisional normative-source entry point at [`docs/specs/nekomusume-session-v0.md`](docs/specs/nekomusume-session-v0.md), and [`docs/research/`](docs/research/). They are research/planning documents, not implemented features. [`docs/design-handoff.md`](docs/design-handoff.md) is historical and non-normative.
+The standards, threat model and recovery studies are indexed in [`docs/m0-spec-plan.md`](docs/m0-spec-plan.md), with the provisional normative-source entry point at [`docs/specs/nekomusume-session-v0.md`](docs/specs/nekomusume-session-v0.md), and [`docs/research/`](docs/research/). Those documents retain their stated research/provisional scope; repository-wide implementation evidence is tracked separately in [`docs/status.md`](docs/status.md). [`docs/design-handoff.md`](docs/design-handoff.md) is historical and non-normative.
 
 ## Local verification
 

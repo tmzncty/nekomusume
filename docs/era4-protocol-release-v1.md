@@ -72,8 +72,17 @@ features may be omitted; mandatory mismatches fail the session before data.
 
 ## Not yet release evidence
 
-This slice adds only the criteria, registry shape, and deterministic policy
-checks. It contains no wire negotiation implementation, no compatibility claim,
-and no live VPS/WAN evidence. Remaining L work includes authenticated transcript
-implementation, canonical vectors, previous/current interop, independent
-review, rollback rehearsal, and a separately authorized release gate.
+The repository now contains the bounded N1 wire-negotiation primitive and TCP
+multistream binds the exact N1 transcript into Noise before Session data
+admission, with executable positive and malicious-peer coverage. That is narrow
+authenticated-admission evidence for the TCP multistream path, not a global
+negotiation claim: probe, failover/resume and UDP paths have not thereby proven
+version negotiation, downgrade handling, replay/amplification safety or
+interoperability.
+
+Current/current and unsupported/future compatibility behavior and executable
+candidate vectors exist, but the corpus remains `freeze=false`; no previous
+frozen release exists for previous/current interoperability. Remaining release
+Remaining L work includes independent review, a reviewed freeze decision, the
+missing path matrix above, sustained WAN/release evidence, and rollback/release
+governance.

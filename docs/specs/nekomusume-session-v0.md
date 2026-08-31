@@ -2,9 +2,13 @@
 
 **Status: provisional normative entry point; not frozen.**
 
-This is the single canonical entry point for Session v0. Current Rust models
-are bounded, synchronous, and transport-independent. They do not implement
-sockets, runtime integration, cryptography, or live failover.
+This is the single canonical entry point for the provisional Session v0
+contract. The models specified by this document are bounded, synchronous, and
+transport-independent; this document does not specify sockets, runtime
+integration, cryptographic construction, or live failover. Separate repository
+crates and evidence do implement bounded instances of those concerns, as
+recorded in `docs/status.md`, but their existence does not expand or freeze this
+document's normative scope.
 
 ## Candidate evidence boundary
 
