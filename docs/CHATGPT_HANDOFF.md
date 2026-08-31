@@ -1,215 +1,173 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-08-31 20:13 Asia/Shanghai
-Repository HEAD reviewed: `23008e904fd7a5ab258349e4679e973c5eb41555`
-Previous checked HEAD: `e794f3437acf9300ccb2e128c3656460b82f1a53`
+Checked at: 2026-09-01 01:02 Asia/Shanghai
+Repository HEAD reviewed: `ee555e2874420b7cf92a4c088a617daa94b8b23c`
+Previous checked HEAD: `23008e904fd7a5ab258349e4679e973c5eb41555`
 
 ## What changed
 
-The repository-reconciliation gate is now closed. GitHub `main` is a normal merge whose parents preserve both the advanced implementation chain and the reviewer/governance chain:
+The previous repair package was substantially completed and pushed as four reviewable commits after the prior handoff:
 
-- `23008e9` — merge authoritative implementation with GitHub governance;
-  - implementation parent: `c44340a`;
-  - reviewer/governance parent: `735c11d`.
+- `4dcb871` — **implementation + tests + bounded local evidence**: replaces anonymous lifecycle readiness counting with named idempotent prerequisites, makes readiness finalization fail closed, and adds process-level READY / invalid-bind / SIGTERM / listener-rebind evidence. The historical N8 raw logs are preserved and only their readiness subclaim is superseded.
+- `53c1497` — **tests**: adds executable malicious-peer coverage for the TCP multistream authenticated-admission path. A one-byte negotiation-binding mismatch fails during Noise before `SecureSession`/Session data admission; unsupported-only negotiation is rejected before Noise/data admission with the existing uniform external error surface.
+- `b6d3cd6` — **test harness + fixture repair**: adds a Rust integration test that loads `fixtures/canonical-vectors.v1.json`, exercises current wire/negotiation code for a subset of entries, and changes several fixture oracle flags/classifications so expected-failure/state-only entries are no longer universally self-described as byte-roundtrippable.
+- `ee555e2` — **documentation/navigation**: reconciles README/release-boundary text and converts `IMPLEMENTATION_PLAN.md` back into an actual current N/RC execution queue rather than a duplicate roadmap.
 
-Relative to the previous formal reviewer baseline `e794f34`, the reconciled branch exposes 188 additional commits. The newly reviewable history includes substantial implementation, test, experiment and release-engineering work rather than documentation-only claims. Important recent slices include:
-
-- `91a735c` / `5ee081a` — reproducible Linux package and native x86_64 build evidence;
-- `d04fdde` — separate implementation-complete, RC, production, freeze and release governance states;
-- `9ee91e8` — explicit CLI lifecycle state plus bounded SIGTERM/SIGINT handling;
-- `59ecaca` — install/upgrade/rollback package lifecycle evidence;
-- `84cc86f` — architecture support audit;
-- `5e2ac79` — bounded explicit version negotiation primitive;
-- `743e433` — candidate canonical-vector schema/corpus validator;
-- `067bc55` — current/current and future/unsupported compatibility harness;
-- `12bb098` — N8 bounded self-owned endpoint matrix;
-- `d2e73ee` — authenticated version-admission remediation design;
-- `0f799ca` — exact duplicate negotiation hello response replay;
-- `5c4cbf1` — bind TCP multistream N1 negotiation transcript into the Noise prologue before Session data admission;
-- `c44340a` — record the direct CLI -> wire dependency required by that integration.
-
-The current merge has no GitHub commit-status checks or PR-triggered workflow runs attached through the GitHub API. Repository-local test/gate logs are therefore evidence committed by the coding environment, not an independent GitHub CI attestation.
+The repository-local full validation log committed with the N4 repair shows format/check/workspace tests/clippy and repository gates passing. GitHub still has no independent commit-status checks attached to `ee555e2`; this remains coding-environment evidence rather than an independent CI attestation.
 
 ## Review verdict
 
-**needs repair — correctness/evidence blockers before further RC work**
+**needs repair, but the previous correctness blockers are closed. N9 is READY and is not blocked by the later independent security-review gate.**
 
-The previous repository-reconciliation blocker is resolved. The next priority is not a new feature or a broader WAN run. Review found two concrete acceptance defects and one evidence-model gap:
+The previous handoff's N4 and N7-11 blockers are satisfactorily repaired within their stated bounded scope:
 
-1. **N4 lifecycle readiness is incorrect in the live CLI integration.** `Lifecycle::finalize_readiness()` requires five readiness marks, but the actual TCP/UDP server paths provide only four before finalization. The server then continues serving even though lifecycle state is `FAILED`. The raw N8 logs confirm `lifecycle_state=FAILED readiness=false` before successful exchanges and before the SIGTERM shutdown result.
-2. **N7-11 authenticated negotiation admission is only partially closed.** The implementation binds the exact N1 transcript into Noise for TCP multistream, but the process-level malicious-peer tests required by `docs/n7-11-version-authenticated-admission-design.md` are absent. Wire/crypto unit tests do not prove the executable CLI rejects a transcript-binding mismatch or unsupported-only negotiation before Session data admission.
-3. **The N2 canonical-vector corpus is structurally validated but not executable evidence.** `scripts/validate-canonical-vectors.py` checks JSON shape and requires hard-coded `oracle=true` fields; it does not invoke current Rust encoders/decoders/state-machine logic. The corpus remains a useful candidate fixture (`freeze=false`) but must not be treated as proven canonical interoperability vectors yet.
+1. Current `server()` explicitly marks five named readiness prerequisites and exits on incomplete readiness before entering the accept/receive loop. The previous “serve while FAILED” defect is closed.
+2. The TCP multistream path now has process-level negative tests for exact negotiation-transcript mismatch and unsupported-only negotiation before Session data admission. The N7-11 bounded TCP admission claim is supportable.
 
-These are repairable within the existing architecture. No maintainer value decision or new authorization is required.
+However, N9 candidate-corpus freeze is **not ready to PASS yet**. This reviewer run is the independent corpus review required by the current `IMPLEMENTATION_PLAN.md`, and it found concrete remaining corpus/oracle defects below. Therefore the coding agent must not keep N9 blocked waiting for an “external reviewer handoff”: this handoff is that independent N9 review. The separate **independent release/security review** remains a later release gate and must not be collapsed into N9.
+
+Also reconcile any stale task label such as `N9 Freeze RC manifest`. The authoritative current plan defines N9 as **candidate-corpus review and freeze decision** and explicitly says N9 must not imply RC, security approval, or release. Full RC/release evidence is a later dependency.
 
 ## Evidence boundaries
 
-- `docs/status.md` correctly keeps `IMPLEMENTATION_COMPLETE=true` separate from `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false`.
-- N8 endpoint evidence is bounded authenticated runtime evidence, not public-WAN/NAT evidence. `192.168.122.1` is explicitly a self-owned host-address path from the same host, not an independently observed Internet path.
-- The four N8 matrix rows do support bounded TCP/UDP authenticated multi-record exchange. That result survives the lifecycle-readiness defect; what does **not** survive is any claim that those runs demonstrated a valid READY lifecycle transition.
-- `artifacts/n8-20260831/tcp-loopback-server.log` and `lifecycle-sigterm.log` explicitly record `lifecycle_state=FAILED readiness=false` before `STOPPED`. Preserve these raw artifacts; do not edit them into a pass.
-- `artifacts/n8-20260831/lifecycle-result.txt` saying `SIGTERM graceful shutdown PASS` can support bounded signal termination/cleanup only. It does not prove READY was ever reached.
-- N5 package evidence supports install A -> upgrade B -> rollback A, external-state retention, package hashes and cleanup on the self-owned x86_64 host. It is package-lifecycle evidence, not public-WAN evidence.
-- N3 correctly defers previous/current interoperability until a real prior frozen release exists; current/current and unsupported/future rejection are the valid present claims.
-- N1 negotiation is bounded and fail-closed. TCP multistream now cryptographically binds its exact negotiation transcript to Noise, but that does not yet mean all CLI probe/failover/UDP paths negotiate versions.
-- The candidate canonical-vector corpus has `freeze=false`. Structural schema validation is not equivalent to executing the vectors against the implementation.
-- `docs/standing-vps-lab-authorization.md` remains authoritative for in-scope bounded self-owned client <-> VPS TCP/UDP/WAN work. Ordinary `40080/40081`, bounded capture, diagnostics, benchmark, HY2 comparison and cleanup do not require another per-run approval.
-- Release/security/production claims remain blocked even though bounded self-owned WAN execution is authorized.
+- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain correct.
+- N4 repair evidence is bounded loopback/process-lifecycle evidence, not WAN or production service evidence.
+- N7-11 coverage is **TCP multistream only**. Ordinary `server/client` probe, UDP, and failover/resume still do not thereby gain version negotiation.
+- The candidate vector corpus remains `freeze=false` and must stay so during the repair below.
+- The new Rust canonical-vector test is real executable evidence for several entries, but it still does not enforce every `oracle.*=true` claim against the fixture's actual `bytes_hex`.
+- State-only/conceptual contract fixtures are useful, but they are not canonical wire bytes and must not look like frozen interoperability bytes.
+- Standing self-owned VPS authorization remains active. Missing ordinary per-run approval is not a blocker for later bounded TCP/UDP release-evidence work.
+- Independent release/security review is still required before RC, but it is **not** a prerequisite for performing N9 corpus repair/review.
 
-## Half-Day Work Package
+## Work Package
 
-### Primary — Repair N4 lifecycle readiness and supersede the contradictory evidence
+### Primary — Close N9 corpus/oracle defects and return it for freeze review
 
 **Goal**
 
-Make the live CLI server lifecycle truthful: STARTING must become READY only after explicit, meaningful prerequisites are satisfied; a failed readiness transition must never continue into serving application traffic; bounded signal shutdown must start from a genuinely READY server when that is what the evidence claims.
+Make `fixtures/canonical-vectors.v1.json` truthful and fully machine-enforced wherever it claims canonical bytes or executable decode/round-trip behavior. Do not freeze it in the same implementation commit; return the repaired candidate (`freeze=false`) for the next independent reviewer decision.
 
 **Why now**
 
-This is a live correctness and evidence-integrity defect in a release-gate area. The repository currently contains successful exchange logs whose server lifecycle simultaneously says `FAILED`. Continuing RC work would compound that contradiction.
+`IMPLEMENTATION_PLAN.md` correctly names N9 as the first READY release-engineering task. The current harness is a strong improvement over structural validation, but several oracle claims are still partially self-attested and the corpus mixes actual wire vectors with pseudo-byte state fixtures. Freezing now would turn those ambiguities into a compatibility contract.
 
-**Preconditions**
+**Concrete review findings to repair**
 
-- Preserve current raw N8 artifacts unchanged.
-- Read `crates/neko-cli/src/lifecycle.rs`, the TCP/UDP server paths in `crates/neko-cli/src/main.rs`, existing CLI process tests and N8 audit/evidence files.
-- Do not change protocol wire semantics, identity format, trust policy or standing authorization.
+1. `negotiation.hello.v0-v2` asserts emitted bytes equal `bytes_hex`, but does not actually feed the fixture bytes through a server-side negotiation operation to prove the claimed decoded semantic versions. If `decode_bytes_equals_expected=true`, the test must exercise the fixture bytes, not only a freshly generated equivalent.
+2. `negotiation.no-overlap` and `negotiation.duplicate` build fresh hello bytes from `input` and execute those; they do not require the fixture's `bytes_hex` to be the bytes that produced the expected error. Enforce fixture-byte equality/consumption directly.
+3. `frame.oversized` proves that constructing an oversized `Frame::Datagram` fails encoding, but it does not decode the fixture `bytes_hex` even though `decode_bytes_equals_expected=true`. Execute `decode_frames(bytes_hex)` and verify the expected `LengthTooLarge` path.
+4. `frame.datagram-max` is semantically misnamed: it contains a one-byte payload (`0c000100`), not the 1024-byte frame payload boundary. Rename it to a truthful minimum/small vector and add a real max-boundary vector, or change the payload to the actual maximum with a deterministic byte oracle.
+5. Several `state_only` entries carry non-empty `bytes_hex` despite all byte oracles being false (`ack.range-max`, key-update entries, carrier transition, etc.). A freeze corpus must not make invented/pseudo bytes look canonical. Either move state-only cases to a separate state-contract fixture, allow an explicit `bytes_hex: null`/absent representation, or otherwise make the schema unmistakably non-wire for those rows.
+6. `close.empty` is currently classified `state_only`, but `Frame::Close` has a real wire codec (`04 0000`). Promote this row to an actually executed frame vector and enforce encode/decode/round-trip bytes, rather than leaving a real wire surface untested in the canonical corpus.
+7. Review the rest of the version-sensitive public wire surface for freeze coverage. At minimum decide explicitly whether the frozen corpus covers or intentionally excludes: outer `RecordType::{Data,Ack,PathChallenge}`, `Frame::{Data,Datagram,DeliveryAck,Close,PathChallenge,PathResponse}`, unknown-ignorable/unknown-critical/reserved frame behavior, negotiation response bytes, malformed/unsupported selected-version response, truncation, max frame count/payload, and canonical varint boundaries. Do not add dozens of rows merely for volume; every omission must be deliberate and documented.
 
-**Likely files / crates**
+**Likely files**
 
-- `crates/neko-cli/src/lifecycle.rs`;
-- `crates/neko-cli/src/main.rs`;
-- CLI process/integration tests;
-- a new small lifecycle-repair evidence note/artifact set;
-- if necessary, a narrow erratum/superseding note linked from `docs/n8-wan-loopback-audit-20260831.md` without rewriting old raw logs.
+- `fixtures/canonical-vectors.v1.json`;
+- `crates/neko-wire/tests/canonical_vectors.rs`;
+- `scripts/validate-canonical-vectors.py` if schema semantics change;
+- a small `docs/` corpus-scope note only if needed to state what is and is not frozen.
 
-**Minimum behavior**
+**Minimum behavior / tests**
 
-1. Replace the anonymous readiness counter with named, idempotent prerequisites or an equivalent explicit representation. Duplicate marks must not compensate for a missing prerequisite.
-2. The prerequisites should correspond to real server facts, for example: configuration accepted; identity/trust/state initialized; socket successfully bound; runtime initialized; accept/receive loop ready. Use the implementation's actual architecture rather than mechanically copying these names.
-3. READY may be emitted only after all required prerequisites are true and before the first application exchange is accepted.
-4. If readiness finalization fails, the process must fail/exit; it must not continue accepting TCP or UDP traffic in `FAILED` state.
-5. SIGTERM/SIGINT after READY must enter the existing bounded shutdown path, stop accepting new work, release the listener/socket, and reach STOPPED within the current bounded contract. Do not invent seamless active-session drain if it is not implemented.
-6. Startup/bind/configuration failure must never emit READY.
-
-**Tests / fixtures**
-
-- lifecycle unit test: each named prerequisite is required; duplicate setting is idempotent; one missing prerequisite cannot become READY;
-- TCP process test waits for an observable READY line before starting the client exchange and verifies the exchange succeeds;
-- UDP equivalent where supported;
-- startup failure/invalid bind test verifies no READY line;
-- SIGTERM-after-READY process test verifies bounded STOPPED and listener release/rebindability;
-- cleanup assertion for experimental processes/listeners.
-
-**Evidence repair**
-
-- Keep the existing N8 raw logs exactly as historical evidence.
-- Add a new repair evidence bundle/note showing a genuine READY -> DRAINING/STOPPED (or READY -> STOPPED if the bounded contract intentionally elides observable DRAINING) path.
-- Explicitly state that the old N8 exchange matrix remains valid as exchange evidence but its readiness subclaim is superseded because the old logs recorded FAILED.
+- Every row with `oracle.encode_equals_bytes=true` executes the real encoder and compares with fixture bytes.
+- Every row with `oracle.decode_bytes_equals_expected=true` consumes the fixture's actual `bytes_hex` through real implementation logic and verifies the expected value/error.
+- Every row with `oracle.roundtrip_equals_bytes=true` performs the actual decode/encode (or protocol-equivalent) round trip.
+- State-only rows never masquerade as canonical bytes.
+- Expected failures remain failures; no “PASS” is manufactured by changing expected semantics to match bugs.
+- `freeze` remains `false` in the coding-agent repair commit.
 
 **Validation**
 
-Run at minimum:
-
-```text
-cargo fmt --all -- --check
-cargo check --workspace --locked
-cargo test --workspace --all-targets --locked --no-fail-fast
-cargo clippy --workspace --all-targets --locked -- -D warnings
-bash scripts/check.sh
-git diff --check
-```
-
-No wire/parser change is expected in this slice, so fuzz is not mandatory unless the repair touches such code.
+Run targeted `neko-wire` canonical-vector tests, the structural validator, the full repository gate, and fuzz smoke if parser/decoder/schema-adapter code changes in a way covered by the fuzz policy.
 
 **Completion definition**
 
-A real TCP/UDP server cannot serve in FAILED readiness state; process tests observe READY before traffic; bounded shutdown/cleanup is demonstrated from a genuinely READY process; old contradictory evidence is preserved and correctly superseded rather than rewritten.
+The candidate corpus is internally truthful, executable oracles are implementation-backed rather than boolean self-attestation, conceptual/state fixtures are clearly separated from byte interoperability, coverage/exclusions are explicit, and the corpus is ready for the next ChatGPT independent freeze review while still `freeze=false`.
 
 **Do not expand into**
 
-- systemd/service-manager integration;
-- persistent daemonization;
-- new protocol features;
-- longer soak runs;
-- public-WAN/failover/benchmark work;
-- RC freeze/release declaration.
+- RC declaration or RC manifest freeze;
+- changing wire semantics just to make fixture bytes convenient;
+- inventing previous-release interoperability;
+- new carriers or unrelated performance work.
 
-### Follow-up 1 — Close N7-11 with executable malicious-peer tests
+### Follow-up 1 — Complete authenticated negotiation for ordinary TCP/UDP probe paths
 
-**Dependency:** Primary complete and full gate green.
+**Dependency:** Primary complete and full gate green. If the next reviewer freezes/accepts the corpus first, consume that handoff before changing frozen bytes; otherwise this slice must preserve the repaired candidate wire semantics.
 
-Use the already-committed remediation contract in `docs/n7-11-version-authenticated-admission-design.md`; do not redesign it unless implementation facts force a documented decision change.
+The current N1 primitive and TCP multistream transcript binding are not global runtime negotiation. Integrate the same bounded negotiation-before-Noise rule into the ordinary `neko server/client` TCP and UDP authenticated probe paths.
 
-Add the missing process-level acceptance tests in the TCP multistream path:
+Required contract:
 
-1. A raw/malicious TCP peer completes a syntactically valid N1 exchange but constructs Noise with a one-byte-different negotiation binding (or otherwise proves exact transcript mismatch). The executable must fail before a successful `SecureSession`/`ProcessMessage`/multistream success diagnostic exists.
-2. An unsupported-only negotiation must fail closed before Noise/data admission. Do not add an operator CLI version-selection feature merely to make the test convenient; a test peer/fixture is sufficient.
-3. Preserve the existing positive multistream path and allowlist rejection tests.
+1. N1 negotiation completes before the first Noise/session-data message is accepted.
+2. The exact accepted hello + selected response are bound into the Noise prologue/authenticated transcript exactly as in the reviewed multistream design; same selected version with a different offer must not authenticate as the same negotiation.
+3. Unsupported-only, malformed, duplicate/late, and transcript-mismatch peers fail before Session data admission.
+4. TCP framing remains bounded.
+5. UDP negotiation response must stay within the existing anti-amplification/resource boundary; duplicate hello may replay the exact accepted response, but changed/late unauthenticated messages must not mutate established state.
+6. Preserve current uniform external failure behavior unless a documented operator-only diagnostic is already allowed.
+7. Do not add 0-RTT or early application data.
 
-Verify that external error output remains suitably uniform and does not turn negotiation/authentication internals into a useful oracle beyond the existing research boundary.
+Add positive and malicious-peer process/integration tests for both TCP and UDP. If wire/parser code changes, run fuzz smoke in addition to the full gate.
 
-Run targeted `neko-wire`, `neko-crypto`, and `neko-cli` tests plus the full repository gate. If negotiation/parser code changes, rerun fuzz smoke.
+### Follow-up 2 — Extend negotiation binding through failover/resume without weakening Session/Carrier separation
 
-Only after these executable negative paths pass may the N7-11 design document be marked closed. Do not fan version negotiation into UDP/probe/failover in this slice; the design itself explicitly reserves those for later anti-replay/amplification/resume work.
+**Dependency:** Follow-up 1 complete.
 
-### Follow-up 2 — Make canonical vectors executable rather than self-attested
+Specify and implement the version-binding rule for the failover/resume path. The selected protocol version and exact negotiation context must not be lost when the logical Session moves from UDP to TCP fallback/resume.
 
-**Dependency:** Follow-up 1 complete, or Primary complete if this is used as the independent fallback while N7 process testing is temporarily blocked.
+Minimum acceptance questions/tests:
 
-Turn `fixtures/canonical-vectors.v1.json` from a structurally valid candidate corpus into machine-executed evidence:
+- Can a fallback carrier negotiate a different unsupported/downgraded version and still resume the same logical Session? It must fail closed unless the documented compatibility contract explicitly permits the transition.
+- Is the negotiation/version context bound to the authenticated resume material/generation so replay from an old carrier generation cannot advance the resumed Session?
+- Do uncertain resend/dedup and Session delivery evidence remain independent of carrier packet ACK/readiness evidence?
+- Does duplicate/loss recovery remain bounded without turning negotiation messages into application delivery proof?
 
-- add a Rust integration test, small adapter, or equivalent executable harness that loads the fixture and actually invokes current implementation logic for supported operations;
-- prove byte equality, decode/expected equality and round-trip behavior where those operations have real canonical bytes;
-- for expected failures/state-only concepts with no meaningful encoder or canonical byte representation, define truthful oracle semantics instead of asserting `encode_equals_bytes=true` by convention;
-- keep `scripts/validate-canonical-vectors.py` as a structural/schema gate if useful, but do not let hard-coded booleans substitute for execution;
-- if some current entries are conceptual contract fixtures rather than wire vectors, classify/move them rather than fabricating byte interoperability;
-- keep `freeze=false`; N9 alone may freeze a reviewed corpus.
+Keep single-active/multi-ready semantics and the existing no-striping decision. Record any genuinely new architecture choice in `docs/decisions.md` before implementation if the current accepted decisions do not already determine it.
 
-Run the executable vector test, structural validator and full `scripts/check.sh` gate.
+### Follow-up 3 — Start the standing-authorized bounded release-evidence matrix
 
-### Follow-up 3 — Reconcile stale navigation/release-boundary documentation
+**Dependency:** Follow-up 2 complete and full local gate green.
 
-**Dependency:** correctness/security evidence blockers above closed, unless performed as a documentation-only fallback that does not change implementation claims.
+Use `docs/standing-vps-lab-authorization.md` directly; do not ask again for ordinary self-owned VPS TCP/UDP permission or count/bytes/duration/port. Start with the smallest reproducible rows that exercise the newly negotiated runtime:
 
-Several repository-facing documents now lag the reconciled code:
+1. independently controlled self-owned VPS TCP authenticated negotiated session;
+2. self-owned VPS UDP authenticated negotiated session;
+3. bounded UDP degradation -> TCP fallback/resume with exact Session continuity/dedup evidence;
+4. bounded short soak within the standing <=10-minute limit if the first three rows pass.
 
-- `README.md` still says `Research bootstrap / pre-Milestone 0` despite `docs/status.md` recording the bounded research implementation complete;
-- `docs/specs/nekomusume-session-v0.md` says current Rust models do not implement sockets/runtime/cryptography/live failover, which is no longer a true repository-wide statement. Reframe this as the **scope of that provisional normative document**, not absence of code;
-- `docs/spec/m5-release-readiness-gate.md` still lists self-owned VPS/non-loopback execution itself as blocked. Update it to distinguish standing **execution authorization** from still-missing **release evidence/security/production approval**;
-- `docs/era4-protocol-release-v1.md` still says no wire negotiation implementation exists. Update the boundary precisely: the N1 primitive exists and TCP multistream has authenticated admission; global probe/failover/UDP negotiation is not thereby proven;
-- `IMPLEMENTATION_PLAN.md` currently duplicates the roadmap (including its `# 猫娘 Roadmap` title) even though `AGENTS.md` treats it as the executable-plan source. Restore a coherent executable current N/RC plan or explicitly redefine the execution source so agents do not select stale roadmap checkboxes as work.
+For each row record experiment ID, exact git/binary identity, actual parameters, endpoint-ownership classification, client/server result, structured events, capture metadata if used, and cleanup verification. Negative results remain evidence. Do not call self-owned same-host/host-address observations “public Internet reachability”, NAT evidence, or production readiness.
 
-Do not convert candidate/blocked items to PASS merely to make documents look consistent. Preserve `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` until their independent gates are actually satisfied.
+If IPv6 is unavailable in the actual environment, classify that row `BLOCKED_ENVIRONMENT`; do not invent failure or stop IPv4-independent work. NAT/endpoint-change work should only be attempted when a controllable path actually exists and remains within standing authorization.
 
-### Fallback
+### Fallback — Repair authorization/status/navigation drift only if a runtime dependency blocks the main path
 
-If the lifecycle repair is unexpectedly blocked by a real implementation dependency, do **not** jump ahead to RC freeze or broaden WAN experiments. Keep the lifecycle defect explicit and choose one independent bounded repair that does not rely on false readiness, preferably:
+There is still one concrete navigation inconsistency: `ROADMAP.md` Milestone 1 says real WAN failover/long-lived/NAT validation is blocked because it “needs new authorization”, while `AGENTS.md` and `docs/standing-vps-lab-authorization.md` explicitly grant ordinary bounded self-owned VPS execution. Correct that wording so the remaining blockers are evidence/environment/release scope, not nonexistent per-run authorization.
 
-1. executable canonical-vector evidence; or
-2. the documentation/status drift repair above.
+Also review `docs/status.md` reachability wording for the same distinction: execution authorization can be present while release/public-reachability claims remain blocked. Do not turn those claims into PASS.
 
-A standing-authorized WAN experiment is not an authorization blocker, but it is also not the right fallback while a release-area correctness defect is open.
+This fallback is documentation/governance repair only; it must not replace the Primary corpus work when the Primary is executable.
 
 ## Completion gates
 
-- Live server reaches READY only from explicit complete prerequisites.
-- FAILED readiness cannot continue serving traffic.
-- Process-level TCP/UDP readiness and signal-shutdown tests pass with cleanup/rebind evidence.
-- Historical N8 logs remain immutable; new evidence explicitly supersedes only the invalid readiness subclaim.
-- N7-11 malicious transcript/unsupported negotiation tests reject before Session data admission.
-- Canonical vectors have executable implementation-backed oracles; structural booleans alone are not treated as proof.
-- Full repository verification passes after each behavior-changing slice.
-- Release/production/freeze flags remain truthful.
+- N9 corpus-review defects above are repaired with `freeze=false` and returned for independent freeze review.
+- No `oracle.*=true` remains self-attested without exercising the fixture bytes/real implementation semantics it claims.
+- State-only pseudo-bytes are not presented as canonical interoperability bytes.
+- Ordinary TCP/UDP probe paths negotiate before Noise and cryptographically bind the exact accepted negotiation transcript before Session data.
+- Failover/resume cannot silently downgrade or lose the negotiated-version context across carrier transition.
+- Standing-authorized release-evidence rows preserve exact experiment parameters, endpoint ownership, negative results and cleanup.
+- Full repository gates remain green after each behavior-changing slice.
+- Release/production/freeze flags remain truthful until separate decisions actually pass.
 
 ## Do not expand into
 
-- new experimental carriers, 0-RTT, FEC enablement or heterogeneous striping without an observed problem and a fresh gate;
+- RC/production/security approval before their later gates;
+- previous/current interop before a real prior frozen release exists;
+- 0-RTT, FEC enablement, concurrent striping, heterogeneous aggregation or exotic carriers without a new observed-problem gate;
 - third-party targets or scanning;
 - production firewall/route/DNS/proxy/tunnel/qdisc changes;
-- long-duration/high-volume/high-concurrency experiments outside standing authorization;
-- calling self-owned host-address evidence public WAN/NAT evidence;
-- calling candidate canonical vectors frozen interoperability evidence;
-- declaring RC/production/security approval from local tests or E3 observations.
+- >10-minute, >256 MiB, >32-session or other experiments outside standing authorization;
+- treating one bounded self-owned VPS result as general public reachability or performance superiority.
 
 ## Questions requiring maintainer decision
 
