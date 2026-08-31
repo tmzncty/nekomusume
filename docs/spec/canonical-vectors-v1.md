@@ -32,6 +32,11 @@ malformed, truncated, trailing, oversized, unknown enum/version,
 unauthenticated, range, duplicate/late, noncanonical integer, overflow, and
 minimum/maximum integer classifications.
 
-All lengths, IDs, bytes, vector count, error names, enums, and SHA-1-shaped
-parent references are bounded by the JSON Schema and executable validator.
-`freeze` is required to remain `false`; N9 owns any future freeze decision.
+All lengths, IDs, bytes, vector count, error names, and enums are bounded by the
+JSON Schema and executable validator. Corpus provenance is content-addressed:
+`schema_revision` selects the identity algorithm and `corpus_sha256` is
+recomputed over deterministic JSON content with only the hash field excluded.
+It is intentionally independent of mutable branch or HEAD names. The validator
+also checks a fixed required-domain set, including `close` and `error`, rather
+than deriving coverage requirements from fixture contents. `freeze` is required
+to remain `false`; N9 owns any future freeze decision.

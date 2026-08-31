@@ -1,7 +1,8 @@
 {
   "schema": "nekomusume.canonical-vector.v1",
   "schema_version": 1,
-  "parent_commit": "16458f6dbe818e3ecbba83ef2982c1d5e0aafac5",
+  "schema_revision": 1,
+  "corpus_sha256": "d089bdca3e81511b6792fdaaa71d49c35102142dc58fc24eae2f4f0fda689b4b",
   "freeze": false,
   "vectors": [
     {
@@ -420,7 +421,7 @@
     },
     {
       "id": "close.empty",
-      "domain": "frame",
+      "domain": "close",
       "operation": "frames",
       "input": {
         "frames": [

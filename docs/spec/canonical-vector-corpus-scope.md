@@ -1,6 +1,14 @@
 # Candidate canonical vector corpus scope
 
-`fixtures/canonical-vectors.v1.json` is the machine-readable candidate wire corpus. It is deliberately `freeze=false`: these rows are review evidence, not yet a release, security approval, or compatibility freeze. `parent_commit` identifies the exact implementation parent against which the candidate was prepared.
+`fixtures/canonical-vectors.v1.json` is the machine-readable candidate wire corpus. It is deliberately `freeze=false`: these rows are review evidence, not yet a release, security approval, or compatibility freeze. Its immutable identity is `schema_revision` plus `corpus_sha256`. The hash is SHA-256 over the deterministic JSON serialization of the complete corpus with object keys sorted, UTF-8 encoding, no insignificant whitespace, and `corpus_sha256` itself omitted. It is independent of branch or repository HEAD, so the validator can always recompute it from corpus content.
+
+## Required domains
+
+The validator owns this explicit required set; it never infers completeness from
+whatever rows happen to remain in the fixture: `negotiation`, `wire`, `frame`,
+`ack`, `reliable_udp`, `datagram`, `key_update`, `carrier_transition`, `close`,
+and `error`. `close.empty` is the required `close` row while retaining its
+existing frame bytes and executable oracle semantics.
 
 ## Executed wire coverage
 

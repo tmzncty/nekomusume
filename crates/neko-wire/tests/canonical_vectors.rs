@@ -277,7 +277,7 @@ fn every_claimed_oracle_executes_real_implementation_code() {
                 "{} decode",
                 v.id
             ),
-            ("frame", "frames") => {
+            ("frame" | "close", "frames") => {
                 if v.oracle.encode_equals_bytes {
                     assert_eq!(
                         encode_frames(&input_frames(&v)).unwrap(),
