@@ -1,5 +1,7 @@
 //! Bounded authenticated research probe runtime; never a proxy or tunnel.
 mod lifecycle;
+
+use lifecycle::ReadinessPrerequisite;
 mod multistream;
 mod reachability;
 
@@ -317,16 +319,27 @@ fn write_frame(s: &mut TcpStream, b: &[u8]) -> std::io::Result<()> {
     s.write_all(b)?;
     s.flush()
 }
+fn emit_lifecycle(lifecycle: &lifecycle::Lifecycle) {
+    println!(
+        "lifecycle_state={} readiness={}",
+        lifecycle.state().as_str(),
+        lifecycle.readiness()
+    );
+    std::io::stdout()
+        .flush()
+        .unwrap_or_else(|_| fail("lifecycle output failed"));
+}
 fn server(args: &[String]) {
     let lifecycle = lifecycle::Lifecycle::new();
     let shutdown = Arc::new(AtomicBool::new(false));
     flag::register(SIGTERM, Arc::clone(&shutdown)).unwrap_or_else(|_| fail("signal setup failed"));
     flag::register(SIGINT, Arc::clone(&shutdown)).unwrap_or_else(|_| fail("signal setup failed"));
     let (t, p, max, d) = common(args);
-    lifecycle.mark_ready(); // configuration parsed
+    lifecycle.satisfy(ReadinessPrerequisite::ConfigurationAccepted);
     let count = exchange_count(args);
     let idpath = PathBuf::from(parse(args, "--identity", Some("neko-server.identity")));
     let id = load_or_generate(&idpath);
+    lifecycle.satisfy(ReadinessPrerequisite::IdentityInitialized);
     if !json_mode(args) {
         println!("server_public_key={}", hex(id.public_key()));
     }
@@ -339,7 +352,7 @@ fn server(args: &[String]) {
         scope: b"probe".to_vec(),
         status: TrustStatus::Active,
     }]);
-    lifecycle.mark_ready(); // trust policy/state initialized
+    lifecycle.satisfy(ReadinessPrerequisite::TrustPolicyInitialized);
     if t == "tcp" {
         let bind_addr = parse(args, "--bind", Some("0.0.0.0:0"));
         let bind: SocketAddr = if bind_addr == "0.0.0.0:0" {
@@ -353,15 +366,14 @@ fn server(args: &[String]) {
             fail("bind port must equal --port");
         }
         let l = TcpListener::bind(bind).unwrap_or_else(|_| fail("bind failed"));
-        l.set_nonblocking(true).unwrap();
-        lifecycle.mark_ready();
-        lifecycle.mark_ready();
-        lifecycle.finalize_readiness();
-        println!(
-            "lifecycle_state={} readiness={}",
-            lifecycle.state().as_str(),
-            lifecycle.readiness()
-        );
+        lifecycle.satisfy(ReadinessPrerequisite::SocketBound);
+        l.set_nonblocking(true)
+            .unwrap_or_else(|_| fail("listener setup failed"));
+        lifecycle.satisfy(ReadinessPrerequisite::IoConfigured);
+        lifecycle
+            .finalize_readiness()
+            .unwrap_or_else(|_| fail("readiness prerequisites incomplete"));
+        emit_lifecycle(&lifecycle);
         while start.elapsed() < d && !shutdown.load(Ordering::Acquire) {
             match l.accept() {
                 Ok((mut s, _)) => {
@@ -405,16 +417,14 @@ fn server(args: &[String]) {
             fail("bind port must equal --port");
         }
         let u = UdpSocket::bind(bind).unwrap_or_else(|_| fail("bind failed"));
-        lifecycle.mark_ready();
-        lifecycle.mark_ready();
-        lifecycle.finalize_readiness();
-        println!(
-            "lifecycle_state={} readiness={}",
-            lifecycle.state().as_str(),
-            lifecycle.readiness()
-        );
+        lifecycle.satisfy(ReadinessPrerequisite::SocketBound);
         u.set_read_timeout(Some(Duration::from_millis(100)))
-            .unwrap();
+            .unwrap_or_else(|_| fail("socket setup failed"));
+        lifecycle.satisfy(ReadinessPrerequisite::IoConfigured);
+        lifecycle
+            .finalize_readiness()
+            .unwrap_or_else(|_| fail("readiness prerequisites incomplete"));
+        emit_lifecycle(&lifecycle);
         let mut b = [0; 65536];
         while start.elapsed() < d && !shutdown.load(Ordering::Acquire) {
             if let Ok((n, peer)) = u.recv_from(&mut b) {

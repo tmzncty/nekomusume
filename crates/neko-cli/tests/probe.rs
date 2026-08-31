@@ -1,9 +1,11 @@
 use std::{
     fs,
+    io::{BufRead, BufReader, Read},
+    net::{TcpListener, UdpSocket},
     path::PathBuf,
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 fn tmp(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("neko-cli-{name}-{}", std::process::id()))
@@ -20,6 +22,75 @@ fn key(bin: &str, path: &std::path::Path) -> String {
         .strip_prefix("client_public_key=")
         .unwrap()
         .to_string()
+}
+
+struct ReadyServer {
+    child: Child,
+    stdout: BufReader<std::process::ChildStdout>,
+    startup_log: String,
+}
+
+fn start_server(
+    bin: &str,
+    transport: &str,
+    port: u16,
+    identity: &std::path::Path,
+    client_key: &str,
+) -> ReadyServer {
+    let mut child = Command::new(bin)
+        .args([
+            "server",
+            "--transport",
+            transport,
+            "--port",
+            &port.to_string(),
+            "--bind",
+            &format!("127.0.0.1:{port}"),
+            "--identity",
+            identity.to_str().unwrap(),
+            "--client-key",
+            client_key,
+            "--duration",
+            "5",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut startup_log = String::new();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        assert!(Instant::now() < deadline, "READY timeout: {startup_log}");
+        let mut line = String::new();
+        let read = stdout.read_line(&mut line).unwrap();
+        assert_ne!(read, 0, "server exited before READY: {startup_log}");
+        startup_log.push_str(&line);
+        if line.contains("lifecycle_state=READY readiness=true") {
+            break;
+        }
+    }
+    ReadyServer {
+        child,
+        stdout,
+        startup_log,
+    }
+}
+
+fn finish_server(mut server: ReadyServer) -> (std::process::ExitStatus, String) {
+    let mut remainder = String::new();
+    server.stdout.read_to_string(&mut remainder).unwrap();
+    let status = server.child.wait().unwrap();
+    server.startup_log.push_str(&remainder);
+    (status, server.startup_log)
+}
+
+fn signal_term(child: &Child) {
+    let status = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(status.success());
 }
 #[test]
 fn rejects_unbounded_arguments() {
@@ -42,33 +113,20 @@ fn rejects_unbounded_arguments() {
     assert_eq!(out.status.code(), Some(2));
 }
 #[test]
-fn authenticated_tcp_and_udp_loopback_probe() {
+fn authenticated_tcp_and_udp_loopback_probe_starts_after_ready() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     for (transport, port) in [("tcp", 40080u16), ("udp", 40081u16)] {
-        let sp = tmp(&format!("{transport}-server"));
-        let cp = tmp(&format!("{transport}-client"));
+        let sp = tmp(&format!("{transport}-ready-server"));
+        let cp = tmp(&format!("{transport}-ready-client"));
         let sk = key(bin, &sp);
         let ck = key(bin, &cp);
-        let mut server = Command::new(bin)
-            .args([
-                "server",
-                "--transport",
-                transport,
-                "--port",
-                &port.to_string(),
-                "--identity",
-                sp.to_str().unwrap(),
-                "--client-key",
-                &ck,
-                "--duration",
-                "3",
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        thread::sleep(Duration::from_millis(100));
-        let addr = format!("127.0.0.1:{port}");
+        let server = start_server(bin, transport, port, &sp, &ck);
+        assert!(
+            server
+                .startup_log
+                .contains("lifecycle_state=READY readiness=true")
+        );
+
         let out = Command::new(bin)
             .args([
                 "client",
@@ -77,7 +135,7 @@ fn authenticated_tcp_and_udp_loopback_probe() {
                 "--port",
                 &port.to_string(),
                 "--addr",
-                &addr,
+                &format!("127.0.0.1:{port}"),
                 "--server-key",
                 &sk,
                 "--identity",
@@ -89,8 +147,7 @@ fn authenticated_tcp_and_udp_loopback_probe() {
             ])
             .output()
             .unwrap();
-        let _ = server.kill();
-        let _server_out = server.wait_with_output().unwrap();
+        let (server_status, server_log) = finish_server(server);
         let _ = fs::remove_file(sp);
         let _ = fs::remove_file(cp);
         assert!(
@@ -99,6 +156,70 @@ fn authenticated_tcp_and_udp_loopback_probe() {
             String::from_utf8_lossy(&out.stderr)
         );
         assert!(String::from_utf8_lossy(&out.stdout).contains("probe_ok"));
+        assert!(server_status.success(), "{server_log}");
+        assert!(server_log.contains("lifecycle_state=STOPPED readiness=false"));
+    }
+}
+
+#[test]
+fn invalid_bind_never_emits_ready() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("invalid-bind-server");
+    let cp = tmp("invalid-bind-client");
+    let ck = key(bin, &cp);
+    let out = Command::new(bin)
+        .args([
+            "server",
+            "--transport",
+            "tcp",
+            "--port",
+            "40080",
+            "--bind",
+            "not-an-address",
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+        ])
+        .output()
+        .unwrap();
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    assert!(!out.status.success());
+    assert!(!log.contains("lifecycle_state=READY"), "{log}");
+}
+
+#[test]
+fn sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    for (transport, port) in [("tcp", 40084u16), ("udp", 40085u16)] {
+        let sp = tmp(&format!("{transport}-sigterm-server"));
+        let cp = tmp(&format!("{transport}-sigterm-client"));
+        let ck = key(bin, &cp);
+        let server = start_server(bin, transport, port, &sp, &ck);
+        signal_term(&server.child);
+        let (status, log) = finish_server(server);
+        let _ = fs::remove_file(sp);
+        let _ = fs::remove_file(cp);
+        assert!(status.success(), "{log}");
+        assert!(
+            log.contains("lifecycle_state=READY readiness=true"),
+            "{log}"
+        );
+        assert!(
+            log.contains("lifecycle_state=STOPPED readiness=false"),
+            "{log}"
+        );
+        if transport == "tcp" {
+            drop(TcpListener::bind(("127.0.0.1", port)).unwrap());
+        } else {
+            drop(UdpSocket::bind(("127.0.0.1", port)).unwrap());
+        }
     }
 }
 

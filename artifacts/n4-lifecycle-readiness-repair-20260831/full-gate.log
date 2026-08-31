@@ -1,0 +1,817 @@
+$ cargo fmt --all -- --check
+$ cargo check --workspace --locked
+    Checking typenum v1.20.1
+    Checking cfg-if v1.0.4
+    Checking subtle v2.6.1
+    Checking cpufeatures v0.2.17
+    Checking zeroize v1.9.0
+    Checking opaque-debug v0.3.1
+    Checking untrusted v0.9.0
+    Checking neko-carrier v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-carrier)
+    Checking neko-wire v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-wire)
+    Checking neko-reliable v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-reliable)
+    Checking neko-session v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-session)
+    Checking libc v0.2.189
+    Checking curve25519-dalek v4.1.3
+    Checking neko-observe v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-observe)
+    Checking generic-array v0.14.7
+    Checking getrandom v0.2.17
+    Checking getrandom v0.3.4
+    Checking errno v0.3.14
+    Checking signal-hook-registry v1.4.8
+    Checking ring v0.17.14
+    Checking signal-hook v0.3.18
+    Checking crypto-common v0.1.7
+    Checking inout v0.1.4
+    Checking block-buffer v0.10.4
+    Checking universal-hash v0.5.1
+    Checking cipher v0.4.4
+    Checking aead v0.5.2
+    Checking digest v0.10.7
+    Checking polyval v0.6.2
+    Checking poly1305 v0.8.0
+    Checking ctr v0.9.2
+    Checking aes v0.8.4
+    Checking chacha20 v0.9.1
+    Checking sha2 v0.10.9
+    Checking blake2 v0.10.6
+    Checking ghash v0.5.1
+    Checking chacha20poly1305 v0.10.1
+    Checking aes-gcm v0.10.3
+    Checking snow v0.10.0
+    Checking neko-crypto v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-crypto)
+    Checking neko-cli v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-cli)
+    Checking neko-bench v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-bench)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.10s
+$ cargo test --workspace --all-targets --locked --no-fail-fast
+   Compiling neko-reliable v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-reliable)
+   Compiling neko-wire v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-wire)
+   Compiling neko-session v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-session)
+   Compiling neko-crypto v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-crypto)
+   Compiling neko-carrier v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-carrier)
+   Compiling neko-cli v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-cli)
+   Compiling neko-bench v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-bench)
+   Compiling neko-observe v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-observe)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.34s
+     Running unittests src/main.rs (target/debug/deps/neko_bench-a5c03917fa997a81)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/neko_carrier-99699b1b1e6663a8)
+
+running 37 tests
+test concurrent_manager_tests::both_fail_then_new_generation_recovers_in_readiness_order ... ok
+test concurrent_manager_tests::cooldown_and_uncertain_capacity_rejections_are_atomic ... ok
+test concurrent_manager_tests::readiness_is_bounded_consecutive_and_generation_scoped ... ok
+test concurrent_manager_tests::warm_and_cold_recovery_are_classified_by_failure_order ... ok
+test concurrent_manager_tests::warm_switch_is_reason_coded_dwell_guarded_and_drains_uncertain ... ok
+test fault_inject_tests::deterministic_blackhole_loss_and_close_are_bounded ... ok
+test health_evidence_tests::evidence_is_bounded_and_json_is_deterministic ... ok
+test health_evidence_tests::evidence_rejects_zero_bound_without_mutation ... ok
+test manager_tests::bulk_does_not_starve_interactive ... ok
+test manager_tests::carrier_scoring_and_hysteresis_bound_oscillation ... ok
+test manager_tests::changing_best_path_does_not_accumulate_hold_across_candidates ... ok
+test manager_tests::choose_prefers_lowest_path_id_on_equal_score ... ok
+test manager_tests::flow_limits_are_atomic ... ok
+test manager_tests::health_limits_and_capacity_are_deterministic ... ok
+test manager_tests::health_transitions_are_bounded_and_staged ... ok
+test manager_tests::interactive_burst_is_bounded_and_order_is_repeatable ... ok
+test manager_tests::migration_back_requires_validation_generation_health_margin_and_hold ... ok
+test manager_tests::score_formula_and_health_boundary_are_deterministic ... ok
+test memory_pair_tests::bidirectional_fifo_boundaries_and_input_copy ... ok
+test memory_pair_tests::close_is_idempotent_and_preserves_queued_data ... ok
+test memory_pair_tests::contract_is_opaque_and_evidence_free ... ok
+test memory_pair_tests::limits_and_queue_full_are_atomic ... ok
+test tcp_failover_tests::capabilities_do_not_duplicate_tcp_packet_ack ... ok
+test tcp_failover_tests::hard_failure_switches_and_resends_uncertain_with_dedup ... ok
+test tcp_failover_tests::recovery_latency_is_monotonic_and_bounded ... ok
+test memory_pair_tests::concurrent_bidirectional_send_completes_without_deadlock ... ok
+test tcp_failover_tests::uncertain_duplicate_and_counter_boundaries_are_atomic ... ok
+test tcp_failover_tests::uncertain_limits_are_atomic ... ok
+test tests::ack_is_not_validation ... ok
+test tcp_failover_tests::tcp_framing_preserves_empty_and_boundaries ... ok
+test tests::duplicate_path_reports_exists_before_capacity ... ok
+test tests::failover_gate_requires_validation_and_hysteresis ... ok
+test tests::limits_and_invalid_transitions_are_deterministic ... ok
+test tests::old_generation_and_late_old_path_are_rejected ... ok
+test tests::pto_is_not_failure ... ok
+test udp_loopback_tests::loopback_preserves_boundaries_empty_and_would_block ... ok
+test udp_loopback_tests::oversize_is_rejected_and_close_is_local_idempotent ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/encrypted_udp_echo.rs (target/debug/deps/encrypted_udp_echo-51066baffd8c8f08)
+
+running 2 tests
+test corrupted_ciphertext_produces_no_echo ... ok
+test authenticated_encrypted_loopback_echo_and_close ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/era4_g_migration_property.rs (target/debug/deps/era4_g_migration_property-6994430c8ba2eb8c)
+
+running 1 test
+test deterministic_migration_candidates_never_switch_before_all_gates ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/era4_resilience.rs (target/debug/deps/era4_resilience-7b893d9e1cebd6aa)
+
+running 2 tests
+test repeated_failover_recovery_cycles_clear_uncertain_data ... ok
+test repeated_stream_open_close_and_peer_disappearance_are_bounded ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/integration_gates.rs (target/debug/deps/integration_gates-296ba9f608c03f74)
+
+running 5 tests
+test activation_requires_challenge_validation_and_hysteresis ... ok
+test duplicate_data_id_is_idempotent_and_conflict_is_rejected ... ok
+test evidence_domains_do_not_cross_promote_delivery ... ok
+test pto_is_health_evidence_not_failure_or_delivery ... ok
+test old_generation_and_late_old_path_cannot_advance_watermark ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/m3_long_migration.rs (target/debug/deps/m3_long_migration-e5eea8d9a8d6c7e2)
+
+running 3 tests
+test migration_requires_validation_current_generation_and_hold_then_switches_once ... ok
+test sequence_and_counter_exhaustion_are_fail_closed ... ok
+test bounded_long_session_preserves_exact_order_through_uncertain_ack_and_close ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/process_runner.rs (target/debug/deps/process_runner-ab4f56c3a5dcefa3)
+
+running 1 test
+test process_boundary_udp_blackhole_tcp_resume_is_bounded_exactly_once ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/record_framing.rs (target/debug/deps/record_framing-91262c5018c356d4)
+
+running 5 tests
+test malformed_wire_is_rejected_and_evidence_is_untouched ... ok
+test empty_max_and_max_plus_one_are_bounded ... ok
+test memory_roundtrip_fifo_and_empty ... ok
+test trailing_datagram_is_one_rejected_record ... ok
+test udp_roundtrip_fifo_and_would_block ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/resumed_session.rs (target/debug/deps/resumed_session-dd6fc82630b943e5)
+
+running 3 tests
+test process_boundary_runner_uses_two_ends_for_bounded_udp_to_tcp_resume ... ok
+test fresh_tcp_noise_transport_resumes_one_logical_session_without_duplicate_delivery ... ok
+test bounded_udp_blackhole_tcp_resume_preserves_order_and_exactly_once_bytes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/tcp_failover.rs (target/debug/deps/tcp_failover-f0893d83f6ac659a)
+
+running 2 tests
+test failover_timeline_is_explicit_and_bounded ... ok
+test udp_blackhole_recovers_over_tcp_without_loss_and_deduplicates ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running unittests src/main.rs (target/debug/deps/neko_cli-55b01d160541f163)
+
+running 10 tests
+test cli_regression_tests::json_mode_is_detected_without_affecting_address_family ... ok
+test cli_regression_tests::workload_duration_boundary_is_strictly_bounded ... ok
+test cli_regression_tests::health_observe_arguments_are_bounded_and_parseable ... ok
+test cli_regression_tests::failover_gate_arguments_are_bounded_and_loopback_explicit ... ok
+test lifecycle::tests::duplicate_prerequisite_is_idempotent ... ok
+test lifecycle::tests::every_named_readiness_prerequisite_is_required ... ok
+test lifecycle::tests::listener_is_rebindable_after_shutdown ... ok
+test reachability::tests::rejects_mismatched_family_and_bounds ... ok
+test reachability::tests::artifact_is_stable_except_explicit_observation_time ... ok
+test reachability::tests::rejects_wan_before_socket ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/multistream.rs (target/debug/deps/multistream-28507f81029ee8aa)
+
+running 3 tests
+test multistream_rejects_unbounded_payload_before_connecting ... ok
+neko: handshake rejected
+test unauthorized_client_is_rejected_by_allowlist ... ok
+{"ok":true,"role":"server","peer":"127.0.0.1:43572","streams":3,"records_per_stream":4,"bytes_per_record":17,"records":12,"payload_bytes":204}
+test bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s
+
+     Running tests/probe.rs (target/debug/deps/probe-06e50e30c1d9299f)
+
+running 7 tests
+test rejects_unbounded_arguments ... ok
+test invalid_bind_never_emits_ready ... ok
+test sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings ... ok
+test authenticated_tcp_and_udp_loopback_probe_starts_after_ready ... ok
+test executable_loopback_udp_blackhole_tcp_resume ... ok
+test failover_udp_handshake_timeout_reports_last_success_stage ... ok
+test udp_handshake_diagnostic_stages_are_deterministic ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.60s
+
+     Running unittests src/lib.rs (target/debug/deps/neko_crypto-962c358329021471)
+
+running 18 tests
+test preauth_tests::rejected_charge_is_atomic ... ok
+test preauth_tests::response_requires_charged_input_and_respects_amplification ... ok
+test resume_tests::attachment_is_peer_bound_monotonic_expiring_and_single_use ... ok
+test tests::nonce_is_direction_local_and_fails_closed_at_wrap ... ok
+test tests::invalid_replay_windows_are_rejected ... ok
+test tests::replay_window_rejects_duplicates_and_old_values ... ok
+test tests::replay_window_shift_discards_only_outside_window ... ok
+test session_tests::revoked_or_wrong_scope_is_not_authorized ... ok
+test session_tests::prologue_mismatch_and_oversize_fail_uniformly ... ok
+test session_tests::tamper_and_replay_collapse_to_uniform_rejection ... ok
+test resume_tests::fresh_noise_transport_is_bound_to_existing_logical_session ... ok
+test preauth_tests::unreliable_oversize_rejection_preserves_replay_state ... ok
+test session_tests::ik_handshake_and_bidirectional_records ... ok
+test session_tests::record_context_mismatch_is_rejected ... ok
+test preauth_tests::unsynchronized_update_fails_closed_without_peer_state_change ... ok
+test preauth_tests::synchronized_key_update_resets_nonce_and_rejects_old_phase ... ok
+test preauth_tests::unreliable_datagram_roundtrip_replay_and_size_are_bounded ... ok
+test session_tests::authenticated_binding_matches_and_one_bit_mismatch_fails_before_session ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running unittests src/lib.rs (target/debug/deps/neko_observe-71dede8cf681821f)
+
+running 2 tests
+test tests::switch_datagram_scheduler_and_eviction_are_observed ... ok
+test tests::runtime_facts_are_correlated_secret_free_and_bounded ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/neko_reliable-68e2e32369f41c2c)
+
+running 27 tests
+test era4_resource_limit_tests::hostile_limits_are_rejected_before_allocation ... ok
+test fec_tests::fec_block_identity_is_bounded_and_rejection_is_atomic ... ok
+test fec_tests::fec_limits_and_duplicate_boundaries_are_explicit ... ok
+test fec_tests::multiple_loss_is_not_silently_recovered ... ok
+test fec_tests::xor_recovers_single_loss_and_is_reorder_independent ... ok
+test plpmtud_tests::blackhole_fallback_is_bounded_and_progress_resets_counter ... ok
+test plpmtud_tests::converges_across_path_mtus ... ok
+test plpmtud_tests::invalid_configurations_fail_closed ... ok
+test fec_tests::parity_overhead_is_one_symbol_per_block ... ok
+test plpmtud_tests::only_one_probe_and_resource_limit ... ok
+test plpmtud_tests::probe_arithmetic_and_rejection_are_bounded_at_u16_edges ... ok
+test plpmtud_tests::stale_reordered_duplicate_and_wrong_ack_are_rejected ... ok
+test plpmtud_tests::timeout_retries_then_reduces_without_path_failure ... ok
+test pmtu_runtime_tests::emsgsize_reduces_ceiling_without_failure ... ok
+test pmtu_runtime_tests::ipv4_ipv6_packet_size_accounting_is_deterministic ... ok
+test tests::ack_range_boundaries_are_canonical ... ok
+test tests::ack_ranges_merge_and_bound_atomically ... ok
+test tests::huge_ack_range_is_constant_work_and_canonical ... ok
+test tests::packet_numbers_fail_closed ... ok
+test tests::fault_profiles_cover_burst_reorder_blackhole_and_clock ... ok
+test tests::overlapping_retransmission_keeps_frame_outstanding_until_all_copies_ack ... ok
+test tests::packet_threshold_loss_retransmits_frames_not_packets ... ok
+test tests::recovery_capacity_and_pto_are_bounded ... ok
+test tests::reorder_inside_threshold_is_not_loss ... ok
+test tests::rtt_pto_are_deterministic ... ok
+test tests::time_threshold_and_reno_pacing ... ok
+test tests::deterministic_loss_and_reorder_preserve_all_frames ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/era4_g_property.rs (target/debug/deps/era4_g_property-31585f98022c9659)
+
+running 3 tests
+test path_mtu_accounting_is_bounded_for_both_ip_versions ... ok
+test pmtud_probe_timeout_and_generation_reset_are_deterministic ... ok
+test ack_ranges_generated_insertion_matches_canonical_batch ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/udp_loopback_recovery.rs (target/debug/deps/udp_loopback_recovery-efdc9cbd1f27c5fd)
+
+running 3 tests
+test loss_bytes_and_persistent_congestion_are_observable_and_bounded ... ok
+test packet_numbers_fail_closed_at_lifetime_boundary ... ok
+test loopback_drop_then_retransmit_preserves_recovery_evidence ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/neko_session-537b1525de285461)
+
+running 32 tests
+test bounded_window_fixture_tests::invalid_window_limits_are_rejected_without_state ... ok
+test datagram_runtime_tests::admission_send_receive_and_drop_are_bounded ... ok
+test bounded_window_fixture_tests::send_window_exhaustion_ack_release_and_resume_are_atomic_and_observable ... ok
+test datagram_runtime_tests::close_drops_without_ack_or_retransmission ... ok
+test era4_resource_limit_tests::hostile_runtime_limits_are_rejected_before_allocation ... ok
+test m4_multistream_tests::receive_ordering_and_session_resource_limits_apply_across_streams ... ok
+test m4_multistream_tests::streams_close_independently_and_invalid_or_exhausted_ids_are_bounded ... ok
+test process_boundary_tests::bounded_process_messages_roundtrip_identity_resume_data_and_ack ... ok
+test m4_multistream_tests::supports_stream_zero_one_and_two_plus_with_per_stream_ordering ... ok
+test process_boundary_tests::process_boundary_rejects_truncation_unknown_version_and_oversize ... ok
+test runtime_tests::delivery_ack_rejects_unknown_stream_and_missing_inflight_atomically ... ok
+test runtime_tests::duplicate_is_deduplicated_and_delivery_ack_advances_watermark ... ok
+test runtime_tests::idle_deadline_prevents_post_timeout_mutation ... ok
+test runtime_tests::lifecycle_ordered_exchange_and_graceful_close_are_bounded ... ok
+test runtime_tests::observable_event_json_is_stable_and_monotonic ... ok
+test runtime_tests::queue_limits_and_cancel_are_atomic_terminal_operations ... ok
+test runtime_tests::virtual_clock_udp_death_preserves_order_after_tcp_recovery ... ok
+test runtime_tests::zero_length_delivery_ack_is_rejected_without_event ... ok
+test tests::context_and_old_epoch_rejected ... ok
+test tests::duplicate_and_contiguous_bytes_merge ... ok
+test tests::missing_range_and_invalid_transition_are_stable_errors ... ok
+test tests::exact_duplicate_is_idempotent_and_state_transition_is_bounded ... ok
+test tests::mixed_state_overlap_is_not_collapsed ... ok
+test tests::monotonic_path_and_key_migrations_are_allowed_but_regressions_rejected ... ok
+test tests::old_epoch_replay_cannot_confirm_or_change_state ... ok
+test tests::overflow_and_bounds_are_deterministic ... ok
+test tests::overlap_merge_and_conflict ... ok
+test tests::overlap_never_zero_fills_a_gap ... ok
+test tests::overlap_preserves_delivered_bytes ... ok
+test tests::rejected_limits_do_not_commit_context ... ok
+test tests::states_and_feedback ... ok
+test tests::watermark_monotonic ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/neko_wire-7fd18b92d9c22fa4)
+
+running 18 tests
+test datagram_frame_tests::datagram_truncation_is_rejected ... ok
+test datagram_frame_tests::datagram_vector_is_deterministic_and_bounded ... ok
+test frame_tests::critical_unknown_and_reserved_types_fail_closed ... ok
+test frame_tests::frame_bounds_and_malformed_lengths_are_deterministic ... ok
+test frame_tests::multi_frame_roundtrip_and_unknown_compatibility ... ok
+test negotiation_tests::compatible_selects_highest_and_establishes_only_after_both_messages ... ok
+test negotiation_tests::duplicate_supported_future_response_and_late_messages_reject ... ok
+test negotiation_tests::established_peers_produce_identical_exact_bindings ... ok
+test negotiation_tests::established_server_replays_exact_response_for_duplicate_hello_only ... ok
+test negotiation_tests::malformed_and_duplicate_are_deterministic_and_bounded ... ok
+test negotiation_tests::no_overlap_is_terminal_and_future_is_not_accepted ... ok
+test negotiation_tests::same_selection_with_different_offer_has_different_binding ... ok
+test tests::decode_rejects_all_short_prefixes_without_panic_or_evidence ... ok
+test tests::decode_rejects_malformed_inputs ... ok
+test tests::decode_rejects_overflow_and_noncanonical_varints ... ok
+test tests::encode_rejects_flags_and_oversized_payloads ... ok
+test tests::golden_varints_are_minimal ... ok
+test tests::golden_vectors_cover_empty_and_boundary_records ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/era4_g_roundtrip.rs (target/debug/deps/era4_g_roundtrip-fcbfeafb49ef96b9)
+
+running 2 tests
+test deterministic_varint_round_trip_property_and_canonical_rejection ... ok
+test deterministic_frame_round_trip_property ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/n3_compatibility.rs (target/debug/deps/n3_compatibility-5ef8f850a5a94e39)
+
+running 3 tests
+test current_current_establishes_highest_common_version_before_data_admission ... ok
+test future_selected_response_is_rejected_before_data_admission ... ok
+test unsupported_or_future_only_offer_is_rejected_and_terminal ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo clippy --workspace --all-targets --locked -- -D warnings
+    Checking typenum v1.20.1
+    Checking cfg-if v1.0.4
+    Checking subtle v2.6.1
+    Checking cpufeatures v0.2.17
+    Checking libc v0.2.189
+    Checking zeroize v1.9.0
+    Checking opaque-debug v0.3.1
+    Checking untrusted v0.9.0
+    Checking neko-carrier v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-carrier)
+    Checking neko-wire v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-wire)
+    Checking neko-session v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-session)
+    Checking neko-reliable v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-reliable)
+    Checking neko-crypto v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-crypto)
+    Checking curve25519-dalek v4.1.3
+    Checking neko-cli v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-cli)
+    Checking neko-bench v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-bench)
+    Checking neko-observe v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-observe)
+    Checking generic-array v0.14.7
+    Checking getrandom v0.2.17
+    Checking getrandom v0.3.4
+    Checking errno v0.3.14
+    Checking signal-hook-registry v1.4.8
+    Checking ring v0.17.14
+    Checking signal-hook v0.3.18
+    Checking crypto-common v0.1.7
+    Checking inout v0.1.4
+    Checking block-buffer v0.10.4
+    Checking universal-hash v0.5.1
+    Checking aead v0.5.2
+    Checking cipher v0.4.4
+    Checking digest v0.10.7
+    Checking polyval v0.6.2
+    Checking poly1305 v0.8.0
+    Checking blake2 v0.10.6
+    Checking sha2 v0.10.9
+    Checking aes v0.8.4
+    Checking chacha20 v0.9.1
+    Checking ctr v0.9.2
+    Checking ghash v0.5.1
+    Checking chacha20poly1305 v0.10.1
+    Checking aes-gcm v0.10.3
+    Checking snow v0.10.0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.40s
+$ bash scripts/check.sh
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+   Compiling neko-observe v0.1.0 (/media/tmzn/DATA5/nekomusume-research/worktrees/primary-lifecycle-readiness/crates/neko-observe)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.20s
+     Running unittests src/main.rs (target/debug/deps/neko_bench-a5c03917fa997a81)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/neko_carrier-99699b1b1e6663a8)
+
+running 37 tests
+test concurrent_manager_tests::both_fail_then_new_generation_recovers_in_readiness_order ... ok
+test concurrent_manager_tests::cooldown_and_uncertain_capacity_rejections_are_atomic ... ok
+test concurrent_manager_tests::readiness_is_bounded_consecutive_and_generation_scoped ... ok
+test concurrent_manager_tests::warm_and_cold_recovery_are_classified_by_failure_order ... ok
+test concurrent_manager_tests::warm_switch_is_reason_coded_dwell_guarded_and_drains_uncertain ... ok
+test fault_inject_tests::deterministic_blackhole_loss_and_close_are_bounded ... ok
+test health_evidence_tests::evidence_is_bounded_and_json_is_deterministic ... ok
+test health_evidence_tests::evidence_rejects_zero_bound_without_mutation ... ok
+test manager_tests::bulk_does_not_starve_interactive ... ok
+test manager_tests::carrier_scoring_and_hysteresis_bound_oscillation ... ok
+test manager_tests::changing_best_path_does_not_accumulate_hold_across_candidates ... ok
+test manager_tests::choose_prefers_lowest_path_id_on_equal_score ... ok
+test manager_tests::flow_limits_are_atomic ... ok
+test manager_tests::health_limits_and_capacity_are_deterministic ... ok
+test manager_tests::interactive_burst_is_bounded_and_order_is_repeatable ... ok
+test manager_tests::migration_back_requires_validation_generation_health_margin_and_hold ... ok
+test manager_tests::score_formula_and_health_boundary_are_deterministic ... ok
+test memory_pair_tests::bidirectional_fifo_boundaries_and_input_copy ... ok
+test manager_tests::health_transitions_are_bounded_and_staged ... ok
+test memory_pair_tests::close_is_idempotent_and_preserves_queued_data ... ok
+test memory_pair_tests::contract_is_opaque_and_evidence_free ... ok
+test memory_pair_tests::limits_and_queue_full_are_atomic ... ok
+test tcp_failover_tests::capabilities_do_not_duplicate_tcp_packet_ack ... ok
+test memory_pair_tests::concurrent_bidirectional_send_completes_without_deadlock ... ok
+test tcp_failover_tests::recovery_latency_is_monotonic_and_bounded ... ok
+test tcp_failover_tests::hard_failure_switches_and_resends_uncertain_with_dedup ... ok
+test tcp_failover_tests::uncertain_duplicate_and_counter_boundaries_are_atomic ... ok
+test tcp_failover_tests::uncertain_limits_are_atomic ... ok
+test tests::ack_is_not_validation ... ok
+test tests::duplicate_path_reports_exists_before_capacity ... ok
+test tests::failover_gate_requires_validation_and_hysteresis ... ok
+test tcp_failover_tests::tcp_framing_preserves_empty_and_boundaries ... ok
+test tests::limits_and_invalid_transitions_are_deterministic ... ok
+test tests::old_generation_and_late_old_path_are_rejected ... ok
+test tests::pto_is_not_failure ... ok
+test udp_loopback_tests::loopback_preserves_boundaries_empty_and_would_block ... ok
+test udp_loopback_tests::oversize_is_rejected_and_close_is_local_idempotent ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/encrypted_udp_echo.rs (target/debug/deps/encrypted_udp_echo-51066baffd8c8f08)
+
+running 2 tests
+test authenticated_encrypted_loopback_echo_and_close ... ok
+test corrupted_ciphertext_produces_no_echo ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/era4_g_migration_property.rs (target/debug/deps/era4_g_migration_property-6994430c8ba2eb8c)
+
+running 1 test
+test deterministic_migration_candidates_never_switch_before_all_gates ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/era4_resilience.rs (target/debug/deps/era4_resilience-7b893d9e1cebd6aa)
+
+running 2 tests
+test repeated_failover_recovery_cycles_clear_uncertain_data ... ok
+test repeated_stream_open_close_and_peer_disappearance_are_bounded ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/integration_gates.rs (target/debug/deps/integration_gates-296ba9f608c03f74)
+
+running 5 tests
+test activation_requires_challenge_validation_and_hysteresis ... ok
+test duplicate_data_id_is_idempotent_and_conflict_is_rejected ... ok
+test old_generation_and_late_old_path_cannot_advance_watermark ... ok
+test evidence_domains_do_not_cross_promote_delivery ... ok
+test pto_is_health_evidence_not_failure_or_delivery ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/m3_long_migration.rs (target/debug/deps/m3_long_migration-e5eea8d9a8d6c7e2)
+
+running 3 tests
+test migration_requires_validation_current_generation_and_hold_then_switches_once ... ok
+test sequence_and_counter_exhaustion_are_fail_closed ... ok
+test bounded_long_session_preserves_exact_order_through_uncertain_ack_and_close ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/process_runner.rs (target/debug/deps/process_runner-ab4f56c3a5dcefa3)
+
+running 1 test
+test process_boundary_udp_blackhole_tcp_resume_is_bounded_exactly_once ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/record_framing.rs (target/debug/deps/record_framing-91262c5018c356d4)
+
+running 5 tests
+test malformed_wire_is_rejected_and_evidence_is_untouched ... ok
+test empty_max_and_max_plus_one_are_bounded ... ok
+test memory_roundtrip_fifo_and_empty ... ok
+test trailing_datagram_is_one_rejected_record ... ok
+test udp_roundtrip_fifo_and_would_block ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/resumed_session.rs (target/debug/deps/resumed_session-dd6fc82630b943e5)
+
+running 3 tests
+test process_boundary_runner_uses_two_ends_for_bounded_udp_to_tcp_resume ... ok
+test fresh_tcp_noise_transport_resumes_one_logical_session_without_duplicate_delivery ... ok
+test bounded_udp_blackhole_tcp_resume_preserves_order_and_exactly_once_bytes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/tcp_failover.rs (target/debug/deps/tcp_failover-f0893d83f6ac659a)
+
+running 2 tests
+test failover_timeline_is_explicit_and_bounded ... ok
+test udp_blackhole_recovers_over_tcp_without_loss_and_deduplicates ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running unittests src/main.rs (target/debug/deps/neko_cli-55b01d160541f163)
+
+running 10 tests
+test cli_regression_tests::failover_gate_arguments_are_bounded_and_loopback_explicit ... ok
+test cli_regression_tests::health_observe_arguments_are_bounded_and_parseable ... ok
+test cli_regression_tests::json_mode_is_detected_without_affecting_address_family ... ok
+test cli_regression_tests::workload_duration_boundary_is_strictly_bounded ... ok
+test lifecycle::tests::duplicate_prerequisite_is_idempotent ... ok
+test lifecycle::tests::every_named_readiness_prerequisite_is_required ... ok
+test reachability::tests::artifact_is_stable_except_explicit_observation_time ... ok
+test lifecycle::tests::listener_is_rebindable_after_shutdown ... ok
+test reachability::tests::rejects_mismatched_family_and_bounds ... ok
+test reachability::tests::rejects_wan_before_socket ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/multistream.rs (target/debug/deps/multistream-28507f81029ee8aa)
+
+running 3 tests
+test multistream_rejects_unbounded_payload_before_connecting ... ok
+neko: handshake rejected
+test unauthorized_client_is_rejected_by_allowlist ... ok
+{"ok":true,"role":"server","peer":"127.0.0.1:49042","streams":3,"records_per_stream":4,"bytes_per_record":17,"records":12,"payload_bytes":204}
+test bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s
+
+     Running tests/probe.rs (target/debug/deps/probe-06e50e30c1d9299f)
+
+running 7 tests
+test rejects_unbounded_arguments ... ok
+test invalid_bind_never_emits_ready ... ok
+test sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings ... ok
+test authenticated_tcp_and_udp_loopback_probe_starts_after_ready ... ok
+test executable_loopback_udp_blackhole_tcp_resume ... ok
+test failover_udp_handshake_timeout_reports_last_success_stage ... ok
+test udp_handshake_diagnostic_stages_are_deterministic ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.60s
+
+     Running unittests src/lib.rs (target/debug/deps/neko_crypto-962c358329021471)
+
+running 18 tests
+test preauth_tests::rejected_charge_is_atomic ... ok
+test preauth_tests::response_requires_charged_input_and_respects_amplification ... ok
+test resume_tests::attachment_is_peer_bound_monotonic_expiring_and_single_use ... ok
+test tests::invalid_replay_windows_are_rejected ... ok
+test tests::nonce_is_direction_local_and_fails_closed_at_wrap ... ok
+test tests::replay_window_rejects_duplicates_and_old_values ... ok
+test tests::replay_window_shift_discards_only_outside_window ... ok
+test session_tests::prologue_mismatch_and_oversize_fail_uniformly ... ok
+test session_tests::revoked_or_wrong_scope_is_not_authorized ... ok
+test resume_tests::fresh_noise_transport_is_bound_to_existing_logical_session ... ok
+test session_tests::tamper_and_replay_collapse_to_uniform_rejection ... ok
+test session_tests::ik_handshake_and_bidirectional_records ... ok
+test preauth_tests::synchronized_key_update_resets_nonce_and_rejects_old_phase ... ok
+test session_tests::record_context_mismatch_is_rejected ... ok
+test preauth_tests::unreliable_datagram_roundtrip_replay_and_size_are_bounded ... ok
+test preauth_tests::unreliable_oversize_rejection_preserves_replay_state ... ok
+test preauth_tests::unsynchronized_update_fails_closed_without_peer_state_change ... ok
+test session_tests::authenticated_binding_matches_and_one_bit_mismatch_fails_before_session ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running unittests src/lib.rs (target/debug/deps/neko_observe-71dede8cf681821f)
+
+running 2 tests
+test tests::runtime_facts_are_correlated_secret_free_and_bounded ... ok
+test tests::switch_datagram_scheduler_and_eviction_are_observed ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/neko_reliable-68e2e32369f41c2c)
+
+running 27 tests
+test era4_resource_limit_tests::hostile_limits_are_rejected_before_allocation ... ok
+test fec_tests::fec_block_identity_is_bounded_and_rejection_is_atomic ... ok
+test fec_tests::multiple_loss_is_not_silently_recovered ... ok
+test fec_tests::fec_limits_and_duplicate_boundaries_are_explicit ... ok
+test fec_tests::xor_recovers_single_loss_and_is_reorder_independent ... ok
+test plpmtud_tests::blackhole_fallback_is_bounded_and_progress_resets_counter ... ok
+test fec_tests::parity_overhead_is_one_symbol_per_block ... ok
+test plpmtud_tests::converges_across_path_mtus ... ok
+test plpmtud_tests::invalid_configurations_fail_closed ... ok
+test plpmtud_tests::only_one_probe_and_resource_limit ... ok
+test plpmtud_tests::probe_arithmetic_and_rejection_are_bounded_at_u16_edges ... ok
+test plpmtud_tests::stale_reordered_duplicate_and_wrong_ack_are_rejected ... ok
+test plpmtud_tests::timeout_retries_then_reduces_without_path_failure ... ok
+test pmtu_runtime_tests::emsgsize_reduces_ceiling_without_failure ... ok
+test pmtu_runtime_tests::ipv4_ipv6_packet_size_accounting_is_deterministic ... ok
+test tests::ack_range_boundaries_are_canonical ... ok
+test tests::ack_ranges_merge_and_bound_atomically ... ok
+test tests::huge_ack_range_is_constant_work_and_canonical ... ok
+test tests::fault_profiles_cover_burst_reorder_blackhole_and_clock ... ok
+test tests::packet_numbers_fail_closed ... ok
+test tests::overlapping_retransmission_keeps_frame_outstanding_until_all_copies_ack ... ok
+test tests::packet_threshold_loss_retransmits_frames_not_packets ... ok
+test tests::reorder_inside_threshold_is_not_loss ... ok
+test tests::recovery_capacity_and_pto_are_bounded ... ok
+test tests::rtt_pto_are_deterministic ... ok
+test tests::time_threshold_and_reno_pacing ... ok
+test tests::deterministic_loss_and_reorder_preserve_all_frames ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/era4_g_property.rs (target/debug/deps/era4_g_property-31585f98022c9659)
+
+running 3 tests
+test path_mtu_accounting_is_bounded_for_both_ip_versions ... ok
+test pmtud_probe_timeout_and_generation_reset_are_deterministic ... ok
+test ack_ranges_generated_insertion_matches_canonical_batch ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/udp_loopback_recovery.rs (target/debug/deps/udp_loopback_recovery-efdc9cbd1f27c5fd)
+
+running 3 tests
+test packet_numbers_fail_closed_at_lifetime_boundary ... ok
+test loss_bytes_and_persistent_congestion_are_observable_and_bounded ... ok
+test loopback_drop_then_retransmit_preserves_recovery_evidence ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/neko_session-537b1525de285461)
+
+running 32 tests
+test bounded_window_fixture_tests::invalid_window_limits_are_rejected_without_state ... ok
+test bounded_window_fixture_tests::send_window_exhaustion_ack_release_and_resume_are_atomic_and_observable ... ok
+test datagram_runtime_tests::admission_send_receive_and_drop_are_bounded ... ok
+test era4_resource_limit_tests::hostile_runtime_limits_are_rejected_before_allocation ... ok
+test datagram_runtime_tests::close_drops_without_ack_or_retransmission ... ok
+test m4_multistream_tests::receive_ordering_and_session_resource_limits_apply_across_streams ... ok
+test m4_multistream_tests::streams_close_independently_and_invalid_or_exhausted_ids_are_bounded ... ok
+test m4_multistream_tests::supports_stream_zero_one_and_two_plus_with_per_stream_ordering ... ok
+test process_boundary_tests::bounded_process_messages_roundtrip_identity_resume_data_and_ack ... ok
+test process_boundary_tests::process_boundary_rejects_truncation_unknown_version_and_oversize ... ok
+test runtime_tests::delivery_ack_rejects_unknown_stream_and_missing_inflight_atomically ... ok
+test runtime_tests::duplicate_is_deduplicated_and_delivery_ack_advances_watermark ... ok
+test runtime_tests::idle_deadline_prevents_post_timeout_mutation ... ok
+test runtime_tests::lifecycle_ordered_exchange_and_graceful_close_are_bounded ... ok
+test runtime_tests::observable_event_json_is_stable_and_monotonic ... ok
+test runtime_tests::queue_limits_and_cancel_are_atomic_terminal_operations ... ok
+test runtime_tests::virtual_clock_udp_death_preserves_order_after_tcp_recovery ... ok
+test runtime_tests::zero_length_delivery_ack_is_rejected_without_event ... ok
+test tests::context_and_old_epoch_rejected ... ok
+test tests::duplicate_and_contiguous_bytes_merge ... ok
+test tests::exact_duplicate_is_idempotent_and_state_transition_is_bounded ... ok
+test tests::missing_range_and_invalid_transition_are_stable_errors ... ok
+test tests::mixed_state_overlap_is_not_collapsed ... ok
+test tests::monotonic_path_and_key_migrations_are_allowed_but_regressions_rejected ... ok
+test tests::old_epoch_replay_cannot_confirm_or_change_state ... ok
+test tests::overflow_and_bounds_are_deterministic ... ok
+test tests::overlap_merge_and_conflict ... ok
+test tests::overlap_never_zero_fills_a_gap ... ok
+test tests::overlap_preserves_delivered_bytes ... ok
+test tests::states_and_feedback ... ok
+test tests::watermark_monotonic ... ok
+test tests::rejected_limits_do_not_commit_context ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/neko_wire-7fd18b92d9c22fa4)
+
+running 18 tests
+test datagram_frame_tests::datagram_vector_is_deterministic_and_bounded ... ok
+test datagram_frame_tests::datagram_truncation_is_rejected ... ok
+test frame_tests::critical_unknown_and_reserved_types_fail_closed ... ok
+test frame_tests::frame_bounds_and_malformed_lengths_are_deterministic ... ok
+test frame_tests::multi_frame_roundtrip_and_unknown_compatibility ... ok
+test negotiation_tests::compatible_selects_highest_and_establishes_only_after_both_messages ... ok
+test negotiation_tests::duplicate_supported_future_response_and_late_messages_reject ... ok
+test negotiation_tests::established_peers_produce_identical_exact_bindings ... ok
+test negotiation_tests::established_server_replays_exact_response_for_duplicate_hello_only ... ok
+test negotiation_tests::malformed_and_duplicate_are_deterministic_and_bounded ... ok
+test negotiation_tests::no_overlap_is_terminal_and_future_is_not_accepted ... ok
+test negotiation_tests::same_selection_with_different_offer_has_different_binding ... ok
+test tests::decode_rejects_all_short_prefixes_without_panic_or_evidence ... ok
+test tests::decode_rejects_malformed_inputs ... ok
+test tests::decode_rejects_overflow_and_noncanonical_varints ... ok
+test tests::encode_rejects_flags_and_oversized_payloads ... ok
+test tests::golden_varints_are_minimal ... ok
+test tests::golden_vectors_cover_empty_and_boundary_records ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/era4_g_roundtrip.rs (target/debug/deps/era4_g_roundtrip-fcbfeafb49ef96b9)
+
+running 2 tests
+test deterministic_varint_round_trip_property_and_canonical_rejection ... ok
+test deterministic_frame_round_trip_property ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/n3_compatibility.rs (target/debug/deps/n3_compatibility-5ef8f850a5a94e39)
+
+running 3 tests
+test current_current_establishes_highest_common_version_before_data_admission ... ok
+test future_selected_response_is_rejected_before_data_admission ... ok
+test unsupported_or_future_only_offer_is_rejected_and_terminal ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests neko_carrier
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests neko_crypto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests neko_observe
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests neko_reliable
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests neko_session
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests neko_wire
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+status evidence validation passed: 21 rows
+status evidence mutation tests passed
+status scoped coverage validation passed: 8 referenced docs/spec and docs/adr files
+status scoped coverage mutation regression passed
+observability contract validation passed
+observability contract mutation regression passed
+markdown link validation passed: 14 local links
+markdown link mutation regression passed
+release boundary validation passed: reachability and production remain blocked
+release boundary mutation regression passed
+Era-4 L protocol release policy validation passed
+Era-4 L protocol release mutation regression passed
+Era 3 capability validation passed: 13 entries
+Era 3 unsupported-capability mutation regression passed
+roadmap/implementation-plan sync passed: 7 shared gates
+roadmap/plan mutation regression passed
+decision index validation passed: 65 unique numbered decisions
+decision index mutation regression passed
+$ git diff --check

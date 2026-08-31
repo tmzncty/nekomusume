@@ -54,3 +54,9 @@ The CLI emits `probe_ok` only after all requested authenticated echoes complete.
 - Because this audit adds documentation/evidence only, the full repository gate was rerun after the change (see `full-gate.log`).
 - Temporary identities were removed. Ports `40080`–`40087` had no remaining listeners.
 - The authoritative checkout's pre-existing untracked `neko-server.identity` was not modified; before/after SHA-256 records match.
+
+## Lifecycle readiness erratum — 2026-08-31
+
+The authenticated exchange results above remain valid, but their lifecycle-readiness interpretation is superseded. The preserved historical server logs show `lifecycle_state=FAILED readiness=false`; therefore they did not demonstrate a valid READY transition.
+
+The repair implementation and new bounded evidence use named, idempotent prerequisites, make incomplete readiness fatal, and observe READY before traffic or signal shutdown. See [`artifacts/n4-lifecycle-readiness-repair-20260831/README.md`](../artifacts/n4-lifecycle-readiness-repair-20260831/README.md). The new TCP/UDP SIGTERM rows demonstrate genuine READY -> STOPPED transitions and immediate rebindability; the invalid-bind row emits no READY. This erratum does not alter or replace any raw N8 artifact.
