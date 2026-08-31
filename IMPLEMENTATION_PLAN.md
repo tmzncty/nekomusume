@@ -51,10 +51,11 @@ not be promoted to public-WAN reachability.
    with `freeze=true` and a content-addressed identity. This corpus-specific fact
    does not imply RC, security approval or release, and does not freeze Noise,
    ciphertext, carrier packetization, failover/resume or the global protocol.
-2. [ ] **Negotiation path completion.** Specify and test authenticated version
-   negotiation for probe, UDP and failover/resume, including downgrade,
-   replay/amplification and resume-binding boundaries. Do not infer this from
-   TCP multistream coverage.
+2. [ ] **Negotiation path completion.** Generic TCP/UDP probes now use canonical
+   negotiation before Noise, authenticate the exact transcript, and fail closed
+   before echo admission. Failover/resume negotiation remains required, including
+   downgrade, replay/amplification and resume-binding boundaries; do not infer it
+   from TCP multistream or generic probe coverage.
 3. [ ] **Bounded release evidence matrix.** Under standing authorization, collect
    reproducible independently controlled IPv4/IPv6, UDP degradation -> TCP
    fallback, long-lived and NAT/endpoint-change evidence with actual parameters,

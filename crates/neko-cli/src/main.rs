@@ -17,6 +17,7 @@ use neko_session::{
     InboundRecord, ProcessMessage, ResumeWireBinding, RuntimeLimits, SessionId, SessionRuntime,
     StreamId,
 };
+use neko_wire::{NEGOTIATION_VERSION, NegotiationRole, VersionNegotiator};
 use signal_hook::{
     consts::{SIGINT, SIGTERM},
     flag,
@@ -41,6 +42,8 @@ const MAX_DURATION: u64 = 30;
 const MAX_WORKLOAD_DURATION: u64 = 600;
 const PROCESS_FRAME_MAX: usize = neko_session::PROCESS_FRAME_MAX;
 const DOMAIN: &[u8] = b"nekomusume-vps-probe";
+const SUPPORTED_VERSIONS: &[u16] = &[NEGOTIATION_VERSION];
+const MAX_NEGOTIATION_FRAME: usize = 4 + neko_wire::MAX_NEGOTIATION_VERSIONS * 2;
 fn json_mode(args: &[String]) -> bool {
     args.iter().any(|a| a == "--json")
 }
@@ -377,12 +380,34 @@ fn server(args: &[String]) {
         while start.elapsed() < d && !shutdown.load(Ordering::Acquire) {
             match l.accept() {
                 Ok((mut s, _)) => {
+                    let mut negotiation =
+                        VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
+                            .unwrap_or_else(|_| fail("negotiation setup failed"));
+                    let hello = read_frame(&mut s, MAX_NEGOTIATION_FRAME)
+                        .unwrap_or_else(|_| fail("malformed negotiation"));
+                    let selection = negotiation
+                        .server_accept_hello(&hello)
+                        .unwrap_or_else(|_| fail("incompatible negotiation"));
+                    write_frame(&mut s, &selection)
+                        .unwrap_or_else(|_| fail("negotiation response failed"));
+                    let binding = negotiation
+                        .authenticated_binding()
+                        .unwrap_or_else(|_| fail("negotiation binding failed"));
                     let first = read_frame(&mut s, 1024).unwrap_or_else(|_| fail("bad handshake"));
-                    let (resp, mut ss) = ResponderHandshake::new(&id, policy.clone(), DOMAIN)
-                        .unwrap()
-                        .receive_first(&first, context(0))
-                        .unwrap_or_else(|_| fail("unauthorized handshake"));
-                    write_frame(&mut s, &resp).unwrap();
+                    let (resp, mut ss) = ResponderHandshake::new_with_prologue_binding(
+                        &id,
+                        policy.clone(),
+                        DOMAIN,
+                        binding.as_bytes(),
+                    )
+                    .unwrap_or_else(|_| fail("handshake setup failed"))
+                    .receive_first(&first, context(0))
+                    .unwrap_or_else(|_| fail("unauthorized handshake"));
+                    write_frame(&mut s, &resp)
+                        .unwrap_or_else(|_| fail("handshake response failed"));
+                    negotiation
+                        .admit_data()
+                        .unwrap_or_else(|_| fail("data admission denied"));
                     for _ in 0..count {
                         let frame =
                             read_frame(&mut s, max + 64).unwrap_or_else(|_| fail("bad data"));
@@ -428,14 +453,43 @@ fn server(args: &[String]) {
         let mut b = [0; 65536];
         while start.elapsed() < d && !shutdown.load(Ordering::Acquire) {
             if let Ok((n, peer)) = u.recv_from(&mut b) {
-                let first = &b[..n];
-                let (resp, mut ss) = ResponderHandshake::new(&id, policy.clone(), DOMAIN)
-                    .unwrap()
-                    .receive_first(first, context(0))
-                    .unwrap_or_else(|_| fail("unauthorized handshake"));
-                u.send_to(&resp, peer).unwrap();
+                let mut negotiation =
+                    VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
+                        .unwrap_or_else(|_| fail("negotiation setup failed"));
+                let selection = negotiation
+                    .server_accept_hello(&b[..n])
+                    .unwrap_or_else(|_| fail("incompatible negotiation"));
+                u.send_to(&selection, peer)
+                    .unwrap_or_else(|_| fail("negotiation response failed"));
+                let binding = negotiation
+                    .authenticated_binding()
+                    .unwrap_or_else(|_| fail("negotiation binding failed"));
+                let (n, handshake_peer) = u
+                    .recv_from(&mut b)
+                    .unwrap_or_else(|_| fail("handshake timeout"));
+                if handshake_peer != peer {
+                    fail("handshake peer changed");
+                }
+                let (resp, mut ss) = ResponderHandshake::new_with_prologue_binding(
+                    &id,
+                    policy.clone(),
+                    DOMAIN,
+                    binding.as_bytes(),
+                )
+                .unwrap_or_else(|_| fail("handshake setup failed"))
+                .receive_first(&b[..n], context(0))
+                .unwrap_or_else(|_| fail("unauthorized handshake"));
+                u.send_to(&resp, peer)
+                    .unwrap_or_else(|_| fail("handshake response failed"));
+                negotiation
+                    .admit_data()
+                    .unwrap_or_else(|_| fail("data admission denied"));
                 for _ in 0..count {
-                    let (n, peer) = u.recv_from(&mut b).unwrap_or_else(|_| fail("data timeout"));
+                    let (n, data_peer) =
+                        u.recv_from(&mut b).unwrap_or_else(|_| fail("data timeout"));
+                    if data_peer != peer {
+                        fail("data peer changed");
+                    }
                     let plain = ss
                         .open_unreliable(&b[..n])
                         .unwrap_or_else(|_| fail("auth failure"));
@@ -469,24 +523,46 @@ fn client(args: &[String]) {
     if !json_mode(args) {
         println!("client_public_key={}", hex(id.public_key()));
     }
-    let mut hs = InitiatorHandshake::new(&id, &sk, b"probe", DOMAIN)
-        .unwrap_or_else(|_| fail("handshake setup failed"));
-    let first = hs
-        .first_message()
-        .unwrap_or_else(|_| fail("handshake failed"));
     let payload = vec![b'x'; max];
     let start = Instant::now();
     let cs = if t == "tcp" {
         let mut s =
             TcpStream::connect_timeout(&addr.parse().unwrap_or_else(|_| fail("bad address")), d)
                 .unwrap_or_else(|_| fail("connect failed"));
-        write_frame(&mut s, &first).unwrap();
+        let mut negotiation = VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS)
+            .unwrap_or_else(|_| fail("negotiation setup failed"));
+        let hello = negotiation
+            .client_hello()
+            .unwrap_or_else(|_| fail("negotiation setup failed"));
+        write_frame(&mut s, &hello).unwrap_or_else(|_| fail("negotiation send failed"));
+        let selection = read_frame(&mut s, MAX_NEGOTIATION_FRAME)
+            .unwrap_or_else(|_| fail("negotiation response failed"));
+        negotiation
+            .client_accept_response(&selection)
+            .unwrap_or_else(|_| fail("incompatible negotiation"));
+        let binding = negotiation
+            .authenticated_binding()
+            .unwrap_or_else(|_| fail("negotiation binding failed"));
+        let mut hs = InitiatorHandshake::new_with_prologue_binding(
+            &id,
+            &sk,
+            b"probe",
+            DOMAIN,
+            binding.as_bytes(),
+        )
+        .unwrap_or_else(|_| fail("handshake setup failed"));
+        let first = hs
+            .first_message()
+            .unwrap_or_else(|_| fail("handshake failed"));
+        write_frame(&mut s, &first).unwrap_or_else(|_| fail("handshake send failed"));
         let resp = read_frame(&mut s, 1024).unwrap_or_else(|_| fail("handshake response failed"));
-        Some((
-            s,
-            hs.finish(&resp, context(0))
-                .unwrap_or_else(|_| fail("handshake finish failed")),
-        ))
+        let session = hs
+            .finish(&resp, context(0))
+            .unwrap_or_else(|_| fail("handshake finish failed"));
+        negotiation
+            .admit_data()
+            .unwrap_or_else(|_| fail("data admission denied"));
+        Some((s, session))
     } else {
         let target: SocketAddr = addr.parse().unwrap_or_else(|_| fail("bad address"));
         let local = match target.ip() {
@@ -495,20 +571,53 @@ fn client(args: &[String]) {
         };
         let u = UdpSocket::bind(local).unwrap_or_else(|_| fail("UDP socket family unavailable"));
         u.set_read_timeout(Some(d)).unwrap();
-        u.send_to(&first, target).unwrap();
+        u.connect(target)
+            .unwrap_or_else(|_| fail("UDP connect failed"));
+        let mut negotiation = VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS)
+            .unwrap_or_else(|_| fail("negotiation setup failed"));
+        let hello = negotiation
+            .client_hello()
+            .unwrap_or_else(|_| fail("negotiation setup failed"));
+        u.send(&hello)
+            .unwrap_or_else(|_| fail("negotiation send failed"));
         let mut b = [0; 65536];
-        let (n, _) = u
-            .recv_from(&mut b)
+        let n = u
+            .recv(&mut b)
+            .unwrap_or_else(|_| fail("negotiation response failed"));
+        negotiation
+            .client_accept_response(&b[..n])
+            .unwrap_or_else(|_| fail("incompatible negotiation"));
+        let binding = negotiation
+            .authenticated_binding()
+            .unwrap_or_else(|_| fail("negotiation binding failed"));
+        let mut hs = InitiatorHandshake::new_with_prologue_binding(
+            &id,
+            &sk,
+            b"probe",
+            DOMAIN,
+            binding.as_bytes(),
+        )
+        .unwrap_or_else(|_| fail("handshake setup failed"));
+        let first = hs
+            .first_message()
+            .unwrap_or_else(|_| fail("handshake failed"));
+        u.send(&first)
+            .unwrap_or_else(|_| fail("handshake send failed"));
+        let n = u
+            .recv(&mut b)
             .unwrap_or_else(|_| fail("handshake response failed"));
         let mut ss = hs
             .finish(&b[..n], context(0))
             .unwrap_or_else(|_| fail("handshake finish failed"));
+        negotiation
+            .admit_data()
+            .unwrap_or_else(|_| fail("data admission denied"));
         for _ in 0..count {
             let rec = ss
                 .seal_unreliable(&payload)
                 .unwrap_or_else(|_| fail("payload too large"));
-            u.send_to(&rec, target).unwrap();
-            let (n, _) = u.recv_from(&mut b).unwrap_or_else(|_| fail("echo timeout"));
+            u.send(&rec).unwrap();
+            let n = u.recv(&mut b).unwrap_or_else(|_| fail("echo timeout"));
             if ss
                 .open_unreliable(&b[..n])
                 .unwrap_or_else(|_| fail("echo auth failed"))

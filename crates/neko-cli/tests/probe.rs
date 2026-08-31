@@ -1,6 +1,10 @@
+use neko_crypto::{
+    LocalIdentity, RecordContext, ResponderHandshake, TrustPolicy, TrustRecord, TrustStatus,
+};
+use neko_wire::{NEGOTIATION_VERSION, NegotiationRole, VersionNegotiator};
 use std::{
     fs,
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, UdpSocket},
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -384,4 +388,295 @@ fn udp_handshake_diagnostic_stages_are_deterministic() {
     }
     assert!(log.contains("last_success_stage\":\"client_hello_sent"));
     let _ = fs::remove_file(dir);
+}
+
+const PROBE_DOMAIN: &[u8] = b"nekomusume-vps-probe";
+const PROBE_SCOPE: &[u8] = b"probe";
+
+fn test_context() -> RecordContext {
+    RecordContext {
+        delivery_epoch: 1,
+        key_phase: 0,
+        path_generation: 1,
+        stream_id: 1,
+        direction: 0,
+    }
+}
+
+fn load_test_identity(path: &std::path::Path) -> LocalIdentity {
+    let text = fs::read_to_string(path).unwrap();
+    let (private, public) = text.trim().split_once(':').unwrap();
+    let decode = |value: &str| {
+        (0..value.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&value[index..index + 2], 16).unwrap())
+            .collect::<Vec<_>>()
+    };
+    LocalIdentity::from_keypair(&decode(private), &decode(public)).unwrap()
+}
+
+fn run_client(
+    bin: &str,
+    transport: &str,
+    port: u16,
+    identity: &std::path::Path,
+    server_key: &str,
+) -> std::process::Output {
+    Command::new(bin)
+        .args([
+            "client",
+            "--transport",
+            transport,
+            "--port",
+            &port.to_string(),
+            "--addr",
+            &format!("127.0.0.1:{port}"),
+            "--server-key",
+            server_key,
+            "--identity",
+            identity.to_str().unwrap(),
+            "--duration",
+            "2",
+        ])
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn tcp_and_udp_reject_malformed_unsupported_and_duplicate_negotiation_before_echo() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    for (case, message) in [
+        ("malformed", vec![b'N', b'1', 1, 1, 0]),
+        ("unsupported", vec![b'N', b'1', 1, 1, 0, 1]),
+    ] {
+        for (transport, port) in [("tcp", 40091u16), ("udp", 40092u16)] {
+            let sp = tmp(&format!("{transport}-{case}-server"));
+            let cp = tmp(&format!("{transport}-{case}-client"));
+            let ck = key(bin, &cp);
+            let server = start_server(bin, transport, port, &sp, &ck);
+            if transport == "tcp" {
+                let mut socket = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+                frame_write_test(&mut socket, &message);
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(1)))
+                    .unwrap();
+                let mut byte = [0; 1];
+                assert_eq!(
+                    socket.read(&mut byte).unwrap(),
+                    0,
+                    "{case} reached TCP response/data"
+                );
+            } else {
+                let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_millis(300)))
+                    .unwrap();
+                socket.send_to(&message, ("127.0.0.1", port)).unwrap();
+                let mut byte = [0; 1];
+                assert!(
+                    socket.recv(&mut byte).is_err(),
+                    "{case} reached UDP response/data"
+                );
+            }
+            let (status, log) = finish_server(server);
+            assert!(!status.success(), "{case} unexpectedly admitted: {log}");
+            assert!(
+                !log.contains("lifecycle_state=STOPPED"),
+                "{case} produced successful echo lifecycle: {log}"
+            );
+            let _ = fs::remove_file(sp);
+            let _ = fs::remove_file(cp);
+        }
+    }
+
+    for (transport, port) in [("tcp", 40093u16), ("udp", 40094u16)] {
+        let sp = tmp(&format!("{transport}-duplicate-server"));
+        let cp = tmp(&format!("{transport}-duplicate-client"));
+        let ck = key(bin, &cp);
+        let server = start_server(bin, transport, port, &sp, &ck);
+        let hello = [b'N', b'1', 1, 1, 0, 0];
+        if transport == "tcp" {
+            let mut socket = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            frame_write_test(&mut socket, &hello);
+            assert_eq!(frame_read_test(&mut socket), [b'N', b'1', 2, 0, 0, 0]);
+            frame_write_test(&mut socket, &hello);
+            socket
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let mut byte = [0; 1];
+            assert_eq!(
+                socket.read(&mut byte).unwrap(),
+                0,
+                "duplicate hello reached TCP data"
+            );
+        } else {
+            let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            socket.send_to(&hello, ("127.0.0.1", port)).unwrap();
+            let mut response = [0; 64];
+            let n = socket.recv(&mut response).unwrap();
+            assert_eq!(&response[..n], &[b'N', b'1', 2, 0, 0, 0]);
+            socket.send_to(&hello, ("127.0.0.1", port)).unwrap();
+            assert!(
+                socket.recv(&mut response).is_err(),
+                "duplicate hello reached UDP data"
+            );
+        }
+        let (status, log) = finish_server(server);
+        assert!(!status.success(), "duplicate negotiation admitted: {log}");
+        assert!(
+            !log.contains("lifecycle_state=STOPPED"),
+            "duplicate produced successful echo: {log}"
+        );
+        let _ = fs::remove_file(sp);
+        let _ = fs::remove_file(cp);
+    }
+}
+
+fn frame_write_test(stream: &mut std::net::TcpStream, frame: &[u8]) {
+    stream
+        .write_all(&(frame.len() as u32).to_be_bytes())
+        .unwrap();
+    stream.write_all(frame).unwrap();
+}
+fn frame_read_test(stream: &mut std::net::TcpStream) -> Vec<u8> {
+    let mut length = [0; 4];
+    stream.read_exact(&mut length).unwrap();
+    let mut frame = vec![0; u32::from_be_bytes(length) as usize];
+    stream.read_exact(&mut frame).unwrap();
+    frame
+}
+
+#[test]
+fn tcp_and_udp_transcript_mismatch_rejects_before_application_echo() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    for (transport, port) in [("tcp", 40095u16), ("udp", 40096u16)] {
+        let sp = tmp(&format!("{transport}-mismatch-server"));
+        let cp = tmp(&format!("{transport}-mismatch-client"));
+        let server_key = key(bin, &sp);
+        let client_key = key(bin, &cp);
+        let server_identity = load_test_identity(&sp);
+        let client_public = decode_key(&client_key);
+        let peer = thread::spawn(move || {
+            let policy = TrustPolicy::new(vec![TrustRecord {
+                version: 1,
+                public_key: client_public,
+                scope: PROBE_SCOPE.to_vec(),
+                status: TrustStatus::Active,
+            }]);
+            if transport == "tcp" {
+                let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
+                let (mut socket, _) = listener.accept().unwrap();
+                let hello = frame_read_test(&mut socket);
+                let mut negotiation =
+                    VersionNegotiator::new(NegotiationRole::Server, &[NEGOTIATION_VERSION])
+                        .unwrap();
+                let response = negotiation.server_accept_hello(&hello).unwrap();
+                frame_write_test(&mut socket, &response);
+                let mut binding = negotiation
+                    .authenticated_binding()
+                    .unwrap()
+                    .as_bytes()
+                    .to_vec();
+                binding[0] ^= 1;
+                let handshake = ResponderHandshake::new_with_prologue_binding(
+                    &server_identity,
+                    policy,
+                    PROBE_DOMAIN,
+                    &binding,
+                )
+                .unwrap();
+                let first = frame_read_test(&mut socket);
+                assert!(handshake.receive_first(&first, test_context()).is_err());
+            } else {
+                let socket = UdpSocket::bind(("127.0.0.1", port)).unwrap();
+                let mut buf = [0; 2048];
+                let (n, peer) = socket.recv_from(&mut buf).unwrap();
+                let mut negotiation =
+                    VersionNegotiator::new(NegotiationRole::Server, &[NEGOTIATION_VERSION])
+                        .unwrap();
+                let response = negotiation.server_accept_hello(&buf[..n]).unwrap();
+                socket.send_to(&response, peer).unwrap();
+                let mut binding = negotiation
+                    .authenticated_binding()
+                    .unwrap()
+                    .as_bytes()
+                    .to_vec();
+                binding[0] ^= 1;
+                let handshake = ResponderHandshake::new_with_prologue_binding(
+                    &server_identity,
+                    policy,
+                    PROBE_DOMAIN,
+                    &binding,
+                )
+                .unwrap();
+                let (n, same_peer) = socket.recv_from(&mut buf).unwrap();
+                assert_eq!(same_peer, peer);
+                assert!(handshake.receive_first(&buf[..n], test_context()).is_err());
+            }
+        });
+        thread::sleep(Duration::from_millis(50));
+        let output = run_client(bin, transport, port, &cp, &server_key);
+        peer.join().unwrap();
+        assert!(!output.status.success());
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("probe_ok"));
+        let _ = fs::remove_file(sp);
+        let _ = fs::remove_file(cp);
+    }
+}
+
+fn decode_key(value: &str) -> Vec<u8> {
+    (0..value.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&value[index..index + 2], 16).unwrap())
+        .collect()
+}
+
+#[test]
+fn tcp_and_udp_reject_unsupported_selected_version_before_noise() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    for (transport, port) in [("tcp", 40097u16), ("udp", 40098u16)] {
+        let sp = tmp(&format!("{transport}-selected-server"));
+        let cp = tmp(&format!("{transport}-selected-client"));
+        let server_key = key(bin, &sp);
+        let peer = thread::spawn(move || {
+            if transport == "tcp" {
+                let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
+                let (mut socket, _) = listener.accept().unwrap();
+                assert_eq!(frame_read_test(&mut socket), [b'N', b'1', 1, 1, 0, 0]);
+                frame_write_test(&mut socket, &[b'N', b'1', 2, 0, 0, 1]);
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(1)))
+                    .unwrap();
+                let mut byte = [0; 1];
+                assert_eq!(
+                    socket.read(&mut byte).unwrap(),
+                    0,
+                    "client emitted Noise/data"
+                );
+            } else {
+                let socket = UdpSocket::bind(("127.0.0.1", port)).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(1)))
+                    .unwrap();
+                let mut buf = [0; 64];
+                let (n, peer) = socket.recv_from(&mut buf).unwrap();
+                assert_eq!(&buf[..n], &[b'N', b'1', 1, 1, 0, 0]);
+                socket.send_to(&[b'N', b'1', 2, 0, 0, 1], peer).unwrap();
+                assert!(
+                    socket.recv_from(&mut buf).is_err(),
+                    "client emitted Noise/data"
+                );
+            }
+        });
+        thread::sleep(Duration::from_millis(50));
+        let output = run_client(bin, transport, port, &cp, &server_key);
+        peer.join().unwrap();
+        assert!(!output.status.success());
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("probe_ok"));
+        let _ = fs::remove_file(sp);
+        let _ = fs::remove_file(cp);
+    }
 }
