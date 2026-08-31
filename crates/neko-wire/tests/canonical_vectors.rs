@@ -574,5 +574,8 @@ fn semantic_mutations_reach_real_oracle_assertions_without_changing_bytes() {
         .unwrap();
     let mut stale = hello.expected.value.clone().unwrap();
     stale["selected"] = Value::from(selected + 1);
-    assert_ne!(selected as u64, stale["selected"].as_u64().unwrap());
+    assert!(
+        std::panic::catch_unwind(|| assert_negotiation_selected(&hello.id, selected, &stale))
+            .is_err()
+    );
 }
