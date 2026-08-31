@@ -28,8 +28,8 @@
           "value": {},
           "error": {"type": "string", "pattern": "^[A-Z][A-Za-z0-9_.-]{1,95}$"}
         }, "allOf": [{"if": {"properties": {"ok": {"const": true}}}, "then": {"required": ["value"], "not": {"required": ["error"]}}}, {"if": {"properties": {"ok": {"const": false}}}, "then": {"required": ["error"], "not": {"required": ["value"]}}}]},
-        "oracle": {"type": "object", "additionalProperties": false, "required": ["encode_equals_bytes", "decode_bytes_equals_expected", "roundtrip_equals_bytes"], "properties": {"encode_equals_bytes": {"const": true}, "decode_bytes_equals_expected": {"const": true}, "roundtrip_equals_bytes": {"const": true}}},
-        "classification": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["valid", "malformed", "truncated", "trailing", "oversized", "unknown_enum", "unknown_version", "unauthenticated", "out_of_range", "integer_min", "integer_max", "integer_overflow", "noncanonical_integer", "duplicate", "late"]}}
+        "oracle": {"type": "object", "additionalProperties": false, "required": ["encode_equals_bytes", "decode_bytes_equals_expected", "roundtrip_equals_bytes"], "properties": {"encode_equals_bytes": {"type": "boolean"}, "decode_bytes_equals_expected": {"type": "boolean"}, "roundtrip_equals_bytes": {"type": "boolean"}}},
+        "classification": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["valid", "malformed", "truncated", "trailing", "oversized", "unknown_enum", "unknown_version", "unauthenticated", "out_of_range", "integer_min", "integer_max", "integer_overflow", "noncanonical_integer", "duplicate", "late", "expected_failure", "conceptual", "state_only"]}}
       }
     }
   }

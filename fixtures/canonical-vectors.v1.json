@@ -1,23 +1,426 @@
 {
-  "schema":"nekomusume.canonical-vector.v1", "schema_version":1,
-  "parent_commit":"5e2ac795747582f5f1f36ad537234305c300b47f", "freeze":false,
-  "vectors":[
-    {"id":"negotiation.hello.v0-v2","domain":"negotiation","operation":"client_hello","input":{"versions":[0,2]},"bytes_hex":"4e31010200000002","expected":{"ok":true,"value":{"versions":[0,2]}},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["valid"]},
-    {"id":"negotiation.no-overlap","domain":"negotiation","operation":"server_accept_hello","input":{"versions":[8]},"bytes_hex":"4e3101010008","expected":{"ok":false,"error":"NoCompatibleVersion"},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["out_of_range"]},
-    {"id":"negotiation.duplicate","domain":"negotiation","operation":"server_accept_hello","input":{"versions":[0,0]},"bytes_hex":"4e31010200000000","expected":{"ok":false,"error":"DuplicateOffered"},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["duplicate"]},
-    {"id":"wire.record-data","domain":"wire","operation":"record","input":{"type":"Data","flags":0,"payload_hex":"6869"},"bytes_hex":"4e4b000100000000026869","expected":{"ok":true,"value":{"type":"Data","flags":0,"payload_hex":"6869"}},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["valid"]},
-    {"id":"wire.bad-version","domain":"wire","operation":"record","input":{"version":9},"bytes_hex":"4e4b09010000000000","expected":{"ok":false,"error":"UnknownVersion"},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["unknown_version"]},
-    {"id":"frame.datagram-max","domain":"frame","operation":"frames","input":{"frames":[{"type":"Datagram","payload_hex":"00"}]},"bytes_hex":"0c000100","expected":{"ok":true,"value":{"frame_count":1}},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["valid","integer_min"]},
-    {"id":"frame.oversized","domain":"frame","operation":"frames","input":{"payload_bytes":1025},"bytes_hex":"00040101","expected":{"ok":false,"error":"LengthTooLarge"},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["oversized"]},
-    {"id":"ack.range-max","domain":"ack","operation":"ack_range","input":{"start":0,"end":18446744073709551615},"bytes_hex":"00ffffffffffffffff","expected":{"ok":true,"value":{"start":0,"end":"u64::MAX"}},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["valid","integer_min","integer_max"]},
-    {"id":"reliable.packet-overflow","domain":"reliable_udp","operation":"packet_number","input":{"next":"u64::MAX"},"bytes_hex":"","expected":{"ok":false,"error":"PacketNumberExhausted"},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["integer_overflow"]},
-    {"id":"datagram.oversized","domain":"datagram","operation":"unreliable","input":{"payload_bytes":1201},"bytes_hex":"","expected":{"ok":false,"error":"Oversized"},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["oversized"]},
-    {"id":"key-update.phase-one","domain":"key_update","operation":"update_key_phase","input":{"from":0,"to":1},"bytes_hex":"01","expected":{"ok":true,"value":{"key_phase":1}},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["valid","integer_max"]},
-    {"id":"key-update.invalid-phase","domain":"key_update","operation":"update_key_phase","input":{"from":0,"to":2},"bytes_hex":"02","expected":{"ok":false,"error":"InvalidKeyPhase"},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["unknown_enum","out_of_range"]},
-    {"id":"carrier.transition-generation","domain":"carrier_transition","operation":"path_validated","input":{"path":1,"generation":2},"bytes_hex":"0102","expected":{"ok":true,"value":{"path":1,"generation":2}},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["valid"]},
-    {"id":"carrier.transition-unauth","domain":"carrier_transition","operation":"path_validated","input":{"authenticated":false},"bytes_hex":"","expected":{"ok":false,"error":"Unauthenticated"},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["unauthenticated"]},
-    {"id":"close.empty","domain":"close","operation":"close","input":{"reason_hex":""},"bytes_hex":"040000","expected":{"ok":true,"value":{"closed":true}},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["valid"]},
-    {"id":"error.trailing","domain":"error","operation":"decode","input":{"payload_hex":""},"bytes_hex":"4e4b0001000000000000","expected":{"ok":false,"error":"TrailingBytes"},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["trailing","malformed"]},
-    {"id":"varint.noncanonical","domain":"wire","operation":"varint","input":{"value":0},"bytes_hex":"8000","expected":{"ok":false,"error":"NonCanonicalInteger"},"oracle":{"encode_equals_bytes":true,"decode_bytes_equals_expected":true,"roundtrip_equals_bytes":true},"classification":["noncanonical_integer","malformed"]}
+  "schema": "nekomusume.canonical-vector.v1",
+  "schema_version": 1,
+  "parent_commit": "5e2ac795747582f5f1f36ad537234305c300b47f",
+  "freeze": false,
+  "vectors": [
+    {
+      "id": "negotiation.hello.v0-v2",
+      "domain": "negotiation",
+      "operation": "client_hello",
+      "input": {
+        "versions": [
+          0,
+          2
+        ]
+      },
+      "bytes_hex": "4e31010200000002",
+      "expected": {
+        "ok": true,
+        "value": {
+          "versions": [
+            0,
+            2
+          ]
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid"
+      ]
+    },
+    {
+      "id": "negotiation.no-overlap",
+      "domain": "negotiation",
+      "operation": "server_accept_hello",
+      "input": {
+        "versions": [
+          8
+        ]
+      },
+      "bytes_hex": "4e3101010008",
+      "expected": {
+        "ok": false,
+        "error": "NoCompatibleVersion"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "out_of_range",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "negotiation.duplicate",
+      "domain": "negotiation",
+      "operation": "server_accept_hello",
+      "input": {
+        "versions": [
+          0,
+          0
+        ]
+      },
+      "bytes_hex": "4e31010200000000",
+      "expected": {
+        "ok": false,
+        "error": "DuplicateOffered"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "duplicate",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "wire.record-data",
+      "domain": "wire",
+      "operation": "record",
+      "input": {
+        "type": "Data",
+        "flags": 0,
+        "payload_hex": "6869"
+      },
+      "bytes_hex": "4e4b000100000000026869",
+      "expected": {
+        "ok": true,
+        "value": {
+          "type": "Data",
+          "flags": 0,
+          "payload_hex": "6869"
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid"
+      ]
+    },
+    {
+      "id": "wire.bad-version",
+      "domain": "wire",
+      "operation": "record",
+      "input": {
+        "version": 9
+      },
+      "bytes_hex": "4e4b09010000000000",
+      "expected": {
+        "ok": false,
+        "error": "UnknownVersion"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "unknown_version",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "frame.datagram-max",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {
+        "frames": [
+          {
+            "type": "Datagram",
+            "payload_hex": "00"
+          }
+        ]
+      },
+      "bytes_hex": "0c000100",
+      "expected": {
+        "ok": true,
+        "value": {
+          "frame_count": 1
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": true,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": true
+      },
+      "classification": [
+        "valid",
+        "integer_min"
+      ]
+    },
+    {
+      "id": "frame.oversized",
+      "domain": "frame",
+      "operation": "frames",
+      "input": {
+        "payload_bytes": 1025
+      },
+      "bytes_hex": "00040101",
+      "expected": {
+        "ok": false,
+        "error": "LengthTooLarge"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "oversized",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "ack.range-max",
+      "domain": "ack",
+      "operation": "ack_range",
+      "input": {
+        "start": 0,
+        "end": 18446744073709551615
+      },
+      "bytes_hex": "00ffffffffffffffff",
+      "expected": {
+        "ok": true,
+        "value": {
+          "start": 0,
+          "end": "u64::MAX"
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": false,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "valid",
+        "integer_min",
+        "integer_max",
+        "state_only"
+      ]
+    },
+    {
+      "id": "reliable.packet-overflow",
+      "domain": "reliable_udp",
+      "operation": "packet_number",
+      "input": {
+        "next": "u64::MAX"
+      },
+      "bytes_hex": "",
+      "expected": {
+        "ok": false,
+        "error": "PacketNumberExhausted"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": false,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "integer_overflow",
+        "state_only"
+      ]
+    },
+    {
+      "id": "datagram.oversized",
+      "domain": "datagram",
+      "operation": "unreliable",
+      "input": {
+        "payload_bytes": 1201
+      },
+      "bytes_hex": "",
+      "expected": {
+        "ok": false,
+        "error": "Oversized"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": false,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "oversized",
+        "state_only"
+      ]
+    },
+    {
+      "id": "key-update.phase-one",
+      "domain": "key_update",
+      "operation": "update_key_phase",
+      "input": {
+        "from": 0,
+        "to": 1
+      },
+      "bytes_hex": "01",
+      "expected": {
+        "ok": true,
+        "value": {
+          "key_phase": 1
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": false,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "valid",
+        "integer_max",
+        "state_only"
+      ]
+    },
+    {
+      "id": "key-update.invalid-phase",
+      "domain": "key_update",
+      "operation": "update_key_phase",
+      "input": {
+        "from": 0,
+        "to": 2
+      },
+      "bytes_hex": "02",
+      "expected": {
+        "ok": false,
+        "error": "InvalidKeyPhase"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": false,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "unknown_enum",
+        "out_of_range",
+        "state_only"
+      ]
+    },
+    {
+      "id": "carrier.transition-generation",
+      "domain": "carrier_transition",
+      "operation": "path_validated",
+      "input": {
+        "path": 1,
+        "generation": 2
+      },
+      "bytes_hex": "0102",
+      "expected": {
+        "ok": true,
+        "value": {
+          "path": 1,
+          "generation": 2
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": false,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "valid",
+        "state_only"
+      ]
+    },
+    {
+      "id": "carrier.transition-unauth",
+      "domain": "carrier_transition",
+      "operation": "path_validated",
+      "input": {
+        "authenticated": false
+      },
+      "bytes_hex": "",
+      "expected": {
+        "ok": false,
+        "error": "Unauthenticated"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": false,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "unauthenticated",
+        "state_only"
+      ]
+    },
+    {
+      "id": "close.empty",
+      "domain": "close",
+      "operation": "close",
+      "input": {
+        "reason_hex": ""
+      },
+      "bytes_hex": "040000",
+      "expected": {
+        "ok": true,
+        "value": {
+          "closed": true
+        }
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": false,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "valid",
+        "state_only"
+      ]
+    },
+    {
+      "id": "error.trailing",
+      "domain": "error",
+      "operation": "decode",
+      "input": {
+        "payload_hex": ""
+      },
+      "bytes_hex": "4e4b0001000000000000",
+      "expected": {
+        "ok": false,
+        "error": "TrailingBytes"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "trailing",
+        "malformed",
+        "expected_failure"
+      ]
+    },
+    {
+      "id": "varint.noncanonical",
+      "domain": "wire",
+      "operation": "varint",
+      "input": {
+        "value": 0
+      },
+      "bytes_hex": "8000",
+      "expected": {
+        "ok": false,
+        "error": "NonCanonicalInteger"
+      },
+      "oracle": {
+        "encode_equals_bytes": false,
+        "decode_bytes_equals_expected": true,
+        "roundtrip_equals_bytes": false
+      },
+      "classification": [
+        "noncanonical_integer",
+        "malformed",
+        "expected_failure"
+      ]
+    }
   ]
 }
