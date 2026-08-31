@@ -1,6 +1,6 @@
-# Canonical protocol vector corpus v1 (N2 candidate)
+# Canonical protocol vector corpus v1 (N9 frozen corpus)
 
-This is a **candidate conformance corpus**, not a protocol freeze. The
+This is the **frozen canonical conformance corpus v1**, not a repository-wide protocol freeze. The
 authoritative fixture is `fixtures/canonical-vectors.v1.json`; its schema is
 `schema/canonical-vector.v1.json` and the structural gate is
 `scripts/validate-canonical-vectors.py`.
@@ -39,4 +39,9 @@ recomputed over deterministic JSON content with only the hash field excluded.
 It is intentionally independent of mutable branch or HEAD names. The validator
 also checks a fixed required-domain set, including `close` and `error`, rather
 than deriving coverage requirements from fixture contents. `freeze` is required
-to remain `false`; N9 owns any future freeze decision.
+to remain `true`; the validator and generator reject a reversion to `false`, and
+the content identity rejects stale or silently changed rows.
+
+## Freeze boundary
+
+`freeze=true` freezes exactly this 42-vector, 10-domain corpus identity and its represented bytes and semantics. It does not freeze Noise transcripts, cryptographic ciphertext, carrier packetization, failover/resume behavior, or the global protocol/release state. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, repository-wide `FREEZE=false`, and `RELEASED=false` remain unchanged in `docs/status.md`.

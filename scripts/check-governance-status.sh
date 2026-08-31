@@ -43,7 +43,7 @@ check_checkbox wire x '固定第一版 session record / UDP packet header'
 check_checkbox session x '定义 Session delivery state / acknowledgement 语义'
 check_checkbox fuzz x 'fuzz：畸形输入不得 panic、越界或无限分配'
 
-if grep -RIn --exclude-dir=.git --exclude-dir=target --exclude='status.md' -E 'production[- ]ready|security audit passed|publicly deployable|implemented (protocol|security|tunnel)|protocol (is )?frozen' README.md ROADMAP.md IMPLEMENTATION_PLAN.md docs; then
+if grep -RIn --exclude-dir=.git --exclude-dir=target --exclude='status.md' --exclude='CHATGPT_HANDOFF.md' -E 'production[- ]ready|security audit passed|publicly deployable|implemented (protocol|security|tunnel)|protocol (is )?frozen' README.md ROADMAP.md IMPLEMENTATION_PLAN.md docs; then
   echo 'forbidden governance escalation claim found'; exit 1
 fi
 

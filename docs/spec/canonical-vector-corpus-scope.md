@@ -1,6 +1,6 @@
-# Candidate canonical vector corpus scope
+# Frozen canonical vector corpus v1 scope
 
-`fixtures/canonical-vectors.v1.json` is the machine-readable candidate wire corpus. It is deliberately `freeze=false`: these rows are review evidence, not yet a release, security approval, or compatibility freeze. Its immutable identity is `schema_revision` plus `corpus_sha256`. The hash is SHA-256 over the deterministic JSON serialization of the complete corpus with object keys sorted, UTF-8 encoding, no insignificant whitespace, and `corpus_sha256` itself omitted. It is independent of branch or repository HEAD, so the validator can always recompute it from corpus content.
+`fixtures/canonical-vectors.v1.json` is the machine-readable canonical wire corpus v1. Its `freeze=true` is a corpus-specific compatibility fact: these 42 reviewed rows are frozen under the content identity below. It is not a release, security approval, repository-wide protocol freeze, or production-readiness claim. Its immutable identity is `schema_revision` plus `corpus_sha256`. The hash is SHA-256 over the deterministic JSON serialization of the complete corpus with object keys sorted, UTF-8 encoding, no insignificant whitespace, and `corpus_sha256` itself omitted. It is independent of branch or repository HEAD, so the validator can always recompute it from corpus content.
 
 ## Required domains
 
@@ -14,7 +14,7 @@ existing frame bytes and executable oracle semantics.
 
 Every non-`state_only` row carries real `bytes_hex`. The Rust adapter executes every oracle marked `true`: encoders compare emitted bytes, decoders consume the fixture bytes and compare values/errors, and round trips decode then re-encode (or perform the equivalent complete negotiation exchange) byte-exactly.
 
-The candidate deliberately covers:
+The frozen corpus deliberately covers:
 
 - negotiation hello, selected-version response, no overlap, duplicate offers, malformed responses, and unsupported selections;
 - all outer record kinds (`Data`, `Ack`, `PathChallenge`), plus unknown version, truncation and trailing bytes;
@@ -26,6 +26,6 @@ The candidate deliberately covers:
 
 ## Deliberate exclusions
 
-The corpus freezes only public `neko-wire` record/frame/negotiation bytes. ACK-range state, reliable packet-number exhaustion, unreliable-datagram API policy, key-update state, and carrier-transition state are conceptual contracts in other crates rather than codecs in this wire layer. Their rows therefore use `bytes_hex: null`, all byte oracles are false, and `state_only` makes their non-wire status explicit.
+The corpus-specific freeze covers only the represented public `neko-wire` record/frame/negotiation bytes. ACK-range state, reliable packet-number exhaustion, unreliable-datagram API policy, key-update state, and carrier-transition state are conceptual contracts in other crates rather than codecs in this wire layer. Their rows therefore use `bytes_hex: null`, all byte oracles are false, and `state_only` makes their non-wire status explicit.
 
-Cryptographic ciphertext, Noise messages, carrier packetization, failover/resume state, and previous-release interoperability are excluded. Ciphertext is key/nonce dependent; carrier and Session state have separate executable tests; no previous frozen release exists. Empty frame lists, invalid flags/magic/type, record payload maximum, path-frame invalid length, and additional malformed permutations remain covered by ordinary unit/fuzz tests rather than compatibility vectors. These exclusions do not waive parser safety requirements and may be revisited before a future independent freeze decision.
+Cryptographic ciphertext, Noise messages, carrier packetization, failover/resume state, and previous-release interoperability are excluded and are not frozen by this change. Ciphertext is key/nonce dependent; carrier and Session state have separate executable tests; no previous frozen release exists. Empty frame lists, invalid flags/magic/type, record payload maximum, path-frame invalid length, and additional malformed permutations remain covered by ordinary unit/fuzz tests rather than compatibility vectors. These exclusions do not waive parser safety requirements and remain outside this corpus-specific freeze and may be revisited separately.

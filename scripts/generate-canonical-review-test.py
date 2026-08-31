@@ -8,6 +8,14 @@ generator = importlib.util.module_from_spec(spec); spec.loader.exec_module(gener
 root = json.loads((ROOT / "fixtures/canonical-vectors.v1.json").read_text(encoding="utf-8"))
 assert len(root["vectors"]) == 42
 assert generator.sha256_canonical(root) == root["corpus_sha256"]
+assert root["freeze"] is True
+reverted = dict(root); reverted["freeze"] = False; reverted["corpus_sha256"] = generator.sha256_canonical(reverted)
+try:
+    generator.render(reverted)
+except ValueError as e:
+    assert "freeze must be true" in str(e)
+else:
+    raise AssertionError("generator accepted freeze=false with recomputed identity")
 text = generator.render(root)
 assert text.count("| `") >= 42
 # Every executable row must have an adapter; remove one mapping and require render failure.

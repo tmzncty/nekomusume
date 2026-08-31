@@ -25,7 +25,7 @@ not be promoted to public-WAN reachability.
   RC, production readiness, freeze and release state.
 - [x] **N1 negotiation primitive:** bounded fail-closed version negotiation.
 - [x] **N2 executable candidate vectors:** structure validation plus Rust
-  execution against current implementation; corpus remains `freeze=false`.
+  execution against current implementation; this described the pre-N9 candidate state.
 - [x] **N3 compatibility harness:** current/current acceptance and unsupported /
   future rejection. Previous/current remains inapplicable until a prior frozen
   release exists.
@@ -46,10 +46,11 @@ not be promoted to public-WAN reachability.
 
 ## Next executable work (strict dependency order)
 
-1. [ ] **N9 candidate-corpus review and freeze decision.** Independently review
-   semantics and coverage of the executable corpus. Either record defects and
-   keep `freeze=false`, or make a separately reviewed governance change. N9 must
-   not imply RC, security approval or release.
+1. [x] **N9 canonical-corpus freeze.** Independently reviewed bytes, semantics,
+   exclusions and oracle-specific implementation mapping are frozen as corpus v1
+   with `freeze=true` and a content-addressed identity. This corpus-specific fact
+   does not imply RC, security approval or release, and does not freeze Noise,
+   ciphertext, carrier packetization, failover/resume or the global protocol.
 2. [ ] **Negotiation path completion.** Specify and test authenticated version
    negotiation for probe, UDP and failover/resume, including downgrade,
    replay/amplification and resume-binding boundaries. Do not infer this from

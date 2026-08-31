@@ -48,6 +48,7 @@ be collapsed into one readiness bit:
 - `PRODUCTION_READY=false` — Production readiness is not granted; production remains blocked.
 - `FREEZE=false` — No protocol or release freeze is declared.
 - `RELEASED=false` — No release is declared.
+- `CANONICAL_CORPUS_V1_FROZEN=true` — N9 freezes exactly the 42-vector, 10-domain corpus identity in `fixtures/canonical-vectors.v1.json`; this does not freeze Noise, ciphertext, carrier packetization, failover/resume, or the global protocol.
 
 `PRODUCTION_AUTHORIZATION` is **not** an RC prerequisite. It is a separate,
 later production gate: its absence does not explain or prevent the RC decision;

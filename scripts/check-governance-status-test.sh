@@ -48,6 +48,11 @@ expect_rejection() {
 
 run_checker >/dev/null
 
+# The reviewer-owned handoff may quote forbidden escalation language while
+# explicitly denying it; the checker must not require mutating that read-only file.
+grep -F -- "--exclude='CHATGPT_HANDOFF.md'" "$ROOT/scripts/check-governance-status.sh" >/dev/null
+printf '%s\n' 'reviewer handoff exclusion contract passed'
+
 # Leading and trailing whitespace still resolves to the existing Cargo.toml file.
 mutate_workspace_evidence "  \`Cargo.toml\`  "
 run_checker >/dev/null

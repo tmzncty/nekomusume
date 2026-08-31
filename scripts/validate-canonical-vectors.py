@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Strict structural gate for the candidate canonical vector corpus.
+"""Strict structural gate for the frozen canonical vector corpus v1.
 
 The three oracle bits are deliberately mandatory: an adapter that executes a
 vector must set them only after encode(value)==bytes, decode(bytes)==expected,
@@ -38,7 +38,7 @@ def check(path):
     if set(root) != required_root: fail("root properties")
     if root.get("schema") != "nekomusume.canonical-vector.v1" or root.get("schema_version") != 1: fail("schema/version")
     if root.get("schema_revision") != 1: fail("schema_revision")
-    if root.get("freeze") is not False: fail("freeze must remain false until N9")
+    if root.get("freeze") is not True: fail("freeze must be true for canonical corpus v1")
     claimed_hash = root.get("corpus_sha256", "")
     if not SHA256.fullmatch(claimed_hash): fail("corpus_sha256")
     actual_hash = canonical_content_sha256(root)
@@ -75,7 +75,7 @@ def check(path):
         if not isinstance(c,list) or not c or len(set(c)) != len(c) or any(x not in CLASSES for x in c): fail(p+" classification")
     missing=REQUIRED_DOMAINS-domains
     if missing: fail("missing domains: "+",".join(sorted(missing)))
-    print(f"canonical vector validation passed: {len(vectors)} vectors; domains={len(domains)}; freeze=false")
+    print(f"canonical vector validation passed: {len(vectors)} vectors; domains={len(domains)}; freeze=true")
 
 if __name__ == "__main__":
     check(sys.argv[1] if len(sys.argv)>1 else "fixtures/canonical-vectors.v1.json")

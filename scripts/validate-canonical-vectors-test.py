@@ -35,6 +35,22 @@ def must_reject(name, mutate, expected_error):
 
 validator.check(ROOT / "fixtures/canonical-vectors.v1.json")
 must_reject(
+    "freeze reverted to false with stale identity",
+    lambda corpus: corpus.__setitem__("freeze", False),
+    "freeze must be true for canonical corpus v1",
+)
+
+def revert_freeze_and_recompute(corpus):
+    corpus["freeze"] = False
+    corpus["corpus_sha256"] = validator.canonical_content_sha256(corpus)
+
+
+must_reject(
+    "freeze reverted to false with recomputed identity",
+    revert_freeze_and_recompute,
+    "freeze must be true for canonical corpus v1",
+)
+must_reject(
     "wire-byte mutation with stale identity",
     lambda corpus: corpus["vectors"][0].__setitem__("bytes_hex", "4e31010200000003"),
     "corpus_sha256 mismatch",

@@ -1,9 +1,9 @@
 # Canonical vector review coverage (generated)
 
-> **Non-normative review artifact.** Generated from `fixtures/canonical-vectors.v1.json`; it records review coverage and implementation evidence only. It does not add, replace, or freeze protocol requirements. `freeze=false` remains authoritative.
+> **Non-normative review artifact.** Generated from `fixtures/canonical-vectors.v1.json`; it records review coverage and implementation evidence only. It does not add or replace protocol requirements. `freeze=true` records only the corpus-specific v1 compatibility freeze; repository-wide protocol/release `FREEZE=false` remains authoritative.
 
 - Corpus schema: `nekomusume.canonical-vector.v1` revision `1`
-- Corpus identity: `84a49313974341b93d17415d2fffec2b2d0a68fb009f2a6b32381ad65ba93184`
+- Corpus identity: `f12030c543e37933d44246fbe3c3040d7dc570e559beb38d263fca21f2651339`
 - Vector count: **42**
 - Generator: `scripts/generate-canonical-review.py`
 

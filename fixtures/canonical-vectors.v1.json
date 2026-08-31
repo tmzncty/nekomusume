@@ -2,8 +2,8 @@
   "schema": "nekomusume.canonical-vector.v1",
   "schema_version": 1,
   "schema_revision": 1,
-  "corpus_sha256": "84a49313974341b93d17415d2fffec2b2d0a68fb009f2a6b32381ad65ba93184",
-  "freeze": false,
+  "corpus_sha256": "f12030c543e37933d44246fbe3c3040d7dc570e559beb38d263fca21f2651339",
+  "freeze": true,
   "vectors": [
     {
       "id": "negotiation.hello.v0-v2",

@@ -68,8 +68,10 @@ def sha256_canonical(root):
     return hashlib.sha256(raw).hexdigest()
 
 def render(root):
+    if root.get("freeze") is not True:
+        raise ValueError("freeze must be true for canonical corpus v1")
     vectors = root["vectors"]
-    lines = ["# Canonical vector review coverage (generated)", "", "> **Non-normative review artifact.** Generated from `fixtures/canonical-vectors.v1.json`; it records review coverage and implementation evidence only. It does not add, replace, or freeze protocol requirements. `freeze=false` remains authoritative.", "", f"- Corpus schema: `{root['schema']}` revision `{root['schema_revision']}`", f"- Corpus identity: `{root['corpus_sha256']}`", f"- Vector count: **{len(vectors)}**", "- Generator: `scripts/generate-canonical-review.py`", "", "| # | id | domain / operation | classification | bytes | oracles | expected semantic fields / error | adapter / coverage path |", "|---:|---|---|---|:---:|---|---|---|"]
+    lines = ["# Canonical vector review coverage (generated)", "", "> **Non-normative review artifact.** Generated from `fixtures/canonical-vectors.v1.json`; it records review coverage and implementation evidence only. It does not add or replace protocol requirements. `freeze=true` records only the corpus-specific v1 compatibility freeze; repository-wide protocol/release `FREEZE=false` remains authoritative.", "", f"- Corpus schema: `{root['schema']}` revision `{root['schema_revision']}`", f"- Corpus identity: `{root['corpus_sha256']}`", f"- Vector count: **{len(vectors)}**", "- Generator: `scripts/generate-canonical-review.py`", "", "| # | id | domain / operation | classification | bytes | oracles | expected semantic fields / error | adapter / coverage path |", "|---:|---|---|---|:---:|---|---|---|"]
     for i, v in enumerate(vectors, 1):
         state = "state-only (no wire bytes)" if "state_only" in v["classification"] else "present"
         oracle = ", ".join(k.removesuffix("_equals_bytes").replace("_", " ") for k,x in v["oracle"].items() if x) or "none (state-only)"
