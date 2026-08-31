@@ -36,6 +36,8 @@ bash scripts/check-decision-index.sh
 bash scripts/check-decision-index-test.sh
 python3 scripts/validate-canonical-vectors.py fixtures/canonical-vectors.v1.json
 python3 scripts/validate-canonical-vectors-test.py
+python3 scripts/generate-canonical-review.py --check
+python3 scripts/generate-canonical-review-test.py
 test -f docs/specs/nekomusume-session-v0.md
 test -f LICENSE-MIT
 test -f LICENSE-APACHE
