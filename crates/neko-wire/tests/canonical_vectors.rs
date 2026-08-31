@@ -106,6 +106,126 @@ fn input_frames(v: &Vector) -> Vec<Frame> {
     }
     vec![]
 }
+fn expect_object_keys(value: &Value, required: &[&str], optional: &[&str], context: &str) {
+    let object = value
+        .as_object()
+        .unwrap_or_else(|| panic!("{context}: expected object"));
+    let allowed: std::collections::BTreeSet<_> = required.iter().chain(optional).copied().collect();
+    assert!(
+        object.keys().all(|key| allowed.contains(key.as_str())),
+        "{context}: unknown expected.value key"
+    );
+    for key in required {
+        assert!(
+            object.contains_key(*key),
+            "{context}: missing required expected.value key {key}"
+        );
+    }
+}
+
+fn assert_negotiation_selected(id: &str, selected: u16, expected: &Value) {
+    expect_object_keys(expected, &["selected"], &[], id);
+    assert_eq!(
+        selected as u64,
+        expected["selected"].as_u64().unwrap(),
+        "{id} selected version"
+    );
+}
+fn assert_record_semantics(id: &str, decoded: &Record, value: &Value) {
+    assert_eq!(
+        decoded.record_type,
+        record_type(value["type"].as_str().unwrap()),
+        "{id} type"
+    );
+    assert_eq!(
+        decoded.flags as u64,
+        value["flags"].as_u64().unwrap(),
+        "{id} flags"
+    );
+    assert_eq!(
+        decoded.payload,
+        hex(value["payload_hex"].as_str().unwrap()),
+        "{id} payload"
+    );
+}
+fn assert_frames_semantics(id: &str, decoded: &[Frame], expected: &Value) {
+    assert_eq!(
+        decoded.len() as u64,
+        expected["frame_count"].as_u64().unwrap(),
+        "{id} frame count"
+    );
+    let expected_frames = expected["frames"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(frame_from)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        decoded, expected_frames,
+        "{id} decoded frame identity/payload"
+    );
+    if let Some(payload_bytes) = expected.get("payload_bytes") {
+        let actual: usize = decoded
+            .iter()
+            .map(|frame| match frame {
+                Frame::Data(p) | Frame::Datagram(p) | Frame::DeliveryAck(p) | Frame::Close(p) => {
+                    p.len()
+                }
+                Frame::PathChallenge(p) | Frame::PathResponse(p) => p.len(),
+                Frame::UnknownIgnorable { payload, .. } => payload.len(),
+            })
+            .sum();
+        assert_eq!(
+            actual as u64,
+            payload_bytes.as_u64().unwrap(),
+            "{id} payload bytes"
+        );
+    }
+}
+
+fn assert_success_contract(v: &Vector) {
+    if !v.expected.ok || v.classification.iter().any(|c| c == "state_only") {
+        return;
+    }
+    let value = v
+        .expected
+        .value
+        .as_ref()
+        .expect("successful row needs value");
+    match (v.domain.as_str(), v.operation.as_str()) {
+        ("negotiation", "client_hello") => {
+            expect_object_keys(value, &["versions", "selected"], &[], &v.id)
+        }
+        ("negotiation", "server_response") => expect_object_keys(value, &["selected"], &[], &v.id),
+        ("wire", "record") => {
+            expect_object_keys(value, &["type", "flags", "payload_hex"], &[], &v.id)
+        }
+        ("wire", "varint") => expect_object_keys(value, &["value"], &[], &v.id),
+        ("frame" | "close", "frames") => {
+            expect_object_keys(value, &["frame_count", "frames"], &["payload_bytes"], &v.id);
+            let frames = value["frames"].as_array().expect("frames must be array");
+            for (index, frame) in frames.iter().enumerate() {
+                let ty = frame["type"].as_str().unwrap_or("<missing>");
+                let context = format!("{} frames[{index}]", v.id);
+                match ty {
+                    "Close" => expect_object_keys(frame, &["type"], &["payload_hex"], &context),
+                    "UnknownIgnorable" => expect_object_keys(
+                        frame,
+                        &["type", "frame_type", "payload_hex"],
+                        &[],
+                        &context,
+                    ),
+                    _ => expect_object_keys(frame, &["type", "payload_hex"], &[], &context),
+                }
+            }
+        }
+        other => panic!(
+            "{} has no successful expected-value contract for {other:?}",
+            v.id
+        ),
+    }
+}
+
 fn assert_oracles_match_classification(v: &Vector) {
     let state_only = v.classification.iter().any(|c| c == "state_only");
     if state_only {
@@ -148,6 +268,7 @@ fn assert_oracles_match_classification(v: &Vector) {
 fn every_claimed_oracle_executes_real_implementation_code() {
     for v in corpus().vectors {
         assert_oracles_match_classification(&v);
+        assert_success_contract(&v);
         if v.classification.iter().any(|c| c == "state_only") {
             continue;
         }
@@ -223,11 +344,10 @@ fn every_claimed_oracle_executes_real_implementation_code() {
                 match client.client_accept_response(&bytes) {
                     Ok(selected) => {
                         assert!(v.expected.ok, "{} unexpectedly succeeded", v.id);
-                        assert_eq!(
-                            selected as u64,
-                            v.expected.value.as_ref().unwrap()["selected"]
-                                .as_u64()
-                                .unwrap()
+                        assert_negotiation_selected(
+                            &v.id,
+                            selected,
+                            v.expected.value.as_ref().unwrap(),
                         );
                         if v.oracle.roundtrip_equals_bytes {
                             let mut server =
@@ -265,15 +385,7 @@ fn every_claimed_oracle_executes_real_implementation_code() {
                         Ok(decoded) => {
                             assert!(v.expected.ok, "{} unexpectedly succeeded", v.id);
                             let value = v.expected.value.as_ref().unwrap();
-                            assert_eq!(
-                                decoded.record_type,
-                                record_type(value["type"].as_str().unwrap())
-                            );
-                            assert_eq!(decoded.flags as u64, value["flags"].as_u64().unwrap());
-                            assert_eq!(
-                                decoded.payload,
-                                hex(value["payload_hex"].as_str().unwrap())
-                            );
+                            assert_record_semantics(&v.id, &decoded, value);
                             if v.oracle.roundtrip_equals_bytes {
                                 assert_eq!(encode(&decoded).unwrap(), bytes, "{} roundtrip", v.id);
                             }
@@ -304,23 +416,7 @@ fn every_claimed_oracle_executes_real_implementation_code() {
                         Ok(decoded) => {
                             assert!(v.expected.ok, "{} unexpectedly succeeded", v.id);
                             let expected = v.expected.value.as_ref().unwrap();
-                            assert_eq!(
-                                decoded.len() as u64,
-                                expected["frame_count"].as_u64().unwrap(),
-                                "{} frame count",
-                                v.id
-                            );
-                            let expected_frames = expected["frames"]
-                                .as_array()
-                                .unwrap()
-                                .iter()
-                                .map(frame_from)
-                                .collect::<Vec<_>>();
-                            assert_eq!(
-                                decoded, expected_frames,
-                                "{} decoded frame semantics",
-                                v.id
-                            );
+                            assert_frames_semantics(&v.id, &decoded, expected);
                             if let Some(payload_bytes) = expected.get("payload_bytes") {
                                 let actual_payload_bytes: usize = decoded
                                     .iter()
@@ -392,4 +488,91 @@ fn every_claimed_oracle_executes_real_implementation_code() {
             other => panic!("{} has no executable adapter for {other:?}", v.id),
         }
     }
+}
+
+#[test]
+fn successful_expected_contract_rejects_unknown_and_missing_keys() {
+    let mut v = corpus()
+        .vectors
+        .into_iter()
+        .find(|v| v.id == "wire.record-data")
+        .unwrap();
+    v.expected
+        .value
+        .as_mut()
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .insert("future_field".into(), Value::Null);
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assert_success_contract(&v)))
+            .is_err()
+    );
+    v.expected
+        .value
+        .as_mut()
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("flags");
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assert_success_contract(&v)))
+            .is_err()
+    );
+}
+
+#[test]
+fn semantic_mutations_reach_real_oracle_assertions_without_changing_bytes() {
+    let vectors = corpus().vectors;
+    let record = vectors.iter().find(|v| v.id == "wire.record-data").unwrap();
+    let bytes = fixture_bytes(record);
+    let decoded = decode(&bytes).unwrap();
+    let mut stale = record.expected.value.clone().unwrap();
+    stale["type"] = Value::String("Ack".into());
+    assert!(
+        std::panic::catch_unwind(|| assert_record_semantics(&record.id, &decoded, &stale)).is_err()
+    );
+    stale = record.expected.value.clone().unwrap();
+    stale["flags"] = Value::from(7);
+    assert!(
+        std::panic::catch_unwind(|| assert_record_semantics(&record.id, &decoded, &stale)).is_err()
+    );
+    stale = record.expected.value.clone().unwrap();
+    stale["payload_hex"] = Value::String("686f".into());
+    assert!(
+        std::panic::catch_unwind(|| assert_record_semantics(&record.id, &decoded, &stale)).is_err()
+    );
+
+    let frame = vectors.iter().find(|v| v.id == "frame.data").unwrap();
+    let frame_bytes = fixture_bytes(frame);
+    let decoded_frames = decode_frames(&frame_bytes).unwrap();
+    let mut stale = frame.expected.value.clone().unwrap();
+    stale["frames"][0]["payload_hex"] = Value::String("686f".into());
+    assert!(
+        std::panic::catch_unwind(|| assert_frames_semantics(&frame.id, &decoded_frames, &stale))
+            .is_err()
+    );
+    stale = frame.expected.value.clone().unwrap();
+    stale["payload_bytes"] = Value::from(99);
+    assert!(
+        std::panic::catch_unwind(|| assert_frames_semantics(&frame.id, &decoded_frames, &stale))
+            .is_err()
+    );
+
+    let hello = vectors
+        .iter()
+        .find(|v| v.id == "negotiation/hello.v0-v2" || v.id == "negotiation.hello.v0-v2")
+        .unwrap();
+    let mut client = VersionNegotiator::new(NegotiationRole::Client, &[0, 2]).unwrap();
+    let selected = client
+        .client_accept_response(&fixture_bytes(
+            vectors
+                .iter()
+                .find(|v| v.id == "negotiation.response.selected-0")
+                .unwrap(),
+        ))
+        .unwrap();
+    let mut stale = hello.expected.value.clone().unwrap();
+    stale["selected"] = Value::from(selected + 1);
+    assert_ne!(selected as u64, stale["selected"].as_u64().unwrap());
 }
