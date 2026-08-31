@@ -15,6 +15,8 @@ The remaining defect is visible in `crates/neko-wire/tests/canonical_vectors.rs`
 
 The previous handoff was too narrow operationally: it could be completed quickly and then forced the coding agent to wait for another reviewer turn. This handoff therefore keeps the same correctness boundary but expands N9 into a complete closure batch with sequential work that is all genuinely relevant to the freeze decision.
 
+A new coordination policy, `docs/vps-rental-window-priority.md`, records that the currently rented VPS is a time-limited one-month research asset. After correctness gates permit, reviewer/coding-agent scheduling must prefer VPS-only evidence and local work that directly unlocks VPS evidence over ordinary polish/speculative work. This does not widen `docs/standing-vps-lab-authorization.md`.
+
 ## Review verdict
 
 **needs repair — N9 is READY as a full closure batch; project is not otherwise stuck**
@@ -30,8 +32,9 @@ No production wire change is currently requested. If this batch discovers a real
 - `1d4905e` is test/fixture/validator/documentation infrastructure, not runtime behavior.
 - No GitHub CI attestation is attached to the current implementation HEAD; local gates remain coding-environment evidence, not independent review.
 - Standing self-owned VPS authorization is active. It is not the current N9 blocker.
+- `docs/vps-rental-window-priority.md` is scheduling/coordination policy only; it does not authorize experiments beyond the standing authorization.
 - `docs/status.md` still contains stale/narrow reachability wording relative to `docs/standing-vps-lab-authorization.md`; repair the wording without promoting capability/release status.
-- The release plan after N9 remains real work, but do not cross the N9 freeze-review boundary until this closure batch is complete and pushed.
+- The release plan after N9 remains real work, and the rented VPS creates time pressure to collect real-network evidence once the relevant correctness path is ready, but do not cross the N9 freeze-review boundary until this closure batch is complete and pushed.
 
 ## Work Package — N9 Full Closure Batch
 
@@ -161,9 +164,46 @@ The entire N9 closure batch is complete only when all are true:
 - full local repository gate passes;
 - `FREEZE=false`, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `RELEASED=false` remain unchanged.
 
-## After this batch
+## After this batch — VPS rental-window priority
 
-The next hourly reviewer should perform the actual N9 candidate review. If no concrete corpus defect remains, the reviewer may make/authorize the separate N9 governance freeze decision. Once N9 is closed, the repository's next real engineering queue is already defined in `IMPLEMENTATION_PLAN.md`:
+The next hourly reviewer should perform the actual N9 candidate review. If no concrete corpus defect remains, the reviewer may make/authorize the separate N9 governance freeze decision.
+
+After N9 is closed, do **not** spend the rental window on unrelated local polish. Read `docs/vps-rental-window-priority.md` and prioritize the release queue in this order whenever dependencies permit:
+
+```text
+authenticated negotiation path completion needed for truthful WAN behavior
+  ↓
+VPS real-socket/WAN evidence batch
+  - TCP/UDP authenticated sessions
+  - repeated open/exchange/close
+  - UDP degradation -> TCP fallback
+  - uncertain resend/dedup/exactly-once evidence
+  - migration-back / endpoint-path migration where the owned environment permits
+  - real-session key update / PMTUD observations
+  - IPv4/IPv6 as actually available
+  ↓
+bounded 5-10 minute resilience scenarios under standing authorization
+  ↓
+Nekomusume-equivalent command for existing HY2 comparison contract
+  ↓
+paired Nekomusume/HY2 bounded samples on the owned VPS
+  ↓
+native VPS resource/performance/package evidence
+  ↓
+independent release/security review
+  ↓
+separate RC decision
+```
+
+Where one VPS-only row is blocked by an implementation/instrumentation dependency, select the smallest local slice that directly unlocks that row rather than an unrelated enhancement.
+
+Do not mechanically split a forbidden >10-minute soak or capacity test to evade standing authorization. Distinct 5-10 minute scenarios are valid only when they answer distinct questions (steady session, idle/periodic exchange, lifecycle repetition, failover/recovery, key-update interaction, etc.).
+
+Do not run CPU-heavy fuzz/build work concurrently with performance-comparison samples; use spare VPS compute between measurement windows for bounded release builds, workspace gates, parser/property/fuzz campaigns after relevant changes, and process CPU/RSS/FD/socket instrumentation work.
+
+The aim is maximum **evidence value per rental day**, not maximum utilization percentage.
+
+The repository's formal next release queue remains:
 
 ```text
 N9 review/freeze decision
