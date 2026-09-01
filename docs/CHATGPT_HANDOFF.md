@@ -1,251 +1,257 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-01 06:57 Asia/Shanghai
-Repository HEAD: `8726623cf375ab3ef478e6af4993e20bff2383e9`
-Previous reviewed implementation HEAD: `29a5fbc28e5ad35acb5600b2d3810c4bcf130cba`
-Previous reviewer handoff commit: `8187182b...`
+Checked at: 2026-09-01 08:01 Asia/Shanghai
+Repository HEAD: `ca2481017ed704c81ebfb97739cb6db2370ca510`
+Previous reviewed implementation HEAD: `8726623cf375ab3ef478e6af4993e20bff2383e9`
+Previous reviewer handoff commit: `85e0569dd76cdd50f6d2f701a010eaaa29407ab7`
 
 ## What changed
 
-New coding-agent / CI-relevant work is visible since the previous review:
+Two substantive coding-agent commits landed after the previous review:
 
-- `8726623` — **test/toolchain/CI hardening only; no production runtime or wire change.** It pins the fuzz path to a rustup nightly cargo-fuzz toolchain, adds a self-test for that toolchain wrapper, and runs `scripts/fuzz-smoke.sh` in GitHub Actions.
-- The GitHub Actions run associated with `8726623` completed successfully. Both the stable repository checks and the fuzz-smoke job passed. This closes the prior independent-CI/fuzz-attestation gap for the current candidate.
+- `8973ce5` — **N9 governance/spec/test transition; no production transport change.** It mechanically freezes the reviewed 42-vector / 10-domain canonical corpus, recomputes its content identity, updates the validator/schema/generator and governance checks, marks N9 complete, and records `CANONICAL_CORPUS_V1_FROZEN=true` while correctly keeping `FREEZE=false`, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, and `RELEASED=false`. The frozen scope still excludes Noise/ciphertext, carrier packetization, failover/resume and the whole protocol.
+- `ca248101` — **real generic probe implementation + tests.** Ordinary TCP and UDP `neko server` / `neko client` paths now perform canonical `VersionNegotiator` exchange before Noise, authenticate the exact negotiation binding in the Noise prologue, and gate application echo on `admit_data()`. New process tests cover malformed/unsupported negotiation, duplicate hello, unsupported selection and transcript mismatch before application data. GitHub Actions for this HEAD completed successfully.
 
-The reviewer also re-read the current canonical coverage generator and its mutation tests. A finding in the previous handoff was stale/incorrect: the generated review mapping is **not** a coarse one-string operation mapping anymore. `scripts/generate-canonical-review.py` has oracle-specific encode/decode/roundtrip paths, and `scripts/generate-canonical-review-test.py` explicitly rejects missing enabled paths, mislabeled negotiation paths, and the legacy coarse mapping. The generated `docs/spec/canonical-vector-review.v1.md` exposes those oracle-specific paths. Therefore the previous “coarse mapping still blocks N9” claim is withdrawn.
+The reviewer re-read the current failover/resume runner because it is the next explicit implementation-plan dependency and because the rented VPS makes real-socket evidence time-sensitive. The failover path is **not** yet equivalent to the newly repaired generic probe path:
 
-The accepted N9 closure evidence now includes:
+- `failover_server` / `failover_client` still start Noise directly; no canonical version negotiation is performed on the initial UDP path or the TCP resume path.
+- `InitiatorHandshake::with_resume_binding` currently has no way to compose the negotiation prologue binding with the existing resume claim, although the responder can already be created with a generic prologue binding and then call `receive_first_with_resume`.
+- The same-process failover runner can retain the initial selected version and require the TCP resume negotiation to select the same version; this does not require adding a fake second production version or changing the frozen N1 bytes.
 
-- exact successful `expected.value` contracts for every currently successful executable operation family;
-- full frame/close decoded identity and payload semantics plus payload-byte assertions;
-- record and negotiation semantic assertions;
-- real semantic-mutation regressions, including selected-version rejection through the shared negotiation assertion path;
-- content-addressed corpus identity and fixed required-domain validation;
-- deterministic generated review coverage with oracle-specific implementation paths;
-- local full-gate rehearsal at `29a5fbc`;
-- independent GitHub Actions stable + fuzz success at current HEAD `8726623`.
+A second, independent **evidence-integrity finding** is now concrete and must be repaired before new failover VPS evidence is treated as release evidence:
 
-No new production behavior was introduced by the latest fuzz-toolchain commit.
+1. failover diagnostic `start` events hard-code `count=8`, `payload_bytes=64`, `udp_port=40081`, and `max_seconds=15` instead of reporting the actual CLI parameters;
+2. `failover_server` initializes `duplicates = 0` and never increments it, yet reports `duplicates=0` as if measured;
+3. the client reports `udp_blackhole=true` and emits `udp_blackhole_injected`, but the current CLI path does not observe a real UDP health failure or PTO threshold: after the first UDP record/ACK it simply moves to TCP. The historical VPS run is therefore valid evidence of a **controlled client-induced UDP-stop -> TCP resume transition over real sockets**, but it must not be promoted to evidence that the runtime detected actual WAN degradation/blackhole.
+
+These are evidence/runner defects, not proof of a Session deduplication bug. Existing deterministic `FailoverController`/`SessionRuntime` tests still exercise PTO threshold, uncertain resend and logical dedup separately. The next slice should integrate those domains truthfully rather than preserving a constant/misleading diagnostic claim.
 
 ## Review verdict
 
-**PASS for N9 candidate-corpus review at this exact candidate; authorize the separate corpus-specific freeze transition.**
+**PASS for N9 freeze and generic TCP/UDP probe negotiation. NEEDS REPAIR for failover/resume negotiation and failover evidence instrumentation before release-WAN evidence collection.**
 
-The reviewer finds no remaining concrete defect in the current 42-vector canonical corpus evidence contract that requires keeping the corpus candidate mutable. The coding agent may now perform a narrow, mechanical N9 **canonical-corpus freeze** transition.
+Do not reopen the canonical corpus and do not redo generic probe negotiation. The next Primary is the failover/resume closure: authenticate negotiation on both carrier handshakes, bind resume to the same selected Session version, and repair the runner so its diagnostics describe what actually happened.
 
-This authorization is intentionally narrow:
-
-```text
-canonical corpus frozen
-!= whole protocol frozen
-!= RELEASE_CANDIDATE
-!= security approval
-!= production readiness
-!= release
-```
-
-The repository-wide governance facts must remain truthful. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, and `RELEASED=false` must remain unchanged. The existing global `FREEZE=false` must also remain unchanged **unless** repository governance already defines that flag specifically as the canonical-corpus freeze; current status text describes it as protocol/release freeze, so do not silently flip it. Record the N9 result as a corpus-specific freeze fact instead.
-
-After the mechanical N9 transition is green and pushed, do not wait for another reviewer turn. Continue directly into authenticated negotiation-path completion and, if that becomes green in the same work window, into the first high-value VPS evidence run under standing authorization.
+This project is not globally blocked. After the failover runner is green, use the rented VPS immediately for new post-negotiation real-socket evidence under standing authorization. Do not spend the rental window on unrelated local polish.
 
 ## Evidence boundaries
 
-- Current canonical corpus: 42 vectors across 10 required domains.
-- Current candidate corpus identity before the freeze transition: `84a49313974341b93d17415d2fffec2b2d0a68fb009f2a6b32381ad65ba93184`.
-- `docs/spec/canonical-vector-corpus-scope.md` explicitly says this corpus covers public `neko-wire` record/frame/negotiation bytes and excludes cryptographic ciphertext, Noise messages, carrier packetization, failover/resume state, and previous-release interoperability. Preserve that scope.
-- The generated coverage artifact is review/navigation evidence, not a second normative protocol specification.
-- The N9 freeze decision does not validate generic CLI probe, UDP, or failover/resume version negotiation. `IMPLEMENTATION_PLAN.md` correctly lists those as the next separate implementation item.
-- TCP multistream already performs explicit `VersionNegotiator` exchange, binds the authenticated negotiation transcript into Noise, and gates data admission. Generic TCP/UDP probe paths and failover/resume paths do not yet have equivalent integration and must not inherit the multistream claim.
-- Standing self-owned VPS authorization is active. Ordinary bounded TCP/UDP listeners, diagnostic runs, failover/migration experiments, captures, cleanup, and HY2 comparison within its limits require no new per-run approval.
-- The rented VPS remains a time-limited evidence asset. Once negotiation dependencies are green, real-socket/VPS evidence outranks unrelated local polish.
+- Canonical corpus v1 is frozen exactly at the reviewed 42-vector / 10-domain corpus; global protocol/release `FREEZE` remains false.
+- Generic TCP/UDP probe negotiation at `ca248101` is implementation + process-test evidence with green GitHub CI; it is not failover/resume evidence and not a security audit.
+- `docs/status.md` correctly says the generic probe is negotiated/authenticated but failover/resume negotiation is still missing.
+- `IMPLEMENTATION_PLAN.md` correctly leaves “Negotiation path completion” unchecked because failover/resume remains.
+- The existing `docs/vps-failover-success-2026-08-30.md` remains useful historical evidence for its exact old candidate, but its `udp_blackhole_injected` transition is application-controlled. It does **not** satisfy the release-matrix row “observed UDP degradation -> automatic TCP fallback”.
+- Current failover Session/Resume semantics remain bounded: same logical Session, fresh Noise transport, ResumeGuard, uncertain resend/dedup and Session-level delivery are separate from packet/path feedback.
+- Standing self-owned VPS authorization is active: ordinary bounded TCP/UDP listener, failover/migration, bounded capture, soak, cleanup and comparison work within its limits need no new per-run permission.
+- The rented VPS is a time-limited asset. Once this Primary is green, post-negotiation VPS evidence outranks documentation polish and speculative feature work.
 
-## Work Package — N9 freeze -> negotiation integration -> first VPS evidence
+## Work Package — truthful negotiated failover -> immediate VPS evidence
 
-This package is deliberately thick. Execute A -> B -> C -> D in dependency order without returning after a ten-minute subtask. If a later stage exposes a real correctness/security defect, stop that path and use the fallback.
+This package is intentionally thick. Execute A -> B -> C -> D in dependency order. Do not stop after adding one constructor or one test. If a real correctness/security defect appears, use the fallback.
 
-### Primary A — Perform the mechanical N9 canonical-corpus freeze transition
+### Primary A — Close authenticated negotiation + evidence integrity for failover/resume
 
 **Goal**
 
-Freeze exactly the currently reviewed 42-vector canonical corpus and its existing public `neko-wire` bytes/semantics, without expanding the frozen scope and without promoting RC/security/production/global protocol-freeze state.
+Make the executable failover runner truthfully prove this sequence:
+
+```text
+initial UDP path negotiates version
+-> exact UDP negotiation transcript is Noise-authenticated
+-> UDP application data is admitted
+-> a bounded, explicitly classified failure/stop condition is observed
+-> TCP resume path negotiates version
+-> selected resume version equals the Session's initial negotiated version
+-> exact TCP negotiation transcript + existing ResumeBinding are authenticated by fresh Noise
+-> ResumeGuard accepts the carrier attachment
+-> uncertain Session ranges are resent/deduplicated
+-> application data remains exactly-once where that existing Session claim is made
+```
+
+Do not change the frozen canonical N1 bytes.
 
 **Likely files**
 
-- `fixtures/canonical-vectors.v1.json`;
-- `schema/canonical-vector.v1.json`;
-- `scripts/validate-canonical-vectors.py`;
-- `scripts/validate-canonical-vectors-test.py`;
-- `scripts/generate-canonical-review.py` and its tests only as required to represent/check the frozen state;
-- `docs/spec/canonical-vector-corpus-scope.md`;
-- `docs/spec/canonical-vectors-v1.md`;
-- generated `docs/spec/canonical-vector-review.v1.md`;
-- `IMPLEMENTATION_PLAN.md`;
-- `docs/status.md` only for a precise corpus-specific status note if needed by repository status governance;
-- existing check scripts if they currently hard-code the candidate/unfrozen state.
+- `crates/neko-crypto/src/lib.rs`;
+- `crates/neko-cli/src/main.rs`;
+- `crates/neko-cli/tests/probe.rs` or a dedicated failover process test file if that keeps scope clearer;
+- `crates/neko-carrier/tests/resumed_session.rs` and existing failover tests as required;
+- `docs/m3-wan-failover-gate.md` / `docs/spec/m3-tcp-failover.md` for evidence-boundary corrections;
+- `IMPLEMENTATION_PLAN.md` and `docs/status.md` only when the implementation/gate genuinely changes.
 
-**Required behavior**
+**A1 — Compose negotiation binding with resume Noise**
 
-1. Change the canonical corpus from candidate `freeze=false` to the reviewed frozen state without modifying any vector byte or semantic field except metadata mechanically required by the freeze transition.
-2. Recompute `corpus_sha256` using the existing deterministic identity algorithm after the freeze bit changes.
-3. Update schema/validator/generator/tests so the repository now rejects an unexpected return to `freeze=false` for this v1 frozen corpus and continues rejecting stale content identity, missing required domains, unmapped executable oracles, and semantic contract drift.
-4. Preserve the current 42-vector / 10-domain coverage and oracle-specific adapter mapping.
-5. Mark N9 complete in `IMPLEMENTATION_PLAN.md` only after all freeze-transition gates pass.
-6. Record a **corpus-specific** frozen fact. Do not turn it into a claim that Noise/ciphertext/carrier/failover/resume/global Session protocol is frozen.
-7. Keep `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `RELEASED=false`, and the current global protocol/release `FREEZE=false` unless an existing authoritative governance checker proves that `FREEZE` has a narrower meaning. If a checker currently conflates them, repair the checker/status wording rather than silently escalating governance.
+1. Add the smallest non-breaking crypto API needed for an initiator to combine the existing `ResumeBinding` payload with a non-empty generic prologue binding. A `with_resume_binding_and_prologue_binding(...)`-style constructor is acceptable.
+2. Preserve legacy empty-binding behavior and existing `with_resume_binding` callers. Do not change old Noise bytes accidentally.
+3. The responder should use the existing generic prologue-binding constructor with `receive_first_with_resume` unless a smaller refactor is clearly safer; do not introduce wire-policy dependency from `neko-crypto` to `neko-wire`.
+4. Unit-test equal binding success, one-bit negotiation-binding mismatch rejection before `SecureSession`, existing resume-claim validation, and oversized binding fail-closed behavior.
+
+**A2 — Negotiate both failover carrier handshakes**
+
+1. Initial UDP failover handshake must use the same canonical N1 hello/response and authenticated binding as the generic UDP probe before Noise application admission.
+2. Store the selected version as part of the **runner's current logical Session state** for this same-process candidate.
+3. TCP resume must perform a fresh canonical N1 exchange before fresh Noise.
+4. Before resumed application data, require the TCP selected version to equal the initial Session selected version. With only one current production version, test this guard with a small state/helper unit test or raw-peer failure cases; do not add a fake second supported production version merely for coverage.
+5. Bind the exact TCP negotiation transcript into the same fresh Noise handshake that carries/authenticates the existing ResumeBinding. The resume claim and negotiation must not be two unrelated unauthenticated facts.
+6. Only after negotiation, Noise authentication, same-version guard, and ResumeGuard may resumed `ProcessMessage::Data` reach `SessionRuntime`.
+7. Preserve Session-level confirmed/uncertain/dedup semantics; negotiation success is not delivery proof.
+8. Preserve pre-auth/resource limits and UDP amplification bounds. Duplicate/late negotiation attempts must remain bounded/fail-closed.
+
+**A3 — Repair failover evidence instrumentation before any new VPS claim**
+
+1. Replace hard-coded diagnostic start fields with the actual parsed count, payload size, UDP/TCP ports and duration. Add regression tests using non-default legal parameters so hard-coded defaults cannot return unnoticed.
+2. Stop reporting `duplicates=0` unless it is genuinely measured. Either instrument the logical duplicate outcome from the Session/failover path, or remove/rename that field to an honest observable. A constant zero is not evidence.
+3. Stop using `udp_blackhole=true` / `udp_blackhole_injected` as if it proves detected network failure when the client merely elects to stop using UDP. Preserve historical evidence unchanged, but make new runner terminology explicit, e.g. `controlled_udp_stop` / `application_fault_injection`, unless the runtime actually observed bounded missing ACK/PTO evidence.
+4. Prefer upgrading the runner to use existing `FailoverController` semantics: send/track bounded UDP work, observe missing delivery/ACK timeouts, require the configured consecutive PTO/failure threshold, then switch. For a deterministic real-socket test without host qdisc/firewall changes, a lab-only bounded server behavior that intentionally withholds UDP ACKs after N records is acceptable if clearly named as **controlled endpoint fault injection** and impossible to confuse with natural WAN loss.
+5. If such a fault-injection seam is added, keep it explicit, bounded, off by default, available only to the experimental failover command, and covered by process tests. It must not become a production/network mutation mechanism.
+6. Emit enough structured evidence to distinguish:
+   - negotiated/authenticated UDP path;
+   - last successful UDP logical acknowledgement;
+   - controlled drop/timeout observations;
+   - threshold crossing / failover reason;
+   - negotiated/authenticated TCP resume;
+   - uncertain/replayed/duplicate/confirmed/lost bytes or records where the implementation can actually measure them;
+   - cleanup result.
+
+**Required tests**
+
+At minimum cover:
+
+- negotiated current/current UDP -> TCP resume success;
+- generic current Session version retained across the TCP resume guard;
+- unsupported/malformed resume-path negotiation rejection before Noise/data;
+- TCP negotiation transcript mismatch causes Noise failure before resume admission;
+- resume claim mismatch and negotiation mismatch independently fail closed;
+- duplicate/late negotiation is bounded and cannot reset an established Session profile;
+- controlled UDP ACK withholding triggers the actual bounded failure threshold if A3.4 is implemented;
+- one missing ACK/PTO alone does not equal hard failure when current controller contract requires more;
+- uncertain resend/dedup still produces exactly-once logical application bytes in the existing bounded claim;
+- non-default legal count/bytes/ports/duration appear correctly in diagnostics;
+- no constant duplicate/blackhole success field survives without an actual measurement.
 
 **Validation**
 
-At minimum:
+Run targeted crypto/CLI/carrier/session tests, then:
 
-- targeted canonical-vector Rust tests;
-- canonical validator and mutation tests;
-- generated-review `--check` and generator mutation tests;
-- `cargo fmt --all -- --check`;
-- `cargo check --workspace --locked`;
-- `cargo test --workspace --all-targets --locked --no-fail-fast`;
-- `cargo clippy --workspace --all-targets --locked -- -D warnings`;
-- `bash scripts/check.sh`;
-- `git diff --check`.
+```text
+cargo fmt --all -- --check
+cargo check --workspace --locked
+cargo test --workspace --all-targets --locked --no-fail-fast
+cargo clippy --workspace --all-targets --locked -- -D warnings
+bash scripts/check.sh
+git diff --check
+```
 
-No additional fuzz run is required solely because a reviewed fixture/governance freeze bit changed and production parser code did not. If parser/wire implementation code changes unexpectedly, run the normal fuzz gate and treat that as a correctness repair, not a mechanical freeze.
+Run fuzz smoke if public parser/wire decode behavior changes. A pure composition/runner change does not need a fabricated fuzz claim unless the repository gate requires it.
 
 **Completion definition**
 
-The exact current corpus is mechanically frozen and content-addressed; drift back to candidate state or semantic/byte mutation is caught; N9 is checked complete; all broader release/security/global-freeze flags remain truthful.
+Failover/resume no longer bypasses canonical negotiation; same-Session resume cannot silently change negotiated version; exact negotiation is authenticated with the same fresh Noise transport that authenticates the resume; diagnostics are parameter-true and measurement-true; all local gates pass. Only then mark negotiation-path completion checked.
 
-### Follow-up B — Integrate authenticated version negotiation into generic TCP and UDP probe paths
+### Follow-up B — Immediate rented-VPS post-negotiation lab batch
 
-**Dependency:** A green and pushed.
+**Dependency:** A green, pushed, binary identity recorded. No new maintainer approval is required for this bounded self-owned work.
 
-**Goal**
+Use one cleanup-safe bounded lab session where compatible measurements do not confound each other. Keep total activity inside standing authorization and record separate experiment IDs/scenario labels.
 
-Make the ordinary `neko server` / `neko client` TCP and UDP research probe paths perform the same fail-closed N1 negotiation discipline already proven in TCP multistream: negotiate before Noise data admission, bind the exact negotiation transcript into the authenticated handshake, and reject incompatible/malformed negotiation before application data.
+**B1 — Negotiated generic real-socket sanity**
 
-**Why now**
+- TCP current/current negotiated/authenticated echo on self-owned client <-> VPS;
+- UDP current/current negotiated/authenticated echo;
+- use actual non-secret parameters, binary/git identity, timestamps, result and cleanup metadata;
+- if practical, one bounded unsupported/malformed negotiation negative row on the self-owned endpoint, proving no application echo.
 
-This is the next explicit `IMPLEMENTATION_PLAN.md` item and directly unlocks high-value VPS evidence while the rental window is active.
+These rows verify the new `ca248101` behavior on real sockets; they do not need to wait for natural network degradation.
 
-**Required behavior**
+**B2 — Negotiated failover/resume over real sockets**
 
-1. Reuse/refactor the existing `VersionNegotiator` contract rather than inventing a second version protocol.
-2. TCP probe client/server:
-   - client sends canonical hello;
-   - server selects a supported version or rejects;
-   - client validates response;
-   - both obtain the authenticated negotiation binding;
-   - feed that binding into the Noise handshake/prologue binding;
-   - call `admit_data` only after negotiation + authentication complete.
-3. UDP probe client/server: same semantic sequence, with bounded datagrams and existing anti-amplification/resource constraints preserved.
-4. No silent downgrade. Unsupported-only, malformed, duplicate/late negotiation and transcript mismatch must fail before Session/application data admission.
-5. Do not change frozen N1 canonical bytes. If implementation cannot integrate them without changing bytes, stop and record the concrete incompatibility as a freeze/correctness blocker.
-6. Preserve existing CLI bounds, identity/trust policy, lifecycle readiness, diagnostics, and secret-safe behavior.
+Run the newly repaired failover path with the controlled endpoint fault seam if A implements one. The classification must be explicit:
 
-**Tests**
+```text
+real TCP/UDP sockets + controlled endpoint UDP ACK/drop fault
+!= naturally observed WAN degradation
+```
 
-Add bounded executable tests for both TCP and UDP covering at least:
+Require event ordering/evidence for negotiation -> auth -> UDP data/ACK -> bounded missing-ACK/PTO threshold -> TCP negotiation -> fresh authenticated resume -> replay/dedup -> completion.
 
-- current/current success;
-- unsupported-only peer rejection;
-- malformed negotiation rejection;
-- selected-version/transcript mismatch rejection before data;
-- no successful application echo before negotiation admission;
-- existing lifecycle/readiness and cleanup behavior remains intact.
+If A does not produce a truthful automatic threshold-driven runner, do **not** rerun the old unconditional switch and call it release failover evidence. Run only B1 and mark B2 blocked by `evidence instrumentation gap`.
 
-Run fuzz only if public parser/decoder implementation changes.
+**B3 — Repeated lifecycle sample**
 
-### Follow-up C — Bind negotiation into failover/resume without weakening Session semantics
+If B1/B2 are green and time remains, perform a bounded repeated real-socket open/exchange/close sample (TCP and UDP separately or the negotiated failover scenario) with actual success/failure counts and cleanup. This is resilience evidence, not capacity/stress evidence.
 
-**Dependency:** B green.
+Collect process-scoped CPU/RSS/FD/socket observations if current tooling can do so without changing semantics. Do not mix CPU-heavy build/fuzz with performance/resource sampling.
 
-**Goal**
+### Follow-up C — Promote only the evidence actually earned
 
-Complete authenticated version negotiation for the failover/resume path so a logical Session cannot resume across an incompatible or unauthenticated version transition.
+**Dependency:** B complete or explicitly partially blocked.
 
-**Required behavior**
+Update the relevant evidence/status docs so they distinguish at least:
 
-1. Initial UDP failover path and fallback TCP resume path must each use the same canonical version-negotiation primitive.
-2. Bind negotiation identity/selected version to the authenticated Noise/resume context; a resume for an incompatible negotiated version must fail closed.
-3. Preserve Session delivery semantics: confirmed/uncertain ranges and dedup remain Session-level evidence, not negotiation evidence.
-4. Reject downgrade/transcript mismatch/replayed or duplicate negotiation attempts before resumed application data is accepted.
-5. Keep anti-amplification/pre-auth bounds and existing ResumeGuard/resource limits intact.
-6. Do not add UDP+TCP striping or concurrent application-data aggregation.
+- generic negotiated TCP/UDP real-socket PASS;
+- controlled endpoint-fault negotiated failover PASS, if achieved;
+- natural/ambient WAN degradation detection: still unproven unless genuinely observed;
+- long-lived/NAT/endpoint-change/IPv6 rows: unchanged unless this batch actually measured them;
+- cleanup/process/listener state;
+- exact candidate commit/binary identity.
 
-**Tests**
+Do not rewrite historical artifacts. Add new evidence with supersession/relationship notes where needed.
 
-At minimum:
+If the negotiated failover path and full local/CI gates are green, mark `IMPLEMENTATION_PLAN.md` negotiation-path completion done. The next release-evidence matrix remains separate.
 
-- negotiated current/current UDP->TCP resume success in controlled tests;
-- unsupported future/current mismatch rejection;
-- negotiation transcript mismatch rejection;
-- resume-binding/version mismatch rejection;
-- replay/duplicate negotiation behavior remains bounded/fail-closed;
-- uncertain resend/dedup tests still prove exactly-once logical delivery where currently claimed.
+### Follow-up D — Rental-window unlock: next VPS-only evidence seam
 
-### Follow-up D — Use the rented VPS immediately: negotiated real-socket sanity + bounded failover evidence
+**Dependency:** A complete; do after B/C or use as fallback if B2 is instrumentation-blocked.
 
-**Dependency:** B and C green, full local gates green, binary identity recorded.
+Choose the highest-value READY item that unlocks the next rental-window experiment, in this order:
 
-Do not wait for another reviewer if all dependencies are met. Use `docs/standing-vps-lab-authorization.md` directly.
+1. **resource sampler** — reusable process-scoped CPU/RSS/FD/socket sampling with timestamps and experiment identity for Nekomusume/HY2;
+2. **equivalent Nekomusume comparison command** — satisfy the existing HY2 workload contract with exact payload file/hash/application byte semantics and JSON `application_bytes`/`fd_count`;
+3. **bounded resilience runner** — 5–10 minute steady or idle-with-periodic authenticated session with distinct scenario semantics and no claim of restart persistence;
+4. **owned endpoint-change seam** if the existing environment can create a genuine source endpoint change without production route/firewall/qdisc mutation.
 
-**Lab batch goal**
+Do not start speculative FEC/0-RTT/exotic-carrier work while these rental-window evidence gaps are available.
 
-Produce the first post-negotiation real-socket evidence that is difficult to reconstruct after the VPS rental ends.
+## VPS opportunity
 
-**Run, in one cleanup-safe bounded lab session where practical:**
+**READY after Primary A:** negotiated generic TCP/UDP real-socket sanity is already standing-authorized and should be run immediately. Negotiated failover becomes READY only when its runner truthfully detects/classifies the trigger and the resume path is version-bound.
 
-1. negotiated authenticated TCP probe sanity on self-owned client <-> VPS;
-2. negotiated authenticated UDP probe sanity;
-3. negotiated UDP-primary -> TCP fallback/resume using the real failover path, with the implementation-supported bounded degradation/blackhole mechanism;
-4. verify unsupported/mismatched version cannot reach application data on at least one real socket path if this can be done without expanding exposure;
-5. collect experiment id, git/binary identity, exact params, start/end timestamps, client/server results, relevant structured diagnostics, process/socket/resource metadata when available, and cleanup state;
-6. verify no unintended listener/process remains.
-
-Stay inside standing limits: single run/batch semantics must not be used to evade the 10-minute, 256 MiB, or 32-session bounds. Do not modify production firewall/route/qdisc to induce loss. If the real failover degradation requires such a host-level network modification and no application-level/self-contained failure injection exists, mark only that row `BLOCKED_ENVIRONMENT/INSTRUMENTATION` and still execute the negotiated TCP/UDP sanity rows that are READY.
-
-**Evidence boundary**
-
-These are self-owned endpoint observations. Do not promote them to general Internet reachability, sustained production reliability, security approval, or performance superiority.
-
-### Follow-up E — Rental-window unlock stretch: equivalent Nekomusume comparison command / resource sampler
-
-**Dependency:** A-C green; do this only if D is blocked or finishes with meaningful time remaining.
-
-Audit the existing pinned HY2 v2.9.3 comparison contract and current Nekomusume CLI. Implement the smallest reusable missing seam that directly unlocks a fair paired comparison or richer VPS evidence, preferring:
-
-1. an exact Nekomusume application-exchange command satisfying the existing comparison workload contract (`BENCH_PAYLOAD_FILE`, exact application byte count/hash/target/timeout, JSON `application_bytes` and `fd_count`); or
-2. a process-scoped CPU/RSS/FD/socket sampler usable by both Nekomusume and HY2 runs.
-
-Do not run a comparison until the commands have equivalent application semantics and metadata. Do not alter HY2 production config or credentials; use the already documented temporary isolated setup.
+The existing VPS is therefore not a blocker; it is the next evidence target. Missing per-run WAN permission, count/bytes/duration/ports are not valid blockers.
 
 ## Completion gates
 
-This work package is successful when as many dependency-satisfied stages as possible are completed in order, with no deliberate idle gap between tiny substeps:
+This batch is complete when dependency-satisfied work has moved as far as possible without inventing claims:
 
-- N9 corpus is mechanically frozen at the exact reviewed semantics/bytes, with a new valid content identity;
-- N9 is marked complete without promoting RC/security/production/global protocol-freeze claims;
-- generic TCP and UDP probes negotiate/authenticate before data;
-- failover/resume is version-bound and fail-closed;
-- if environment permits, at least negotiated TCP/UDP real-socket VPS evidence is collected and cleaned up, and negotiated real failover is attempted only with an authorized/self-contained failure mechanism;
-- all changed code has the required local gates; GitHub CI should be allowed to attest the pushed state;
-- negative results are retained rather than massaged into PASS.
+- N9 stays frozen and untouched;
+- generic negotiated probe implementation remains green;
+- failover/resume performs and authenticates canonical negotiation on both carrier handshakes;
+- same logical Session cannot resume under a different selected version in the current runner;
+- diagnostic metadata reflects actual parameters;
+- duplicate/failure claims are measured or removed, never constants presented as evidence;
+- controlled fault injection is clearly separated from natural WAN degradation;
+- all changed code passes required local gates and pushed CI is allowed to attest it;
+- at least the READY post-negotiation TCP/UDP VPS sanity rows are collected unless a concrete environment/implementation failure prevents them;
+- negative results and cleanup state are retained;
+- RC/security/production/global freeze flags remain unchanged.
 
 ## Fallback
 
-If A reveals that freezing the corpus conflicts with current repository-global `FREEZE` checkers, do not flip global release/protocol state. Repair the governance model so corpus freeze is independently expressible, then continue A.
+If the combined resume + negotiation binding exposes a real crypto/session incompatibility, preserve a minimal reproducer, keep release state false, and make that correctness issue the only blocker before further failover evidence.
 
-If B/C reveals that the frozen negotiation bytes cannot be integrated into the real probe/failover paths without a wire change, stop those paths, preserve a minimal reproducer, keep broader release state false, and record this as a concrete N9/negotiation compatibility defect requiring reviewer attention. Do not silently mutate frozen bytes.
+If the current runner cannot observe a real bounded failure threshold without changing production host networking, do not request firewall/qdisc permission and do not fake the result. Add/repair a self-contained endpoint fault-injection seam or classify the release row as `evidence instrumentation gap`; continue READY generic TCP/UDP VPS evidence and resource/comparison instrumentation.
 
-If D is blocked only by missing IPv6, NAT-change capability, or an authorized failure-injection mechanism, do not block the whole project. Record the exact environment/instrumentation blocker and continue another READY VPS-value task such as TCP/UDP negotiated sanity, repeated real-socket lifecycle, package/operator evidence, comparison-command instrumentation, or resource sampling.
+If IPv6/NAT/endpoint-change environment is absent, record that exact environment blocker and continue IPv4/failover/resilience/HY2/resource work. Do not stop the project.
 
 ## Do not expand into
 
-- RC declaration, security approval, production readiness, release tagging, or global protocol freeze;
-- changing frozen canonical bytes for convenience;
-- previous/current interoperability before a real previous frozen release exists;
+- changing frozen canonical N1 corpus bytes;
+- RC declaration, security approval, production readiness, release tagging or global protocol freeze;
+- treating a controlled endpoint drop as proof of ambient Internet blackhole/degradation behavior;
+- previous/current interoperability before a real prior frozen release exists;
 - UDP+TCP striping/aggregation;
-- speculative 0-RTT/FEC/exotic carriers without an observed-problem gate;
-- third-party targets, scanning, production network mutation, or experiments outside standing authorization;
-- HY2 superiority claims from one-off or semantically unequal runs.
+- third-party targets, scanning, production network mutation or experiments outside standing authorization;
+- HY2 superiority claims from one-off or semantically unequal runs;
+- speculative experimental carriers while rented-VPS release evidence is READY.
 
 ## Questions requiring maintainer decision
 
