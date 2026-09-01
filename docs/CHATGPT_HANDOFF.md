@@ -1,295 +1,268 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-01 22:57 Asia/Shanghai
-Reviewed implementation HEAD: `df61091d379aa10ad001e24f04e2143e13c0cb08`
-Previous reviewed implementation HEAD: `1eed79c01c82f723beb496100c5d3ebf74a970e4`
-Previous reviewer handoff commit: `0d5b54f5059c8b84241f1373b0a8770a2bf8244d`
+Checked at: 2026-09-02 02:59 Asia/Shanghai
+Repository HEAD: `83f0a0720aa77cc7b811bac4ad6083acd6fe2488`
+Previous reviewed implementation HEAD: `df61091d379aa10ad001e24f04e2143e13c0cb08`
+Previous reviewer handoff commit: `3978f3fdd3fb34510468a2e1708c0b2c5c5f6aec`
 
 ## What changed
 
 One substantive coding-agent commit landed after the previous reviewer handoff:
 
-- `df61091` — **runtime fail-closed repair + negative process tests + runtime-parser fuzz coverage + status/plan/ADR update; no new VPS evidence**. The failover responder now bounds accepted-stream negotiation/handshake/data reads by the remaining experiment duration, applies a one-second whole-sequence readiness deadline, refuses application-data admission after any unadmitted readiness request, emits `tcp_resource_admitted` only after the accepted sequence, repairs `failure_observation_elapsed_us` to mean the actual observation-window duration, adds explicit wrong-tuple/unadmitted/replayed-challenge/tampered/fewer-than-three/stall process failures, and adds `ProcessMessage::decode` to the existing fuzz target with readiness seeds.
+- `83f0a07` — **benchmark/application-seam implementation + tests + negative VPS evidence reconciliation; no positive new release-evidence row.** It adds an exact external-payload mode to the authenticated TCP probe (`--payload-file`, exact byte count + SHA-256 + FD count + `wire_bytes=null`), adds a bounded exact-payload forwarding adapter and a separate self-owned-lab HY2 orchestrator, extends the benchmark result schema, adds fail-closed tests for the new benchmark contract, and records the three requested VPS follow-ups as truthful negative evidence.
 
-The exact `df61091` GitHub Actions run (`Rust CI` run 101) completed successfully. Both jobs passed:
+The exact `83f0a07` GitHub Actions run (`Rust CI` run 103) completed successfully. `stable checks` passed `bash scripts/check.sh`; `nightly decode fuzz smoke` built the pinned fuzz target and completed the bounded 30-second decode fuzz run successfully.
 
-- `stable checks` -> `bash scripts/check.sh` passed;
-- `nightly decode fuzz smoke` -> pinned `cargo-fuzz`, `cargo fuzz build decode`, and `cargo fuzz run decode -- -max_total_time=30 -max_len=8192` passed.
+The VPS evidence is useful precisely because it exposed concrete blockers:
 
-This is materially stronger verification than the previous handoff could observe. The previous D064 correctness/fuzz blocker is closed for the bounded research runner. No current-exact-head owned-VPS warm evidence has yet been committed, so the correct next move is to spend the rented-VPS window immediately rather than open another local feature slice.
+1. **D064 warm path:** UDP negotiation/authentication and logical delivery proof succeeded; TCP negotiation, Noise authentication and resume validation succeeded; readiness challenges 1 and 2 returned authenticated `admitted=true`; challenge 3 timed out / was rejected before `tcp_resource_admitted`, promotion or TCP application data.
+2. **Periodic Session:** TCP connected; the server completed canonical negotiation and Noise authentication, but the client failed to receive/complete the handshake response before any application record. Actual application bytes were zero.
+3. **HY2 pair:** the exact-payload seam and owned-lab orchestrator are implemented and locally gated, but the temporary HY2 v2.9.3 QUIC/UDP path timed out before the forwarding listener became ready. No paired performance sample exists.
+
+These are not reasons to stop the project. They are the next engineering inputs. The rented-VPS priority policy says to repair the smallest local blocker that unlocks a changed, scientifically valid VPS retry.
 
 ## Review verdict
 
-**SAFE TO PROCEED TO CURRENT-EXACT-HEAD VPS EVIDENCE — D064 local fail-closed gate accepted.**
+**CONTINUE WITH REQUIRED FIXES — two timeout-semantics defects block the next useful D064/periodic evidence; one HY2 bind-scope defect blocks another HY2 attempt.**
 
-Do not spend another cycle on unrelated local polish before using the VPS. The active phase remains `IMPLEMENTATION_PLAN.md` item 3, the bounded release evidence matrix.
+Do not mechanically rerun the three failed VPS scenarios at the current code/configuration. The next batch should repair the observed deadline semantics and HY2 listener safety contract, then immediately return to exact-head VPS evidence while the rented environment is available.
 
-The next coding-agent batch should use `df61091` as the reviewed implementation candidate for the first exact-head D064 warm/cold and periodic/resource rows. This handoff itself will create a later reviewer-only descendant commit; do not silently substitute that coordination commit for the reviewed implementation identity when recording evidence. Build/test the exact implementation commit or explicitly record both the reviewer descendant and the unchanged implementation tree identity.
+No core Session-vs-Carrier architecture change is required. The D064 readiness policy amendment is evidence-driven: preserve `k_ready=3`, authentication, exact tuple/generation/epoch binding, one outstanding readiness request, fail-closed admission, and single-active ownership; repair only the runtime timeout budget that the real path has now falsified.
 
 ## Review findings
 
-### R-201 PASS — responder admission now fails closed before application data
+### R-301 RELEASE-BLOCKING CORRECTNESS — D064 one-second whole-sequence deadline is incompatible with the observed path
 
-The responder evaluates every readiness request against the live bounded runtime and terminates the candidate when `admitted=false`. `tcp_resource_admitted` is emitted only after the three-request loop. The application-data receive loop is therefore unreachable on the official bounded responder after a failed/unadmitted readiness proof.
+The retained changed-path client timestamps show:
 
-The new process test exercises six negative classes and requires both peers to fail without `tcp_resource_admitted`, `tcp_warm`, `tcp_resumed`, or authenticated delivery-ack success. This directly closes the prior advisory-admission defect for the research runner.
+```text
+challenge 1: 1047644 -> 1463124 us = 415480 us
+challenge 2: 1463152 -> 1866848 us = 403696 us
+```
 
-### R-202 PASS — accepted-stream and readiness waits are now bounded
+The first two sequential authenticated observations therefore consumed about **819 ms**. Under the current one-second whole-sequence deadline, only about **181 ms** remained for challenge 3. The same path had already demonstrated roughly 400 ms per readiness round trip, so the third sequential proof was structurally unlikely to fit even without a protocol defect.
 
-`bound_stream_to_deadline` limits accepted TCP negotiation, handshake and data I/O by the experiment deadline. The readiness sequence additionally uses a one-second whole-sequence deadline, matching the current D064 ADR. The stalled-readiness process test must finish within a bounded wall-clock interval and passed the current CI gate.
+This is stronger evidence than “the WAN was flaky.” The current runtime addendum conflates a bounded per-probe timeout with the total budget for three mandatory sequential observations. Do not rerun unchanged.
 
-This is a bounded CLI/runtime property, not a general daemon/service liveness guarantee.
+### R-302 RELEASE-EVIDENCE CORRECTNESS — periodic `ack_timeout` is incorrectly reused as setup/handshake deadline
 
-### R-203 PASS — health timing semantics were repaired
+`periodic::client` uses the configured application acknowledgement timeout as the deadline for TCP setup + canonical negotiation + Noise handshake (`start + cfg.ack_timeout`). The failed VPS row used a 1000 ms ACK timeout. The server completed authentication while the client reported `handshake response failed`, which is consistent with a control-plane setup budget that is too short for the real cross-host path.
 
-`failure_observation_started_us` remains a common-origin timestamp while `failure_observation_elapsed_us` is again the duration from the individual observation start to the current observation. The previous cumulative/mislabeled elapsed-field defect is closed in code.
+An application `DeliveryAck` timeout and a Session setup/handshake timeout are different contracts. Keep them separate so a conservative real-path setup budget does not weaken per-record delivery failure detection.
 
-The upcoming VPS collector must still reject semantically invalid/non-monotonic timestamps rather than accepting output merely because fields exist.
+### R-303 HY2 SAFETY BLOCKER — owned-lab orchestrator currently uses a wildcard HY2 listener
 
-### R-204 PASS — new peer-controlled runtime codec has active fuzz/property coverage
+`docs/bench/hy2-vps-setup-20260830.md` explicitly requires: **“Bind only the dedicated VPS address; do not bind `0.0.0.0`.”** The current generated HY2 server config uses:
 
-The existing `decode` fuzz target now calls `neko_session::ProcessMessage::decode` on arbitrary input. Successful decodes must re-encode exactly and remain within `PROCESS_FRAME_MAX`. Readiness request/response corpus seeds are checked as exact process messages. GitHub Actions run 101 independently completed the 30-second bounded fuzz smoke successfully.
+```yaml
+listen: :<temporary-port>
+```
 
-This is bounded fuzz evidence, not exhaustive parser proof or a security audit.
+which is a wildcard listener rather than an explicit dedicated-address bind. Random disposable authentication reduces exposure but does not erase the repository's explicit lab safety contract. Fix this before any new HY2 run. If the intended owned lab address is not locally bindable on the VPS, record that as an environment blocker; do not fall back to wildcard bind and do not change firewall/NAT/provider policy.
 
-### R-205 PASS WITH SMALL PREFLIGHT — local gate is strong enough to move to VPS
+### R-304 PASS — exact-payload comparison seam is now real implementation, not just a plan
 
-GitHub Actions run 101 independently passed `scripts/check.sh` and the decode fuzz smoke on exact `df61091`. `scripts/check.sh` includes fmt, locked workspace check/test, all-target Clippy with warnings denied, governance/evidence/status/observability/release/plan/decision/canonical-vector checks and metadata/license gates.
+The authenticated TCP client can consume one bounded external payload, verify the echoed bytes, and report the exact payload hash/application bytes/FD count. Local tests cover the valid exact-payload path and reject UDP, multi-count and non-JSON misuse. The separate HY2 lab orchestrator and its static/fail-closed guard tests exist. CI run 103 passed the repository stable gate and bounded fuzz smoke.
 
-The previous handoff explicitly requested an all-target/no-fail-fast workspace test command and `git diff --check`; the CI workflow does not separately expose those exact two commands. This is not a reason to delay another review cycle. Before deployment, the coding agent should run the small exact-head preflight below and then continue directly into VPS evidence.
+This is comparison infrastructure only. It is not performance evidence.
 
-### R-206 NOTE — old VPS evidence remains exact-commit evidence, not current warm proof
+### R-305 PASS — negative VPS evidence boundaries are truthful
 
-Existing self-owned VPS records already prove older-commit cross-host IPv4 TCP/UDP behavior, automatic **cold** threshold recovery, periodic Session behavior, resource sampling and package lifecycle slices. Those records remain valid for their exact commits, but none proves the new authenticated pre-failure D064 warm path at `df61091`.
-
-The preserved older automatic-health row is explicitly `controlled self-owned application-level UDP reply cessation -> threshold -> cold TCP recovery`; do not relabel it warm or natural Internet loss.
-
-### R-207 NOTE — IPv6 remains environment-blocked; HY2 remains high-value and READY after the D064 sample
-
-The previously observed owned path lacked a usable global IPv6/default-route environment. Do not mechanically rerun that unchanged failure.
-
-HY2 v2.9.3 remains pinned with its repository-recorded commit/hash, and `docs/research/hy2-forwarding-comparison-note-20260901.md` identifies a bounded application-forwarding seam that avoids the existing production Hysteria configuration. No valid equal-application paired sample exists yet. This is a high-value rented-VPS target after the D064 and periodic rows.
+The A/B/C evidence files retain failed runs, exact implementation/binary provenance and cleanup, and do not manufacture warm recovery, five-minute stability, HY2 statistics, IPv6 reachability, public WAN or superiority claims. Keep those negative rows immutable as exact-run evidence.
 
 ## Evidence boundaries
 
-- `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, and `RELEASED=false` remain correct.
-- `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific and is not reopened by the D064 runtime codec.
-- `df61091` has verified local/CI fail-closed and fuzz evidence, but **no current-exact-head VPS warm evidence yet**.
-- Current GitHub Actions success is CI verification of repository gates and bounded fuzz smoke, not an independent release/security review.
-- The upcoming warm/cold experiment remains a controlled self-owned fault-injection experiment. It cannot prove natural WAN blackhole behavior, public reachability, production failover, capacity or security approval.
-- Existing historical five-minute periodic/resource evidence is exact to an older implementation. Repeating a scientifically distinct current-head periodic row is justified because the runtime baseline materially changed; do not repeat it merely to chase better numbers.
-- Standing authorization covers the owned-endpoint TCP/UDP failover, periodic Session, resource sampling, temporary HY2 comparison services, bounded benchmark/capture and cleanup required below. No new per-run approval is required.
-- IPv6 remains blocked until the actual owned environment changes.
-- VPS rental time is a priority constraint. VPS-only evidence now outranks unrelated local feature/document work.
+- `IMPLEMENTATION_COMPLETE=true` remains the bounded research-baseline status.
+- `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific.
+- `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, `RELEASED=false` remain correct.
+- The current positive real-socket evidence still includes older exact-commit TCP/UDP/lifecycle/cold-recovery rows; `83f0a07` adds three blocker rows rather than new positive release rows.
+- D064 challenge-3 failure is a controlled self-owned application-level UDP reply-cessation experiment. It is not natural Internet blackhole evidence.
+- The periodic failure proves neither five-minute stability nor reconnect/resume behavior.
+- HY2 v2.9.3 remains pinned, but no equal-application pair exists.
+- IPv6 remains environment-blocked; do not rerun unchanged.
+- Standing authorization covers the repaired self-owned TCP/UDP experiments, bounded capture, process/resource sampling, temporary HY2 lab services and cleanup below. No per-run maintainer approval is needed.
+- Production firewall/route/DNS/proxy/tunnel/qdisc changes remain outside authorization.
 
-## Work Package — harvest `df61091` VPS evidence, then execute the first fair HY2 pair
+## Work Package — repair control-plane budgets, then immediately harvest changed-path VPS evidence
 
-Execute A -> B -> C -> D in dependency order. This is intentionally a thick evidence batch. Do not stop after the preflight or after the first successful warm run if the remaining work is still within standing authorization and the environment is healthy.
+Execute A -> B -> C -> D in order where dependencies apply. This is intentionally a thick batch. If one VPS branch remains blocked, continue the independent READY branch instead of waiting.
 
-### Primary A — exact-head preflight + interleaved D064 warm/cold VPS batch
+### Primary A — separate and bound control-plane timeout semantics
 
-**Goal:** obtain the first reviewed current-exact-head real-socket D064 warm evidence while preserving a directly comparable cold baseline.
+**Goal:** repair the two real-path timeout couplings without weakening fail-closed behavior or changing wire semantics.
 
-#### A0 — exact-head preflight
+#### A1 — D064 readiness deadline amendment
 
-Use exact implementation commit:
+Preserve:
 
-```text
-df61091d379aa10ad001e24f04e2143e13c0cb08
-```
+- exactly three authenticated sequential readiness observations;
+- one outstanding request at a time;
+- exact Session/PathId/PathGeneration/DeliveryEpoch/challenge binding;
+- live responder-side resource admission;
+- no TCP application data before atomic promotion;
+- failure/reset on malformed, wrong tuple, duplicate/non-consecutive challenge, authentication failure or `admitted=false`.
 
-Before deployment:
-
-1. fetch and verify the commit exists on the authoritative remote;
-2. use a clean detached/integration worktree that does not read/copy/commit protected identity material;
-3. run at minimum:
-   - `cargo test --workspace --all-targets --locked --no-fail-fast`;
-   - `git diff --check`;
-4. build the release binary once for the VPS batch and record its SHA-256;
-5. record exact compiler/target/host metadata needed to reproduce the artifact;
-6. if A0 exposes a correctness failure, stop the affected D064 path and use the correctness fallback below. Otherwise continue directly into A1 without waiting for another reviewer turn.
-
-The already successful GitHub Actions stable+fuzz run does not need to be mechanically rerun just for ceremony unless the local build environment exposes a real difference.
-
-#### A1 — interleaved warm/cold recovery sample
-
-Use the established self-owned path that previously produced valid cross-host evidence. Do not retry the unchanged public-address negative path merely because it exists historically.
-
-Prefer an interleaved batch of **5 warm + 5 cold** recoveries on the same exact binary if the complete experiment remains comfortably within standing authorization. Concurrency should remain 1 and per-run application traffic should remain small; this is a recovery-evidence sample, not a stress test.
-
-For every run preserve at least:
-
-- exact implementation commit and binary SHA-256;
-- experiment ID, run index/order, ports, count/bytes/duration, endpoint ownership/path class;
-- canonical version negotiation result and Noise authentication success without secrets;
-- warm runs: exactly three authenticated readiness request/response challenge IDs, exact tuple/generation/epoch, live `admitted=true`, and timestamp of the third accepted response;
-- proof warm TCP connect/negotiation/auth/resume/readiness completed before UDP failure decision;
-- proof UDP remained sole application-data owner before promotion;
-- failure observation start + per-window elapsed durations;
-- threshold/failure decision timestamp and reason/cause classification;
-- warm/cold fallback class and promotion gate;
-- first resumed application-data acceptance timestamp;
-- uncertain resend range and exact authenticated Session `DeliveryAck` result;
-- logical attempted/confirmed/missing/duplicate/conflict counts and application bytes;
-- recovery latency per run;
-- warm/cold median/P95 only if computed from the preserved raw sample set;
-- client/server exit status and cleanup result;
-- process CPU/RSS/FD/socket observations where the existing sampler can be attached without altering the protocol behavior.
-
-The collector/review logic must fail closed if any warm run shows:
-
-- fewer/more than three readiness successes;
-- any `admitted=false`;
-- repeated/non-consecutive challenge IDs;
-- `tcp_resource_admitted` before the final accepted response;
-- application data before failure/promotion;
-- warm setup after the failure decision;
-- non-monotonic common-origin timestamps;
-- cumulative/mislabeled `failure_observation_elapsed_us`;
-- missing/duplicate/conflicting logical delivery beyond the declared Session behavior.
-
-Retain failed runs. Do not silently discard outliers or rerun unchanged failures to improve the distribution.
-
-Classification remains exactly:
+Replace the current one-second **whole-sequence** readiness deadline with an explicitly bounded per-observation + whole-sequence policy. The simplest acceptable candidate is:
 
 ```text
-controlled self-owned application-level UDP reply cessation
--> D064 threshold decision
--> authenticated warm/cold TCP recovery
+READINESS_PROBE_TIMEOUT = 1 s per request/response
+READINESS_SEQUENCE_TIMEOUT = k_ready * READINESS_PROBE_TIMEOUT = 3 s
 ```
 
-It is not natural Internet blackhole evidence, public reachability, production failover or a superiority benchmark.
+The sequence deadline starts immediately before readiness challenge 1, after TCP negotiation/authentication/resume validation. Every read/write is bounded by the minimum of the per-probe deadline, remaining sequence deadline and remaining experiment deadline. Client and server must use compatible semantics. A single probe may not consume more than its per-probe budget, and the total three-proof sequence may not exceed the sequence budget.
 
-### Follow-up B — current-head five-minute periodic Session + process-resource sample
+If implementation evidence supports a different equally bounded formula, document it in D064 and tests; do not silently use an arbitrary large timeout.
 
-**Dependency:** A cleanup complete. Use the same exact `df61091` binary if the periodic runner is compatible.
+Required deterministic/process tests:
 
-Run one scientifically distinct current-head periodic authenticated Session, approximately the existing historical profile:
+- three responses each delayed roughly 350-450 ms succeed under the whole-sequence budget;
+- one individual response exceeding the per-probe timeout fails closed;
+- cumulative sequence exceeding the whole-sequence budget fails closed;
+- two successes + third failure never emit `tcp_resource_admitted`, `tcp_warm`, promotion or application data;
+- exactly three valid responses still produce the one and only readiness transition.
+
+Update the D064 ADR/runtime addendum and status text in the same commit so the one-second whole-sequence claim does not survive as spec drift.
+
+#### A2 — periodic setup timeout separated from `DeliveryAck` timeout
+
+Do not reuse `ack_timeout` for TCP connect + version negotiation + Noise handshake.
+
+Introduce a bounded setup budget with an explicit reproducible contract, for example:
+
+```text
+setup_timeout_ms default = 5000
+bounded maximum = 10000
+ack_timeout_ms remains the per-record DeliveryAck deadline
+```
+
+The setup budget begins before TCP connect and covers connect + canonical negotiation + Noise handshake. After authenticated Session establishment, only the per-record ACK budget governs acknowledgement waiting. The server must also bound accepted setup by a compatible finite deadline rather than the full workload duration alone.
+
+Required tests must prove semantic separation, not just argument parsing:
+
+- a setup/handshake delay greater than `ack_timeout_ms` but less than `setup_timeout_ms` can still establish the Session;
+- after setup succeeds, a DeliveryAck delayed beyond `ack_timeout_ms` still fails the record as before;
+- setup beyond `setup_timeout_ms` fails closed with zero application records admitted;
+- malformed/unauthenticated setup remains fail closed.
+
+Do not add reconnect persistence or change Session delivery semantics in this slice.
+
+#### A3 — local/CI gate
+
+Run at minimum:
+
+- targeted D064 process/readiness tests;
+- targeted periodic process tests;
+- `cargo fmt --all -- --check`;
+- `cargo check --workspace --locked`;
+- `cargo test --workspace --all-targets --locked --no-fail-fast`;
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`;
+- `bash scripts/check.sh`;
+- `git diff --check`.
+
+Run fuzz smoke only if a peer-controlled parser/codec changes. Pure deadline-policy changes do not require a fake new fuzz claim.
+
+Push a coherent repair checkpoint before the changed-path VPS reruns.
+
+### Follow-up B — changed-path exact-head D064 warm/cold sample
+
+**Dependency:** A1 green and cleanup baseline verified.
+
+Because the deadline policy has materially changed, a new run is scientifically distinct and is allowed under the standing authorization. Reuse the established self-owned client -> VPS path that already passed UDP preflight; do not retry the unchanged public/no-ingress path.
+
+If the first warm run reaches all three admitted readiness responses and promotion correctly, continue with an interleaved **5 warm + 5 cold** batch on the same exact binary, concurrency 1, small payloads, within the standing time/traffic limits.
+
+Preserve per run:
+
+- exact commit + binary SHA-256 + compiler/target;
+- path classification and endpoint ownership without publishing unnecessary addresses;
+- negotiation/Noise/resume success;
+- three readiness challenge request/response timestamps and admissions;
+- readiness sequence duration and per-probe duration;
+- failure decision and promotion timestamps;
+- warm/cold class;
+- first resumed application-data acceptance;
+- uncertain/replayed/confirmed/missing/duplicate/conflict counts;
+- authenticated logical `DeliveryAck` evidence;
+- recovery latency raw samples and median/P95 only from retained successful/failed raw set;
+- client/server exit status, CPU/RSS/FD/socket sample where available, cleanup.
+
+If a new distinct correctness failure appears, preserve it and stop only the affected warm branch; do not rerun unchanged to chase a PASS.
+
+### Follow-up C — changed-path exact-head five-minute periodic/resource row
+
+**Dependency:** A2 green. Independent of B after cleanup.
+
+Retry the established private self-owned TCP path because the setup-timeout contract has materially changed. Use the existing bounded profile unless the repaired CLI contract requires a truthfully recorded setup-timeout parameter:
 
 ```text
 duration <= 300 s
 concurrency = 1
 60 records
 32 B / record
-every 5 s
-~1920 application bytes
+interval = 5000 ms
+ack_timeout = 1000 ms
+application bytes <= 1920
 ```
 
-Stay within the standing authorization and keep the application load intentionally low.
+Require authenticated setup before the first periodic record. Preserve attempted/confirmed/missing/duplicate counts, per-record confirmation latency, elapsed/application bytes, CPU user/system, max RSS, peak FD/sockets and cleanup. A setup success followed by an ACK timeout is a valid application-delivery failure and must not be conflated with handshake failure.
 
-Record:
+This remains a five-minute bounded resilience/resource observation, not production long-lived proof.
 
-- exact commit/binary hash and endpoint/path class;
-- negotiated/authenticated Session identity without secrets;
-- attempted/confirmed/missing/duplicate counts;
-- confirmation latency raw/summary values already produced by the runner;
-- elapsed time/application bytes;
-- process CPU user/system, max RSS, peak FD, peak owned sockets via the existing sampler;
-- listener/process cleanup and any sampler failure;
-- no reconnect/resume claim unless the runner actually exercises it.
+### Follow-up D — repair HY2 listener scope, then diagnose the UDP path with new capture coverage
 
-This creates current-runtime resilience/resource evidence. It does not turn five minutes into production long-lived proof.
+**Dependency:** independent local safety repair first. Do not perform a new HY2 network attempt until the wildcard bind is removed.
 
-Do not retry IPv6 while the owned path is unchanged.
+1. Change the generated temporary HY2 server config to bind an explicit administrator-controlled address that is actually assigned on the VPS. Validate the address against read-only remote interface metadata before launch.
+2. Add tests that reject wildcard / empty-host listen forms and ensure the generated config cannot contain `listen: :PORT`, `0.0.0.0:PORT` or equivalent wildcard forms.
+3. Preserve the pinned v2.9.3 SHA-256 and all disposable TLS/auth/cleanup behavior. Do not read or reuse production Hysteria secrets/config.
+4. If the desired lab address is not locally bindable, record `BLOCKED_ENVIRONMENT` and do not widen the listener or alter NAT/firewall/provider policy.
+5. If explicit bind succeeds, one new short diagnostic attempt may be run because **capture coverage is a new variable**. Use a bounded capture restricted to the temporary HY2 UDP port on the self-owned VPS to distinguish:
+   - no client datagrams arrive -> path/network environment blocker;
+   - client datagrams arrive but server emits no usable response -> server/config/runtime diagnostic branch;
+   - bidirectional QUIC handshake succeeds -> continue to the existing equal-application paired harness.
+6. Store only bounded/redacted capture metadata or hashes needed for the conclusion; do not commit secrets or unnecessary endpoint details.
+7. If the path becomes viable without network-policy changes, run the first interleaved **5 Nekomusume + 5 HY2** exact-payload pair and report raw samples, median/P95, failures, CPU, RSS, FD, application bytes; `wire_bytes` stays null unless capture provenance is trustworthy.
 
-### Follow-up C — first valid equal-application Nekomusume/HY2 paired VPS sample
+Do not make superiority claims from the first sample.
 
-**Dependency:** A/B cleanup complete; do not run CPU-heavy builds/fuzz while collecting performance samples.
+## Fallback / spare VPS opportunity
 
-Reuse:
+If B or C is temporarily blocked while its local repair is underway, continue the other independent branch. If both real-path branches are blocked and D remains environment-blocked, use the rented VPS window for one current-head release-engineering row that answers a new question rather than idle repetition:
 
-- pinned HY2 v2.9.3 artifact and repository-recorded SHA-256;
-- `docs/research/hy2-forwarding-comparison-note-20260901.md`;
-- `docs/bench/hy2-comparison-workload.md` result methodology/schema;
-- existing process resource sampler.
+- native x86_64 release build + binary/package SHA-256 provenance;
+- dedicated-path install/smoke/readiness/shutdown/cleanup;
+- current-head package rollback rehearsal only if the package/state contract changed materially since the previous N5 evidence;
+- bounded process-resource sampling on a generic authenticated TCP/UDP exchange if current-head runtime changes make the sample scientifically distinct.
 
-Do **not** weaken the loopback-only guard in `scripts/bench/compare-hy2.sh`. If the self-owned-VPS orchestrator/adapter still does not exist, implement the smallest separate fail-closed lab orchestrator that:
-
-1. accepts only the explicitly configured owned lab endpoint/path contract;
-2. uses fresh experiment-only high ports;
-3. starts a temporary HY2 v2.9.3 server using generated disposable TLS/auth material, without reading/reusing `/etc/hysteria/server.yaml` secrets and without stopping/reconfiguring the existing Hysteria service;
-4. starts a temporary HY2 client `tcpForwarding` path and a temporary loopback TCP echo target on the VPS;
-5. invokes an equivalent bounded Nekomusume authenticated echo command for the same application question: exact payload in -> exact payload echoed back;
-6. uses one deterministic payload file with exact byte count + SHA-256 for both implementations;
-7. records same client/VPS pair, close time window, route/MTU metadata, authenticated-encrypted security class, single-stream load shape, timeout and run count;
-8. traps cleanup and verifies all temporary listeners/processes/config/certs/auth files are removed;
-9. fails closed on payload mismatch, incomplete exchange, malformed JSON/result or cleanup failure.
-
-After any necessary orchestrator commit passes its appropriate local/script checks, run a small nearby/interleaved paired sample, preferably **5 Nekomusume + 5 HY2** if bounded execution remains well inside standing authorization.
-
-Preserve raw samples and report only:
-
-- latency/timing raw values and median/P95;
-- failure counts;
-- CPU user/system;
-- max RSS;
-- FD count;
-- application bytes;
-- `wire_bytes=null` unless a bounded capture has trustworthy provenance.
-
-Do not make a superiority claim from this first paired sample. A slower or failed Nekomusume row is valid evidence and must be preserved.
-
-If a fair application-semantic pair is genuinely blocked, record the exact technical/environment blocker and continue to the fallback rather than altering production Hysteria/firewall/route/tunnel state.
-
-### Follow-up D — reconcile the release-evidence ledger after the real runs
-
-**Dependency:** A-C completed or truthfully blocked.
-
-Update only the evidence/status/navigation that the actual runs justify:
-
-- add exact evidence documents/artifact hashes for A/B/C;
-- link the current-head D064 warm/cold result from `docs/status.md` if A genuinely passes;
-- retain the older cold/periodic/negative rows as historical exact-commit evidence;
-- keep IPv6 explicitly environment-blocked if unchanged;
-- keep `IMPLEMENTATION_PLAN.md` bounded release evidence matrix open unless every required row is really evidenced or reviewed as inapplicable;
-- preserve `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, `RELEASED=false`;
-- do not turn self-owned path evidence into public/general WAN claims.
-
-Run the normal repository gate for any tracked changes and push a coherent checkpoint.
-
-## Fallback
-
-If A0/A1 exposes a real D064 correctness defect:
-
-1. preserve the exact failing run/reproducer and binary identity;
-2. stop only the affected warm claim;
-3. make the smallest correctness repair and required tests/fuzz if parser behavior changes;
-4. run the local gate on the repaired exact commit;
-5. rerun only the changed hypothesis/path;
-6. while the warm repair is in progress, independent current-head periodic/resource or HY2 orchestration work may continue if it does not depend on the broken warm path.
-
-If the owned VPS path itself is temporarily unavailable, use the cycle to finish the HY2 self-owned-lab orchestrator/adapter and any current-head resource/package evidence that directly prepares the next valid VPS window; do not invent unrelated features.
-
-If HY2 cannot be run fairly without touching production Hysteria, firewall, route, DNS, proxy or tunnel configuration, preserve that blocker and use the remaining VPS window for a current-head package build/install/smoke/readiness/cleanup row or another already-defined release-evidence row. Do not widen authorization.
-
-Do not mechanically rerun the unchanged IPv6 failure.
+Do not repeat unchanged IPv6 failure, HY2 timeout, public no-ingress path or old benchmark solely for utilization.
 
 ## Completion gates
 
-This package is complete only when the following are truthfully resolved:
+This batch is complete only when:
 
-- `df61091` exact-head preflight is green;
-- the D064 current-head warm path has real self-owned socket evidence only if three authenticated peer readiness responses genuinely precede failure/promotion/data;
-- cold comparison remains separately classified;
-- raw warm/cold samples, failures, timing and cleanup are preserved;
-- a current-head periodic/resource row is preserved if B runs;
-- HY2 is marked compared only if a fair equal-application paired sample really executes;
-- no production Hysteria config/service or network policy is modified;
-- negative/superseded historical evidence remains retained;
-- IPv6 remains blocked unless the environment actually changes;
-- release/security/production/global-freeze flags remain unchanged;
-- the coding agent does not stop after a small substep while later dependency-ordered work in this package remains READY.
+- D064 no longer uses a one-second whole-sequence deadline for three sequential mandatory readiness proofs, and the new bounded deadline semantics are documented/tested;
+- periodic setup and per-record DeliveryAck timeouts are separate and behaviorally tested;
+- full local repository gate passes for the repair commit;
+- a changed-path D064 exact-head run is either positively sampled or retained as a new distinct blocker;
+- a changed-path periodic exact-head row is either positively sampled or retained as a new distinct blocker;
+- HY2 temporary listener generation no longer violates the explicit-address safety contract;
+- any new HY2 retry uses changed capture/bind evidence and does not alter production network policy;
+- all experiment failures remain preserved with exact commit/binary identity and cleanup;
+- release-evidence/status documents are updated only for claims actually supported;
+- `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, `RELEASED=false` remain unchanged.
 
 ## Do not expand into
 
-- reopening or changing the frozen N9 corpus for D064 runtime messages;
-- concurrent TCP+UDP application-data striping/aggregation;
-- enabled FEC, 0-RTT or exotic carriers without an observed-problem gate;
-- third-party targets, scanning or production network changes;
-- repeated IPv6 probes without a real path change;
-- >10-minute single experiments or high-volume/high-concurrency stress outside standing authorization;
-- performance superiority claims from the first paired sample;
-- RC/security/production approval before the independent review gate.
+- Session/Carrier architecture redesign;
+- reducing `k_ready` merely to make the VPS test pass;
+- weakening authentication/admission/tuple binding;
+- UDP+TCP striping/aggregation;
+- reconnect persistence or durable Session store;
+- production Hysteria/firewall/NAT/route/DNS/proxy/tunnel/qdisc changes;
+- wildcard temporary listeners as a workaround for NAT;
+- third-party targets or scans;
+- retrying unchanged failed paths;
+- RC/security/production approval or performance-superiority claims.
 
 ## Questions requiring maintainer decision
 
