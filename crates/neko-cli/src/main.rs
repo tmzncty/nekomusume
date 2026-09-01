@@ -1,16 +1,19 @@
 //! Bounded authenticated research probe runtime; never a proxy or tunnel.
 mod lifecycle;
 
+use health_window::{HealthDatagram, HealthObservationWindow};
 use lifecycle::ReadinessPrerequisite;
+mod framed;
+mod health_window;
 mod multistream;
 mod periodic;
 mod reachability;
 
 use neko_carrier::{
     ActiveCarrier, CarrierHealthEvidence, CarrierManager, CarrierSwitchReason, DataId,
-    FailoverController, FairScheduler, FlowLimits, HealthEvidenceLimits, HealthFailureCause,
-    HealthLimits, HealthObservation, HealthSample, HealthState, ManagerLimits, PathGeneration,
-    PathId, PromotionEvidence, StreamId as CarrierStreamId, StreamPriority,
+    FailoverController, FairScheduler, FlowLimits, HealthEvidenceLimits, HealthLimits,
+    HealthSample, HealthState, ManagerLimits, PathGeneration, PathId, PromotionEvidence,
+    StreamId as CarrierStreamId, StreamPriority,
 };
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, ResumeGuard, TrustPolicy,
@@ -1390,71 +1393,118 @@ fn failover_client(args: &[String]) {
             ),
         );
     }
-    let automatic_started = Instant::now();
+    const HEALTH_OBSERVATION_WINDOW: Duration = Duration::from_secs(1);
+    const MAX_IGNORED_HEALTH_DATAGRAMS: usize = 64;
+    let failure_observation_started = Instant::now();
     let mut decision_at = None;
     if automatic_health_failover {
+        let mut window = HealthObservationWindow::new(
+            failure_observation_started,
+            HEALTH_OBSERVATION_WINDOW,
+            MAX_IGNORED_HEALTH_DATAGRAMS,
+        );
+        let mut ignored_diagnostics = 0usize;
         for observation_index in 1..=health_limits.fail_after {
-            let cause = match u.recv_from(&mut buf) {
-                Ok((n, peer)) if peer == target && us.open_unreliable(&buf[..n]).is_ok() => {
-                    health
-                        .observe_event(PathId(1), HealthObservation::Progress)
-                        .unwrap();
-                    fail("unexpected authenticated UDP progress at degradation boundary")
+            loop {
+                let now = Instant::now();
+                if now >= window.deadline() {
+                    let observation_started = window.started_at();
+                    let state = window
+                        .expire(now, &mut health, PathId(1))
+                        .unwrap_or_else(|e| fail(e));
+                    let state_name = match state {
+                        HealthState::Unknown => "unknown",
+                        HealthState::Healthy => "healthy",
+                        HealthState::Degraded => "degraded",
+                        HealthState::Failed => "failed",
+                    };
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "udp_health_event",
+                        observation_index as usize,
+                        &format!(
+                            ",\"event\":\"failure\",\"cause\":\"authenticated_delivery_ack_timeout\",\"state\":\"{}\",\"failure_observation_started_us\":{},\"failure_observation_elapsed_us\":{}",
+                            state_name,
+                            observation_started
+                                .duration_since(failure_observation_started)
+                                .as_micros(),
+                            now.duration_since(failure_observation_started).as_micros()
+                        ),
+                    );
+                    if state == HealthState::Failed {
+                        let pending = manager
+                            .fail_udp_to_tcp(
+                                PathId(1),
+                                PathGeneration(0),
+                                PathId(2),
+                                state,
+                                CarrierSwitchReason::UdpPathDegraded,
+                            )
+                            .unwrap();
+                        decision_at = Some(now);
+                        println!(
+                            "carrier_event name=udp_health_failed session=7001 generation={} threshold={} reason={} diagnostic_cause=authenticated_delivery_ack_timeout",
+                            pending.generation.0,
+                            health_limits.fail_after,
+                            pending.reason.as_str()
+                        );
+                    }
+                    break;
                 }
-                Ok((_, peer)) if peer != target => "unexpected_peer",
-                Ok(_) => "malformed_or_unadmitted",
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    "authenticated_delivery_ack_timeout"
+                match u.recv_from(&mut buf) {
+                    Ok((_, peer)) if peer != target => {
+                        let _ = window.observe(
+                            HealthDatagram::WrongPeer,
+                            Instant::now(),
+                            &mut health,
+                            PathId(1),
+                        );
+                        if ignored_diagnostics < MAX_IGNORED_HEALTH_DATAGRAMS {
+                            admission_diagnostic("unexpected_peer");
+                            ignored_diagnostics += 1;
+                        }
+                    }
+                    Ok((n, _)) => {
+                        let classification = match us.open_unreliable(&buf[..n]) {
+                            Ok(plain)
+                                if records
+                                    .get(1)
+                                    .is_some_and(|record| delivery_ack_matches(&plain, record)) =>
+                            {
+                                HealthDatagram::PermittedProgress
+                            }
+                            Ok(_) => HealthDatagram::StaleOrNonmatchingAuthenticated,
+                            Err(_) => HealthDatagram::MalformedOrUnadmitted,
+                        };
+                        if classification == HealthDatagram::PermittedProgress {
+                            window
+                                .observe(classification, Instant::now(), &mut health, PathId(1))
+                                .unwrap_or_else(|e| fail(e));
+                            fail(
+                                "unexpected permitted UDP delivery progress at degradation boundary",
+                            );
+                        }
+                        let _ =
+                            window.observe(classification, Instant::now(), &mut health, PathId(1));
+                        if ignored_diagnostics < MAX_IGNORED_HEALTH_DATAGRAMS {
+                            admission_diagnostic(match classification {
+                                HealthDatagram::MalformedOrUnadmitted => "malformed_or_unadmitted",
+                                HealthDatagram::StaleOrNonmatchingAuthenticated => {
+                                    "stale_or_nonmatching_authenticated"
+                                }
+                                _ => unreachable!(),
+                            });
+                            ignored_diagnostics += 1;
+                        }
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) => {}
+                    Err(_) => fail("UDP health receive failed"),
                 }
-                Err(_) => fail("UDP health receive failed"),
-            };
-            let observed_at = Instant::now();
-            let state = health
-                .observe_event(
-                    PathId(1),
-                    HealthObservation::Failure(HealthFailureCause::AuthenticatedDeliveryAckTimeout),
-                )
-                .unwrap();
-            let state_name = match state {
-                HealthState::Unknown => "unknown",
-                HealthState::Healthy => "healthy",
-                HealthState::Degraded => "degraded",
-                HealthState::Failed => "failed",
-            };
-            emit_diagnostic(
-                args,
-                "client",
-                "udp_health_event",
-                observation_index as usize,
-                &format!(
-                    ",\"event\":\"failure\",\"cause\":\"{}\",\"state\":\"{}\",\"elapsed_us\":{}",
-                    cause,
-                    state_name,
-                    observed_at.duration_since(automatic_started).as_micros()
-                ),
-            );
-            if state == HealthState::Failed {
-                let pending = manager
-                    .fail_udp_to_tcp(
-                        PathId(1),
-                        PathGeneration(0),
-                        PathId(2),
-                        state,
-                        CarrierSwitchReason::UdpPathDegraded,
-                    )
-                    .unwrap();
-                decision_at = Some(observed_at);
-                println!(
-                    "carrier_event name=udp_health_failed session=7001 generation={} threshold={} reason={} diagnostic_cause=authenticated_delivery_ack_timeout",
-                    pending.generation.0,
-                    health_limits.fail_after,
-                    pending.reason.as_str()
-                );
             }
         }
         if manager.active().is_some() || failover.active() != ActiveCarrier::Udp {
@@ -1474,9 +1524,11 @@ fn failover_client(args: &[String]) {
         Duration::from_secs(secs),
     )
     .unwrap();
+    let tcp_connected = Instant::now();
     write_frame(&mut tcp, &hello2).unwrap();
     let response2 = read_frame(&mut tcp, MAX_NEGOTIATION_FRAME).unwrap();
     negotiation2.client_accept_response(&response2).unwrap();
+    let tcp_negotiated = Instant::now();
     let binding2 = negotiation2.authenticated_binding().unwrap();
     let mut hs2 = InitiatorHandshake::with_resume_negotiation_binding(
         &id,
@@ -1491,8 +1543,11 @@ fn failover_client(args: &[String]) {
     write_frame(&mut tcp, &first2).unwrap();
     let resp = read_frame(&mut tcp, 1024).unwrap();
     let mut ts = hs2.finish(&resp, context(2)).unwrap();
+    let tcp_authenticated = Instant::now();
+    let resume_validated = tcp_authenticated;
     println!("carrier_event name=tcp_resume_guard session=7001 generation=1");
-    let tcp_active_at = if automatic_health_failover {
+    let readiness_satisfied = resume_validated;
+    let new_active_at = if automatic_health_failover {
         let decision = manager
             .promote_failed_udp_target(PromotionEvidence {
                 target_path: PathId(2),
@@ -1524,7 +1579,6 @@ fn failover_client(args: &[String]) {
         .unwrap();
         let encrypted = ts.seal(&logical).unwrap();
         write_frame(&mut tcp, &encrypted).unwrap();
-        first_resumed_data_at.get_or_insert_with(Instant::now);
         let ack = read_frame(&mut tcp, PROCESS_FRAME_MAX)
             .unwrap_or_else(|_| fail("TCP delivery acknowledgement timeout"));
         let plain = ts
@@ -1533,6 +1587,7 @@ fn failover_client(args: &[String]) {
         if !delivery_ack_matches(&plain, &record) {
             fail("invalid TCP delivery acknowledgement")
         }
+        first_resumed_data_at.get_or_insert_with(Instant::now);
         delivery
             .delivery_ack(
                 record.stream,
@@ -1563,14 +1618,38 @@ fn failover_client(args: &[String]) {
             "failover_timing",
             count,
             &format!(
-                ",\"fallback_class\":\"cold\",\"decision_to_tcp_active_us\":{},\"tcp_active_to_first_resumed_data_us\":{},\"recovery_latency_us\":{}",
-                tcp_active_at.duration_since(decision).as_micros(),
-                first_data.duration_since(tcp_active_at).as_micros(),
+                ",\"fallback_class\":\"cold\",\"failure_decided_at_us\":{},\"tcp_connect_started_us\":{},\"tcp_connected_us\":{},\"tcp_negotiated_us\":{},\"tcp_authenticated_us\":{},\"resume_validated_us\":{},\"readiness_satisfied_us\":{},\"new_active_at_us\":{},\"first_resumed_data_accepted_us\":{},\"recovery_latency_us\":{}",
+                decision
+                    .duration_since(failure_observation_started)
+                    .as_micros(),
+                tcp_connect_started
+                    .duration_since(failure_observation_started)
+                    .as_micros(),
+                tcp_connected
+                    .duration_since(failure_observation_started)
+                    .as_micros(),
+                tcp_negotiated
+                    .duration_since(failure_observation_started)
+                    .as_micros(),
+                tcp_authenticated
+                    .duration_since(failure_observation_started)
+                    .as_micros(),
+                resume_validated
+                    .duration_since(failure_observation_started)
+                    .as_micros(),
+                readiness_satisfied
+                    .duration_since(failure_observation_started)
+                    .as_micros(),
+                new_active_at
+                    .duration_since(failure_observation_started)
+                    .as_micros(),
+                first_data
+                    .duration_since(failure_observation_started)
+                    .as_micros(),
                 latency
             ),
         );
     }
-    let _ = tcp_connect_started;
     println!(
         "carrier_event name=ordered_records_complete session=7001 count={count} bytes={bytes}"
     );

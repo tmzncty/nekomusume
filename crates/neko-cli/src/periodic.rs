@@ -1,5 +1,6 @@
 //! One bounded authenticated TCP Session carrying periodic logical records.
 use super::*;
+use crate::framed::{FrameRead, FramedReader};
 use std::collections::BTreeSet;
 
 const SESSION: SessionId = SessionId(7201);
@@ -111,21 +112,46 @@ fn limits(cfg: Config) -> RuntimeLimits {
     }
 }
 
+fn frame_or_fail(
+    reader: &mut FramedReader,
+    stream: &mut TcpStream,
+    max_frame_len: usize,
+    deadline: Instant,
+    message: &str,
+) -> Vec<u8> {
+    reader
+        .set_max_frame_len(max_frame_len)
+        .unwrap_or_else(|_| fail("partial frame crossed protocol stage"));
+    match reader.read_until(stream, deadline) {
+        Ok(FrameRead::Complete(frame)) => frame,
+        Ok(FrameRead::Deadline | FrameRead::CleanEof | FrameRead::Truncated) | Err(_) => {
+            fail(message)
+        }
+    }
+}
+
 fn handshake_server(
     stream: &mut TcpStream,
+    reader: &mut FramedReader,
+    deadline: Instant,
     id: &LocalIdentity,
     policy: TrustPolicy,
 ) -> neko_crypto::SecureSession {
     let mut negotiation =
         VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS).unwrap();
-    let hello =
-        read_frame(stream, MAX_NEGOTIATION_FRAME).unwrap_or_else(|_| fail("malformed negotiation"));
+    let hello = frame_or_fail(
+        reader,
+        stream,
+        MAX_NEGOTIATION_FRAME,
+        deadline,
+        "malformed negotiation",
+    );
     let selection = negotiation
         .server_accept_hello(&hello)
         .unwrap_or_else(|_| fail("incompatible negotiation"));
     write_frame(stream, &selection).unwrap_or_else(|_| fail("negotiation response failed"));
     let binding = negotiation.authenticated_binding().unwrap();
-    let first = read_frame(stream, 1024).unwrap_or_else(|_| fail("bad handshake"));
+    let first = frame_or_fail(reader, stream, 1024, deadline, "bad handshake");
     let (response, secure) =
         ResponderHandshake::new_with_prologue_binding(id, policy, DOMAIN, binding.as_bytes())
             .unwrap()
@@ -140,6 +166,8 @@ fn handshake_server(
 
 fn handshake_client(
     stream: &mut TcpStream,
+    reader: &mut FramedReader,
+    deadline: Instant,
     id: &LocalIdentity,
     server_key: &[u8],
 ) -> neko_crypto::SecureSession {
@@ -147,8 +175,13 @@ fn handshake_client(
         VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
     let hello = negotiation.client_hello().unwrap();
     write_frame(stream, &hello).unwrap_or_else(|_| fail("negotiation send failed"));
-    let selection = read_frame(stream, MAX_NEGOTIATION_FRAME)
-        .unwrap_or_else(|_| fail("negotiation response failed"));
+    let selection = frame_or_fail(
+        reader,
+        stream,
+        MAX_NEGOTIATION_FRAME,
+        deadline,
+        "negotiation response failed",
+    );
     negotiation
         .client_accept_response(&selection)
         .unwrap_or_else(|_| fail("incompatible negotiation"));
@@ -163,7 +196,7 @@ fn handshake_client(
     .unwrap();
     let first = hs.first_message().unwrap();
     write_frame(stream, &first).unwrap_or_else(|_| fail("handshake send failed"));
-    let response = read_frame(stream, 1024).unwrap_or_else(|_| fail("handshake response failed"));
+    let response = frame_or_fail(reader, stream, 1024, deadline, "handshake response failed");
     let secure = hs
         .finish(&response, context(0))
         .unwrap_or_else(|_| fail("handshake finish failed"));
@@ -229,7 +262,9 @@ pub(super) fn server(args: &[String]) {
     stream
         .set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap();
-    let mut secure = handshake_server(&mut stream, &id, policy);
+    let mut framed = FramedReader::new(PROCESS_FRAME_MAX + 128);
+    let mut secure = handshake_server(&mut stream, &mut framed, start + cfg.duration, &id, policy);
+    framed.set_max_frame_len(PROCESS_FRAME_MAX + 128).unwrap();
     println!("periodic_server_authenticated session=7201 stream=1");
     let mut runtime = SessionRuntime::new(SESSION, limits(cfg), 0).unwrap();
     runtime.open_stream(STREAM, 0).unwrap();
@@ -257,8 +292,8 @@ pub(super) fn server(args: &[String]) {
     let mut confirmed = 0usize;
     let mut duplicates = 0usize;
     while Instant::now() < deadline && received < cfg.count && !shutdown.load(Ordering::Acquire) {
-        match read_frame(&mut stream, PROCESS_FRAME_MAX + 128) {
-            Ok(frame) => {
+        match framed.read_until(&mut stream, deadline) {
+            Ok(FrameRead::Complete(frame)) => {
                 let plain = secure
                     .open_unreliable(&frame)
                     .unwrap_or_else(|_| fail("unauthenticated periodic data"));
@@ -322,12 +357,10 @@ pub(super) fn server(args: &[String]) {
                     duplicates > 0
                 );
             }
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
-            Err(_) => fail("periodic Session disconnected; reconnect/resume unsupported"),
+            Ok(FrameRead::Deadline) => break,
+            Ok(FrameRead::CleanEof | FrameRead::Truncated) | Err(_) => {
+                fail("periodic Session disconnected; reconnect/resume unsupported")
+            }
         }
     }
     let now = start.elapsed().as_millis() as u64;
@@ -364,8 +397,18 @@ pub(super) fn client(args: &[String]) {
     let start = Instant::now();
     let mut stream = TcpStream::connect_timeout(&addr, cfg.ack_timeout)
         .unwrap_or_else(|_| fail("connect failed; reconnect/resume unsupported"));
-    stream.set_read_timeout(Some(cfg.ack_timeout)).unwrap();
-    let mut secure = handshake_client(&mut stream, &id, &server_key);
+    stream
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let mut framed = FramedReader::new(PROCESS_FRAME_MAX + 128);
+    let mut secure = handshake_client(
+        &mut stream,
+        &mut framed,
+        start + cfg.ack_timeout,
+        &id,
+        &server_key,
+    );
+    framed.set_max_frame_len(PROCESS_FRAME_MAX + 128).unwrap();
     println!("periodic_client_authenticated session=7201 stream=1 reconnect=unsupported");
     let mut runtime = SessionRuntime::new(SESSION, limits(cfg), 0).unwrap();
     runtime.open_stream(STREAM, 0).unwrap();
@@ -412,8 +455,8 @@ pub(super) fn client(args: &[String]) {
         });
         let mut ok = false;
         loop {
-            match read_frame(&mut stream, PROCESS_FRAME_MAX + 128) {
-                Ok(frame) => {
+            match framed.read_until(&mut stream, sent_at + cfg.ack_timeout) {
+                Ok(FrameRead::Complete(frame)) => {
                     let plain = secure
                         .open_unreliable(&frame)
                         .unwrap_or_else(|_| fail("unauthenticated delivery acknowledgement"));
@@ -453,18 +496,13 @@ pub(super) fn client(args: &[String]) {
                     }
                     fail("non-matching authenticated delivery acknowledgement");
                 }
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::WouldBlock
-                            | std::io::ErrorKind::TimedOut
-                            | std::io::ErrorKind::UnexpectedEof
-                    ) =>
-                {
+                Ok(FrameRead::Deadline | FrameRead::CleanEof) => {
                     missing += 1;
                     break;
                 }
-                Err(_) => fail("periodic Session disconnected; reconnect/resume unsupported"),
+                Ok(FrameRead::Truncated) | Err(_) => {
+                    fail("periodic Session disconnected; reconnect/resume unsupported")
+                }
             }
         }
         println!(
