@@ -50,6 +50,9 @@ const PROCESS_FRAME_MAX: usize = neko_session::PROCESS_FRAME_MAX;
 const DOMAIN: &[u8] = b"nekomusume-vps-probe";
 const SUPPORTED_VERSIONS: &[u16] = &[NEGOTIATION_VERSION];
 const MAX_NEGOTIATION_FRAME: usize = 4 + neko_wire::MAX_NEGOTIATION_VERSIONS * 2;
+const READINESS_PROBES: u64 = 3;
+const READINESS_FRAME_MAX: usize = 128;
+const READINESS_DEADLINE: Duration = Duration::from_secs(1);
 fn json_mode(args: &[String]) -> bool {
     args.iter().any(|a| a == "--json")
 }
@@ -764,6 +767,13 @@ fn recv_udp_delivery_ack(
         }
     }
 }
+fn readiness_admitted(runtime: &SessionRuntime, request: &ProcessMessage) -> bool {
+    matches!(request, ProcessMessage::ReadinessRequest { session: SessionId(7001), target_path: 2, path_generation: 1, delivery_epoch: 1, challenge_id } if (1..=READINESS_PROBES).contains(challenge_id))
+        && runtime.state() == neko_session::RuntimeState::Open
+        && runtime.queued_records() <= 2
+        && runtime.queued_bytes() <= MAX_BYTES * 2
+}
+
 fn runtime_limits(bytes: usize, count: usize) -> RuntimeLimits {
     RuntimeLimits {
         max_streams: 1,
@@ -1065,6 +1075,63 @@ fn failover_server(args: &[String]) {
                 .unwrap_or(false)
             {
                 write_frame(&mut stream, &resp).unwrap();
+                println!("carrier_event name=tcp_authenticated session=7001 generation=1");
+                println!("carrier_event name=tcp_resume_validated session=7001 generation=1");
+                let mut readiness_response_bytes = 0usize;
+                for expected_challenge in 1..=READINESS_PROBES {
+                    let ciphertext = read_frame(&mut stream, READINESS_FRAME_MAX)
+                        .unwrap_or_else(|_| fail("bad readiness frame"));
+                    let plain = ss
+                        .open(&ciphertext)
+                        .unwrap_or_else(|_| fail("unauthenticated readiness frame"));
+                    let request = ProcessMessage::decode(&plain)
+                        .unwrap_or_else(|_| fail("malformed readiness request"));
+                    let admitted = readiness_admitted(&runtime, &request);
+                    let ProcessMessage::ReadinessRequest {
+                        session,
+                        target_path,
+                        path_generation,
+                        delivery_epoch,
+                        challenge_id,
+                    } = request
+                    else {
+                        fail("unexpected readiness message")
+                    };
+                    if challenge_id != expected_challenge {
+                        fail("non-consecutive readiness challenge")
+                    }
+                    let response = ProcessMessage::ReadinessResponse {
+                        session,
+                        target_path,
+                        path_generation,
+                        delivery_epoch,
+                        challenge_id,
+                        admitted,
+                    }
+                    .encode()
+                    .unwrap();
+                    let encrypted = ss.seal(&response).unwrap();
+                    readiness_response_bytes =
+                        readiness_response_bytes.saturating_add(encrypted.len());
+                    if readiness_response_bytes > READINESS_FRAME_MAX * READINESS_PROBES as usize {
+                        fail("readiness responder byte bound exceeded")
+                    }
+                    write_frame(&mut stream, &encrypted).unwrap();
+                    emit_diagnostic(
+                        args,
+                        "server",
+                        "tcp_readiness_response",
+                        challenge_id as usize,
+                        &format!(
+                            ",\"admitted\":{},\"ciphertext_bytes\":{}",
+                            admitted,
+                            encrypted.len()
+                        ),
+                    );
+                }
+                println!(
+                    "carrier_event name=tcp_resource_admitted session=7001 generation=1 source=runtime_limits"
+                );
                 for _ in 0..count.saturating_sub(1) {
                     let ciphertext = read_frame(&mut stream, PROCESS_FRAME_MAX)
                         .unwrap_or_else(|_| fail("bad TCP data frame"));
@@ -1147,6 +1214,7 @@ fn failover_server(args: &[String]) {
     fail("failover timeout")
 }
 fn failover_client(args: &[String]) {
+    let experiment_origin = Instant::now();
     let mut diag = HandshakeDiagnostics::new("client");
     let count = exchange_count(args);
     let bytes = parse(args, "--bytes", Some("32"))
@@ -1429,13 +1497,35 @@ fn failover_client(args: &[String]) {
         .unwrap();
         write_frame(&mut tcp, &hs2.first_message().unwrap()).unwrap();
         let response = read_frame(&mut tcp, 1024).unwrap();
-        let session = hs2.finish(&response, context(2)).unwrap();
+        let mut session = hs2.finish(&response, context(2)).unwrap();
         let authenticated = Instant::now();
         negotiation2.admit_data().unwrap();
+        let resume_validated = Instant::now();
         manager
             .prepare_warm_candidate(PathId(2), PathGeneration(1), 7001, 1)
             .unwrap();
-        for observation_id in 1..=3 {
+        tcp.set_read_timeout(Some(READINESS_DEADLINE)).unwrap();
+        let mut readiness_satisfied = authenticated;
+        for observation_id in 1..=READINESS_PROBES {
+            let requested = Instant::now();
+            let request = ProcessMessage::ReadinessRequest {
+                session: SessionId(7001),
+                target_path: 2,
+                path_generation: 1,
+                delivery_epoch: 1,
+                challenge_id: observation_id,
+            }
+            .encode()
+            .unwrap();
+            write_frame(&mut tcp, &session.seal(&request).unwrap()).unwrap();
+            let ciphertext = read_frame(&mut tcp, READINESS_FRAME_MAX)
+                .unwrap_or_else(|_| fail("readiness response timeout or malformed frame"));
+            let plain = session
+                .open(&ciphertext)
+                .unwrap_or_else(|_| fail("readiness response authentication failed"));
+            let response = ProcessMessage::decode(&plain)
+                .unwrap_or_else(|_| fail("malformed readiness response"));
+            let admitted = matches!(response, ProcessMessage::ReadinessResponse { session: SessionId(7001), target_path: 2, path_generation: 1, delivery_epoch: 1, challenge_id, admitted: true } if challenge_id == observation_id);
             let warm = manager
                 .observe_warm_candidate_readiness(ReadinessObservation {
                     target_path: PathId(2),
@@ -1445,15 +1535,23 @@ fn failover_client(args: &[String]) {
                     observation_id,
                     authenticated: true,
                     resume_validated: true,
-                    resource_admitted: true,
+                    resource_admitted: admitted,
                 })
-                .unwrap();
+                .unwrap_or_else(|_| fail("readiness tuple unadmitted"));
+            readiness_satisfied = Instant::now();
             emit_diagnostic(
                 args,
                 "client",
                 "tcp_warm_readiness",
                 observation_id as usize,
-                &format!(",\"warm\":{}", warm),
+                &format!(
+                    ",\"warm\":{},\"request_us\":{},\"response_us\":{}",
+                    warm,
+                    requested.duration_since(experiment_origin).as_micros(),
+                    readiness_satisfied
+                        .duration_since(experiment_origin)
+                        .as_micros()
+                ),
             );
         }
         if manager.active() != Some(PathId(1))
@@ -1468,7 +1566,14 @@ fn failover_client(args: &[String]) {
         );
         warm_tcp = Some(tcp);
         warm_session = Some(session);
-        warm_timing = Some((connect_started, connected, negotiated, authenticated));
+        warm_timing = Some((
+            connect_started,
+            connected,
+            negotiated,
+            authenticated,
+            resume_validated,
+            readiness_satisfied,
+        ));
     }
     const HEALTH_OBSERVATION_WINDOW: Duration = Duration::from_secs(1);
     const MAX_IGNORED_HEALTH_DATAGRAMS: usize = 64;
@@ -1503,9 +1608,9 @@ fn failover_client(args: &[String]) {
                             ",\"event\":\"failure\",\"cause\":\"authenticated_delivery_ack_timeout\",\"state\":\"{}\",\"failure_observation_started_us\":{},\"failure_observation_elapsed_us\":{}",
                             state_name,
                             observation_started
-                                .duration_since(failure_observation_started)
+                                .duration_since(experiment_origin)
                                 .as_micros(),
-                            now.duration_since(failure_observation_started).as_micros()
+                            now.duration_since(experiment_origin).as_micros()
                         ),
                     );
                     if state == HealthState::Failed {
@@ -1615,11 +1720,19 @@ fn failover_client(args: &[String]) {
         tcp_negotiated,
         tcp_authenticated,
         resume_validated,
+        readiness_satisfied,
         warm_recovery,
     ) = if let (
         Some(tcp),
         Some(session),
-        Some((connect_started, connected, negotiated, authenticated)),
+        Some((
+            connect_started,
+            connected,
+            negotiated,
+            authenticated,
+            resume_validated,
+            readiness_satisfied,
+        )),
     ) = (warm_tcp, warm_session, warm_timing)
     {
         (
@@ -1629,7 +1742,8 @@ fn failover_client(args: &[String]) {
             connected,
             negotiated,
             authenticated,
-            authenticated,
+            resume_validated,
+            readiness_satisfied,
             true,
         )
     } else {
@@ -1659,14 +1773,37 @@ fn failover_client(args: &[String]) {
         .unwrap();
         write_frame(&mut tcp, &hs2.first_message().unwrap()).unwrap();
         let resp = read_frame(&mut tcp, 1024).unwrap();
-        let session = hs2.finish(&resp, context(2)).unwrap();
+        let mut session = hs2.finish(&resp, context(2)).unwrap();
         let authenticated = Instant::now();
+        tcp.set_read_timeout(Some(READINESS_DEADLINE)).unwrap();
+        for challenge_id in 1..=READINESS_PROBES {
+            let request = ProcessMessage::ReadinessRequest {
+                session: SessionId(7001),
+                target_path: 2,
+                path_generation: 1,
+                delivery_epoch: 1,
+                challenge_id,
+            }
+            .encode()
+            .unwrap();
+            write_frame(&mut tcp, &session.seal(&request).unwrap()).unwrap();
+            let response = read_frame(&mut tcp, READINESS_FRAME_MAX)
+                .unwrap_or_else(|_| fail("cold readiness control timeout"));
+            let plain = session
+                .open(&response)
+                .unwrap_or_else(|_| fail("cold readiness authentication failed"));
+            if !matches!(ProcessMessage::decode(&plain), Ok(ProcessMessage::ReadinessResponse { session: SessionId(7001), target_path: 2, path_generation: 1, delivery_epoch: 1, challenge_id: response_id, admitted: true }) if response_id == challenge_id)
+            {
+                fail("cold readiness control rejected")
+            }
+        }
         (
             tcp,
             session,
             connect_started,
             connected,
             negotiated,
+            authenticated,
             authenticated,
             authenticated,
             false,
@@ -1758,34 +1895,24 @@ fn failover_client(args: &[String]) {
                 ",\"fallback_class\":\"{}\",\"promotion_gate\":\"{}\",\"failure_decided_at_us\":{},\"tcp_connect_started_us\":{},\"tcp_connected_us\":{},\"tcp_negotiated_us\":{},\"tcp_authenticated_us\":{},\"resume_validated_us\":{},\"{}\":{},\"new_active_at_us\":{},\"first_resumed_data_accepted_us\":{},\"recovery_latency_us\":{}",
                 fallback_class,
                 promotion_gate,
-                decision
-                    .duration_since(failure_observation_started)
-                    .as_micros(),
+                decision.duration_since(experiment_origin).as_micros(),
                 tcp_connect_started
-                    .duration_since(failure_observation_started)
+                    .duration_since(experiment_origin)
                     .as_micros(),
-                tcp_connected
-                    .duration_since(failure_observation_started)
-                    .as_micros(),
-                tcp_negotiated
-                    .duration_since(failure_observation_started)
-                    .as_micros(),
+                tcp_connected.duration_since(experiment_origin).as_micros(),
+                tcp_negotiated.duration_since(experiment_origin).as_micros(),
                 tcp_authenticated
-                    .duration_since(failure_observation_started)
+                    .duration_since(experiment_origin)
                     .as_micros(),
                 resume_validated
-                    .duration_since(failure_observation_started)
+                    .duration_since(experiment_origin)
                     .as_micros(),
                 promotion_ready_field,
-                resume_validated
-                    .duration_since(failure_observation_started)
+                readiness_satisfied
+                    .duration_since(experiment_origin)
                     .as_micros(),
-                new_active_at
-                    .duration_since(failure_observation_started)
-                    .as_micros(),
-                first_data
-                    .duration_since(failure_observation_started)
-                    .as_micros(),
+                new_active_at.duration_since(experiment_origin).as_micros(),
+                first_data.duration_since(experiment_origin).as_micros(),
                 latency
             ),
         );

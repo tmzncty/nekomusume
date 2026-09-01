@@ -208,3 +208,25 @@ loopback/process and netns warm/cold recovery experiments with the metrics above
 Run `./scripts/check.sh`, `git diff --check`, and fuzz smoke when wire/parser
 fields change. This ADR adds no code, dependencies, wire fields, listeners,
 WAN authorization, or release/security approval.
+
+### D064 authenticated readiness runtime exchange
+
+The pre-established TCP fallback carries exactly three sequential encrypted
+`ReadinessRequest` / `ReadinessResponse` control observations while UDP remains
+the sole application-data owner. Each message binds Session ID, target PathId,
+PathGeneration, DeliveryEpoch, and a distinct challenge ID. The responder
+recomputes admission from the current bounded Session runtime (open state and
+queue/byte limits); it does not accept a caller-supplied boolean.
+
+The runtime permits one outstanding request, three total observations, a
+one-second response deadline, 128-byte ciphertext frames, and at most
+`3 * 128` responder ciphertext bytes. Requests are consecutive challenge IDs
+1..=3, so the fixed total also bounds rate. Authentication failure, malformed or
+wrong tuple, duplicate/non-consecutive challenge, timeout, or an unadmitted
+response cannot advance readiness. The manager's deterministic policy is:
+duplicate IDs do not advance; any current-candidate failed validation resets the
+consecutive count to zero; stale/wrong candidate dimensions fail closed and reset the current consecutive count. The third valid peer response alone sets
+`readiness_satisfied_at`; authentication and resume validation remain separate
+timestamps. No `Data` process message is sent on standby before atomic manager
+promotion. These process messages extend only the runtime/failover codec and do
+not alter the frozen N9 canonical corpus.

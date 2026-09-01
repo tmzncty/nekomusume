@@ -686,6 +686,23 @@ pub enum ProcessMessage {
     Resume {
         binding: ResumeWireBinding,
     },
+    /// D064 standby-path control traffic. These messages are carried only
+    /// inside an authenticated carrier record and never contain application data.
+    ReadinessRequest {
+        session: SessionId,
+        target_path: u64,
+        path_generation: u64,
+        delivery_epoch: u64,
+        challenge_id: u64,
+    },
+    ReadinessResponse {
+        session: SessionId,
+        target_path: u64,
+        path_generation: u64,
+        delivery_epoch: u64,
+        challenge_id: u64,
+        admitted: bool,
+    },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessCodecError {
@@ -732,6 +749,44 @@ impl ProcessMessage {
                 out.extend_from_slice(&binding.path_generation.to_be_bytes());
                 out.extend_from_slice(&binding.expires_at_ms.to_be_bytes());
                 out.extend_from_slice(&binding.token);
+            }
+            Self::ReadinessRequest {
+                session,
+                target_path,
+                path_generation,
+                delivery_epoch,
+                challenge_id,
+            } => {
+                out.push(4);
+                for value in [
+                    session.0,
+                    *target_path,
+                    *path_generation,
+                    *delivery_epoch,
+                    *challenge_id,
+                ] {
+                    out.extend_from_slice(&value.to_be_bytes());
+                }
+            }
+            Self::ReadinessResponse {
+                session,
+                target_path,
+                path_generation,
+                delivery_epoch,
+                challenge_id,
+                admitted,
+            } => {
+                out.push(5);
+                for value in [
+                    session.0,
+                    *target_path,
+                    *path_generation,
+                    *delivery_epoch,
+                    *challenge_id,
+                ] {
+                    out.extend_from_slice(&value.to_be_bytes());
+                }
+                out.push(u8::from(*admitted));
             }
         }
         if out.len() > PROCESS_FRAME_MAX {
@@ -804,6 +859,42 @@ impl ProcessMessage {
                         token,
                     },
                 })
+            }
+            4 | 5 => {
+                let expected = if kind == 4 { 44 } else { 45 };
+                if input.len() != expected {
+                    return Err(ProcessCodecError::Malformed);
+                }
+                let fields = (
+                    SessionId(u64_at(4)?),
+                    u64_at(12)?,
+                    u64_at(20)?,
+                    u64_at(28)?,
+                    u64_at(36)?,
+                );
+                if kind == 4 {
+                    Ok(Self::ReadinessRequest {
+                        session: fields.0,
+                        target_path: fields.1,
+                        path_generation: fields.2,
+                        delivery_epoch: fields.3,
+                        challenge_id: fields.4,
+                    })
+                } else {
+                    let admitted = match input[44] {
+                        0 => false,
+                        1 => true,
+                        _ => return Err(ProcessCodecError::Malformed),
+                    };
+                    Ok(Self::ReadinessResponse {
+                        session: fields.0,
+                        target_path: fields.1,
+                        path_generation: fields.2,
+                        delivery_epoch: fields.3,
+                        challenge_id: fields.4,
+                        admitted,
+                    })
+                }
             }
             _ => Err(ProcessCodecError::Malformed),
         }
@@ -1967,5 +2058,83 @@ mod era4_resource_limit_tests {
             SessionRuntime::new(SessionId(1), limits, 0),
             Err(RuntimeError::InvalidLimits)
         ));
+    }
+}
+
+#[cfg(test)]
+mod d064_readiness_codec_tests {
+    use super::*;
+
+    fn request() -> ProcessMessage {
+        ProcessMessage::ReadinessRequest {
+            session: SessionId(7001),
+            target_path: 2,
+            path_generation: 1,
+            delivery_epoch: 4,
+            challenge_id: 3,
+        }
+    }
+
+    #[test]
+    fn readiness_request_and_response_roundtrip_with_exact_bounds() {
+        let request = request();
+        let encoded = request.encode().unwrap();
+        assert_eq!(encoded.len(), 44);
+        assert_eq!(ProcessMessage::decode(&encoded), Ok(request));
+        let response = ProcessMessage::ReadinessResponse {
+            session: SessionId(7001),
+            target_path: 2,
+            path_generation: 1,
+            delivery_epoch: 4,
+            challenge_id: 3,
+            admitted: true,
+        };
+        let encoded = response.encode().unwrap();
+        assert_eq!(encoded.len(), 45);
+        assert_eq!(ProcessMessage::decode(&encoded), Ok(response));
+    }
+
+    #[test]
+    fn readiness_codec_rejects_every_truncation_trailing_and_mutated_boolean() {
+        for message in [
+            request(),
+            ProcessMessage::ReadinessResponse {
+                session: SessionId(7001),
+                target_path: 2,
+                path_generation: 1,
+                delivery_epoch: 4,
+                challenge_id: 3,
+                admitted: false,
+            },
+        ] {
+            let encoded = message.encode().unwrap();
+            for end in 0..encoded.len() {
+                assert_eq!(
+                    ProcessMessage::decode(&encoded[..end]),
+                    Err(ProcessCodecError::Malformed)
+                );
+            }
+            let mut trailing = encoded.clone();
+            trailing.push(0);
+            assert_eq!(
+                ProcessMessage::decode(&trailing),
+                Err(ProcessCodecError::Malformed)
+            );
+        }
+        let mut response = ProcessMessage::ReadinessResponse {
+            session: SessionId(7001),
+            target_path: 2,
+            path_generation: 1,
+            delivery_epoch: 4,
+            challenge_id: 3,
+            admitted: true,
+        }
+        .encode()
+        .unwrap();
+        response[44] = 2;
+        assert_eq!(
+            ProcessMessage::decode(&response),
+            Err(ProcessCodecError::Malformed)
+        );
     }
 }

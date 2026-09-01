@@ -2303,15 +2303,24 @@ impl CarrierManager {
         let candidate = self
             .warm_candidate
             .ok_or(MigrationError::GenerationMismatch)?;
-        if observation.generation.0 < candidate.generation.0 {
-            return Err(MigrationError::OldGeneration);
-        }
-        if observation.target_path != candidate.target_path
+        let dimension_error = if observation.generation.0 < candidate.generation.0 {
+            Some(MigrationError::OldGeneration)
+        } else if observation.target_path != candidate.target_path
             || observation.generation != candidate.generation
             || observation.session_id != candidate.session_id
             || observation.delivery_epoch != candidate.delivery_epoch
         {
-            return Err(MigrationError::GenerationMismatch);
+            Some(MigrationError::GenerationMismatch)
+        } else {
+            None
+        };
+        if let Some(error) = dimension_error {
+            self.readiness_observation_ids.clear();
+            if let Some(candidate) = self.warm_candidate.as_mut() {
+                candidate.ready_observations = 0;
+                candidate.warm = false;
+            }
+            return Err(error);
         }
         if !observation.authenticated
             || !observation.resume_validated
@@ -3058,6 +3067,10 @@ mod health_evidence_tests {
             ),
         ] {
             let mut manager = active_manager();
+            manager
+                .observe_warm_candidate_readiness(warm_readiness(99))
+                .unwrap();
+            assert_eq!(manager.warm_candidate().unwrap().ready_observations, 1);
             assert_eq!(manager.observe_warm_candidate_readiness(bad), Err(error));
             assert_eq!(manager.active(), Some(PathId(9)));
             assert_eq!(manager.warm_candidate().unwrap().ready_observations, 0);

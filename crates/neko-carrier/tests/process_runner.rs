@@ -194,6 +194,9 @@ fn receiver_process(
                 }
             }
             ProcessMessage::DeliveryAck { .. } => panic!("ack on receiver input"),
+            ProcessMessage::ReadinessRequest { .. } | ProcessMessage::ReadinessResponse { .. } => {
+                panic!("readiness on data runner input")
+            }
         }
     }
     runtime.close_graceful(5).unwrap();
