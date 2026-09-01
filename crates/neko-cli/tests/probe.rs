@@ -357,6 +357,171 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
 }
 
 #[test]
+fn executable_loopback_health_threshold_drives_udp_to_tcp() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("health-failover-server");
+    let cp = tmp("health-failover-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let udp = 40086u16;
+    let tcp = 40087u16;
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "5",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--cease-udp-replies-after",
+            "1",
+            "--send-malformed-after-cessation",
+            "--diagnostic",
+            "--experiment-id",
+            "health-failover-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    thread::sleep(Duration::from_millis(150));
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "3",
+            "--automatic-health-failover",
+            "--diagnostic",
+            "--experiment-id",
+            "health-failover-client",
+        ])
+        .output()
+        .unwrap();
+    let server_out = server.wait_with_output().unwrap();
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let server_log = String::from_utf8_lossy(&server_out.stdout);
+    assert!(
+        out.status.success(),
+        "stdout={client_log} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        server_out.status.success(),
+        "stdout={server_log} stderr={}",
+        String::from_utf8_lossy(&server_out.stderr)
+    );
+    assert!(
+        !client_log.contains("carrier_event name=controlled_udp_stop"),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains("controlled_udp_stop=false"),
+        "{client_log}"
+    );
+    assert!(client_log.contains("carrier_event name=udp_health_failed session=7001 generation=0 threshold=4 reason=authenticated_delivery_ack_timeout"), "{client_log}");
+    assert_eq!(
+        client_log
+            .matches("\"event\":\"udp_health_sample\"")
+            .count(),
+        4
+    );
+    assert!(
+        client_log.contains("\"state\":\"degraded\""),
+        "{client_log}"
+    );
+    assert!(client_log.contains("\"state\":\"failed\""), "{client_log}");
+    assert!(
+        client_log.contains("\"event\":\"udp_signal_ignored\""),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains("carrier_event name=tcp_resume_guard"),
+        "{client_log}"
+    );
+    assert_eq!(
+        client_log
+            .matches("\"event\":\"tcp_delivery_ack_validated\"")
+            .count(),
+        2
+    );
+    assert!(
+        client_log.contains("failover_mode=automatic_health_failure"),
+        "{client_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"udp_reply_ceased\""),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("carrier_event name=tcp_resumed"),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("records=3 application_bytes_total=48"),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains(&format!("bytes_hex={}", "78".repeat(48))),
+        "{server_log}"
+    );
+}
+
+#[test]
+fn udp_reply_cessation_seam_is_bounded_and_off_by_default() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let output = Command::new(bin)
+        .args([
+            "failover-server",
+            "--count",
+            "3",
+            "--cease-udp-replies-after",
+            "3",
+            "--client-key",
+            &"00".repeat(32),
+            "--udp-port",
+            "40082",
+            "--tcp-port",
+            "40083",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("UDP reply cessation point outside 1..count")
+    );
+}
+
+#[test]
 fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("retry-server");

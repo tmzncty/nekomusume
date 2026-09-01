@@ -6,8 +6,9 @@ mod multistream;
 mod reachability;
 
 use neko_carrier::{
-    CarrierHealthEvidence, FairScheduler, FlowLimits, HealthEvidenceLimits, HealthLimits,
-    HealthSample, PathId, StreamId as CarrierStreamId, StreamPriority,
+    ActiveCarrier, CarrierHealthEvidence, DataId, FailoverController, FairScheduler, FlowLimits,
+    HealthEvidenceLimits, HealthLimits, HealthSample, HealthState, PathId,
+    StreamId as CarrierStreamId, StreamPriority,
 };
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, ResumeGuard, TrustPolicy,
@@ -777,6 +778,19 @@ fn failover_server(args: &[String]) {
     diag.event(args, "socket_bind");
     let started = Instant::now();
     let mut buf = [0u8; 65536];
+    // Explicitly opt-in, bounded application-level fault seam. Production and
+    // ordinary controlled-stop runs never cease replies.
+    let cease_udp_replies_after = args
+        .windows(2)
+        .find(|w| w[0] == "--cease-udp-replies-after")
+        .map(|w| {
+            w[1].parse::<usize>()
+                .unwrap_or_else(|_| fail("invalid UDP reply cessation point"))
+        });
+    if cease_udp_replies_after.is_some_and(|point| point == 0 || point >= count) {
+        fail("UDP reply cessation point outside 1..count");
+    }
+    let mut udp_replies = 0usize;
     // Bounded one-peer pre-auth cache. It is discarded only after authentication.
     let mut pending: Option<PendingUdpNegotiation> = None;
     let mut secure = None;
@@ -914,14 +928,31 @@ fn failover_server(args: &[String]) {
                             .encode()
                             .unwrap();
                             let ack = ss.seal_unreliable(&logical).unwrap();
-                            udp.send_to(&ack, peer).unwrap();
-                            emit_diagnostic(
-                                args,
-                                "server",
-                                "udp_delivery_ack_sent",
-                                offset as usize / bytes.max(1),
-                                &format!(",\"ciphertext_bytes\":{}", ack.len()),
-                            );
+                            if cease_udp_replies_after.is_none_or(|point| udp_replies < point) {
+                                udp.send_to(&ack, peer).unwrap();
+                                udp_replies += 1;
+                                emit_diagnostic(
+                                    args,
+                                    "server",
+                                    "udp_delivery_ack_sent",
+                                    offset as usize / bytes.max(1),
+                                    &format!(",\"ciphertext_bytes\":{}", ack.len()),
+                                );
+                            } else {
+                                emit_diagnostic(
+                                    args,
+                                    "server",
+                                    "udp_reply_ceased",
+                                    offset as usize / bytes.max(1),
+                                    ",\"reason\":\"bounded_test_seam\"",
+                                );
+                                if args
+                                    .iter()
+                                    .any(|arg| arg == "--send-malformed-after-cessation")
+                                {
+                                    udp.send_to(b"malformed", peer).unwrap();
+                                }
+                            }
                             if let Some(delivered) = runtime.pop_receive(2).unwrap() {
                                 app.extend_from_slice(&delivered.data);
                             }
@@ -1009,11 +1040,18 @@ fn failover_server(args: &[String]) {
                     }
                 }
                 println!("carrier_event name=tcp_resumed session=7001 generation=1");
+                let mode = if cease_udp_replies_after.is_some() {
+                    "automatic_health_failure"
+                } else {
+                    "controlled_udp_stop"
+                };
                 println!(
-                    "failover_server_ok session=7001 records={} application_bytes_total={} bytes_hex={} controlled_udp_stop=true udp_port={} tcp_port={} carrier_events=udp_negotiated,udp_authenticated,controlled_udp_stop,tcp_negotiated,tcp_resumed",
+                    "failover_server_ok session=7001 records={} application_bytes_total={} bytes_hex={} failover_mode={} controlled_udp_stop={} udp_port={} tcp_port={}",
                     app.len() / bytes.max(1),
                     app.len(),
                     hex(&app),
+                    mode,
+                    cease_udp_replies_after.is_none(),
                     udp_local_port,
                     tcp_local_port
                 );
@@ -1218,9 +1256,22 @@ fn failover_client(args: &[String]) {
         1,
         &format!(",\"ciphertext_bytes\":{}", n),
     );
-    // Leave exactly the next logical range uncertain at the controlled carrier
-    // stop. It is resent over TCP; the receiver's Session runtime deduplicates
-    // it if UDP delivery completed before the fault boundary.
+    let automatic_health_failover = args.iter().any(|a| a == "--automatic-health-failover");
+    let health_limits = HealthLimits::default();
+    let mut health =
+        CarrierHealthEvidence::new(health_limits, HealthEvidenceLimits { max_samples: 16 })
+            .unwrap();
+    let mut failover =
+        FailoverController::new(health_limits.fail_after, count, count * bytes).unwrap();
+    failover.udp_progress();
+    // Leave exactly the next logical range uncertain at the carrier boundary.
+    // It is resent over TCP; the receiver's Session runtime deduplicates it if
+    // UDP delivery completed before reply cessation.
+    for uncertain in records.iter().skip(1) {
+        failover
+            .track_uncertain(DataId(uncertain.offset), &uncertain.data)
+            .unwrap();
+    }
     if let Some(uncertain) = records.get(1) {
         let logical = ProcessMessage::Data {
             session: SessionId(7001),
@@ -1244,9 +1295,72 @@ fn failover_client(args: &[String]) {
             ),
         );
     }
-    println!(
-        "carrier_event name=controlled_udp_stop session=7001 generation=0 reason=bounded_application_fault_injection"
-    );
+    if automatic_health_failover {
+        let bad = HealthSample {
+            rtt_us: 100_000,
+            loss_per_mille: 1_000,
+            pto: 3,
+        };
+        for sample_index in 1..=health_limits.fail_after {
+            match u.recv_from(&mut buf) {
+                Ok((n, peer)) if peer == target => {
+                    if us.open_unreliable(&buf[..n]).is_ok() {
+                        fail("unexpected authenticated UDP progress at degradation boundary")
+                    }
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "udp_signal_ignored",
+                        sample_index as usize,
+                        ",\"reason\":\"malformed_or_unadmitted\"",
+                    );
+                }
+                Ok(_) => emit_diagnostic(
+                    args,
+                    "client",
+                    "udp_signal_ignored",
+                    sample_index as usize,
+                    ",\"reason\":\"unexpected_peer\"",
+                ),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(_) => fail("UDP health receive failed"),
+            }
+            let state = health.observe(PathId(1), bad).unwrap();
+            let state_name = match state {
+                HealthState::Unknown => "unknown",
+                HealthState::Healthy => "healthy",
+                HealthState::Degraded => "degraded",
+                HealthState::Failed => "failed",
+            };
+            emit_diagnostic(
+                args,
+                "client",
+                "udp_health_sample",
+                sample_index as usize,
+                &format!(
+                    ",\"pto\":3,\"loss_per_mille\":1000,\"state\":\"{}\"",
+                    state_name
+                ),
+            );
+            if failover.udp_health_at(state, sample_index as u64 * 100_000) {
+                println!(
+                    "carrier_event name=udp_health_failed session=7001 generation=0 threshold={} reason=authenticated_delivery_ack_timeout",
+                    health_limits.fail_after
+                );
+            }
+        }
+        if failover.active() != ActiveCarrier::Tcp {
+            fail("carrier health threshold did not select TCP")
+        }
+    } else {
+        println!(
+            "carrier_event name=controlled_udp_stop session=7001 generation=0 reason=bounded_application_fault_injection"
+        );
+    }
     let mut negotiation2 =
         VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
     let hello2 = negotiation2.client_hello().unwrap();
@@ -1273,7 +1387,12 @@ fn failover_client(args: &[String]) {
     let resp = read_frame(&mut tcp, 1024).unwrap();
     let mut ts = hs2.finish(&resp, context(2)).unwrap();
     println!("carrier_event name=tcp_resume_guard session=7001 generation=1");
-    for record in records.into_iter().skip(1) {
+    let resend_records = if automatic_health_failover {
+        failover.tcp_resend().unwrap().len()
+    } else {
+        count.saturating_sub(1)
+    };
+    for record in records.into_iter().skip(1).take(resend_records) {
         let logical = ProcessMessage::Data {
             session: SessionId(7001),
             record: record.clone(),
@@ -1298,6 +1417,9 @@ fn failover_client(args: &[String]) {
                 count as u64 + 4,
             )
             .unwrap();
+        if automatic_health_failover {
+            failover.confirm(DataId(record.offset)).unwrap();
+        }
         emit_diagnostic(
             args,
             "client",
@@ -1327,9 +1449,16 @@ fn failover_client(args: &[String]) {
         count + 1,
         ",\"capture\":\"metadata-only\",\"payload\":false,\"keys\":false,\"bounded\":true",
     );
+    let mode = if automatic_health_failover {
+        "automatic_health_failure"
+    } else {
+        "controlled_udp_stop"
+    };
     println!(
-        "failover_client_ok session=7001 count={count} application_bytes_total={} controlled_udp_stop=true",
-        count * bytes
+        "failover_client_ok session=7001 count={count} application_bytes_total={} failover_mode={} controlled_udp_stop={}",
+        count * bytes,
+        mode,
+        !automatic_health_failover
     );
 }
 fn failover_gate(args: &[String]) {

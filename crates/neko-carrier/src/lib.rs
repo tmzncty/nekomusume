@@ -1475,6 +1475,22 @@ impl FailoverController {
             false
         }
     }
+    /// Switches an active UDP carrier only after the caller's carrier-health
+    /// contract has reached `Failed`. Degraded/healthy samples are not a hard
+    /// failure and cannot bypass the health model's threshold or hysteresis.
+    pub fn udp_health_at(&mut self, state: HealthState, now_us: u64) -> bool {
+        if self.active != ActiveCarrier::Udp || state != HealthState::Failed {
+            return false;
+        }
+        self.failure_started_us.get_or_insert(now_us);
+        self.active = ActiveCarrier::Tcp;
+        self.metrics.switches = self.metrics.switches.saturating_add(1);
+        self.metrics.recovery_events = self.metrics.recovery_events.saturating_add(1);
+        self.metrics.last_recovery_latency_us = self
+            .failure_started_us
+            .and_then(|started| now_us.checked_sub(started));
+        true
+    }
     pub fn tcp_resend(&self) -> Result<Vec<(DataId, Vec<u8>)>, FailoverError> {
         if self.active != ActiveCarrier::Tcp {
             return Err(FailoverError::WrongCarrier);
@@ -1941,6 +1957,9 @@ impl CarrierHealthEvidence {
     }
     pub fn transitions(&self) -> &[HealthTransitionEvidence] {
         &self.transitions
+    }
+    pub fn path(&self, path: PathId) -> Option<HealthRecord> {
+        self.health.path(path)
     }
     pub fn json(&self) -> String {
         let samples = self.samples.iter().map(|e| format!("{{\"path\":{},\"rtt_us\":{},\"loss_per_mille\":{},\"pto\":{},\"state\":\"{}\"}}", e.path.0, e.sample.rtt_us, e.sample.loss_per_mille, e.sample.pto, health_state_name(e.state))).collect::<Vec<_>>().join(",");
@@ -2524,6 +2543,66 @@ mod manager_tests {
 #[cfg(test)]
 mod health_evidence_tests {
     use super::*;
+
+    #[test]
+    fn failed_health_state_is_the_only_failover_adapter_trigger() {
+        let limits = HealthLimits::default();
+        let mut evidence =
+            CarrierHealthEvidence::new(limits, HealthEvidenceLimits { max_samples: 16 }).unwrap();
+        let mut failover = FailoverController::new(limits.fail_after, 2, 32).unwrap();
+        let bad = HealthSample {
+            rtt_us: 100_000,
+            loss_per_mille: 1_000,
+            pto: 3,
+        };
+        for index in 1..limits.fail_after {
+            let state = evidence.observe(PathId(9), bad).unwrap();
+            assert!(!failover.udp_health_at(state, index as u64));
+            assert_eq!(failover.active(), ActiveCarrier::Udp);
+        }
+        let failed = evidence.observe(PathId(9), bad).unwrap();
+        assert_eq!(failed, HealthState::Failed);
+        assert!(failover.udp_health_at(failed, limits.fail_after as u64));
+        assert_eq!(failover.active(), ActiveCarrier::Tcp);
+        assert!(!failover.udp_health_at(failed, limits.fail_after as u64 + 1));
+        assert_eq!(failover.metrics.switches, 1);
+    }
+
+    #[test]
+    fn recovered_health_respects_hysteresis_and_never_switches() {
+        let limits = HealthLimits::default();
+        let mut evidence =
+            CarrierHealthEvidence::new(limits, HealthEvidenceLimits { max_samples: 16 }).unwrap();
+        let mut failover = FailoverController::new(limits.fail_after, 2, 32).unwrap();
+        let bad = HealthSample {
+            rtt_us: 100_000,
+            loss_per_mille: 1_000,
+            pto: 3,
+        };
+        let good = HealthSample {
+            rtt_us: 1_000,
+            loss_per_mille: 0,
+            pto: 0,
+        };
+        for _ in 0..limits.degrade_after {
+            assert_ne!(
+                evidence.observe(PathId(9), bad).unwrap(),
+                HealthState::Failed
+            );
+        }
+        assert_eq!(
+            evidence.path(PathId(9)).unwrap().state,
+            HealthState::Degraded
+        );
+        assert_eq!(
+            evidence.observe(PathId(9), good).unwrap(),
+            HealthState::Degraded
+        );
+        let recovered = evidence.observe(PathId(9), good).unwrap();
+        assert_eq!(recovered, HealthState::Healthy);
+        assert!(!failover.udp_health_at(recovered, 10));
+        assert_eq!(failover.active(), ActiveCarrier::Udp);
+    }
 
     #[test]
     fn evidence_is_bounded_and_json_is_deterministic() {
