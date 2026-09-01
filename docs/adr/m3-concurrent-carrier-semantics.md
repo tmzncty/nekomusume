@@ -216,10 +216,12 @@ The pre-established TCP fallback carries exactly three sequential encrypted
 the sole application-data owner. Each message binds Session ID, target PathId,
 PathGeneration, DeliveryEpoch, and a distinct challenge ID. The responder
 recomputes admission from the current bounded Session runtime (open state and
-queue/byte limits); it does not accept a caller-supplied boolean.
+queue/byte limits); it does not accept a caller-supplied boolean. It emits
+`tcp_resource_admitted` and enters application-data handling only after all
+three exact, authenticated, ordered requests are admitted.
 
 The runtime permits one outstanding request, three total observations, a
-one-second response deadline, 128-byte ciphertext frames, and at most
+one-second whole-sequence readiness deadline on both peers, 128-byte ciphertext frames, and at most
 `3 * 128` responder ciphertext bytes. Requests are consecutive challenge IDs
 1..=3, so the fixed total also bounds rate. Authentication failure, malformed or
 wrong tuple, duplicate/non-consecutive challenge, timeout, or an unadmitted

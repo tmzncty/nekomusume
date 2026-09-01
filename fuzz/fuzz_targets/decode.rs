@@ -1,6 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use neko_session::ProcessMessage;
 use neko_wire::{decode, encode, NegotiationRole, VersionNegotiator};
 
 fuzz_target!(|input: &[u8]| {
@@ -19,6 +20,18 @@ fuzz_target!(|input: &[u8]| {
         }
     });
     assert!(result.is_ok(), "decoder panicked on fuzz input");
+
+    // Runtime process messages are also peer-controlled after authentication.
+    // Successful decodes must round-trip exactly and remain under the fixed
+    // process-frame bound. The corpus seeds include ReadinessRequest/Response.
+    let result = std::panic::catch_unwind(|| {
+        if let Ok(message) = ProcessMessage::decode(input) {
+            let encoded = message.encode().expect("decoder accepts encodable process messages");
+            assert_eq!(encoded.as_slice(), input);
+            assert!(encoded.len() <= neko_session::PROCESS_FRAME_MAX);
+        }
+    });
+    assert!(result.is_ok(), "process message decoder panicked on fuzz input");
 
     // Negotiation input is peer-controlled. Every byte string must reject or
     // establish within the fixed version-count/resource bounds without panic.

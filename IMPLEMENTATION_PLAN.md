@@ -61,7 +61,7 @@ not be promoted to public-WAN reachability.
    reproducible independently controlled IPv4/IPv6, UDP degradation -> TCP
    fallback, long-lived and NAT/endpoint-change evidence with actual parameters,
    endpoint ownership, cleanup and negative results. Self-owned same-host paths
-   remain classified as such. The D064 pre-failure seam now uses three bounded authenticated peer request/response observations, deterministic reset-on-failure manager policy, live runtime admission, and local warm/cold tests, but current-exact-head VPS warm
+   remain classified as such. The D064 pre-failure seam now uses three bounded authenticated peer request/response observations, fail-closed responder admission, one-second server readiness and remaining-duration I/O deadlines, deterministic reset-on-failure manager policy, live runtime admission, negative process tests, and local warm/cold tests, but current-exact-head VPS warm
    recovery evidence and the remaining matrix rows are still open; this item is
    intentionally not complete.
 4. [ ] **Independent release/security review.** Resolve findings, verify resource

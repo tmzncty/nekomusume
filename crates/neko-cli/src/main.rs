@@ -31,7 +31,7 @@ use signal_hook::{
 use std::{
     env, fs,
     io::{Read, Write},
-    net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket},
+    net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket},
     path::PathBuf,
     sync::{
         Arc,
@@ -361,6 +361,23 @@ fn recv_udp_until(
         }
     }
 }
+fn bound_stream_to_deadline(
+    stream: &TcpStream,
+    deadline: Instant,
+    phase_limit: Option<Duration>,
+) -> std::io::Result<()> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "experiment duration elapsed",
+        ));
+    }
+    let timeout = phase_limit.map_or(remaining, |limit| remaining.min(limit));
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))
+}
+
 fn emit_lifecycle(lifecycle: &lifecycle::Lifecycle) {
     println!(
         "lifecycle_state={} readiness={}",
@@ -842,6 +859,7 @@ fn failover_server(args: &[String]) {
     tcp.set_nonblocking(true).unwrap();
     diag.event(args, "socket_bind");
     let started = Instant::now();
+    let experiment_deadline = started + duration;
     let mut buf = [0u8; 65536];
     // Explicitly opt-in, bounded application-level fault seam. Production and
     // ordinary controlled-stop runs never cease replies.
@@ -1045,6 +1063,8 @@ fn failover_server(args: &[String]) {
             }
         }
         if let Ok((mut stream, _)) = tcp.accept() {
+            bound_stream_to_deadline(&stream, experiment_deadline, None)
+                .unwrap_or_else(|_| fail("TCP negotiation deadline elapsed"));
             let hello = read_frame(&mut stream, MAX_NEGOTIATION_FRAME)
                 .unwrap_or_else(|_| fail("bad negotiation"));
             let mut negotiation =
@@ -1052,9 +1072,13 @@ fn failover_server(args: &[String]) {
             let selection = negotiation
                 .server_accept_hello(&hello)
                 .unwrap_or_else(|_| fail("incompatible negotiation"));
+            bound_stream_to_deadline(&stream, experiment_deadline, None)
+                .unwrap_or_else(|_| fail("TCP negotiation deadline elapsed"));
             write_frame(&mut stream, &selection).unwrap();
             let binding = negotiation.authenticated_binding().unwrap();
             println!("carrier_event name=tcp_negotiated session=7001 generation=1 version=0");
+            bound_stream_to_deadline(&stream, experiment_deadline, None)
+                .unwrap_or_else(|_| fail("TCP handshake deadline elapsed"));
             let first = read_frame(&mut stream, 1024).unwrap_or_else(|_| fail("bad TCP handshake"));
             let (resp, mut ss, remote, resume_binding) =
                 ResponderHandshake::new_with_prologue_binding(
@@ -1074,11 +1098,17 @@ fn failover_server(args: &[String]) {
                 })
                 .unwrap_or(false)
             {
+                bound_stream_to_deadline(&stream, experiment_deadline, None)
+                    .unwrap_or_else(|_| fail("TCP handshake deadline elapsed"));
                 write_frame(&mut stream, &resp).unwrap();
                 println!("carrier_event name=tcp_authenticated session=7001 generation=1");
                 println!("carrier_event name=tcp_resume_validated session=7001 generation=1");
+                let readiness_deadline =
+                    (Instant::now() + READINESS_DEADLINE).min(experiment_deadline);
                 let mut readiness_response_bytes = 0usize;
                 for expected_challenge in 1..=READINESS_PROBES {
+                    bound_stream_to_deadline(&stream, readiness_deadline, None)
+                        .unwrap_or_else(|_| fail("readiness deadline elapsed"));
                     let ciphertext = read_frame(&mut stream, READINESS_FRAME_MAX)
                         .unwrap_or_else(|_| fail("bad readiness frame"));
                     let plain = ss
@@ -1086,7 +1116,8 @@ fn failover_server(args: &[String]) {
                         .unwrap_or_else(|_| fail("unauthenticated readiness frame"));
                     let request = ProcessMessage::decode(&plain)
                         .unwrap_or_else(|_| fail("malformed readiness request"));
-                    let admitted = readiness_admitted(&runtime, &request);
+                    let admitted = readiness_admitted(&runtime, &request)
+                        && !args.iter().any(|arg| arg == "--test-readiness-unadmitted");
                     let ProcessMessage::ReadinessRequest {
                         session,
                         target_path,
@@ -1128,11 +1159,16 @@ fn failover_server(args: &[String]) {
                             encrypted.len()
                         ),
                     );
+                    if !admitted {
+                        fail("readiness request not admitted")
+                    }
                 }
                 println!(
-                    "carrier_event name=tcp_resource_admitted session=7001 generation=1 source=runtime_limits"
+                    "carrier_event name=tcp_resource_admitted session=7001 target_path=2 generation=1 delivery_epoch=1 final_challenge=3 source=runtime_limits"
                 );
                 for _ in 0..count.saturating_sub(1) {
+                    bound_stream_to_deadline(&stream, experiment_deadline, None)
+                        .unwrap_or_else(|_| fail("TCP data deadline elapsed"));
                     let ciphertext = read_frame(&mut stream, PROCESS_FRAME_MAX)
                         .unwrap_or_else(|_| fail("bad TCP data frame"));
                     let plain = ss
@@ -1507,17 +1543,41 @@ fn failover_client(args: &[String]) {
         tcp.set_read_timeout(Some(READINESS_DEADLINE)).unwrap();
         let mut readiness_satisfied = authenticated;
         for observation_id in 1..=READINESS_PROBES {
+            if observation_id == 3 && args.iter().any(|arg| arg == "--test-readiness-short") {
+                tcp.shutdown(Shutdown::Write).unwrap();
+                fail("test readiness sequence stopped before third request")
+            }
+            if observation_id == 3 && args.iter().any(|arg| arg == "--test-readiness-stall") {
+                std::thread::sleep(READINESS_DEADLINE + Duration::from_millis(200));
+            }
             let requested = Instant::now();
             let request = ProcessMessage::ReadinessRequest {
-                session: SessionId(7001),
+                session: SessionId(
+                    if args.iter().any(|arg| arg == "--test-readiness-wrong-tuple") {
+                        7002
+                    } else {
+                        7001
+                    },
+                ),
                 target_path: 2,
                 path_generation: 1,
                 delivery_epoch: 1,
-                challenge_id: observation_id,
+                challenge_id: if observation_id == 2
+                    && args.iter().any(|arg| arg == "--test-readiness-replay")
+                {
+                    1
+                } else {
+                    observation_id
+                },
             }
             .encode()
             .unwrap();
-            write_frame(&mut tcp, &session.seal(&request).unwrap()).unwrap();
+            let mut encrypted = session.seal(&request).unwrap();
+            if observation_id == 2 && args.iter().any(|arg| arg == "--test-readiness-tamper") {
+                let last = encrypted.len() - 1;
+                encrypted[last] ^= 1;
+            }
+            write_frame(&mut tcp, &encrypted).unwrap();
             let ciphertext = read_frame(&mut tcp, READINESS_FRAME_MAX)
                 .unwrap_or_else(|_| fail("readiness response timeout or malformed frame"));
             let plain = session
@@ -1610,7 +1670,7 @@ fn failover_client(args: &[String]) {
                             observation_started
                                 .duration_since(experiment_origin)
                                 .as_micros(),
-                            now.duration_since(experiment_origin).as_micros()
+                            now.duration_since(observation_started).as_micros()
                         ),
                     );
                     if state == HealthState::Failed {

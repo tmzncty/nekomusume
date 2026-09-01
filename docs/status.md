@@ -56,3 +56,17 @@ the RC remains `false` because the independent release-readiness criteria are
 incomplete. Conversely, `IMPLEMENTATION_COMPLETE=true` does not imply RC,
 release, freeze, reachability, security approval, or production readiness.
 The `reachability` and `production` rows above remain `blocked`.
+
+### D064 local readiness repair (2026-09-01)
+
+The bounded failover responder now requires exactly three authenticated,
+ordered, current-tuple readiness requests with live `admitted=true` before it
+emits `tcp_resource_admitted` or reads application data. Negotiation, handshake,
+readiness and data reads are bounded by the remaining experiment duration; the
+whole server readiness sequence has a one-second deadline. Process tests cover
+wrong tuple, explicit unadmitted response, replayed challenge, tampered
+ciphertext, fewer than three requests and stall/timeout, and assert no admitted,
+warm, resumed or data event. `ProcessMessage::decode` is included in the bounded
+fuzz target with readiness request/response seeds. This is local implementation
+evidence only; it does not add current-head VPS evidence or change any release,
+freeze, production or canonical-corpus flag.

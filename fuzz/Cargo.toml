@@ -11,6 +11,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 neko-wire = { path = "../crates/neko-wire" }
+neko-session = { path = "../crates/neko-session" }
 
 [[bin]]
 name = "decode"

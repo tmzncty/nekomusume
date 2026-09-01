@@ -70,6 +70,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "neko-session"
+version = "0.1.0"
+
+[[package]]
 name = "neko-wire"
 version = "0.1.0"
 
@@ -78,6 +82,7 @@ name = "neko-wire-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
+ "neko-session",
  "neko-wire",
 ]
 

@@ -509,6 +509,7 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
 }
 #[test]
 fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
+    let _lock = FAILOVER_TEST_LOCK.lock().unwrap();
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("warm-failover-server");
     let cp = tmp("warm-failover-client");
@@ -1410,6 +1411,7 @@ fn tcp_and_udp_reject_unsupported_selected_version_before_noise() {
     }
 }
 
+static FAILOVER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static PERIODIC_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn periodic_test_port() -> u16 {
@@ -1627,4 +1629,124 @@ fn periodic_server_signal_cleanup_is_bounded() {
     assert!(log.contains("cleanup=verified"), "{log}");
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
+}
+
+#[test]
+fn warm_readiness_failures_close_before_admission_or_application_data() {
+    let _lock = FAILOVER_TEST_LOCK.lock().unwrap();
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    for (name, seam, server_seam) in [
+        (
+            "wrong-tuple",
+            "--test-readiness-wrong-tuple",
+            "--diagnostic",
+        ),
+        (
+            "admitted-false",
+            "--diagnostic",
+            "--test-readiness-unadmitted",
+        ),
+        (
+            "replayed-challenge",
+            "--test-readiness-replay",
+            "--diagnostic",
+        ),
+        (
+            "tampered-ciphertext",
+            "--test-readiness-tamper",
+            "--diagnostic",
+        ),
+        ("fewer-than-three", "--test-readiness-short", "--diagnostic"),
+        ("readiness-stall", "--test-readiness-stall", "--diagnostic"),
+    ] {
+        let sp = tmp(&format!("negative-{name}-server"));
+        let cp = tmp(&format!("negative-{name}-client"));
+        let sk = key(bin, &sp);
+        let ck = key(bin, &cp);
+        let udp = 40084u16;
+        let tcp = 40085u16;
+        let started = Instant::now();
+        let server = Command::new(bin)
+            .args([
+                "failover-server",
+                "--udp-port",
+                &udp.to_string(),
+                "--tcp-port",
+                &tcp.to_string(),
+                "--identity",
+                sp.to_str().unwrap(),
+                "--client-key",
+                &ck,
+                "--count",
+                "3",
+                "--bytes",
+                "16",
+                "--duration",
+                "3",
+                "--udp-bind",
+                &format!("127.0.0.1:{udp}"),
+                "--tcp-bind",
+                &format!("127.0.0.1:{tcp}"),
+                "--cease-udp-replies-after",
+                "1",
+                "--diagnostic",
+                "--experiment-id",
+                &format!("negative-{name}-server"),
+                server_seam,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        thread::sleep(Duration::from_millis(150));
+        let client = Command::new(bin)
+            .args([
+                "failover-client",
+                "--addr",
+                "127.0.0.1",
+                "--udp-port",
+                &udp.to_string(),
+                "--tcp-port",
+                &tcp.to_string(),
+                "--server-key",
+                &sk,
+                "--identity",
+                cp.to_str().unwrap(),
+                "--count",
+                "3",
+                "--bytes",
+                "16",
+                "--duration",
+                "2",
+                "--automatic-health-failover",
+                seam,
+            ])
+            .output()
+            .unwrap();
+        let server = server.wait_with_output().unwrap();
+        let _ = fs::remove_file(sp);
+        let _ = fs::remove_file(cp);
+        let client_log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&client.stdout),
+            String::from_utf8_lossy(&client.stderr)
+        );
+        let server_log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&server.stdout),
+            String::from_utf8_lossy(&server.stderr)
+        );
+        assert!(!client.status.success(), "{name}: {client_log}");
+        assert!(!server.status.success(), "{name}: {server_log}");
+        assert!(started.elapsed() < Duration::from_secs(5), "{name} stalled");
+        for forbidden in [
+            "carrier_event name=tcp_resource_admitted",
+            "carrier_event name=tcp_warm",
+            "carrier_event name=tcp_resumed",
+            "tcp_delivery_ack_sent",
+        ] {
+            assert!(!server_log.contains(forbidden), "{name}: {server_log}");
+            assert!(!client_log.contains(forbidden), "{name}: {client_log}");
+        }
+    }
 }
