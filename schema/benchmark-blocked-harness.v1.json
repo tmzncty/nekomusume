@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nekomusume.dev/schema/benchmark-blocked-harness.v1.json",
+  "title": "Nekomusume benchmark harness blocker with retained samples",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "experiment_id", "git_commit", "status", "failure_stage", "contract", "samples", "cleanup_status", "cleanup_evidence"],
+  "properties": {
+    "schema": {"const": "nekomusume.benchmark-blocked-harness.v1"},
+    "experiment_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]{8,64}$"},
+    "git_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "status": {"const": "BLOCKED_HARNESS"},
+    "failure_stage": {"type": "string", "minLength": 1, "maxLength": 96},
+    "contract": {"type": "object"},
+    "samples": {"type": "array", "items": {"type": "object"}, "maxItems": 20},
+    "cleanup_status": {"enum": ["verified", "failed"]},
+    "cleanup_evidence": {"type": "object"}
+  }
+}

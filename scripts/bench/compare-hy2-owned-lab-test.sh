@@ -37,4 +37,21 @@ grep -q "HY2 artifact is not pinned" "$source_script"
 # Endpoint mismatch and unsafe output remain rejected.
 if env $base LAB_ENDPOINT_SHA256=$(printf %064d 0) LAB_REMOTE_BIND_ADDRESS=192.0.2.9 MOCK_REMOTE_INTERFACES="$interfaces" "$s" --validate >/dev/null 2>&1; then exit 1; fi
 grep -q "BENCH_RUNS must be 3..10" "$source_script"; grep -q "ports must be distinct" "$source_script"
+# Fake-command timing evidence: diagnostics and nonzero exit stay distinct from the sentinel.
+cat >"$tmp/fake-time" <<'FAKE'
+#!/bin/sh
+out=$1
+printf '%s\n' 'Command exited with non-zero status 9' >"$out"
+printf '%s\n' '{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":0.25,"cpu_user_seconds":0.01,"cpu_system_seconds":0.02,"rss_kib":9,"exit_code":9}' >>"$out"
+exit 9
+FAKE
+chmod +x "$tmp/fake-time"
+set +e; "$tmp/fake-time" "$tmp/fake-time.out"; fake_rc=$?; set -e
+[ "$fake_rc" -eq 9 ]
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" parse-time "$tmp/fake-time.out" | grep -q '"exit_code":9'
+# Cleanup/reap and retention contracts are executable/static invariants of the harness.
+grep -Fq 'trap on_exit EXIT; trap on_signal INT TERM' "$source_script"
+grep -Fq 'wait "$pid" 2>/dev/null || true' "$source_script"
+grep -Fq 'remote_process_groups_reaped' "$source_script"
+grep -Fq 'atomic_append "$row"' "$source_script"
 echo compare-hy2-owned-lab-test-ok

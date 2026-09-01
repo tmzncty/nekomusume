@@ -47,3 +47,4 @@ test -f LICENSE-APACHE
 cargo metadata --locked --format-version 1 --no-deps | grep -q 'MIT OR Apache-2.0'
 
 bash scripts/bench/compare-hy2-owned-lab-test.sh
+python3 scripts/bench/validate-hy2-owned-lab-test.py

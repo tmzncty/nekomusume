@@ -41,15 +41,38 @@ command -v jq >/dev/null || fail 'jq required'; command -v openssl >/dev/null ||
 out=${1:-artifacts/hy2-owned-lab/result.json}; case "$out" in /*|*..*) fail 'output must be relative and non-traversing';; esac
 [ "${1:-}" != --validate ] || { echo validated; exit 0; }
 root=$(git rev-parse --show-toplevel); cd "$root"; mkdir -p "$(dirname "$out")"
-run=$(mktemp -d /tmp/neko-hy2-owned.XXXXXXXX); remote="/tmp/$(basename "$run")"; records=$run/records.jsonl; : >"$records"
-cleanup_status=failed
-cleanup(){
-  set +e
-  [ -n "${hy2_client_pid:-}" ] && kill "$hy2_client_pid" 2>/dev/null
-  ssh -o BatchMode=yes "$LAB_SSH_TARGET" "pkill -TERM -f '^$remote/(hysteria|neko-cli|echo-server.py)' 2>/dev/null || true; test ! -e '$remote/pids' || while read p; do kill \"\$p\" 2>/dev/null || true; done <'$remote/pids'; rm -rf '$remote'" >/dev/null 2>&1
-  rm -rf "$run"
+run=$(mktemp -d /tmp/neko-hy2-owned.XXXXXXXX); remote="/tmp/$(basename "$run")"; records="$out.samples.jsonl"; touch "$records"
+validator=$root/scripts/bench/validate-hy2-owned-lab.py
+cleanup_done=0; cleanup_ok=0; failure_stage=setup; local_pids=(); active_spid=; remote_started=0; remote_resources=$run/remote-resources.json
+atomic_append(){ local source=$1 temporary; temporary=$(mktemp "$(dirname "$records")/.samples.XXXXXXXX"); cat "$records" "$source" >"$temporary"; mv -f "$temporary" "$records"; }
+terminate_local(){
+  local pid
+  for pid in "${local_pids[@]:-}"; do [ -n "$pid" ] || continue; kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true; done
+  sleep .1
+  for pid in "${local_pids[@]:-}"; do [ -n "$pid" ] || continue; kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; done
+  local_pids=()
 }
-trap cleanup EXIT INT TERM
+cleanup(){
+  local rc=${1:-$?} local_residual=0 remote_residual=1
+  [ "$cleanup_done" -eq 0 ] || return "$rc"; cleanup_done=1; set +e; trap - EXIT INT TERM
+  [ -z "${active_spid:-}" ] || { kill -TERM "$active_spid" 2>/dev/null || true; wait "$active_spid" 2>/dev/null || true; active_spid=; }
+  terminate_local
+  for p in "${ports[@]}"; do ss -H -lntup "sport = :$p" | grep -q . && local_residual=$((local_residual+1)); done
+  if [ "$remote_started" -eq 1 ]; then
+    ssh -o BatchMode=yes "$LAB_SSH_TARGET" "if test -r '$remote/pids'; then while read p; do kill -TERM -- -"\$p" 2>/dev/null || kill -TERM "\$p" 2>/dev/null || true; done <'$remote/pids'; sleep .1; while read p; do kill -KILL -- -"\$p" 2>/dev/null || kill -KILL "\$p" 2>/dev/null || true; done <'$remote/pids'; fi; jq -s . '$remote'/*-resource.json 2>/dev/null || printf '[]'; for p in '${ports[0]}' '${ports[1]}' '${ports[3]}'; do ! ss -H -lntup "sport = :\$p" | grep -q . || exit 1; done" >"$remote_resources" 2>/dev/null && ssh -o BatchMode=yes "$LAB_SSH_TARGET" "rm -rf '$remote'; test ! -e '$remote'" >/dev/null 2>&1 && remote_residual=0
+  else remote_residual=0; fi
+  [ "$local_residual" -eq 0 ] && [ "$remote_residual" -eq 0 ] && cleanup_ok=1
+  return "$rc"
+}
+blocked(){
+  local stage=$1; failure_stage=$stage; cleanup 0
+  python3 "$validator" blocked --records "$records" --output "$out" --stage "$stage" --commit "$(git rev-parse HEAD)" --runs "$RUNS" --bytes "$BYTES" --payload-hash "${payload_hash:-$(printf empty | sha256sum | awk '{print $1}')}" --cleanup-ok "$cleanup_ok"
+  rm -rf "$run"
+  echo "$out" >&2; exit 2
+}
+on_signal(){ blocked signal; }
+on_exit(){ local rc=$?; [ "$rc" -eq 0 ] || blocked "$failure_stage"; }
+trap on_exit EXIT; trap on_signal INT TERM
 for p in "${ports[@]}"; do ! ss -H -lntup "sport = :$p" | grep -q . || fail "local experimental port $p occupied"; ssh -o BatchMode=yes "$LAB_SSH_TARGET" "! ss -H -lntup 'sport = :$p' | grep -q ." || fail "remote experimental port $p occupied"; done
 payload=$run/payload.bin; dd if=/dev/zero of="$payload" bs=1 count="$BYTES" status=none; payload_hash=$(sha256sum "$payload"|awk '{print $1}')
 cp "$NEKO_BIN" "$run/neko-cli"; cp "$HY2_BIN" "$run/hysteria"; cp scripts/bench/process-resource-sampler.py scripts/bench/echo-payload.py "$run/"
@@ -88,9 +111,9 @@ for _ in range(n):
 s.close()
 PY
 chmod 700 "$run"/* "$run/tls"/* 2>/dev/null || true
-ssh -o BatchMode=yes "$LAB_SSH_TARGET" "umask 077; mkdir '$remote'"; tar -C "$run" -cf - neko-cli hysteria process-resource-sampler.py echo-payload.py echo-server.py payload.bin server.identity tls hy2-server.yaml | ssh -o BatchMode=yes "$LAB_SSH_TARGET" "tar -C '$remote' -xf -; chmod 700 '$remote/neko-cli' '$remote/hysteria'; : >'$remote/pids'"
+ssh -o BatchMode=yes "$LAB_SSH_TARGET" "umask 077; mkdir '$remote'"; remote_started=1; tar -C "$run" -cf - neko-cli hysteria process-resource-sampler.py echo-payload.py echo-server.py payload.bin server.identity tls hy2-server.yaml | ssh -o BatchMode=yes "$LAB_SSH_TARGET" "tar -C '$remote' -xf -; chmod 700 '$remote/neko-cli' '$remote/hysteria'; : >'$remote/pids'"
 ssh -o BatchMode=yes "$LAB_SSH_TARGET" "nohup python3 '$remote/echo-server.py' '${ports[3]}' '$RUNS' '$BYTES' >'$remote/echo.log' 2>&1 </dev/null & echo \$! >>'$remote/pids'; nohup python3 '$remote/process-resource-sampler.py' --experiment-id hy2-owned-lab --implementation hy2-v2.9.3 --role server --identity sha256:66dbdb0608f25f30 --application-bytes '$((RUNS*BYTES))' --owned-port '${ports[1]}' --interval-ms 10 --max-seconds '$((RUNS*TIMEOUT+10))' --output '$remote/hy2-server-resource.json' -- '$remote/hysteria' server -c '$remote/hy2-server.yaml' >'$remote/hy2-server.log' 2>&1 </dev/null & echo \$! >>'$remote/pids'"
-python3 "$run/process-resource-sampler.py" --experiment-id hy2-owned-lab --implementation hy2-v2.9.3 --role client --identity sha256:66dbdb0608f25f30 --application-bytes "$((RUNS*BYTES))" --owned-port "${ports[2]}" --interval-ms 10 --max-seconds "$((RUNS*TIMEOUT+10))" --output "$run/hy2-client-resource.json" -- "$run/hysteria" client -c "$run/hy2-client.yaml" >"$run/hy2-client.log" 2>&1 & hy2_client_pid=$!
+python3 "$run/process-resource-sampler.py" --experiment-id hy2-owned-lab --implementation hy2-v2.9.3 --role client --identity sha256:66dbdb0608f25f30 --application-bytes "$((RUNS*BYTES))" --owned-port "${ports[2]}" --interval-ms 10 --max-seconds "$((RUNS*TIMEOUT+10))" --output "$run/hy2-client-resource.json" -- "$run/hysteria" client -c "$run/hy2-client.yaml" >"$run/hy2-client.log" 2>&1 & hy2_client_pid=$!; local_pids+=("$hy2_client_pid")
 for _ in $(seq 1 100); do
   ss -H -lnt "sport = :${ports[2]}"|grep -q . && break
   if ! kill -0 "$hy2_client_pid" 2>/dev/null; then
@@ -102,27 +125,29 @@ for _ in $(seq 1 100); do
 done
 ss -H -lnt "sport = :${ports[2]}"|grep -q . || fail 'HY2 forwarding listener not ready'
 run_client(){
- impl=$1 run_no=$2 cmd=$3 raw=$run/raw.json stats=$run/stats
- : >"$raw"; : >"$stats"; set +e; timeout "$TIMEOUT" /usr/bin/time -f '%e %U %S %M %x' -o "$stats" bash -c "$cmd" >"$raw" 2>"$run/client.err"; rc=$?; set -e
- elapsed=$(awk '{print $1}' "$stats" 2>/dev/null || true); user=$(awk '{print $2}' "$stats" 2>/dev/null || true); sys=$(awk '{print $3}' "$stats" 2>/dev/null || true); rss=$(awk '{print $4}' "$stats" 2>/dev/null || true); fd=$(jq -r '.fd_count//empty' "$raw" 2>/dev/null||true); app=$(jq -r '.application_bytes//empty' "$raw" 2>/dev/null||true); h=$(jq -r '.payload_sha256//empty' "$raw" 2>/dev/null||true); failure=0
- [ "$rc" -eq 0 ] && [ "$app" = "$BYTES" ] && [ "$h" = "$payload_hash" ] && [[ "$fd" =~ ^[0-9]+$ ]] || failure=1
- jq -nc --arg name "$impl-$run_no" --arg impl "$impl" --argjson run "$run_no" --argjson failures "$failure" --arg e "$elapsed" --arg u "$user" --arg s "$sys" --arg r "$rss" --arg f "$fd" --argjson bytes "$BYTES" --arg hash "$h" --argjson rc "$rc" '{name:$name,implementation:$impl,run:$run,failures:$failures,elapsed_seconds:(if $e=="" then null else ($e|tonumber) end),cpu_user_seconds:(if $u=="" then null else ($u|tonumber) end),cpu_system_seconds:(if $s=="" then null else ($s|tonumber) end),rss_kib:(if $r=="" then null else ($r|tonumber) end),fd_count:(if $f=="" then null else ($f|tonumber) end),application_bytes:$bytes,payload_sha256:(if $hash=="" then null else $hash end),wire_bytes:null,exit_code:$rc}' >>"$records"
+ local impl=$1 run_no=$2 cmd=$3 raw=$run/raw.json stats=$run/stats.jsonl parsed=$run/time.json row=$run/record.json rc elapsed user sys rss fd app h failure=0 stage=null
+ : >"$raw"; : >"$stats"; failure_stage="$impl-$run_no-client"
+ set +e; timeout "$TIMEOUT" /usr/bin/time -a -f '{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":%e,"cpu_user_seconds":%U,"cpu_system_seconds":%S,"rss_kib":%M,"exit_code":%x}' -o "$stats" bash -c "$cmd" >"$raw" 2>"$run/client.err"; rc=$?; set -e
+ if python3 "$validator" parse-time "$stats" >"$parsed" 2>/dev/null; then elapsed=$(jq -r .elapsed_seconds "$parsed"); user=$(jq -r .cpu_user_seconds "$parsed"); sys=$(jq -r .cpu_system_seconds "$parsed"); rss=$(jq -r .rss_kib "$parsed"); else elapsed=null; user=null; sys=null; rss=null; failure=1; stage=time_parse; fi
+ fd=$(jq -r 'if (.fd_count|type)=="number" and .fd_count>=0 and (.fd_count|floor)==.fd_count then .fd_count else "null" end' "$raw" 2>/dev/null || echo null); app=$(jq -r 'if (.application_bytes|type)=="number" then .application_bytes else "null" end' "$raw" 2>/dev/null || echo null); h=$(jq -r 'if (.payload_sha256|type)=="string" then .payload_sha256 else "" end' "$raw" 2>/dev/null || true)
+ [ "$rc" -eq 0 ] || { failure=1; stage=client_exit; }; [ "$app" = "$BYTES" ] || { failure=1; stage=application_bytes; }; [ "$h" = "$payload_hash" ] || { failure=1; stage=payload_hash; }; [ "$fd" != null ] || { failure=1; stage=resource_evidence; }
+ [ "$failure" -eq 0 ] && stage=null
+ jq -nc --arg name "$impl-$run_no" --arg impl "$impl" --argjson run "$run_no" --argjson failures "$failure" --argjson e "$elapsed" --argjson u "$user" --argjson s "$sys" --argjson r "$rss" --argjson f "$fd" --argjson app "$app" --arg h "$h" --argjson rc "$rc" --argjson stage "$stage" '{name:$name,implementation:$impl,run:$run,failures:$failures,elapsed_seconds:$e,cpu_user_seconds:$u,cpu_system_seconds:$s,rss_kib:$r,fd_count:$f,application_bytes:$app,payload_sha256:(if $h=="" then null else $h end),wire_bytes:null,exit_code:$rc,failure_stage:$stage}' >"$row"
+ atomic_append "$row"
 }
 for i in $(seq 1 "$RUNS"); do
- ssh -o BatchMode=yes "$LAB_SSH_TARGET" "python3 '$remote/process-resource-sampler.py' --experiment-id neko-owned-lab-$i --implementation nekomusume --role server --identity sha256:$(sha256sum "$run/neko-cli"|cut -c1-16) --application-bytes '$BYTES' --owned-port '${ports[0]}' --interval-ms 10 --max-seconds '$TIMEOUT' --output '$remote/neko-server-$i-resource.json' -- '$remote/neko-cli' server --transport tcp --bind '${bind_authority}:${ports[0]}' --port '${ports[0]}' --identity '$remote/server.identity' --client-key '$client_pub' --bytes '$BYTES' --count 1 --duration '$TIMEOUT' >'$remote/neko-server-$i.log' 2>&1" & spid=$!
+ ssh -o BatchMode=yes "$LAB_SSH_TARGET" "python3 '$remote/process-resource-sampler.py' --experiment-id neko-owned-lab-$i --implementation nekomusume --role server --identity sha256:$(sha256sum "$run/neko-cli"|cut -c1-16) --application-bytes '$BYTES' --owned-port '${ports[0]}' --interval-ms 10 --max-seconds '$TIMEOUT' --output '$remote/neko-server-$i-resource.json' -- '$remote/neko-cli' server --transport tcp --bind '${bind_authority}:${ports[0]}' --port '${ports[0]}' --identity '$remote/server.identity' --client-key '$client_pub' --bytes '$BYTES' --count 1 --duration '$TIMEOUT' >'$remote/neko-server-$i.log' 2>&1" & spid=$!; active_spid=$spid
  sleep .15
  run_client nekomusume "$i" "'$run/neko-cli' client --transport tcp --addr '${bind_authority}:${ports[0]}' --port '${ports[0]}' --identity '$run/client.identity' --server-key '$server_pub' --bytes '$BYTES' --count 1 --duration '$TIMEOUT' --payload-file '$payload' --json"
- wait "$spid" || true
+ wait "$spid" || true; active_spid=
  run_client hy2 "$i" "python3 '$run/echo-payload.py' --host 127.0.0.1 --port '${ports[2]}' --payload-file '$payload' --timeout '$TIMEOUT'"
 done
-kill "$hy2_client_pid" 2>/dev/null || true; wait "$hy2_client_pid" || true; unset hy2_client_pid
-ssh -o BatchMode=yes "$LAB_SSH_TARGET" "while read p; do kill \"\$p\" 2>/dev/null || true; done <'$remote/pids'; sleep .2; for p in '${ports[0]}' '${ports[1]}' '${ports[3]}'; do ! ss -H -lntup \"sport = :\$p\"|grep -q . || exit 1; done"
-for p in "${ports[2]}"; do ! ss -H -lntup "sport = :$p"|grep -q . || fail 'local cleanup failed'; done
-remote_resources=$run/remote-resources.json; ssh -o BatchMode=yes "$LAB_SSH_TARGET" "jq -s . '$remote'/*-resource.json" >"$remote_resources"
+kill "$hy2_client_pid" 2>/dev/null || true; wait "$hy2_client_pid" || true; local_pids=(); unset hy2_client_pid
+failure_stage=cleanup; cleanup 0; [ "$cleanup_ok" -eq 1 ] || fail 'cleanup verification failed'
 resources=$run/resources.json; jq -s 'add' <(jq -s . "$run/hy2-client-resource.json") "$remote_resources" >"$resources"
 mtu=$(ip route get "$LAB_REMOTE_BIND_ADDRESS" | sed -n 's/.* mtu \([0-9]*\).*/\1/p'); [ -n "$mtu" ] || mtu=$(cat /sys/class/net/$(ip route get "$LAB_REMOTE_BIND_ADDRESS"|awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}')/mtu)
 commit=$(git rev-parse HEAD); neko_hash=$(sha256sum "$run/neko-cli"|awk '{print $1}'); now=$(date -u +%FT%TZ)
-jq -s --arg commit "$commit" --arg endpoint "$LAB_ENDPOINT_ID" --arg mtu "$mtu" --arg hash "$payload_hash" --arg neko_hash "$neko_hash" --arg at "$now" --argjson runs "$RUNS" --argjson bytes "$BYTES" --slurpfile resources "$resources" 'def pct($x;$p): if ($x|length)==0 then null else ($x|sort|.[((($x|length)-1)*$p|ceil)]) end; {schema:"nekomusume.benchmark-result.v1",experiment_id:"hy2-owned-lab-paired",git_commit:$commit,mode:"controlled-owned-lab",transport:"deterministic",scope:"self-owned-client-vps",bounds:{maximum_duration_ms:300000,application_bytes_max:($bytes*$runs*2)},contract:{endpoint_id:$endpoint,route_id:"same-client-vps-nearby-interleaved",mtu:($mtu|tonumber),security_profile:"authenticated encrypted research configuration",load_profile:"single-stream exact authenticated echo",payload_bytes:$bytes,payload_sha256:$hash,runs_per_implementation:$runs,nekomusume_binary_sha256:$neko_hash,hy2_version:"v2.9.3",hy2_binary_sha256:"66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1",wire_bytes_nullable:true,captured_at:$at},samples:.,summary:(group_by(.implementation)|map({implementation:.[0].implementation,failures:(map(.failures)|add),median_exchange_latency_ms:(pct([.[]|select(.failures==0)|.elapsed_seconds*1000];0.5)),p95_exchange_latency_ms:(pct([.[]|select(.failures==0)|.elapsed_seconds*1000];0.95)),application_bytes:(map(.application_bytes)|add),wire_bytes:null})),resources:$resources[0],cleanup_status:"verified"}' "$records" >"$out"
-cleanup_status=verified
-ssh -o BatchMode=yes "$LAB_SSH_TARGET" "rm -rf '$remote'"; rm -rf "$run"; trap - EXIT INT TERM
-echo "$out"
+failure_stage=final_assembly
+jq -s --arg commit "$commit" --arg endpoint "$LAB_ENDPOINT_ID" --arg mtu "$mtu" --arg hash "$payload_hash" --arg neko_hash "$neko_hash" --arg at "$now" --argjson runs "$RUNS" --argjson bytes "$BYTES" --slurpfile resources "$resources" 'def pct($x;$p): if ($x|length)==0 then null else ($x|sort|.[((($x|length)-1)*$p|ceil)]) end; {schema:"nekomusume.benchmark-result.v1",experiment_id:"hy2-owned-lab-paired",git_commit:$commit,mode:"controlled-owned-lab",transport:"deterministic",scope:"self-owned-client-vps",bounds:{maximum_duration_ms:300000,application_bytes_max:($bytes*$runs*2)},contract:{endpoint_id:$endpoint,route_id:"same-client-vps-nearby-interleaved",mtu:($mtu|tonumber),security_profile:"authenticated encrypted research configuration",load_profile:"single-stream exact authenticated echo",payload_bytes:$bytes,payload_sha256:$hash,runs_per_implementation:$runs,nekomusume_binary_sha256:$neko_hash,hy2_version:"v2.9.3",hy2_binary_sha256:"66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1",wire_bytes_nullable:true,captured_at:$at},samples:.,summary:(group_by(.implementation)|map({implementation:.[0].implementation,failures:(map(.failures)|add),median_exchange_latency_ms:(pct([.[]|select(.failures==0)|.elapsed_seconds*1000];0.5)),p95_exchange_latency_ms:(pct([.[]|select(.failures==0)|.elapsed_seconds*1000];0.95)),application_bytes:(map(select(.failures==0)|.application_bytes)|add//0),wire_bytes:null})),resources:$resources[0],cleanup_status:"verified",cleanup_evidence:{local_processes_reaped:true,local_listeners_remaining:0,remote_process_groups_reaped:true,remote_listeners_remaining:0,remote_temp_path_removed:true}}' "$records" >"$out.tmp"
+python3 "$validator" validate-result "$out.tmp" >/dev/null || blocked validation
+mv -f "$out.tmp" "$out"; rm -f "$records"; rm -rf "$run"; trap - EXIT INT TERM; echo "$out"
