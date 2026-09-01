@@ -1,293 +1,305 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-01 20:58 Asia/Shanghai
-Repository HEAD: `9d890510c5b694b71f33e13aa68937bcf4f97814`
-Previous checked implementation HEAD: `4b95e96202a02ea496fe54eb2e0adc0480f52e83`
-Previous reviewer handoff commit: `2ad248550b608a81a865c1c17ff8ce9439c19c49`
+Checked at: 2026-09-01 21:59 Asia/Shanghai
+Repository HEAD: `1eed79c01c82f723beb496100c5d3ebf74a970e4`
+Previous checked implementation HEAD: `9d890510c5b694b71f33e13aa68937bcf4f97814`
+Previous reviewer handoff commit: `ac4b30eb12872c4dbd91eb86ad24d9bf698e04f7`
 
 ## What changed
 
 One substantive coding-agent commit landed after the previous reviewer handoff:
 
-- `9d89051` — **implementation + deterministic tests + status/plan update**. It adds a pre-failure `WarmCandidate` seam to `CarrierManager`, binds readiness state to target path/generation/session/delivery epoch, adds warm/cold recovery counters, allows a TCP candidate to be connected/canonically negotiated/Noise-authenticated before the UDP failure threshold, keeps UDP as the active owner during that setup, adds a warm promotion API, preserves the cold promotion path, and adds CLI/process tests plus local manager tests. `IMPLEMENTATION_PLAN.md` correctly leaves the bounded release-evidence matrix open and `docs/status.md` says current-exact-head VPS warm evidence is still absent.
+- `1eed79c` — **runtime implementation + manager repair + codec/tests + ADR/status/plan update; no new VPS evidence**. It replaces the prior client-local synthetic D064 readiness observations with three encrypted `ReadinessRequest` / `ReadinessResponse` exchanges on the pre-established TCP fallback, binds Session/path generation/delivery epoch/challenge ID, derives the peer `admitted` bit from bounded server runtime state, resets manager readiness on wrong candidate dimensions, separates a common experiment timing origin from the UDP failure-observation start, adds exact-length runtime-codec tests, and updates D064/status text. The existing loopback warm failover process test now necessarily traverses real peer request/response I/O before it can succeed.
 
-This is meaningful progress and restores the *shape* of the Accepted D064 single-active/multi-ready design. However, the current executable path still does **not** satisfy D064's readiness-evidence contract, so it must not yet be taken to the VPS as “warm fallback evidence”.
+This closes the central provenance defect from the previous review: the official warm client no longer promotes from three locally asserted `true` booleans. It also materially improves timing provenance by recording readiness request/response times from an origin created before warm preparation.
 
-No GitHub commit-status/CI checks are attached to `9d89051` through the available status API. Local coding-environment gates, if run, remain local evidence rather than independent CI attestation.
+However, the current exact HEAD is **not yet ready for a D064 warm VPS evidence claim**. Review of the actual server path found two concrete fail-closed/boundedness defects and one verification gap introduced/exposed by the new peer-controlled runtime codec. These should be repaired first; then the rented-VPS window should be spent immediately on current-head warm/cold evidence rather than more unrelated local polish.
+
+No GitHub commit-status/CI checks are attached to `1eed79c` through the available status API. Repository-local checks, if run by the coding environment, remain local evidence rather than independent CI attestation.
 
 ## Review verdict
 
-**NEEDS REPAIR — pre-failure warm state exists, but the three D064 “readiness observations” are currently synthesized locally rather than observed through an authenticated readiness exchange. Fix the evidence source and timing before current-head VPS warm claims.**
+**NEEDS REPAIR — accept the real authenticated readiness-exchange design, but close server admission/deadline semantics and the new parser verification gate before current-head VPS warm claims.**
 
-Accept the manager-level separation between standby/warm/active and the preservation of the cold fallback path. Do not revert that structure merely because the executable readiness seam is incomplete.
-
-The release-evidence matrix remains the current phase. The fastest truthful path is now:
+The project is not globally blocked. The bounded release-evidence matrix remains the active phase. The fastest truthful sequence is:
 
 ```text
-real authenticated readiness exchange + truthful timing
-    -> deterministic warm/cold process proof
-    -> exact-head owned-VPS warm/cold evidence
-    -> HY2 equal-application paired sample / remaining VPS-only rows
+server-side D064 fail-closed + timing repair
+    -> negative/process/parser verification + full local gates
+    -> exact-head owned-VPS warm/cold recovery sample
+    -> current-head periodic/resource evidence
+    -> HY2 equal-application paired sample
 ```
 
-The rented VPS remains a high-priority evidence asset, but correctness/evidence provenance must be repaired before running the warm claim.
+The current VPS rental window is time-limited, so once the local correctness gate below is green, do not spend another cycle on unrelated documentation or speculative features.
 
 ## Review findings
 
-### R-001 PASS — manager now has a genuine pre-failure standby/warm state distinct from active ownership
+### R-101 PASS — peer proof now exists before official warm promotion
 
-`CarrierManager` can install one newer standby generation while UDP remains active, accumulate bounded readiness state, preserve a separately classified cold promotion path, and atomically promote the matching warm generation after the existing UDP failure decision. Deterministic tests cover several generation/binding/duplicate/reset cases and distinguish warm/cold counters.
+The official warm client sends three bounded encrypted readiness requests and only advances manager readiness after decrypting a response with the exact Session/path-generation/delivery-epoch/challenge tuple and `admitted=true`. The peer computes admission from live bounded runtime state instead of accepting a caller-supplied boolean. This resolves the previous review's synthetic-observation defect for the normal executable path.
 
-This is accepted as a useful implementation seam. It is not by itself network readiness evidence.
+The manager also now clears accumulated readiness when a stale/wrong candidate dimension is supplied, matching the documented consecutive-readiness reset policy more closely.
 
-### R-002 HIGH — current CLI fabricates the three readiness observations instead of observing authenticated challenge/response traffic
+### R-102 HIGH — the server does not fail closed after an unadmitted readiness response
 
-The Accepted D064 contract is explicit: readiness is a separate evidence domain and requires an **authenticated challenge/response** bound to Session identity, path generation, and delivery epoch. TCP connect/write, handshake success, or local booleans are insufficient.
-
-At current HEAD, immediately after the warm TCP Noise handshake finishes, the client calls `prepare_warm_candidate(...)` and then directly loops `observation_id in 1..=3`, passing:
+`failover_server` computes `admitted` for each readiness request and returns that bit to the client, but after the three-response loop it unconditionally emits:
 
 ```text
-authenticated=true
-resume_validated=true
-resource_admitted=true
+carrier_event name=tcp_resource_admitted ...
 ```
 
-into `observe_warm_candidate_readiness(...)` without any readiness request/response I/O between those observations. `tcp_warm_readiness` is therefore a client-local synthetic event, not an observed peer readiness exchange. The three distinct IDs prove dedup mechanics, not three successful authenticated readiness probes.
+and then enters the TCP application-data receive loop. There is no server-side `all_readiness_admitted`/candidate-admitted gate before application data.
 
-This is an evidence/implementation correctness defect relative to D064, not a cryptographic break. Do not call the current CLI path D064-ready in release evidence and do not run a VPS warm row until this is repaired.
+The official client aborts on `admitted=false`, so the happy path is not affected. But an authenticated custom peer can send an exact challenge sequence containing a wrong Session/path/generation/epoch tuple, receive `admitted=false`, continue sending the remaining readiness messages, and still reach the server's application-data loop. That makes resource admission advisory on the responder and makes the unconditional `tcp_resource_admitted` event potentially false.
 
-### R-003 HIGH — `resource_admitted=true` is asserted, not derived from a bounded admission result
+This is a D064 fail-closed correctness/evidence defect. The responder must retain a bounded aggregate admission result and refuse/close before application data if any required readiness observation was unadmitted or invalid. `tcp_resource_admitted` must be emitted only after the complete accepted sequence.
 
-D064 requires a warm candidate to be authenticated, independently validated, **resource-admitted**, and ready. Current CLI sets the readiness observation's `resource_admitted` field to literal `true`; no admission result is being observed at the readiness point.
+### R-103 HIGH — the documented one-second readiness deadline is currently client-side only
 
-The repair must derive this bit/state from a real bounded admission path already present in the runtime, or add the smallest explicit bounded admission step needed for the warm control channel. A boolean constant is not release evidence.
+D064 now documents a one-second readiness response deadline and bounded control resources. The client sets `tcp.set_read_timeout(Some(READINESS_DEADLINE))`, but the accepted server `TcpStream` does not set a corresponding read deadline before negotiation/handshake/readiness reads. Once `tcp.accept()` returns, `read_frame` can therefore block beyond the failover server's outer `duration` loop if an authenticated or partially authenticated peer stops sending.
 
-### R-004 HIGH — warm timing fields cannot currently prove pre-failure preparation
+At minimum, the server's readiness phase must have a bounded read deadline consistent with the documented D064 contract. Prefer also bounding the accepted failover connection's negotiation/handshake/data reads by the remaining experiment duration so the CLI's advertised finite duration cannot be defeated by a stalled accepted stream. Keep this scoped to the bounded research runner; do not invent an async service architecture.
 
-`failure_observation_started` is created **after** warm TCP setup. Later `failover_timing` expresses `tcp_connect_started_us`, `tcp_connected_us`, `tcp_negotiated_us`, `tcp_authenticated_us`, `resume_validated_us`, and `readiness_satisfied_us` relative to `failure_observation_started`. For a warm path those events occurred earlier, so the diagnostic origin cannot faithfully quantify how far before failure they occurred.
+### R-104 HIGH — `failure_observation_elapsed_us` changed meaning and is now mislabeled
 
-Additionally, `readiness_satisfied_us` is currently populated from the same `resume_validated`/authentication instant rather than the timestamp of the third successful readiness observation.
+The common experiment origin was the right repair, but the health diagnostic currently reports both:
 
-Event order in stdout is useful, but the planned VPS evidence explicitly needs trustworthy timestamps. Introduce a common experiment origin before warm setup and record the actual third readiness success separately from authentication/resume validation.
+```text
+failure_observation_started_us
+failure_observation_elapsed_us
+```
 
-### R-005 MEDIUM — status wording currently overstates the executable readiness source
+relative to `experiment_origin`. `failure_observation_started_us` should be an absolute-relative timestamp from the common origin. `failure_observation_elapsed_us` should remain the elapsed duration of that observation window (for example `now - observation_started`), not another absolute-relative timestamp.
 
-`docs/status.md` says warm TCP is “resource-admitted and marked warm after three distinct bound observations before controlled UDP failure.” The timing/order part is directionally true, but “observations” currently means three local manager calls with asserted booleans, not D064 authenticated readiness exchanges.
+As written, later observation windows can report a large cumulative "elapsed" value that includes all earlier warm preparation and prior windows. That can corrupt recovery/evidence analysis. Repair the field semantics or rename it if a different quantity is intended; do not silently change the established diagnostic meaning.
 
-Until R-002/R-003 are repaired, status should describe this as a **candidate pre-failure warm state seam with synthetic/local readiness inputs**, not as completed D064 readiness evidence.
+### R-105 MEDIUM — the new peer-controlled `ProcessMessage` kinds are not covered by the repository fuzz target
 
-### R-006 NOTE — VPS backlog remains real and should resume immediately after the repair
+`ReadinessRequest` and `ReadinessResponse` extend the runtime/failover `ProcessMessage::decode` surface with network-controlled bytes. Unit tests cover exact roundtrip, every truncation, trailing bytes and the boolean byte, which is good. But the repository's current `fuzz/fuzz_targets/decode.rs` exercises `neko-wire` record decoding and negotiation only; it does not fuzz `neko_session::ProcessMessage::decode`.
 
-The repository already has older self-owned cross-host TCP/UDP, controlled resume, lifecycle, resource-sampler, and periodic-session evidence, but those rows precede the new warm implementation. IPv6 remains environment-blocked and should not be mechanically retried without an actual path change.
+`AGENTS.md` requires fuzz smoke when external parser/decode behavior changes. Extend the existing fuzz target or add the smallest dedicated target so arbitrary bytes exercise `ProcessMessage::decode` under panic-free/bounded roundtrip properties, seed it with the new readiness messages, and run the relevant bounded fuzz smoke. This is a verification gate, not evidence of a known parser exploit.
 
-HY2 v2.9.3 remains pinned and the comparison methodology exists; no valid equal-application paired Nekomusume/HY2 result has landed yet. This remains a high-value rental-window target once the current correctness seam is green.
+### R-106 MEDIUM — happy-path process coverage exists, but negative readiness I/O is not yet demonstrated end-to-end
+
+The existing warm loopback process test now traverses real request/response I/O because the executable path requires it, so the happy path is meaningful. Manager tests cover several stale/generation/reset cases and codec tests cover byte-shape failures.
+
+What is still missing is process-level proof that peer failures cannot produce warm/admitted/data state: wrong tuple, `admitted=false`, malformed/tampered readiness ciphertext, wrong/replayed challenge, timeout/stall, and fewer than three valid responses should all fail closed at the correct layer. Add focused process tests around the smallest seam needed; do not build a giant adversarial framework.
+
+### R-107 NOTE — N9 remains closed and does not need reopening for this runtime codec
+
+`CANONICAL_CORPUS_V1_FROZEN=true` is explicitly corpus-scoped and excludes failover/resume/runtime process messages. The new readiness codec is documented in the D064 runtime ADR and has its own tests. Do not mutate the frozen N9 corpus merely because runtime control messages were added. If the runtime codec contract needs deterministic vectors, keep them in the failover/runtime evidence surface rather than silently broadening the frozen corpus scope.
+
+### R-108 NOTE — VPS backlog remains high-value and READY immediately after repair
+
+Older self-owned evidence already proves real IPv4 TCP/UDP current/current behavior, controlled cold resume, bounded lifecycle samples, resource sampling and periodic-session behavior at older exact commits. It does **not** prove the new D064 warm path at `1eed79c` or its repaired successor.
+
+IPv6 remains environment-blocked because the owned server path lacked a global IPv6 address/default route; do not mechanically rerun that unchanged failure. HY2 v2.9.3 remains pinned and the application-forwarding comparison seam is documented, but no valid equal-application paired result has landed yet.
 
 ## Evidence boundaries
 
 - `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, and `RELEASED=false` remain correct.
-- `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only; this warm-readiness repair is failover/resume/runtime work and does not automatically reopen N9.
-- `9d89051` provides real code/tests for pre-failure warm candidate state, but no real VPS/WAN evidence.
-- The current three readiness IDs are locally synthesized manager inputs, not peer-observed authenticated challenge/response successes.
-- Existing older VPS evidence remains valid only for the exact commits/scenarios recorded; it does not prove the new warm path.
-- The existing cold recovery path remains separately useful and should not be relabeled warm.
-- Standing authorization already covers the owned-endpoint TCP/UDP readiness/failover experiments, bounded periodic Session runs, resource sampling, cleanup, and fair HY2 comparison described below.
-- The VPS rental window is time-limited; after the readiness repair, current-exact-head VPS evidence outranks unrelated local polish.
-- IPv6 remains blocked by the previously observed absence of a real owned end-to-end IPv6 path; do not repeat unchanged failures.
+- `CANONICAL_CORPUS_V1_FROZEN=true` remains a corpus-specific fact only.
+- `1eed79c` is a real runtime correctness improvement and carries real local peer readiness I/O, but it has **no current-exact-head VPS warm evidence**.
+- The current server can still enter application-data handling after an unadmitted readiness sequence if a custom authenticated peer ignores `admitted=false`; do not call that responder fail-closed yet.
+- The current server-side readiness wait is not demonstrably bounded to the documented one-second deadline.
+- Current health timing diagnostics contain a mislabeled elapsed field; do not use the current exact-head timing output as reviewed warm/cold measurement evidence.
+- No independent GitHub CI attestation is attached to current HEAD.
+- Existing older VPS rows remain valid only for their exact commits/scenarios and are not substitutes for current-head warm evidence.
+- Standing authorization covers the owned-endpoint TCP/UDP failover, bounded periodic Session, resource sampling, cleanup and HY2 paired work below; no new maintainer permission is required.
+- The VPS rental window remains a prioritization constraint: after A-C are green, VPS-only evidence outranks unrelated local polish.
 
-## Work Package — make D064 readiness real, then spend the VPS window on exact-head evidence
+## Work Package — finish D064 fail-closed semantics, then immediately harvest current-head VPS evidence
 
-Execute A -> B -> C -> D -> E in dependency order. This is deliberately thicker than a single small repair. If A/B consume the cycle, continue into C on the same package when green; do not stop merely because one coherent commit is complete.
+Execute A -> B -> C -> D -> E in dependency order. This is intentionally a full engineering/evidence batch, not a ten-minute repair ticket. If A/B are completed quickly, continue directly into C and D on the same package.
 
-### Primary A — replace synthetic readiness with a real bounded authenticated readiness exchange
+### Primary A — make responder admission/deadlines and timing diagnostics fail closed
 
-**Goal:** make each of the three D064 readiness successes originate from actual peer-observed authenticated control traffic on the pre-established TCP fallback while UDP remains the sole Session-data owner.
-
-Before implementation, inspect the existing authenticated process/control seams and reuse the smallest safe one. Do not invent a parallel Session protocol if an existing encrypted control channel can carry the readiness exchange.
+**Goal:** make the new D064 peer readiness exchange truthful on both sides before another warm VPS claim.
 
 Required behavior:
 
-1. TCP fallback is connected, canonically negotiated and Noise-authenticated while UDP remains active.
-2. Readiness uses an explicit bounded request/response exchange over that authenticated fallback. Each success must be bound in the authenticated payload/state to at least:
-   - Session identity;
-   - target PathId / PathGeneration;
-   - delivery epoch;
-   - a distinct bounded observation/challenge ID.
-3. The server echoes/acknowledges only the exact current tuple after its bounded admission conditions are satisfied. Client-side literal `resource_admitted=true` is not acceptable evidence.
-4. Only successfully decrypted, tuple-matching, current-generation responses advance readiness. Duplicate response IDs, stale/wrong session/generation/epoch, malformed/authentication failure, timeout, and unadmitted responses cannot advance the gate.
-5. `k_ready=3` means three actual consecutive successful readiness exchanges for the candidate. A failed current-candidate readiness attempt must leave/reset readiness according to one documented deterministic policy; it must not silently preserve a misleading “consecutive” count.
-6. Readiness traffic is control/resume only. The standby TCP channel carries **zero new application data** before manager promotion.
-7. Bound the readiness exchange: payload size, outstanding probes, total observations, deadline/rate, and responder bytes. Preserve D064's amplification/resource boundary; do not create an unbounded ping loop.
-8. Keep the existing cold path intact when no eligible warm candidate exists.
-9. Do not change the frozen canonical vector corpus merely to hide this runtime gap. If a new network-visible process control message is required, document/specify it in the appropriate failover/runtime contract and add codec/parser tests; N9 corpus scope remains frozen only as already declared.
+1. Track the complete server readiness sequence. Application-data receive/resume must be reachable only after all three required current-tuple readiness requests were successfully authenticated, correctly ordered and `admitted=true`.
+2. If any required request is malformed, unauthenticated, wrong tuple/generation/session/epoch, duplicate/non-consecutive, unadmitted, or times out:
+   - do not emit `tcp_resource_admitted`;
+   - do not enter the TCP application-data loop for that candidate;
+   - terminate/fail the candidate within the bounded research-runner contract;
+   - retain a truthful diagnostic/error classification where practical.
+3. Emit `tcp_resource_admitted` only after the third accepted peer exchange. Include enough non-secret tuple/provenance fields in structured diagnostics to correlate it with the candidate generation and final challenge without relying on a prose claim.
+4. Put a real server-side readiness read deadline on the accepted TCP stream. The D064 phase must not block indefinitely waiting for a readiness frame.
+5. Preserve the failover runner's overall finite-duration boundary. If accepted-stream negotiation/handshake/data reads can presently defeat that duration, add the smallest remaining-duration read/write timeout plumbing needed to keep the bounded CLI truthful. Do not turn this into a general daemon/runtime redesign.
+6. Fix health diagnostic time semantics:
+   - `failure_observation_started_us` = timestamp from common experiment origin;
+   - `failure_observation_elapsed_us` = elapsed duration of that observation window;
+   - warm connect/auth/resume/readiness, failure decision, promotion and first resumed-data timestamps remain on the common origin;
+   - `readiness_satisfied_us` remains the actual third accepted readiness response, not authentication time.
+7. Keep cold and warm classification distinct. Do not make cold recovery advertise warm-only readiness completion fields.
+8. Do not change the frozen canonical N9 corpus or protocol bytes unrelated to this runtime control path.
 
-If there truly is no implementation path for an authenticated readiness control exchange without a new architectural choice, preserve the exact gap and use the Fallback below rather than fabricating observations.
+### Follow-up B — close negative process tests and the new parser/fuzz gate
 
-### Follow-up B — make warm evidence timing and admission provenance truthful
+**Dependency:** A implemented.
 
-**Dependency:** A present.
+Add focused deterministic tests that exercise the actual peer control path, not only manager setters.
 
-Introduce one common experiment origin **before** warm TCP preparation and keep the existing failure-observation-window origin separately.
+At minimum prove:
 
-Diagnostics/evidence must make these stages individually observable:
+- normal warm loopback produces exactly three authenticated peer readiness responses before UDP failure decision and before any TCP application data;
+- two accepted responses are insufficient to make the manager/candidate warm;
+- wrong Session/path/generation/delivery epoch receives or results in unadmitted/fail-closed behavior and no server `tcp_resource_admitted`/application success;
+- duplicate or wrong challenge cannot count toward warm readiness;
+- malformed/tampered/unauthenticated readiness ciphertext fails closed;
+- readiness timeout/stalled peer respects the server-side deadline and does not hang beyond the bounded runner contract;
+- one unadmitted observation followed by later valid-looking requests cannot reach server application-data acceptance;
+- manager consecutive-readiness reset remains correct after a failed current-candidate validation;
+- UDP remains the sole application-data owner before failure/promotion;
+- cold fallback remains functional and separately classified;
+- uncertain resend + exact authenticated Session `DeliveryAck` + receiver dedup/conflict behavior still passes after the warm repair;
+- parsed timing fields satisfy the real ordering invariant:
 
-- TCP connect started / connected;
-- canonical negotiation complete;
-- Noise authentication complete;
-- resume binding/validation complete;
-- bounded resource admission complete;
-- readiness probe 1/2/3 request/response success times;
-- exact `warm_eligible_at` / `readiness_satisfied_at` from the third valid response;
-- UDP failure observation start;
-- UDP failure decision;
-- manager promotion/new active;
-- first resumed logical data accepted/acknowledged.
+```text
+tcp connect/auth/resume/readiness_satisfied
+    < failure_decided_at
+    <= new_active_at
+    < first_resumed_data_accepted_at
+```
 
-Use a common monotonic relative origin so warm setup times are measurably **before** failure decision rather than collapsing to zero. `readiness_satisfied_us` must come from the third successful readiness exchange, not from the authentication timestamp.
+and each `failure_observation_elapsed_us` is a window duration rather than cumulative experiment time.
 
-For cold recovery, preserve the separate cold timing/classification and do not invent warm-only fields.
+For the new peer-controlled runtime codec:
 
-Update `docs/status.md` only to the evidence actually present: until real readiness exchange tests pass, do not say D064 readiness is complete.
+1. extend/add bounded fuzz coverage for `neko_session::ProcessMessage::decode`;
+2. on successful decode, require re-encode/canonical roundtrip where valid;
+3. seed readiness request/response examples if the existing smoke corpus needs them;
+4. preserve panic-free, bounded-allocation behavior for arbitrary bytes;
+5. run the relevant bounded fuzz smoke after the parser change.
 
-### Follow-up C — deterministic manager/process regressions for real readiness
+Do not convert this into a new global wire-freeze project.
+
+### Follow-up C — full local gate and exact-head release-evidence rehearsal
 
 **Dependency:** A/B green.
 
-Add tests that exercise actual readiness I/O and preserve manager safety. At minimum:
-
-- three successful encrypted readiness exchanges occur before failure decision and before any TCP application data;
-- two successes are insufficient to become warm;
-- replay/duplicate observation response cannot count twice;
-- stale/wrong target/generation/session/epoch response cannot count;
-- malformed/tampered/unauthenticated response fails closed;
-- current-candidate timeout/failure follows the documented consecutive-readiness reset policy;
-- resource admission failure prevents warm state;
-- readiness response budget/rate/outstanding limits are bounded;
-- UDP remains sole active data owner before failure;
-- failure with valid warm candidate promotes that exact generation;
-- no eligible warm candidate keeps the existing cold path and the `4b95e96` cold evidence labels;
-- failed warm attempt is retained as failed-warm evidence and any later replacement generation starts from standby/cold semantics;
-- uncertain resend + exact authenticated Session DeliveryAck + receiver dedup/conflict rules remain correct after both warm and cold promotion;
-- timing tests parse numeric fields and prove warm setup/readiness happened before `failure_decided_at`, while first resumed data happens after promotion.
-
-If process-control decoding changes, include malformed/boundary/property coverage and run the relevant fuzz smoke required by `AGENTS.md`.
-
-Run full local gates before any VPS use:
+Before VPS deployment, run the complete local gate on one exact commit:
 
 - `cargo fmt --all -- --check`;
 - `cargo check --workspace --locked`;
 - `cargo test --workspace --all-targets --locked --no-fail-fast`;
 - `cargo clippy --workspace --all-targets --locked -- -D warnings`;
 - `bash scripts/check.sh`;
-- `git diff --check`;
-- relevant fuzz smoke if external parser/control decoding changed.
+- relevant parser/process fuzz smoke;
+- `git diff --check`.
 
-### Follow-up D — exact-head owned-VPS warm/cold + periodic/resource evidence batch
+Also verify the exact warm process output mechanically enough that the later VPS collector can reject:
 
-**Dependency:** A-C green. Build/deploy one exact commit and reuse that exact binary for compatible behavior rows. This is now the highest-value rental-window work.
+- fewer/more than three readiness successes;
+- any `admitted=false`;
+- `tcp_resource_admitted` before the third valid response;
+- application data before promotion;
+- non-monotonic or semantically invalid timing fields.
 
-Within standing authorization, run scientifically distinct bounded scenarios:
+Update `docs/status.md`/D064 wording only if behavior changed materially. Keep the release-evidence matrix open and all RC/security/production/global-freeze flags unchanged.
 
-#### D1 — D064 warm automatic recovery
+### Follow-up D — current-exact-head owned-VPS D064 warm/cold + periodic/resource batch
 
-On the self-owned client/VPS pair, establish the fallback TCP candidate and obtain three **real authenticated readiness responses before UDP failure decision**. Then trigger the existing controlled UDP reply-cessation seam.
+**Dependency:** A-C green. Build/deploy one exact commit and record binary SHA-256. Reuse that exact binary across compatible rows.
 
-Record:
+This is the highest-value rental-window work once correctness is green.
 
-- exact git commit and binary SHA-256;
-- ports/actual limits/durations and endpoint ownership classification;
-- negotiation + Noise identities without secrets;
-- connect/auth/resume/admission timestamps;
-- all three readiness response IDs/timestamps and `warm_eligible_at`;
+#### D1 — paired warm/cold recovery sample on real self-owned sockets
+
+Run a bounded sample that is large enough to support the D064 warm/cold measurement contract without becoming a stress test. Prefer an interleaved batch such as **5 warm + 5 cold** recoveries if the complete batch remains comfortably inside the standing wall-clock/traffic/concurrency limits.
+
+For every run record:
+
+- exact git commit / binary hash;
+- experiment ID, ports, count/bytes/duration and endpoint-ownership class;
+- canonical negotiation and Noise authentication success without secrets;
+- warm: all three real peer readiness response IDs/timestamps, admission result and `warm_eligible_at` before failure decision;
 - proof UDP remained sole data owner before failure;
-- failure observation windows + decision timestamp;
-- promotion of the already-warm generation;
-- `fallback_class=warm`;
-- uncertain resend / exact authenticated DeliveryAck / receiver dedup-conflict result;
-- logical records/bytes, missing/duplicate/conflict counts;
-- recovery latency, CPU/RSS/FD/socket sample where available;
-- cleanup verification.
+- controlled UDP reply-cessation classification and threshold/failure decision timestamp;
+- warm vs cold fallback class and promotion gate;
+- uncertain range/resend and exact authenticated DeliveryAck result;
+- final logical records/bytes, missing/duplicate/conflict counts;
+- recovery latency per run and warm/cold median/P95 where sample size supports it;
+- process CPU/RSS/FD/socket sample where available;
+- cleanup state and retained failures.
 
-Classification must remain: controlled owned-endpoint application-level UDP reply cessation -> threshold decision -> pre-established authenticated warm TCP recovery. Not natural Internet blackhole evidence, public reachability, production failover, or security approval.
+Classification must remain: **controlled self-owned application-level UDP reply cessation -> threshold decision -> authenticated TCP recovery**. It is not natural Internet blackhole evidence, public reachability, production failover, or security approval.
 
-#### D2 — same-head cold control
+Do not repeat unchanged failures merely to chase a prettier latency distribution.
 
-Run one bounded cold control from the same exact binary/config question if useful, preserving connect/auth inside the recovery interval and `fallback_class=cold`. Do not repeat merely to chase a better latency number.
+#### D2 — current-head periodic real-socket/resource sample
 
-#### D3 — current-head periodic Session/resource sample
+After D1 cleanup, if the existing periodic runner/resource sampler is still compatible, run one scientifically distinct ~5-minute authenticated periodic Session on the same exact current binary. Keep low traffic and concurrency 1. Record process CPU/RSS/FD/socket observations, records/bytes, failures, missing/duplicate delivery and cleanup. This updates the rented-VPS resilience archive to the new runtime baseline; it is not production long-lived proof.
 
-If the periodic runner remains green on this exact commit, run one distinct ~5 minute bounded authenticated periodic Session (single run <10 min, low traffic) with process resource sampler. This updates the time-limited real-socket evidence to the current failover/runtime baseline without claiming production long-lived stability.
+Do not retry the unchanged IPv6 blocker.
 
-Do not rerun unchanged IPv6 failure. Preserve every negative row and cleanup state.
+### Follow-up E — first valid HY2 equal-application paired sample
 
-### Follow-up E — close the first valid HY2 equal-application paired sample, then reconcile ledgers
+**Dependency:** current exact-head local gate green. May proceed after D1/D2 cleanup; do not run CPU-heavy build/fuzz concurrently with performance sampling.
 
-**Dependency:** local exact-head green; independent of D1 once a trustworthy current binary exists.
+Reuse the pinned HY2 v2.9.3 artifact and the existing forwarding research seam. Do not read/reuse production Hysteria secrets and do not stop/reconfigure the existing Hysteria service.
 
-Reuse the pinned HY2 v2.9.3 artifact and existing comparison contract. Do not touch the existing production Hysteria service/config and do not weaken isolation/target guards.
+The repository's existing `scripts/bench/compare-hy2.sh` is intentionally loopback-only. **Do not weaken that guard.** If no self-owned-VPS comparison orchestrator exists yet, implement the smallest separate fail-closed orchestrator/adapter that:
 
-The pair must answer the same application question:
+- accepts only the explicitly configured owned lab endpoint contract;
+- creates experiment-only high ports/config/certificate/auth material;
+- starts a temporary HY2 server and client TCP-forwarding path plus temporary loopback echo target;
+- invokes an equivalent Nekomusume authenticated echo command;
+- uses the same deterministic payload file/length/SHA-256 and same application question: send exact bytes -> receive exact echo;
+- records same VPS/client, close time window, route/MTU metadata, authenticated-encrypted security class, single-stream/load shape, finite timeout and run count;
+- emits raw samples plus median/P95/failures, CPU user/system, max RSS, FD count and application bytes; `wire_bytes=null` unless capture provenance is trustworthy;
+- traps cleanup and verifies temporary listeners/processes/files are gone.
 
-```text
-send exact deterministic payload bytes -> receive the exact same bytes
-```
+Prefer a small interleaved/nearby paired sample (for example 5 Nekomusume + 5 HY2 runs) rather than two widely separated blocks if orchestration permits. Preserve slower/failed Nekomusume results exactly. Make **no superiority claim** from this first bounded sample.
 
-Use same owned client/VPS pair, close time window, payload file/length/hash, route/MTU metadata, authenticated+encrypted security class, single-stream/load shape, finite timeout/run count, and experiment-only ports/credentials. Prefer a small interleaved/nearby sample (for example 5 paired runs) if the current harness supports it.
+If a fair pair is genuinely blocked by an implementation/environment gap, record the exact blocker and use remaining VPS time for another already-defined current-head evidence row, not speculative features.
 
-Record raw samples, median/P95/failures, CPU user/system, max RSS, FD count and application bytes. `wire_bytes` stays null unless capture provenance is trustworthy. Preserve slower/failed Nekomusume results; make no superiority claim.
-
-If the exact Nekomusume equal-workload adapter is still missing, implement only that smallest benchmark adapter first. If the environment genuinely blocks a fair pair, record the exact blocker and use remaining VPS time for another already-defined row (package/operator smoke, current-head lifecycle, process-resource validation), not speculative features.
-
-After D/E, update release-evidence/status/navigation only to what actually ran:
-
-- link current-exact-head warm evidence only if D1 proves real pre-failure readiness exchange;
-- keep cold recovery distinct;
-- retain older rows as historical exact-commit evidence, not substitutes for current HEAD;
-- keep IPv6 environment-blocked unless the actual path changes;
-- mark HY2 comparison complete only after a semantically equal paired sample;
-- keep `IMPLEMENTATION_PLAN.md` item 3 open until remaining genuine matrix rows are closed or explicitly reviewed as environment-inapplicable;
-- preserve negative/superseded evidence;
-- keep RC/security/production/global-freeze flags unchanged.
+After D/E, reconcile release evidence/status/navigation only to what actually ran. `IMPLEMENTATION_PLAN.md` item 3 remains open until the remaining genuine matrix rows are either evidenced or explicitly reviewed as environment-inapplicable.
 
 ## Completion gates
 
-This package is complete only when:
+This package is complete only when all of the following are true:
 
-- warm candidate state remains pre-failure and single-active;
-- all three readiness successes come from actual authenticated peer responses, not local booleans;
-- resource admission is derived from a real bounded admission result;
-- readiness is session/path-generation/delivery-epoch/observation-ID bound and replay/duplicate/stale/malformed input cannot advance it;
-- readiness/control traffic is bounded and carries no new application data before promotion;
-- warm timing truthfully shows readiness before failure decision and first resumed data after promotion;
-- cold recovery remains available and separately classified;
-- deterministic process/manager tests and full local gates pass;
-- current-exact-head VPS warm evidence is captured or a new evidence-backed blocker is recorded;
-- a same-head cold control and/or periodic resource row is captured where scientifically useful;
-- the HY2 equal-application seam is materially advanced, preferably through the first valid paired sample;
-- status/evidence docs claim only what actually ran;
+- server application data cannot proceed after any failed/unadmitted readiness sequence;
+- `tcp_resource_admitted` is emitted only after the complete accepted readiness gate;
+- server-side readiness/accepted-stream waits respect finite bounds;
+- `failure_observation_elapsed_us` again means elapsed window duration;
+- the official warm path requires three real authenticated exact-tuple peer responses and keeps UDP as sole data owner before promotion;
+- negative process tests prove malformed/tampered/wrong/unadmitted/stalled readiness cannot create warm/admitted/data state;
+- new `ProcessMessage` decode kinds have bounded fuzz/property coverage and the relevant fuzz smoke passes;
+- full local workspace gates pass on the exact VPS candidate commit;
+- current-head real owned-VPS warm evidence exists only if D1 proves pre-failure peer readiness and correct timing;
+- cold results remain separately classified;
+- current-head periodic/resource evidence is preserved if D2 runs;
+- HY2 comparison is marked complete only if an equal-application paired sample really runs;
+- IPv6 remains environment-blocked unless the actual owned path changes;
+- negative and superseded evidence are retained;
 - `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, and `RELEASED=false` remain unchanged.
 
 ## Fallback
 
-If implementing a real authenticated readiness exchange genuinely requires a new unresolved architecture decision rather than an implementation detail already selected by D064:
+If A/B exposes a deeper failover/runtime correctness problem:
 
-1. keep the current manager warm-state seam but classify readiness inputs as synthetic/local only;
-2. do not run/claim D064 warm VPS evidence;
-3. preserve the specific protocol-choice gap in the normal decision process;
-4. spend the rented-VPS window on READY independent rows: current-head periodic Session/resource sampling, equal-application HY2 comparison, package/operator/lifecycle evidence, and existing cold recovery classification;
-5. do not ask for new WAN permission already covered by standing authorization.
+1. keep release/VPS warm claims blocked for the affected path;
+2. preserve a minimal deterministic reproducer and exact failing state;
+3. repair correctness before D064 warm evidence;
+4. continue any **independent** VPS evidence row only if it does not rely on the broken path and answers a genuinely new exact-head question;
+5. otherwise spend the cycle on the HY2 owned-VPS orchestrator/adapter or other local instrumentation that directly unlocks the next valid VPS experiment.
 
-If D1 fails for a runtime reason after A-C are green, preserve the exact failed row and use only a changed diagnostic variable before retrying. D3 and E remain independently READY.
+If the environment blocks fair HY2 comparison, do not modify production Hysteria, firewall, route or tunnel configuration to force it.
 
 ## Do not expand into
 
-- calling three local manager mutations “authenticated readiness probes”;
-- marking literal `resource_admitted=true` as evidence;
-- changing frozen canonical corpus bytes to avoid runtime failover work;
-- rewriting D064 as cold-fallback-only without an explicit superseding decision;
-- striping/aggregation, enabled FEC, 0-RTT or exotic carriers without observed-problem gates;
-- unchanged IPv6 retries;
-- third-party targets, scanning, production route/firewall/DNS/proxy/tunnel/qdisc changes, or experiments outside standing authorization;
-- RC/security/production approval or performance-superiority claims.
+- changing the frozen N9 corpus for runtime readiness messages;
+- concurrent TCP+UDP application-data striping/aggregation;
+- enabled FEC, 0-RTT or exotic carriers without an observed-problem gate;
+- third-party targets, scanning or production network changes;
+- repeated IPv6 probes without a real path change;
+- >10-minute single experiments or high-volume/high-concurrency stress outside standing authorization;
+- performance superiority claims from first bounded paired samples;
+- RC/security/production approval before the independent review gate.
 
 ## Questions requiring maintainer decision
 
