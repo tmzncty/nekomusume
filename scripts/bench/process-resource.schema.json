@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nekomusume.invalid/schemas/process-resource.v1.json",
+  "title": "Nekomusume bounded process resource sample v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "experiment_id", "implementation", "role", "identity", "started_at", "ended_at", "elapsed_seconds", "exit", "cpu", "rss", "fd", "owned_experimental_sockets", "application_bytes", "sampling", "cleanup"],
+  "properties": {
+    "schema_version": {"const": "nekomusume.process-resource.v1"},
+    "experiment_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+    "implementation": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+    "role": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+    "identity": {"type": "string", "minLength": 1, "maxLength": 192},
+    "started_at": {"type": "string", "format": "date-time"},
+    "ended_at": {"type": "string", "format": "date-time"},
+    "elapsed_seconds": {"type": "number", "minimum": 0, "maximum": 602},
+    "exit": {"type": "object", "additionalProperties": false, "required": ["code", "signal", "timed_out"], "properties": {"code": {"type": ["integer", "null"], "minimum": 0, "maximum": 255}, "signal": {"type": ["integer", "null"], "minimum": 1, "maximum": 127}, "timed_out": {"type": "boolean"}}},
+    "cpu": {"$ref": "#/$defs/cpu"},
+    "rss": {"$ref": "#/$defs/rss"},
+    "fd": {"$ref": "#/$defs/fd"},
+    "owned_experimental_sockets": {"$ref": "#/$defs/sockets"},
+    "application_bytes": {"type": "integer", "minimum": 0, "maximum": 268435456},
+    "sampling": {"type": "object", "additionalProperties": false, "required": ["interval_ms", "sample_count", "max_seconds", "scope"], "properties": {"interval_ms": {"type": "integer", "minimum": 10, "maximum": 5000}, "sample_count": {"type": "integer", "minimum": 1, "maximum": 60001}, "max_seconds": {"type": "number", "minimum": 0.1, "maximum": 600}, "scope": {"const": "direct child process only"}}},
+    "cleanup": {"type": "object", "additionalProperties": false, "required": ["process_reaped", "owned_sockets_after_exit", "complete", "scope"], "properties": {"process_reaped": {"const": true}, "owned_sockets_after_exit": {"const": 0}, "complete": {"const": true}, "scope": {"const": "sampled direct child only"}}}
+  },
+  "$defs": {
+    "source": {"type": ["string", "null"], "maxLength": 256},
+    "cpu": {"type": "object", "additionalProperties": false, "required": ["user_seconds", "system_seconds", "source"], "properties": {"user_seconds": {"type": ["number", "null"], "minimum": 0}, "system_seconds": {"type": ["number", "null"], "minimum": 0}, "source": {"$ref": "#/$defs/source"}}},
+    "rss": {"type": "object", "additionalProperties": false, "required": ["max_kib", "unit", "source"], "properties": {"max_kib": {"type": ["integer", "null"], "minimum": 1}, "unit": {"const": "KiB"}, "source": {"$ref": "#/$defs/source"}}},
+    "fd": {"type": "object", "additionalProperties": false, "required": ["peak_count", "source"], "properties": {"peak_count": {"type": ["integer", "null"], "minimum": 0}, "source": {"$ref": "#/$defs/source"}}},
+    "sockets": {"type": "object", "additionalProperties": false, "required": ["peak_count", "ports_supplied_count", "source"], "properties": {"peak_count": {"type": ["integer", "null"], "minimum": 0}, "ports_supplied_count": {"type": "integer", "minimum": 0, "maximum": 32}, "source": {"$ref": "#/$defs/source"}}}
+  }
+}

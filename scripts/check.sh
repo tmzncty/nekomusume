@@ -20,6 +20,7 @@ bash scripts/check-status-evidence-test.sh
 bash scripts/check-status-coverage.sh
 bash scripts/check-status-coverage-test.sh
 bash scripts/check-shell-syntax.sh
+python3 scripts/bench/process-resource-sampler-test.py
 bash scripts/check-observability-contract.sh
 bash scripts/check-observability-contract-test.sh
 bash scripts/check-markdown-links.sh
