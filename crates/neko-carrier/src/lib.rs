@@ -2116,6 +2116,21 @@ pub struct CarrierSwitchDecision {
     pub generation: PathGeneration,
     pub reason: CarrierSwitchReason,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PromotionEvidence {
+    pub target_path: PathId,
+    pub generation: PathGeneration,
+    pub authenticated: bool,
+    pub resume_validated: bool,
+    pub readiness_observations: u32,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingCarrierSwitch {
+    pub failed_path: PathId,
+    pub target_path: PathId,
+    pub generation: PathGeneration,
+    pub reason: CarrierSwitchReason,
+}
 
 #[derive(Debug)]
 pub struct CarrierManager {
@@ -2125,6 +2140,7 @@ pub struct CarrierManager {
     hold: u32,
     pub switches: u64,
     active_generation: Option<PathGeneration>,
+    pending_switch: Option<PendingCarrierSwitch>,
     migration_hold: u32,
 }
 
@@ -2165,6 +2181,7 @@ impl CarrierManager {
             hold: 0,
             switches: 0,
             active_generation: None,
+            pending_switch: None,
             migration_hold: 0,
         })
     }
@@ -2203,6 +2220,7 @@ impl CarrierManager {
         }
         self.active = Some(path);
         self.active_generation = Some(generation);
+        self.pending_switch = None;
         self.migration_hold = 0;
         Ok(())
     }
@@ -2210,7 +2228,11 @@ impl CarrierManager {
     pub fn set_active_udp(&mut self, path: PathId, generation: PathGeneration) {
         self.active = Some(path);
         self.active_generation = Some(generation);
+        self.pending_switch = None;
         self.migration_hold = 0;
+    }
+    pub fn pending_switch(&self) -> Option<PendingCarrierSwitch> {
+        self.pending_switch
     }
     pub fn fail_udp_to_tcp(
         &mut self,
@@ -2219,7 +2241,7 @@ impl CarrierManager {
         fallback: PathId,
         state: HealthState,
         reason: CarrierSwitchReason,
-    ) -> Result<CarrierSwitchDecision, MigrationError> {
+    ) -> Result<PendingCarrierSwitch, MigrationError> {
         if self.active != Some(failed_path) {
             return Err(MigrationError::NotTcp);
         }
@@ -2232,19 +2254,52 @@ impl CarrierManager {
         if generation != current || state != HealthState::Failed {
             return Err(MigrationError::GenerationMismatch);
         }
-        let next = PathGeneration(generation.0.saturating_add(1));
-        self.active = Some(fallback);
-        self.active_generation = Some(next);
+        let pending = PendingCarrierSwitch {
+            failed_path,
+            target_path: fallback,
+            generation: PathGeneration(generation.0.saturating_add(1)),
+            reason,
+        };
+        self.active = None;
+        self.pending_switch = Some(pending);
         self.migration_hold = 0;
-        self.switches = self.switches.saturating_add(1);
-        Ok(CarrierSwitchDecision {
+        Ok(pending)
+    }
+
+    pub fn promote_failed_udp_target(
+        &mut self,
+        evidence: PromotionEvidence,
+    ) -> Result<CarrierSwitchDecision, MigrationError> {
+        let pending = self
+            .pending_switch
+            .ok_or(MigrationError::GenerationMismatch)?;
+        if evidence.generation.0 < pending.generation.0 {
+            return Err(MigrationError::OldGeneration);
+        }
+        if evidence.target_path != pending.target_path || evidence.generation != pending.generation
+        {
+            return Err(MigrationError::GenerationMismatch);
+        }
+        if !evidence.authenticated
+            || !evidence.resume_validated
+            || evidence.readiness_observations < 3
+        {
+            return Err(MigrationError::Unvalidated);
+        }
+        let decision = CarrierSwitchDecision {
             from: ActiveCarrier::Udp,
             to: ActiveCarrier::Tcp,
-            failed_path,
-            active_path: fallback,
-            generation: next,
-            reason,
-        })
+            failed_path: pending.failed_path,
+            active_path: pending.target_path,
+            generation: pending.generation,
+            reason: pending.reason,
+        };
+        self.active = Some(pending.target_path);
+        self.active_generation = Some(pending.generation);
+        self.pending_switch = None;
+        self.migration_hold = 0;
+        self.switches = self.switches.saturating_add(1);
+        Ok(decision)
     }
 
     /// Propose migration from active TCP back to UDP. Every gate is checked
@@ -2700,7 +2755,7 @@ mod health_evidence_tests {
     use super::*;
 
     #[test]
-    fn d064_events_require_three_failures_and_manager_owns_switch() {
+    fn d064_failure_and_target_scoped_promotion_are_atomic() {
         let limits = HealthLimits {
             degrade_after: 2,
             fail_after: 3,
@@ -2715,46 +2770,108 @@ mod health_evidence_tests {
             max_paths: 2,
         })
         .unwrap();
-        manager.set_active_udp(PathId(9), PathGeneration(4));
+        let udp = PathId(9);
+        let tcp = PathId(10);
+        manager.set_active_udp(udp, PathGeneration(1));
         let mut failover = FailoverController::new(3, 2, 32).unwrap();
         let failure =
             HealthObservation::Failure(HealthFailureCause::AuthenticatedDeliveryAckTimeout);
         assert_ne!(
-            evidence.observe_event(PathId(9), failure).unwrap(),
+            evidence.observe_event(udp, failure).unwrap(),
             HealthState::Failed
         );
-        assert_eq!(manager.active(), Some(PathId(9)));
         assert_ne!(
-            evidence.observe_event(PathId(9), failure).unwrap(),
+            evidence.observe_event(udp, failure).unwrap(),
             HealthState::Failed
         );
-        assert_eq!(manager.active(), Some(PathId(9)));
-        let failed = evidence.observe_event(PathId(9), failure).unwrap();
-        let decision = manager
+        assert_eq!(manager.active(), Some(udp));
+        let failed = evidence.observe_event(udp, failure).unwrap();
+        let pending = manager
             .fail_udp_to_tcp(
-                PathId(9),
-                PathGeneration(4),
-                PathId(10),
+                udp,
+                PathGeneration(1),
+                tcp,
                 failed,
                 CarrierSwitchReason::UdpPathDegraded,
             )
             .unwrap();
-        assert_eq!(decision.generation, PathGeneration(5));
-        assert_eq!(decision.reason.as_str(), "udp_path_degraded");
-        assert_eq!(manager.active(), Some(PathId(10)));
+        assert_eq!(pending.generation, PathGeneration(2));
+        assert_eq!(pending.reason.as_str(), "udp_path_degraded");
+        assert_eq!(manager.active(), None);
+        assert_eq!(manager.switches, 0);
+        assert_eq!(failover.active(), ActiveCarrier::Udp);
+
+        let valid = PromotionEvidence {
+            target_path: tcp,
+            generation: PathGeneration(2),
+            authenticated: true,
+            resume_validated: true,
+            readiness_observations: 3,
+        };
+        for (bad, error) in [
+            (
+                PromotionEvidence {
+                    target_path: udp,
+                    ..valid
+                },
+                MigrationError::GenerationMismatch,
+            ),
+            (
+                PromotionEvidence {
+                    generation: PathGeneration(1),
+                    ..valid
+                },
+                MigrationError::OldGeneration,
+            ),
+            (
+                PromotionEvidence {
+                    generation: PathGeneration(3),
+                    ..valid
+                },
+                MigrationError::GenerationMismatch,
+            ),
+            (
+                PromotionEvidence {
+                    authenticated: false,
+                    ..valid
+                },
+                MigrationError::Unvalidated,
+            ),
+            (
+                PromotionEvidence {
+                    resume_validated: false,
+                    ..valid
+                },
+                MigrationError::Unvalidated,
+            ),
+            (
+                PromotionEvidence {
+                    readiness_observations: 2,
+                    ..valid
+                },
+                MigrationError::Unvalidated,
+            ),
+        ] {
+            assert_eq!(manager.promote_failed_udp_target(bad), Err(error));
+            assert_eq!(manager.active(), None);
+            assert_eq!(manager.pending_switch(), Some(pending));
+            assert_eq!(manager.switches, 0);
+        }
+
+        let decision = manager.promote_failed_udp_target(valid).unwrap();
+        assert_eq!(decision.active_path, tcp);
+        assert_eq!(decision.generation, PathGeneration(2));
+        assert_eq!(manager.active(), Some(tcp));
+        assert_eq!(manager.pending_switch(), None);
+        assert_eq!(manager.switches, 1);
         assert!(failover.apply_manager_decision(&decision));
         assert_eq!(failover.active(), ActiveCarrier::Tcp);
         assert!(!failover.apply_manager_decision(&decision));
         assert_eq!(
-            manager.fail_udp_to_tcp(
-                PathId(9),
-                PathGeneration(3),
-                PathId(10),
-                failed,
-                CarrierSwitchReason::UdpPathDegraded
-            ),
-            Err(MigrationError::NotTcp)
+            manager.promote_failed_udp_target(valid),
+            Err(MigrationError::GenerationMismatch)
         );
+        assert_eq!(manager.switches, 1);
     }
 
     #[test]

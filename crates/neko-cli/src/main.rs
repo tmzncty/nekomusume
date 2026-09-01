@@ -10,7 +10,7 @@ use neko_carrier::{
     ActiveCarrier, CarrierHealthEvidence, CarrierManager, CarrierSwitchReason, DataId,
     FailoverController, FairScheduler, FlowLimits, HealthEvidenceLimits, HealthFailureCause,
     HealthLimits, HealthObservation, HealthSample, HealthState, ManagerLimits, PathGeneration,
-    PathId, StreamId as CarrierStreamId, StreamPriority,
+    PathId, PromotionEvidence, StreamId as CarrierStreamId, StreamPriority,
 };
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, ResumeGuard, TrustPolicy,
@@ -1439,7 +1439,7 @@ fn failover_client(args: &[String]) {
                 ),
             );
             if state == HealthState::Failed {
-                let decision = manager
+                let pending = manager
                     .fail_udp_to_tcp(
                         PathId(1),
                         PathGeneration(0),
@@ -1448,20 +1448,17 @@ fn failover_client(args: &[String]) {
                         CarrierSwitchReason::UdpPathDegraded,
                     )
                     .unwrap();
-                if !failover.apply_manager_decision(&decision) {
-                    fail("manager decision was not applied");
-                }
                 decision_at = Some(observed_at);
                 println!(
                     "carrier_event name=udp_health_failed session=7001 generation={} threshold={} reason={} diagnostic_cause=authenticated_delivery_ack_timeout",
-                    decision.generation.0,
+                    pending.generation.0,
                     health_limits.fail_after,
-                    decision.reason.as_str()
+                    pending.reason.as_str()
                 );
             }
         }
-        if manager.active() != Some(PathId(2)) || failover.active() != ActiveCarrier::Tcp {
-            fail("carrier manager did not select TCP")
+        if manager.active().is_some() || failover.active() != ActiveCarrier::Udp {
+            fail("TCP became active before target-path readiness")
         }
     } else {
         println!(
@@ -1477,7 +1474,6 @@ fn failover_client(args: &[String]) {
         Duration::from_secs(secs),
     )
     .unwrap();
-    let tcp_active_at = Instant::now();
     write_frame(&mut tcp, &hello2).unwrap();
     let response2 = read_frame(&mut tcp, MAX_NEGOTIATION_FRAME).unwrap();
     negotiation2.client_accept_response(&response2).unwrap();
@@ -1496,6 +1492,23 @@ fn failover_client(args: &[String]) {
     let resp = read_frame(&mut tcp, 1024).unwrap();
     let mut ts = hs2.finish(&resp, context(2)).unwrap();
     println!("carrier_event name=tcp_resume_guard session=7001 generation=1");
+    let tcp_active_at = if automatic_health_failover {
+        let decision = manager
+            .promote_failed_udp_target(PromotionEvidence {
+                target_path: PathId(2),
+                generation: PathGeneration(1),
+                authenticated: true,
+                resume_validated: true,
+                readiness_observations: 3,
+            })
+            .unwrap();
+        if !failover.apply_manager_decision(&decision) {
+            fail("manager promotion was not applied");
+        }
+        Instant::now()
+    } else {
+        Instant::now()
+    };
     let resend_records = if automatic_health_failover {
         failover.tcp_resend().unwrap().len()
     } else {
