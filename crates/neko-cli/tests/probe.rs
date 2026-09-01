@@ -464,6 +464,18 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
         "{client_log}"
     );
     assert!(
+        client_log.contains("\"promotion_gate\":\"cold_authenticated_resume\""),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains("\"cold_promotion_ready_us\":"),
+        "{client_log}"
+    );
+    assert!(
+        !client_log.contains("\"readiness_satisfied_us\":"),
+        "cold fallback must not advertise D064/warm readiness: {client_log}"
+    );
+    assert!(
         client_log.contains("carrier_event name=tcp_resume_guard"),
         "{client_log}"
     );

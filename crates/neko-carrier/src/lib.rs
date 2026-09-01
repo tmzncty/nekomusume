@@ -2271,8 +2271,8 @@ impl CarrierManager {
         Ok(pending)
     }
 
-    /// Records one target/generation-scoped readiness event. Observation IDs
-    /// are manager-owned and idempotent; callers cannot assert a count.
+    /// Records one target/generation-scoped readiness event. The event source supplies
+    /// each observation ID; the manager owns bounded accumulation and deduplication.
     pub fn observe_failed_udp_target_readiness(
         &mut self,
         observation: ReadinessObservation,

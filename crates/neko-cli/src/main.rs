@@ -1561,7 +1561,6 @@ fn failover_client(args: &[String]) {
     let tcp_authenticated = Instant::now();
     let resume_validated = tcp_authenticated;
     println!("carrier_event name=tcp_resume_guard session=7001 generation=1");
-    let readiness_satisfied = resume_validated;
     let new_active_at = if automatic_health_failover {
         let decision = manager
             .promote_cold_authenticated_resume(PathId(2), PathGeneration(1), true, true)
@@ -1627,7 +1626,7 @@ fn failover_client(args: &[String]) {
             "failover_timing",
             count,
             &format!(
-                ",\"fallback_class\":\"cold\",\"failure_decided_at_us\":{},\"tcp_connect_started_us\":{},\"tcp_connected_us\":{},\"tcp_negotiated_us\":{},\"tcp_authenticated_us\":{},\"resume_validated_us\":{},\"readiness_satisfied_us\":{},\"new_active_at_us\":{},\"first_resumed_data_accepted_us\":{},\"recovery_latency_us\":{}",
+                ",\"fallback_class\":\"cold\",\"failure_decided_at_us\":{},\"tcp_connect_started_us\":{},\"tcp_connected_us\":{},\"tcp_negotiated_us\":{},\"tcp_authenticated_us\":{},\"resume_validated_us\":{},\"promotion_gate\":\"cold_authenticated_resume\",\"cold_promotion_ready_us\":{},\"new_active_at_us\":{},\"first_resumed_data_accepted_us\":{},\"recovery_latency_us\":{}",
                 decision
                     .duration_since(failure_observation_started)
                     .as_micros(),
@@ -1646,7 +1645,7 @@ fn failover_client(args: &[String]) {
                 resume_validated
                     .duration_since(failure_observation_started)
                     .as_micros(),
-                readiness_satisfied
+                resume_validated
                     .duration_since(failure_observation_started)
                     .as_micros(),
                 new_active_at
