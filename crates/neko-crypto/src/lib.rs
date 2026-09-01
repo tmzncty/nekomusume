@@ -364,6 +364,39 @@ impl InitiatorHandshake {
             scope: payload,
         })
     }
+    pub fn with_resume_negotiation_binding(
+        local: &LocalIdentity,
+        responder_public: &[u8],
+        scope: &[u8],
+        application_domain: &[u8],
+        binding: &ResumeBinding,
+        negotiation_binding: &[u8],
+    ) -> Result<Self, SessionRejected> {
+        if negotiation_binding.is_empty()
+            || negotiation_binding.len() > 256
+            || scope.is_empty()
+            || scope.len() > 60
+        {
+            return Err(SessionRejected);
+        }
+        let mut payload = Vec::with_capacity(1 + scope.len() + 65 + 2 + negotiation_binding.len());
+        payload.push(scope.len() as u8);
+        payload.extend_from_slice(scope);
+        payload.extend_from_slice(&binding.encode());
+        payload.extend_from_slice(&(negotiation_binding.len() as u16).to_be_bytes());
+        payload.extend_from_slice(negotiation_binding);
+        let p = bound_prologue(application_domain, negotiation_binding)?;
+        let state = snow::Builder::new(noise_ik_params())
+            .local_private_key(&local.private)
+            .and_then(|b| b.remote_public_key(responder_public))
+            .and_then(|b| b.prologue(&p))
+            .and_then(snow::Builder::build_initiator)
+            .map_err(|_| SessionRejected)?;
+        Ok(Self {
+            state,
+            scope: payload,
+        })
+    }
     pub fn first_message(&mut self) -> Result<Vec<u8>, SessionRejected> {
         let mut out = vec![0; MAX_HANDSHAKE_MESSAGE];
         let n = self
@@ -418,6 +451,20 @@ impl ResponderHandshake {
             .map_err(|_| SessionRejected)?;
         Ok(Self { state, policy })
     }
+    pub fn new_with_resume_negotiation_binding(
+        local: &LocalIdentity,
+        policy: TrustPolicy,
+        application_domain: &[u8],
+        negotiation_binding: &[u8],
+    ) -> Result<Self, SessionRejected> {
+        let p = bound_prologue(application_domain, negotiation_binding)?;
+        let state = snow::Builder::new(noise_ik_params())
+            .local_private_key(&local.private)
+            .and_then(|b| b.prologue(&p))
+            .and_then(snow::Builder::build_responder)
+            .map_err(|_| SessionRejected)?;
+        Ok(Self { state, policy })
+    }
     pub fn receive_first_with_resume(
         mut self,
         message: &[u8],
@@ -435,11 +482,18 @@ impl ResponderHandshake {
             return Err(SessionRejected);
         }
         let scope_len = payload[0] as usize;
-        if scope_len == 0 || 1 + scope_len + 65 != n {
+        if scope_len == 0 || n < 1 + scope_len + 65 {
             return Err(SessionRejected);
         }
         let scope = payload[1..1 + scope_len].to_vec();
-        let binding = ResumeBinding::decode(&payload[1 + scope_len..n])?;
+        let binding = ResumeBinding::decode(&payload[1 + scope_len..1 + scope_len + 65])?;
+        if n > 1 + scope_len + 65 {
+            let rest = &payload[1 + scope_len + 65..n];
+            if rest.len() < 2 || u16::from_be_bytes([rest[0], rest[1]]) as usize != rest.len() - 2 {
+                return Err(SessionRejected);
+            }
+        }
+
         let remote = self
             .state
             .get_remote_static()
@@ -939,9 +993,20 @@ pub struct ResumeGuard {
     key_phase: u8,
     next_path_generation: u64,
     token: [u8; 32],
+    negotiation_binding: Vec<u8>,
 }
 impl ResumeGuard {
     pub fn new(peer_public: &[u8], binding: &ResumeBinding) -> Result<Self, SessionRejected> {
+        Self::new_with_negotiation(peer_public, binding, &[])
+    }
+    pub fn new_with_negotiation(
+        peer_public: &[u8],
+        binding: &ResumeBinding,
+        negotiation_binding: &[u8],
+    ) -> Result<Self, SessionRejected> {
+        if negotiation_binding.len() > 256 {
+            return Err(SessionRejected);
+        }
         if peer_public.is_empty() || binding.path_generation == u64::MAX {
             return Err(SessionRejected);
         }
@@ -952,6 +1017,7 @@ impl ResumeGuard {
             key_phase: binding.key_phase,
             next_path_generation: binding.path_generation + 1,
             token: binding.token,
+            negotiation_binding: negotiation_binding.to_vec(),
         })
     }
     pub fn attach(
@@ -960,12 +1026,22 @@ impl ResumeGuard {
         claim: &ResumeBinding,
         now_ms: u64,
     ) -> Result<(), SessionRejected> {
+        self.attach_with_negotiation(peer_public, claim, &[], now_ms)
+    }
+    pub fn attach_with_negotiation(
+        &mut self,
+        peer_public: &[u8],
+        claim: &ResumeBinding,
+        negotiation_binding: &[u8],
+        now_ms: u64,
+    ) -> Result<(), SessionRejected> {
         if peer_public != self.peer_public
             || claim.session_id != self.session_id
             || claim.delivery_epoch != self.delivery_epoch
             || claim.key_phase != self.key_phase
             || claim.path_generation != self.next_path_generation
             || claim.token != self.token
+            || self.negotiation_binding != negotiation_binding
             || now_ms > claim.expires_at_ms
         {
             return Err(SessionRejected);
@@ -1004,6 +1080,24 @@ mod resume_tests {
         assert_eq!(guard.attach(b"peer", &wrong, 99), Err(SessionRejected));
         assert_eq!(guard.attach(b"other", &claim(6), 99), Err(SessionRejected));
         assert_eq!(guard.attach(b"peer", &claim(6), 101), Err(SessionRejected));
+    }
+
+    #[test]
+    fn resume_guard_binds_exact_negotiation_and_preserves_legacy_mode() {
+        let original = claim(4);
+        let next = claim(5);
+        let mut bound =
+            ResumeGuard::new_with_negotiation(b"peer", &original, b"version-0").unwrap();
+        assert_eq!(
+            bound.attach_with_negotiation(b"peer", &next, b"version-1", 99),
+            Err(SessionRejected)
+        );
+        assert_eq!(
+            bound.attach_with_negotiation(b"peer", &next, b"version-0", 99),
+            Ok(())
+        );
+        let mut legacy = ResumeGuard::new(b"peer", &original).unwrap();
+        assert_eq!(legacy.attach(b"peer", &next, 99), Ok(()));
     }
 
     #[test]

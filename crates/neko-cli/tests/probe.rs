@@ -228,7 +228,7 @@ fn sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings() {
 }
 
 #[test]
-fn executable_loopback_udp_blackhole_tcp_resume() {
+fn executable_loopback_controlled_udp_stop_tcp_resume() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("failover-server");
     let cp = tmp("failover-client");
@@ -257,6 +257,9 @@ fn executable_loopback_udp_blackhole_tcp_resume() {
             &format!("127.0.0.1:{udp}"),
             "--tcp-bind",
             &format!("127.0.0.1:{tcp}"),
+            "--diagnostic",
+            "--experiment-id",
+            "primary-a-server",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -282,6 +285,9 @@ fn executable_loopback_udp_blackhole_tcp_resume() {
             "16",
             "--duration",
             "3",
+            "--diagnostic",
+            "--experiment-id",
+            "primary-a-client",
         ])
         .output()
         .unwrap();
@@ -295,12 +301,12 @@ fn executable_loopback_udp_blackhole_tcp_resume() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(String::from_utf8_lossy(&out.stdout).contains("udp_blackhole=true"));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("controlled_udp_stop=true"));
     let client_log = String::from_utf8_lossy(&out.stdout);
     let server_log = String::from_utf8_lossy(&server_out.stdout);
     for event in [
         "udp_authenticated",
-        "udp_blackhole_injected",
+        "controlled_udp_stop",
         "tcp_resume_guard",
         "ordered_records_complete",
     ] {
@@ -312,9 +318,17 @@ fn executable_loopback_udp_blackhole_tcp_resume() {
     assert!(server_log.contains("carrier_event name=udp_authenticated"));
     assert!(server_log.contains("carrier_event name=tcp_resumed"));
     assert!(
-        server_log.contains("duplicates=0"),
-        "unexpected dedup count: {server_log}"
+        !server_log.contains("duplicates="),
+        "server must not report an unmeasured duplicate constant: {server_log}"
     );
+    assert!(server_log.contains("records=3 payload_bytes=48"));
+    assert!(server_log.contains("controlled_udp_stop=true"));
+    assert!(server_log.contains("\"count\":3"));
+    assert!(server_log.contains("\"payload_bytes\":16"));
+    assert!(server_log.contains("\"udp_port\":40089"));
+    assert!(server_log.contains("\"tcp_port\":40090"));
+    assert!(server_log.contains("\"max_seconds\":5"));
+    assert!(client_log.contains("\"payload_bytes\":48"));
     assert!(
         server_log.contains(&format!("bytes_hex={}", "78".repeat(48))),
         "incomplete ordered bytes: {server_log}"

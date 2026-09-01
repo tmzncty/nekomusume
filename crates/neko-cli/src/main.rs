@@ -740,7 +740,8 @@ fn failover_server(args: &[String]) {
     let mut secure = None;
     let mut guard = None;
     let mut app = Vec::new();
-    let duplicates = 0usize;
+    let udp_local_port = udp.local_addr().map(|a| a.port()).unwrap_or(up);
+    let tcp_local_port = tcp.local_addr().map(|a| a.port()).unwrap_or(tp);
     let mut runtime =
         SessionRuntime::new(SessionId(7001), runtime_limits(bytes, count), 0).unwrap();
     runtime.open_stream(StreamId(1), 0).unwrap();
@@ -749,7 +750,14 @@ fn failover_server(args: &[String]) {
         "server",
         "start",
         0,
-        ",\"count\":8,\"payload_bytes\":64,\"udp_port\":40081,\"max_seconds\":15",
+        &format!(
+            ",\"count\":{},\"payload_bytes\":{},\"udp_port\":{},\"tcp_port\":{},\"max_seconds\":{}",
+            count,
+            bytes,
+            udp_local_port,
+            tcp_local_port,
+            duration.as_secs()
+        ),
     );
     while started.elapsed() < duration {
         if secure.is_none() {
@@ -757,22 +765,42 @@ fn failover_server(args: &[String]) {
                 diag.event(args, "server_recv");
                 diag.event(args, "demux");
                 emit_diagnostic(args, "server", "udp_hello_received", 0, "");
+                let mut negotiation =
+                    VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS).unwrap();
+                let selection = negotiation
+                    .server_accept_hello(&buf[..n])
+                    .unwrap_or_else(|_| fail("incompatible negotiation"));
+                let binding = negotiation.authenticated_binding().unwrap();
+                udp.send_to(&selection, peer).unwrap();
+                let (n, handshake_peer) = udp
+                    .recv_from(&mut buf)
+                    .unwrap_or_else(|_| fail("handshake timeout"));
+                if handshake_peer != peer {
+                    fail("handshake peer changed");
+                }
                 diag.event(args, "client_recv");
-                let (resp, ss, remote, binding) =
-                    ResponderHandshake::new(&id, policy.clone(), DOMAIN)
-                        .unwrap()
-                        .receive_first(&buf[..n], context(1))
-                        .map(|(resp, ss)| {
-                            (resp, ss, client.clone(), failover_binding(7001, 0, 10_000))
-                        })
-                        .unwrap_or_else(|_| fail("unauthorized UDP handshake"));
+                let (resp, ss, remote, resume_binding) =
+                    ResponderHandshake::new_with_prologue_binding(
+                        &id,
+                        policy.clone(),
+                        DOMAIN,
+                        binding.as_bytes(),
+                    )
+                    .unwrap()
+                    .receive_first(&buf[..n], context(1))
+                    .map(|(resp, ss)| (resp, ss, client.clone(), failover_binding(7001, 0, 10_000)))
+                    .unwrap_or_else(|_| fail("unauthorized UDP handshake"));
                 diag.event(args, "parse_auth");
                 udp.send_to(&resp, peer).unwrap();
                 diag.event(args, "reply_send");
                 emit_diagnostic(args, "server", "udp_hello_sent", 0, "");
                 diag.event(args, "server_response_sent");
-                guard = Some(ResumeGuard::new(&remote, &binding).unwrap());
+                guard = Some(
+                    ResumeGuard::new_with_negotiation(&remote, &resume_binding, binding.as_bytes())
+                        .unwrap(),
+                );
                 secure = Some((ss, peer));
+                println!("carrier_event name=udp_negotiated session=7001 generation=0 version=0");
                 println!("carrier_event name=udp_authenticated session=7001 generation=0");
             }
         }
@@ -831,15 +859,33 @@ fn failover_server(args: &[String]) {
             }
         }
         if let Ok((mut stream, _)) = tcp.accept() {
+            let hello = read_frame(&mut stream, MAX_NEGOTIATION_FRAME)
+                .unwrap_or_else(|_| fail("bad negotiation"));
+            let mut negotiation =
+                VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS).unwrap();
+            let selection = negotiation
+                .server_accept_hello(&hello)
+                .unwrap_or_else(|_| fail("incompatible negotiation"));
+            write_frame(&mut stream, &selection).unwrap();
+            let binding = negotiation.authenticated_binding().unwrap();
+            println!("carrier_event name=tcp_negotiated session=7001 generation=1 version=0");
             let first = read_frame(&mut stream, 1024).unwrap_or_else(|_| fail("bad TCP handshake"));
-            let (resp, mut ss, remote, binding) =
-                ResponderHandshake::new(&id, policy.clone(), DOMAIN)
-                    .unwrap()
-                    .receive_first_with_resume(&first, context(2))
-                    .unwrap_or_else(|_| fail("unauthorized TCP handshake"));
+            let (resp, mut ss, remote, resume_binding) =
+                ResponderHandshake::new_with_prologue_binding(
+                    &id,
+                    policy.clone(),
+                    DOMAIN,
+                    binding.as_bytes(),
+                )
+                .unwrap()
+                .receive_first_with_resume(&first, context(2))
+                .unwrap_or_else(|_| fail("unauthorized TCP handshake"));
             if guard
                 .as_mut()
-                .map(|g| g.attach(&remote, &binding, 1).is_ok())
+                .map(|g| {
+                    g.attach_with_negotiation(&remote, &resume_binding, binding.as_bytes(), 1)
+                        .is_ok()
+                })
                 .unwrap_or(false)
             {
                 write_frame(&mut stream, &resp).unwrap();
@@ -886,10 +932,12 @@ fn failover_server(args: &[String]) {
                 }
                 println!("carrier_event name=tcp_resumed session=7001 generation=1");
                 println!(
-                    "failover_server_ok session=7001 records={} bytes_hex={} duplicates={} udp_blackhole=true carrier_events=udp_authenticated,tcp_resumed",
-                    count,
+                    "failover_server_ok session=7001 records={} payload_bytes={} bytes_hex={} controlled_udp_stop=true udp_port={} tcp_port={} carrier_events=udp_negotiated,udp_authenticated,controlled_udp_stop,tcp_negotiated,tcp_resumed",
+                    app.len() / bytes.max(1),
+                    app.len(),
                     hex(&app),
-                    duplicates
+                    udp_local_port,
+                    tcp_local_port
                 );
                 emit_diagnostic(
                     args,
@@ -936,9 +984,10 @@ fn failover_client(args: &[String]) {
         Some("neko-client.identity"),
     )));
     let sk = unhex(&parse(args, "--server-key", None));
-    let mut hs = InitiatorHandshake::new(&id, &sk, b"failover", DOMAIN).unwrap();
-    let first = hs.first_message().unwrap();
     let target = format!("{addr}:{up}");
+    let mut negotiation =
+        VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
+    let negotiation_hello = negotiation.client_hello().unwrap();
     let u = UdpSocket::bind("0.0.0.0:0").unwrap();
     diag.event(args, "socket_bind");
     u.set_read_timeout(Some(Duration::from_millis(100)))
@@ -950,11 +999,18 @@ fn failover_client(args: &[String]) {
         "client",
         "start",
         0,
-        ",\"count\":8,\"payload_bytes\":64,\"udp_port\":40081,\"max_seconds\":15",
+        &format!(
+            ",\"count\":{},\"payload_bytes\":{},\"udp_port\":{},\"tcp_port\":{},\"max_seconds\":{}",
+            count,
+            count * bytes,
+            up,
+            tp,
+            secs
+        ),
     );
     for _ in 0..20 {
         diag.event(args, "client_send");
-        u.send_to(&first, &target).unwrap();
+        u.send_to(&negotiation_hello, &target).unwrap();
         diag.event(args, "client_hello_sent");
         emit_diagnostic(args, "client", "udp_hello_sent", 0, "");
         match u.recv_from(&mut buf) {
@@ -980,6 +1036,19 @@ fn failover_client(args: &[String]) {
             fail("UDP handshake timeout")
         }
     };
+    negotiation.client_accept_response(&buf[..n]).unwrap();
+    let negotiation_binding = negotiation.authenticated_binding().unwrap();
+    let mut hs = InitiatorHandshake::new_with_prologue_binding(
+        &id,
+        &sk,
+        b"failover",
+        DOMAIN,
+        negotiation_binding.as_bytes(),
+    )
+    .unwrap();
+    let first = hs.first_message().unwrap();
+    u.send_to(&first, &target).unwrap();
+    let n = u.recv_from(&mut buf).unwrap().0;
     let mut us = hs.finish(&buf[..n], context(1)).unwrap();
     diag.event(args, "parse_auth");
     let payload = vec![b'x'; bytes];
@@ -1005,21 +1074,31 @@ fn failover_client(args: &[String]) {
     let _ = u.recv_from(&mut buf);
     diag.event(args, "client_recv");
     emit_diagnostic(args, "client", "udp_ack_observed", 1, "");
-    println!("carrier_event name=udp_blackhole_injected session=7001 generation=0");
-    let mut hs2 = InitiatorHandshake::with_resume_binding(
-        &id,
-        &sk,
-        b"failover",
-        DOMAIN,
-        &failover_binding(7001, 1, 10_000),
-    )
-    .unwrap();
-    let first2 = hs2.first_message().unwrap();
+    println!(
+        "carrier_event name=controlled_udp_stop session=7001 generation=0 reason=bounded_application_fault_injection"
+    );
+    let mut negotiation2 =
+        VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
+    let hello2 = negotiation2.client_hello().unwrap();
     let mut tcp = TcpStream::connect_timeout(
         &format!("{addr}:{tp}").parse().unwrap(),
         Duration::from_secs(secs),
     )
     .unwrap();
+    write_frame(&mut tcp, &hello2).unwrap();
+    let response2 = read_frame(&mut tcp, MAX_NEGOTIATION_FRAME).unwrap();
+    negotiation2.client_accept_response(&response2).unwrap();
+    let binding2 = negotiation2.authenticated_binding().unwrap();
+    let mut hs2 = InitiatorHandshake::with_resume_negotiation_binding(
+        &id,
+        &sk,
+        b"failover",
+        DOMAIN,
+        &failover_binding(7001, 1, 10_000),
+        binding2.as_bytes(),
+    )
+    .unwrap();
+    let first2 = hs2.first_message().unwrap();
     write_frame(&mut tcp, &first2).unwrap();
     let resp = read_frame(&mut tcp, 1024).unwrap();
     let mut ts = hs2.finish(&resp, context(2)).unwrap();
@@ -1055,7 +1134,10 @@ fn failover_client(args: &[String]) {
         count + 1,
         ",\"capture\":\"metadata-only\",\"payload\":false,\"keys\":false,\"bounded\":true",
     );
-    println!("failover_client_ok session=7001 count={count} bytes={bytes} udp_blackhole=true")
+    println!(
+        "failover_client_ok session=7001 count={count} payload_bytes={} controlled_udp_stop=true",
+        count * bytes
+    )
 }
 fn failover_gate(args: &[String]) {
     match args.first().map(String::as_str) {

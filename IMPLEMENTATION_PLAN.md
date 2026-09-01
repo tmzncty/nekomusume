@@ -51,11 +51,12 @@ not be promoted to public-WAN reachability.
    with `freeze=true` and a content-addressed identity. This corpus-specific fact
    does not imply RC, security approval or release, and does not freeze Noise,
    ciphertext, carrier packetization, failover/resume or the global protocol.
-2. [ ] **Negotiation path completion.** Generic TCP/UDP probes now use canonical
-   negotiation before Noise, authenticate the exact transcript, and fail closed
-   before echo admission. Failover/resume negotiation remains required, including
-   downgrade, replay/amplification and resume-binding boundaries; do not infer it
-   from TCP multistream or generic probe coverage.
+2. [x] **Negotiation path completion.** Generic TCP/UDP probes and the bounded
+   UDP-primary -> TCP resume path use canonical negotiation before fresh Noise,
+   authenticate the exact transcript, enforce the same selected Session version,
+   and preserve ResumeGuard replay/resource boundaries before data admission.
+   The process fixture truthfully reports controlled application fault injection;
+   it is not evidence of packet-level ACK/PTO blackhole detection.
 3. [ ] **Bounded release evidence matrix.** Under standing authorization, collect
    reproducible independently controlled IPv4/IPv6, UDP degradation -> TCP
    fallback, long-lived and NAT/endpoint-change evidence with actual parameters,
