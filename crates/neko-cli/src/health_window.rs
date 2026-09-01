@@ -11,6 +11,13 @@ pub(crate) enum HealthDatagram {
     PermittedProgress,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HealthWindowError {
+    Evidence(&'static str),
+    AdmissionBudgetExhausted { ignored: usize },
+    NotExpired,
+}
+
 #[derive(Debug)]
 pub(crate) struct HealthObservationWindow {
     started_at: Instant,
@@ -45,7 +52,7 @@ impl HealthObservationWindow {
         now: Instant,
         evidence: &mut CarrierHealthEvidence,
         path: PathId,
-    ) -> Result<Option<HealthState>, &'static str> {
+    ) -> Result<Option<HealthState>, HealthWindowError> {
         if now >= self.deadline {
             return Ok(Some(self.expire(now, evidence, path)?));
         }
@@ -55,12 +62,17 @@ impl HealthObservationWindow {
                 evidence
                     .observe_event(path, HealthObservation::Progress)
                     .map(Some)
-                    .map_err(|_| "health evidence rejected progress")
+                    .map_err(|_| HealthWindowError::Evidence("health evidence rejected progress"))
             }
             HealthDatagram::WrongPeer
             | HealthDatagram::MalformedOrUnadmitted
             | HealthDatagram::StaleOrNonmatchingAuthenticated => {
-                self.ignored = self.ignored.saturating_add(1).min(self.max_ignored);
+                if self.ignored == self.max_ignored {
+                    return Err(HealthWindowError::AdmissionBudgetExhausted {
+                        ignored: self.ignored,
+                    });
+                }
+                self.ignored += 1;
                 Ok(None)
             }
         }
@@ -71,16 +83,16 @@ impl HealthObservationWindow {
         now: Instant,
         evidence: &mut CarrierHealthEvidence,
         path: PathId,
-    ) -> Result<HealthState, &'static str> {
+    ) -> Result<HealthState, HealthWindowError> {
         if now < self.deadline {
-            return Err("health observation window has not expired");
+            return Err(HealthWindowError::NotExpired);
         }
         let state = evidence
             .observe_event(
                 path,
                 HealthObservation::Failure(HealthFailureCause::AuthenticatedDeliveryAckTimeout),
             )
-            .map_err(|_| "health evidence rejected failure")?;
+            .map_err(|_| HealthWindowError::Evidence("health evidence rejected failure"))?;
         self.restart(now);
         Ok(state)
     }
@@ -114,7 +126,7 @@ mod tests {
     }
 
     #[test]
-    fn junk_rate_cannot_advance_reset_or_accelerate_failure_schedule() {
+    fn junk_budget_exhaustion_is_distinct_and_does_not_advance_or_accelerate_health() {
         let start = Instant::now();
         for junk in [
             HealthDatagram::WrongPeer,
@@ -122,22 +134,64 @@ mod tests {
             HealthDatagram::StaleOrNonmatchingAuthenticated,
         ] {
             let mut evidence = evidence();
-            let mut window = HealthObservationWindow::new(start, SECOND, 8);
-            for i in 0..10_000 {
+            let mut window = HealthObservationWindow::new(start, SECOND, 1_024);
+            for i in 0..1_024 {
                 assert_eq!(
                     window
-                        .observe(
-                            junk,
-                            start + Duration::from_nanos(i.min(999_999_999)),
-                            &mut evidence,
-                            PATH,
-                        )
+                        .observe(junk, start + Duration::from_micros(i), &mut evidence, PATH)
                         .unwrap(),
                     None
                 );
             }
+            assert_eq!(
+                window.observe(
+                    junk,
+                    start + Duration::from_millis(999),
+                    &mut evidence,
+                    PATH
+                ),
+                Err(HealthWindowError::AdmissionBudgetExhausted { ignored: 1_024 })
+            );
             assert_eq!(window.deadline(), start + SECOND);
+            assert_eq!(evidence.events().len(), 0);
         }
+    }
+
+    #[test]
+    fn exact_progress_at_budget_boundary_remains_detectable_and_resets_window() {
+        let start = Instant::now();
+        let mut evidence = evidence();
+        let mut window = HealthObservationWindow::new(start, SECOND, 2);
+        assert_eq!(
+            window
+                .observe(HealthDatagram::WrongPeer, start, &mut evidence, PATH)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            window
+                .observe(
+                    HealthDatagram::MalformedOrUnadmitted,
+                    start,
+                    &mut evidence,
+                    PATH
+                )
+                .unwrap(),
+            None
+        );
+        let progress = start + Duration::from_millis(10);
+        assert_eq!(
+            window
+                .observe(
+                    HealthDatagram::PermittedProgress,
+                    progress,
+                    &mut evidence,
+                    PATH
+                )
+                .unwrap(),
+            Some(HealthState::Healthy)
+        );
+        assert_eq!(window.deadline(), progress + SECOND);
     }
 
     #[test]

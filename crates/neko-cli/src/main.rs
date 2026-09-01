@@ -1,7 +1,7 @@
 //! Bounded authenticated research probe runtime; never a proxy or tunnel.
 mod lifecycle;
 
-use health_window::{HealthDatagram, HealthObservationWindow};
+use health_window::{HealthDatagram, HealthObservationWindow, HealthWindowError};
 use lifecycle::ReadinessPrerequisite;
 mod framed;
 mod health_window;
@@ -12,8 +12,8 @@ mod reachability;
 use neko_carrier::{
     ActiveCarrier, CarrierHealthEvidence, CarrierManager, CarrierSwitchReason, DataId,
     FailoverController, FairScheduler, FlowLimits, HealthEvidenceLimits, HealthLimits,
-    HealthSample, HealthState, ManagerLimits, PathGeneration, PathId, PromotionEvidence,
-    StreamId as CarrierStreamId, StreamPriority,
+    HealthSample, HealthState, ManagerLimits, PathGeneration, PathId, StreamId as CarrierStreamId,
+    StreamPriority,
 };
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, ResumeGuard, TrustPolicy,
@@ -1326,7 +1326,7 @@ fn failover_client(args: &[String]) {
         application_deadline,
         &mut admission_diagnostic,
     )
-    .unwrap_or_else(|e| fail(e));
+    .unwrap_or_else(|e| fail(&format!("UDP health observation failed: {e:?}")));
     delivery
         .delivery_ack(
             udp_record.stream,
@@ -1403,7 +1403,6 @@ fn failover_client(args: &[String]) {
             HEALTH_OBSERVATION_WINDOW,
             MAX_IGNORED_HEALTH_DATAGRAMS,
         );
-        let mut ignored_diagnostics = 0usize;
         for observation_index in 1..=health_limits.fail_after {
             loop {
                 let now = Instant::now();
@@ -1411,7 +1410,7 @@ fn failover_client(args: &[String]) {
                     let observation_started = window.started_at();
                     let state = window
                         .expire(now, &mut health, PathId(1))
-                        .unwrap_or_else(|e| fail(e));
+                        .unwrap_or_else(|e| fail(&format!("UDP health observation failed: {e:?}")));
                     let state_name = match state {
                         HealthState::Unknown => "unknown",
                         HealthState::Healthy => "healthy",
@@ -1454,15 +1453,21 @@ fn failover_client(args: &[String]) {
                 }
                 match u.recv_from(&mut buf) {
                     Ok((_, peer)) if peer != target => {
-                        let _ = window.observe(
+                        match window.observe(
                             HealthDatagram::WrongPeer,
                             Instant::now(),
                             &mut health,
                             PathId(1),
-                        );
-                        if ignored_diagnostics < MAX_IGNORED_HEALTH_DATAGRAMS {
-                            admission_diagnostic("unexpected_peer");
-                            ignored_diagnostics += 1;
+                        ) {
+                            Ok(None) => {
+                                admission_diagnostic("unexpected_peer");
+                            }
+                            Err(HealthWindowError::AdmissionBudgetExhausted { ignored }) => {
+                                fail(&format!(
+                                    "UDP health admission budget exhausted after {ignored} ignored datagrams"
+                                ));
+                            }
+                            other => fail(&format!("unexpected UDP health result: {other:?}")),
                         }
                     }
                     Ok((n, _)) => {
@@ -1480,22 +1485,32 @@ fn failover_client(args: &[String]) {
                         if classification == HealthDatagram::PermittedProgress {
                             window
                                 .observe(classification, Instant::now(), &mut health, PathId(1))
-                                .unwrap_or_else(|e| fail(e));
+                                .unwrap_or_else(|e| {
+                                    fail(&format!("UDP health observation failed: {e:?}"))
+                                });
                             fail(
                                 "unexpected permitted UDP delivery progress at degradation boundary",
                             );
                         }
-                        let _ =
-                            window.observe(classification, Instant::now(), &mut health, PathId(1));
-                        if ignored_diagnostics < MAX_IGNORED_HEALTH_DATAGRAMS {
-                            admission_diagnostic(match classification {
-                                HealthDatagram::MalformedOrUnadmitted => "malformed_or_unadmitted",
-                                HealthDatagram::StaleOrNonmatchingAuthenticated => {
-                                    "stale_or_nonmatching_authenticated"
-                                }
-                                _ => unreachable!(),
-                            });
-                            ignored_diagnostics += 1;
+                        match window.observe(classification, Instant::now(), &mut health, PathId(1))
+                        {
+                            Ok(None) => {
+                                admission_diagnostic(match classification {
+                                    HealthDatagram::MalformedOrUnadmitted => {
+                                        "malformed_or_unadmitted"
+                                    }
+                                    HealthDatagram::StaleOrNonmatchingAuthenticated => {
+                                        "stale_or_nonmatching_authenticated"
+                                    }
+                                    _ => unreachable!(),
+                                });
+                            }
+                            Err(HealthWindowError::AdmissionBudgetExhausted { ignored }) => {
+                                fail(&format!(
+                                    "UDP health admission budget exhausted after {ignored} ignored datagrams"
+                                ));
+                            }
+                            other => fail(&format!("unexpected UDP health result: {other:?}")),
                         }
                     }
                     Err(error)
@@ -1549,13 +1564,7 @@ fn failover_client(args: &[String]) {
     let readiness_satisfied = resume_validated;
     let new_active_at = if automatic_health_failover {
         let decision = manager
-            .promote_failed_udp_target(PromotionEvidence {
-                target_path: PathId(2),
-                generation: PathGeneration(1),
-                authenticated: true,
-                resume_validated: true,
-                readiness_observations: 3,
-            })
+            .promote_cold_authenticated_resume(PathId(2), PathGeneration(1), true, true)
             .unwrap();
         if !failover.apply_manager_decision(&decision) {
             fail("manager promotion was not applied");
