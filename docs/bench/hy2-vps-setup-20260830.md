@@ -11,8 +11,14 @@ read-only and were not restarted, reconfigured, or stopped.
 Any experiment must use a newly allocated high port, a temporary config under
 `/tmp`, a generated test certificate/authentication secret, a finite timeout,
 and an explicit cleanup trap. Do not copy credentials from the existing
-service. Bind only the dedicated VPS address; do not bind `0.0.0.0` or alter
-firewall/NAT rules.
+service. The owned-lab adapter requires `LAB_REMOTE_BIND_ADDRESS` separately
+from `LAB_REMOTE_ADDRESS` (the connection/SSH endpoint), accepts only a concrete
+non-wildcard, non-unspecified, non-loopback, non-multicast IP address, and checks
+via read-only `ip -j address show` over SSH that the exact address is assigned to
+a local VPS interface. It generates only `listen: <dedicated-address>:<temporary-port>`
+(with brackets for IPv6). Missing, unsafe, nonlocal, or occupied address/port
+contracts fail closed before process launch. Never fall back to a wildcard bind
+or alter firewall/NAT/route/provider policy.
 
 ## Exact HY2 artifact selected
 

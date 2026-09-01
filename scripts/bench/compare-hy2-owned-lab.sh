@@ -2,16 +2,32 @@
 set -euo pipefail
 fail(){ echo "compare-hy2-owned-lab: $*" >&2; exit 2; }
 need(){ [ -n "${!1:-}" ] || fail "missing $1"; }
-for v in LAB_SSH_TARGET LAB_ENDPOINT_ID LAB_ENDPOINT_SHA256 LAB_REMOTE_ADDRESS NEKO_BIN HY2_BIN; do need "$v"; done
+for v in LAB_SSH_TARGET LAB_ENDPOINT_ID LAB_ENDPOINT_SHA256 LAB_REMOTE_ADDRESS LAB_REMOTE_BIND_ADDRESS NEKO_BIN HY2_BIN; do need "$v"; done
 [ "${NEKO_OWNED_LAB:-}" = yes ] || fail 'NEKO_OWNED_LAB=yes is required'
 case "$LAB_SSH_TARGET" in *[!A-Za-z0-9._-]*|'') fail 'invalid SSH target';; esac
 case "$LAB_ENDPOINT_ID" in *[!A-Za-z0-9._-]*|'') fail 'invalid endpoint id';; esac
 [[ "$LAB_ENDPOINT_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail 'invalid endpoint SHA-256'
 [[ "$LAB_REMOTE_ADDRESS" =~ ^[A-Za-z0-9.:_-]+$ ]] || fail 'invalid remote address'
+[[ "$LAB_REMOTE_BIND_ADDRESS" =~ ^[0-9A-Fa-f:.]+$ ]] || fail 'invalid remote bind address'
+command -v python3 >/dev/null || fail 'python3 required'
+bind_authority=$(python3 - "$LAB_REMOTE_BIND_ADDRESS" <<'PY'
+import ipaddress, sys
+try:
+    address = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+check = address.ipv4_mapped if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped else address
+if check.is_unspecified or check.is_loopback or check.is_multicast or str(check) == "255.255.255.255":
+    raise SystemExit(1)
+print(f"[{address}]" if address.version == 6 else address)
+PY
+) || fail 'remote bind address is wildcard, unspecified, loopback, multicast, broadcast, or invalid'
 resolved=$(ssh -G "$LAB_SSH_TARGET" 2>/dev/null | awk '$1=="hostname"{print $2;exit}')
 [ -n "$resolved" ] || fail 'SSH target does not resolve'
 [ "$(printf %s "$resolved" | sha256sum | awk '{print $1}')" = "$LAB_ENDPOINT_SHA256" ] || fail 'SSH endpoint contract mismatch'
 [ "$resolved" = "$LAB_REMOTE_ADDRESS" ] || fail 'remote address differs from SSH endpoint'
+remote_interfaces=$(ssh -o BatchMode=yes "$LAB_SSH_TARGET" "ip -j address show") || fail 'cannot read remote interface addresses'
+printf '%s' "$remote_interfaces" | python3 -c 'import json,sys; expected=sys.argv[1]; data=json.load(sys.stdin); raise SystemExit(0 if any(a.get("local")==expected for i in data for a in i.get("addr_info",[])) else 1)' "$LAB_REMOTE_BIND_ADDRESS" || fail 'remote bind address is not assigned to a local VPS interface'
 RUNS=${BENCH_RUNS:-5}; BYTES=${BENCH_PAYLOAD_BYTES:-1200}; TIMEOUT=${BENCH_TIMEOUT_SEC:-30}
 [[ "$RUNS" =~ ^[0-9]+$ && "$RUNS" -ge 3 && "$RUNS" -le 10 ]] || fail 'BENCH_RUNS must be 3..10'
 [[ "$BYTES" =~ ^[0-9]+$ && "$BYTES" -gt 0 && "$BYTES" -le 1200 ]] || fail 'BENCH_PAYLOAD_BYTES must be 1..1200'
@@ -39,10 +55,10 @@ payload=$run/payload.bin; dd if=/dev/zero of="$payload" bs=1 count="$BYTES" stat
 cp "$NEKO_BIN" "$run/neko-cli"; cp "$HY2_BIN" "$run/hysteria"; cp scripts/bench/process-resource-sampler.py scripts/bench/echo-payload.py "$run/"
 "$run/neko-cli" keygen --identity "$run/client.identity" >"$run/client-key"; "$run/neko-cli" keygen --identity "$run/server.identity" >"$run/server-key"
 client_pub=$(sed -n 's/^client_public_key=//p' "$run/client-key"); server_pub=$(sed -n 's/^client_public_key=//p' "$run/server-key"); [ -n "$client_pub" ] && [ -n "$server_pub" ] || fail 'identity generation failed'
-mkdir -m700 "$run/tls"; openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=neko-owned-lab -addext "subjectAltName=IP:$LAB_REMOTE_ADDRESS" -keyout "$run/tls/key.pem" -out "$run/tls/cert.pem" >/dev/null 2>&1
+mkdir -m700 "$run/tls"; openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=neko-owned-lab -addext "subjectAltName=IP:$LAB_REMOTE_BIND_ADDRESS" -keyout "$run/tls/key.pem" -out "$run/tls/cert.pem" >/dev/null 2>&1
 auth=$(openssl rand -hex 24)
 cat >"$run/hy2-server.yaml" <<CFG
-listen: :${ports[1]}
+listen: ${bind_authority}:${ports[1]}
 tls:
   cert: $remote/tls/cert.pem
   key: $remote/tls/key.pem
@@ -51,7 +67,7 @@ auth:
   password: $auth
 CFG
 cat >"$run/hy2-client.yaml" <<CFG
-server: $LAB_REMOTE_ADDRESS:${ports[1]}
+server: ${bind_authority}:${ports[1]}
 auth: $auth
 tls:
   insecure: true
@@ -78,8 +94,8 @@ python3 "$run/process-resource-sampler.py" --experiment-id hy2-owned-lab --imple
 for _ in $(seq 1 100); do
   ss -H -lnt "sport = :${ports[2]}"|grep -q . && break
   if ! kill -0 "$hy2_client_pid" 2>/dev/null; then
-    sed "s/$LAB_REMOTE_ADDRESS/<owned-endpoint>/g" "$run/hy2-client.log" >&2
-    ssh -o BatchMode=yes "$LAB_SSH_TARGET" "sed 's/$LAB_REMOTE_ADDRESS/<owned-endpoint>/g' '$remote/hy2-server.log'" >&2 || true
+    sed -e "s/$LAB_REMOTE_ADDRESS/<ssh-endpoint>/g" -e "s/$LAB_REMOTE_BIND_ADDRESS/<owned-endpoint>/g" "$run/hy2-client.log" >&2
+    ssh -o BatchMode=yes "$LAB_SSH_TARGET" "sed -e 's/$LAB_REMOTE_ADDRESS/<ssh-endpoint>/g' -e 's/$LAB_REMOTE_BIND_ADDRESS/<owned-endpoint>/g' '$remote/hy2-server.log'" >&2 || true
     fail 'HY2 client exited before readiness'
   fi
   sleep .1
@@ -93,9 +109,9 @@ run_client(){
  jq -nc --arg name "$impl-$run_no" --arg impl "$impl" --argjson run "$run_no" --argjson failures "$failure" --arg e "$elapsed" --arg u "$user" --arg s "$sys" --arg r "$rss" --arg f "$fd" --argjson bytes "$BYTES" --arg hash "$h" --argjson rc "$rc" '{name:$name,implementation:$impl,run:$run,failures:$failures,elapsed_seconds:(if $e=="" then null else ($e|tonumber) end),cpu_user_seconds:(if $u=="" then null else ($u|tonumber) end),cpu_system_seconds:(if $s=="" then null else ($s|tonumber) end),rss_kib:(if $r=="" then null else ($r|tonumber) end),fd_count:(if $f=="" then null else ($f|tonumber) end),application_bytes:$bytes,payload_sha256:(if $hash=="" then null else $hash end),wire_bytes:null,exit_code:$rc}' >>"$records"
 }
 for i in $(seq 1 "$RUNS"); do
- ssh -o BatchMode=yes "$LAB_SSH_TARGET" "python3 '$remote/process-resource-sampler.py' --experiment-id neko-owned-lab-$i --implementation nekomusume --role server --identity sha256:$(sha256sum "$run/neko-cli"|cut -c1-16) --application-bytes '$BYTES' --owned-port '${ports[0]}' --interval-ms 10 --max-seconds '$TIMEOUT' --output '$remote/neko-server-$i-resource.json' -- '$remote/neko-cli' server --transport tcp --bind '0.0.0.0:${ports[0]}' --port '${ports[0]}' --identity '$remote/server.identity' --client-key '$client_pub' --bytes '$BYTES' --count 1 --duration '$TIMEOUT' >'$remote/neko-server-$i.log' 2>&1" & spid=$!
+ ssh -o BatchMode=yes "$LAB_SSH_TARGET" "python3 '$remote/process-resource-sampler.py' --experiment-id neko-owned-lab-$i --implementation nekomusume --role server --identity sha256:$(sha256sum "$run/neko-cli"|cut -c1-16) --application-bytes '$BYTES' --owned-port '${ports[0]}' --interval-ms 10 --max-seconds '$TIMEOUT' --output '$remote/neko-server-$i-resource.json' -- '$remote/neko-cli' server --transport tcp --bind '${bind_authority}:${ports[0]}' --port '${ports[0]}' --identity '$remote/server.identity' --client-key '$client_pub' --bytes '$BYTES' --count 1 --duration '$TIMEOUT' >'$remote/neko-server-$i.log' 2>&1" & spid=$!
  sleep .15
- run_client nekomusume "$i" "'$run/neko-cli' client --transport tcp --addr '$LAB_REMOTE_ADDRESS:${ports[0]}' --port '${ports[0]}' --identity '$run/client.identity' --server-key '$server_pub' --bytes '$BYTES' --count 1 --duration '$TIMEOUT' --payload-file '$payload' --json"
+ run_client nekomusume "$i" "'$run/neko-cli' client --transport tcp --addr '${bind_authority}:${ports[0]}' --port '${ports[0]}' --identity '$run/client.identity' --server-key '$server_pub' --bytes '$BYTES' --count 1 --duration '$TIMEOUT' --payload-file '$payload' --json"
  wait "$spid" || true
  run_client hy2 "$i" "python3 '$run/echo-payload.py' --host 127.0.0.1 --port '${ports[2]}' --payload-file '$payload' --timeout '$TIMEOUT'"
 done
@@ -104,7 +120,7 @@ ssh -o BatchMode=yes "$LAB_SSH_TARGET" "while read p; do kill \"\$p\" 2>/dev/nul
 for p in "${ports[2]}"; do ! ss -H -lntup "sport = :$p"|grep -q . || fail 'local cleanup failed'; done
 remote_resources=$run/remote-resources.json; ssh -o BatchMode=yes "$LAB_SSH_TARGET" "jq -s . '$remote'/*-resource.json" >"$remote_resources"
 resources=$run/resources.json; jq -s 'add' <(jq -s . "$run/hy2-client-resource.json") "$remote_resources" >"$resources"
-mtu=$(ip route get "$LAB_REMOTE_ADDRESS" | sed -n 's/.* mtu \([0-9]*\).*/\1/p'); [ -n "$mtu" ] || mtu=$(cat /sys/class/net/$(ip route get "$LAB_REMOTE_ADDRESS"|awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}')/mtu)
+mtu=$(ip route get "$LAB_REMOTE_BIND_ADDRESS" | sed -n 's/.* mtu \([0-9]*\).*/\1/p'); [ -n "$mtu" ] || mtu=$(cat /sys/class/net/$(ip route get "$LAB_REMOTE_BIND_ADDRESS"|awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}')/mtu)
 commit=$(git rev-parse HEAD); neko_hash=$(sha256sum "$run/neko-cli"|awk '{print $1}'); now=$(date -u +%FT%TZ)
 jq -s --arg commit "$commit" --arg endpoint "$LAB_ENDPOINT_ID" --arg mtu "$mtu" --arg hash "$payload_hash" --arg neko_hash "$neko_hash" --arg at "$now" --argjson runs "$RUNS" --argjson bytes "$BYTES" --slurpfile resources "$resources" 'def pct($x;$p): if ($x|length)==0 then null else ($x|sort|.[((($x|length)-1)*$p|ceil)]) end; {schema:"nekomusume.benchmark-result.v1",experiment_id:"hy2-owned-lab-paired",git_commit:$commit,mode:"controlled-owned-lab",transport:"deterministic",scope:"self-owned-client-vps",bounds:{maximum_duration_ms:300000,application_bytes_max:($bytes*$runs*2)},contract:{endpoint_id:$endpoint,route_id:"same-client-vps-nearby-interleaved",mtu:($mtu|tonumber),security_profile:"authenticated encrypted research configuration",load_profile:"single-stream exact authenticated echo",payload_bytes:$bytes,payload_sha256:$hash,runs_per_implementation:$runs,nekomusume_binary_sha256:$neko_hash,hy2_version:"v2.9.3",hy2_binary_sha256:"66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1",wire_bytes_nullable:true,captured_at:$at},samples:.,summary:(group_by(.implementation)|map({implementation:.[0].implementation,failures:(map(.failures)|add),median_exchange_latency_ms:(pct([.[]|select(.failures==0)|.elapsed_seconds*1000];0.5)),p95_exchange_latency_ms:(pct([.[]|select(.failures==0)|.elapsed_seconds*1000];0.95)),application_bytes:(map(.application_bytes)|add),wire_bytes:null})),resources:$resources[0],cleanup_status:"verified"}' "$records" >"$out"
 cleanup_status=verified

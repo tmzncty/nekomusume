@@ -104,7 +104,9 @@ self-owned-lab follow-ups add blockers rather than positive release evidence:
   `docs/research/reviewer-3978f3f-followup-b-periodic-vps-20260902.md`.
 - **C — adapter present, comparison absent.** The owned-lab fair-pair adapter and
   exact-payload seam are implemented and pass the full repository gate. The
-  temporary HY2 QUIC/UDP path timed out before its forwarding listener became
+  owned-lab adapter now requires and remotely validates a distinct dedicated
+  HY2 bind address and cannot generate a wildcard listener. The temporary HY2
+  QUIC/UDP path timed out before its forwarding listener became
   ready, so there are no paired samples, comparative statistics or superiority
   claim. See
   `docs/research/reviewer-3978f3f-followup-c-hy2-owned-lab-20260902.md` and
