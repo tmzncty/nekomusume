@@ -12,8 +12,8 @@ mod reachability;
 use neko_carrier::{
     ActiveCarrier, CarrierHealthEvidence, CarrierManager, CarrierSwitchReason, DataId,
     FailoverController, FairScheduler, FlowLimits, HealthEvidenceLimits, HealthLimits,
-    HealthSample, HealthState, ManagerLimits, PathGeneration, PathId, StreamId as CarrierStreamId,
-    StreamPriority,
+    HealthSample, HealthState, ManagerLimits, PathGeneration, PathId, ReadinessObservation,
+    StreamId as CarrierStreamId, StreamPriority,
 };
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, ResumeGuard, TrustPolicy,
@@ -1171,6 +1171,11 @@ fn failover_client(args: &[String]) {
     if !(40080..=MAX_PORT).contains(&up) || !(40080..=MAX_PORT).contains(&tp) {
         fail("ports outside 40080-40100")
     }
+    let automatic_health_failover = args.iter().any(|a| a == "--automatic-health-failover");
+    let cold_health_failover = args.iter().any(|a| a == "--cold-health-failover");
+    if cold_health_failover && !automatic_health_failover {
+        fail("--cold-health-failover requires --automatic-health-failover")
+    }
     let id = load_or_generate(&PathBuf::from(parse(
         args,
         "--identity",
@@ -1342,7 +1347,6 @@ fn failover_client(args: &[String]) {
         1,
         &format!(",\"ciphertext_bytes\":{}", n),
     );
-    let automatic_health_failover = args.iter().any(|a| a == "--automatic-health-failover");
     let health_limits = HealthLimits {
         degrade_after: 2,
         fail_after: 3,
@@ -1362,6 +1366,7 @@ fn failover_client(args: &[String]) {
     .unwrap();
     manager.set_active_udp(PathId(1), PathGeneration(0));
     failover.udp_progress();
+
     // Leave exactly the next logical range uncertain at the carrier boundary.
     // It is resent over TCP; the receiver's Session runtime deduplicates it if
     // UDP delivery completed before reply cessation.
@@ -1392,6 +1397,78 @@ fn failover_client(args: &[String]) {
                 uncertain.data.len()
             ),
         );
+    }
+    // D064 warm path: complete negotiation, Noise authentication, resume binding
+    // and three bounded readiness observations while UDP remains sole active.
+    let mut warm_tcp = None;
+    let mut warm_session = None;
+    let mut warm_timing = None;
+    if automatic_health_failover && !cold_health_failover {
+        let connect_started = Instant::now();
+        let mut tcp = TcpStream::connect_timeout(
+            &format!("{addr}:{tp}").parse().unwrap(),
+            Duration::from_secs(secs),
+        )
+        .unwrap();
+        let connected = Instant::now();
+        let mut negotiation2 =
+            VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
+        write_frame(&mut tcp, &negotiation2.client_hello().unwrap()).unwrap();
+        let response2 = read_frame(&mut tcp, MAX_NEGOTIATION_FRAME).unwrap();
+        negotiation2.client_accept_response(&response2).unwrap();
+        let negotiated = Instant::now();
+        let binding2 = negotiation2.authenticated_binding().unwrap();
+        let mut hs2 = InitiatorHandshake::with_resume_negotiation_binding(
+            &id,
+            &sk,
+            b"failover",
+            DOMAIN,
+            &failover_binding(7001, 1, 10_000),
+            binding2.as_bytes(),
+        )
+        .unwrap();
+        write_frame(&mut tcp, &hs2.first_message().unwrap()).unwrap();
+        let response = read_frame(&mut tcp, 1024).unwrap();
+        let session = hs2.finish(&response, context(2)).unwrap();
+        let authenticated = Instant::now();
+        negotiation2.admit_data().unwrap();
+        manager
+            .prepare_warm_candidate(PathId(2), PathGeneration(1), 7001, 1)
+            .unwrap();
+        for observation_id in 1..=3 {
+            let warm = manager
+                .observe_warm_candidate_readiness(ReadinessObservation {
+                    target_path: PathId(2),
+                    generation: PathGeneration(1),
+                    session_id: 7001,
+                    delivery_epoch: 1,
+                    observation_id,
+                    authenticated: true,
+                    resume_validated: true,
+                    resource_admitted: true,
+                })
+                .unwrap();
+            emit_diagnostic(
+                args,
+                "client",
+                "tcp_warm_readiness",
+                observation_id as usize,
+                &format!(",\"warm\":{}", warm),
+            );
+        }
+        if manager.active() != Some(PathId(1))
+            || !manager
+                .warm_candidate()
+                .is_some_and(|candidate| candidate.warm)
+        {
+            fail("warm readiness changed active ownership")
+        }
+        println!(
+            "carrier_event name=tcp_warm session=7001 generation=1 readiness=3 application_data=0"
+        );
+        warm_tcp = Some(tcp);
+        warm_session = Some(session);
+        warm_timing = Some((connect_started, connected, negotiated, authenticated));
     }
     const HEALTH_OBSERVATION_WINDOW: Duration = Duration::from_secs(1);
     const MAX_IGNORED_HEALTH_DATAGRAMS: usize = 64;
@@ -1530,41 +1607,82 @@ fn failover_client(args: &[String]) {
             "carrier_event name=controlled_udp_stop session=7001 generation=0 reason=bounded_application_fault_injection"
         );
     }
-    let mut negotiation2 =
-        VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
-    let hello2 = negotiation2.client_hello().unwrap();
-    let tcp_connect_started = Instant::now();
-    let mut tcp = TcpStream::connect_timeout(
-        &format!("{addr}:{tp}").parse().unwrap(),
-        Duration::from_secs(secs),
-    )
-    .unwrap();
-    let tcp_connected = Instant::now();
-    write_frame(&mut tcp, &hello2).unwrap();
-    let response2 = read_frame(&mut tcp, MAX_NEGOTIATION_FRAME).unwrap();
-    negotiation2.client_accept_response(&response2).unwrap();
-    let tcp_negotiated = Instant::now();
-    let binding2 = negotiation2.authenticated_binding().unwrap();
-    let mut hs2 = InitiatorHandshake::with_resume_negotiation_binding(
-        &id,
-        &sk,
-        b"failover",
-        DOMAIN,
-        &failover_binding(7001, 1, 10_000),
-        binding2.as_bytes(),
-    )
-    .unwrap();
-    let first2 = hs2.first_message().unwrap();
-    write_frame(&mut tcp, &first2).unwrap();
-    let resp = read_frame(&mut tcp, 1024).unwrap();
-    let mut ts = hs2.finish(&resp, context(2)).unwrap();
-    let tcp_authenticated = Instant::now();
-    let resume_validated = tcp_authenticated;
+    let (
+        mut tcp,
+        mut ts,
+        tcp_connect_started,
+        tcp_connected,
+        tcp_negotiated,
+        tcp_authenticated,
+        resume_validated,
+        warm_recovery,
+    ) = if let (
+        Some(tcp),
+        Some(session),
+        Some((connect_started, connected, negotiated, authenticated)),
+    ) = (warm_tcp, warm_session, warm_timing)
+    {
+        (
+            tcp,
+            session,
+            connect_started,
+            connected,
+            negotiated,
+            authenticated,
+            authenticated,
+            true,
+        )
+    } else {
+        let mut negotiation2 =
+            VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
+        let hello2 = negotiation2.client_hello().unwrap();
+        let connect_started = Instant::now();
+        let mut tcp = TcpStream::connect_timeout(
+            &format!("{addr}:{tp}").parse().unwrap(),
+            Duration::from_secs(secs),
+        )
+        .unwrap();
+        let connected = Instant::now();
+        write_frame(&mut tcp, &hello2).unwrap();
+        let response2 = read_frame(&mut tcp, MAX_NEGOTIATION_FRAME).unwrap();
+        negotiation2.client_accept_response(&response2).unwrap();
+        let negotiated = Instant::now();
+        let binding2 = negotiation2.authenticated_binding().unwrap();
+        let mut hs2 = InitiatorHandshake::with_resume_negotiation_binding(
+            &id,
+            &sk,
+            b"failover",
+            DOMAIN,
+            &failover_binding(7001, 1, 10_000),
+            binding2.as_bytes(),
+        )
+        .unwrap();
+        write_frame(&mut tcp, &hs2.first_message().unwrap()).unwrap();
+        let resp = read_frame(&mut tcp, 1024).unwrap();
+        let session = hs2.finish(&resp, context(2)).unwrap();
+        let authenticated = Instant::now();
+        (
+            tcp,
+            session,
+            connect_started,
+            connected,
+            negotiated,
+            authenticated,
+            authenticated,
+            false,
+        )
+    };
     println!("carrier_event name=tcp_resume_guard session=7001 generation=1");
     let new_active_at = if automatic_health_failover {
-        let decision = manager
-            .promote_cold_authenticated_resume(PathId(2), PathGeneration(1), true, true)
-            .unwrap();
+        let decision = if warm_recovery {
+            manager
+                .promote_warm_authenticated_resume(PathId(2), PathGeneration(1), 7001, 1)
+                .unwrap()
+        } else {
+            manager
+                .promote_cold_authenticated_resume(PathId(2), PathGeneration(1), true, true)
+                .unwrap()
+        };
         if !failover.apply_manager_decision(&decision) {
             fail("manager promotion was not applied");
         }
@@ -1620,13 +1738,26 @@ fn failover_client(args: &[String]) {
     {
         let latency = first_data.duration_since(decision).as_micros() as u64;
         failover.record_recovery_latency(latency);
+        let fallback_class = if warm_recovery { "warm" } else { "cold" };
+        let promotion_gate = if warm_recovery {
+            "warm_authenticated_resume"
+        } else {
+            "cold_authenticated_resume"
+        };
+        let promotion_ready_field = if warm_recovery {
+            "readiness_satisfied_us"
+        } else {
+            "cold_promotion_ready_us"
+        };
         emit_diagnostic(
             args,
             "client",
             "failover_timing",
             count,
             &format!(
-                ",\"fallback_class\":\"cold\",\"failure_decided_at_us\":{},\"tcp_connect_started_us\":{},\"tcp_connected_us\":{},\"tcp_negotiated_us\":{},\"tcp_authenticated_us\":{},\"resume_validated_us\":{},\"promotion_gate\":\"cold_authenticated_resume\",\"cold_promotion_ready_us\":{},\"new_active_at_us\":{},\"first_resumed_data_accepted_us\":{},\"recovery_latency_us\":{}",
+                ",\"fallback_class\":\"{}\",\"promotion_gate\":\"{}\",\"failure_decided_at_us\":{},\"tcp_connect_started_us\":{},\"tcp_connected_us\":{},\"tcp_negotiated_us\":{},\"tcp_authenticated_us\":{},\"resume_validated_us\":{},\"{}\":{},\"new_active_at_us\":{},\"first_resumed_data_accepted_us\":{},\"recovery_latency_us\":{}",
+                fallback_class,
+                promotion_gate,
                 decision
                     .duration_since(failure_observation_started)
                     .as_micros(),
@@ -1645,6 +1776,7 @@ fn failover_client(args: &[String]) {
                 resume_validated
                     .duration_since(failure_observation_started)
                     .as_micros(),
+                promotion_ready_field,
                 resume_validated
                     .duration_since(failure_observation_started)
                     .as_micros(),

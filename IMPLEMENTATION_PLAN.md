@@ -61,7 +61,10 @@ not be promoted to public-WAN reachability.
    reproducible independently controlled IPv4/IPv6, UDP degradation -> TCP
    fallback, long-lived and NAT/endpoint-change evidence with actual parameters,
    endpoint ownership, cleanup and negative results. Self-owned same-host paths
-   remain classified as such.
+   remain classified as such. The minimum D064 pre-failure warm seam and local
+   deterministic warm/cold tests now exist, but current-exact-head VPS warm
+   recovery evidence and the remaining matrix rows are still open; this item is
+   intentionally not complete.
 4. [ ] **Independent release/security review.** Resolve findings, verify resource
    and abuse limits, compatibility policy, package rollback, operator lifecycle,
    canonical vectors and comparison methodology.

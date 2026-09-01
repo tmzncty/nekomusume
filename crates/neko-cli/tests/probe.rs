@@ -418,6 +418,7 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
             "--duration",
             "3",
             "--automatic-health-failover",
+            "--cold-health-failover",
             "--diagnostic",
             "--experiment-id",
             "health-failover-client",
@@ -474,6 +475,179 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
     assert!(
         !client_log.contains("\"readiness_satisfied_us\":"),
         "cold fallback must not advertise D064/warm readiness: {client_log}"
+    );
+    assert!(
+        client_log.contains("carrier_event name=tcp_resume_guard"),
+        "{client_log}"
+    );
+    assert_eq!(
+        client_log
+            .matches("\"event\":\"tcp_delivery_ack_validated\"")
+            .count(),
+        2
+    );
+    assert!(
+        client_log.contains("failover_mode=automatic_health_failure"),
+        "{client_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"udp_reply_ceased\""),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("carrier_event name=tcp_resumed"),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("records=3 application_bytes_total=48"),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains(&format!("bytes_hex={}", "78".repeat(48))),
+        "{server_log}"
+    );
+}
+#[test]
+fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("warm-failover-server");
+    let cp = tmp("warm-failover-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let udp = 40084u16;
+    let tcp = 40085u16;
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "5",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--cease-udp-replies-after",
+            "1",
+            "--send-malformed-after-cessation",
+            "--diagnostic",
+            "--experiment-id",
+            "warm-failover-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    thread::sleep(Duration::from_millis(150));
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "3",
+            "--automatic-health-failover",
+            "--diagnostic",
+            "--experiment-id",
+            "warm-failover-client",
+        ])
+        .output()
+        .unwrap();
+    let server_out = server.wait_with_output().unwrap();
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let server_log = String::from_utf8_lossy(&server_out.stdout);
+    assert!(
+        out.status.success(),
+        "stdout={client_log} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        server_out.status.success(),
+        "stdout={server_log} stderr={}",
+        String::from_utf8_lossy(&server_out.stderr)
+    );
+    assert!(
+        !client_log.contains("carrier_event name=controlled_udp_stop"),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains("controlled_udp_stop=false"),
+        "{client_log}"
+    );
+    assert!(client_log.contains("carrier_event name=udp_health_failed session=7001 generation=1 threshold=3 reason=udp_path_degraded diagnostic_cause=authenticated_delivery_ack_timeout"), "{client_log}");
+    assert_eq!(
+        client_log.matches("\"event\":\"udp_health_event\"").count(),
+        3
+    );
+    assert!(
+        client_log.contains("\"state\":\"degraded\""),
+        "{client_log}"
+    );
+    assert!(client_log.contains("\"state\":\"failed\""), "{client_log}");
+    assert!(!client_log.contains("\"rtt_us\""), "{client_log}");
+    assert!(!client_log.contains("\"loss_per_mille\""), "{client_log}");
+    assert!(
+        client_log.contains("\"fallback_class\":\"warm\""),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains("\"promotion_gate\":\"warm_authenticated_resume\""),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains("\"readiness_satisfied_us\":"),
+        "{client_log}"
+    );
+    assert!(
+        !client_log.contains("\"cold_promotion_ready_us\":"),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains(
+            "carrier_event name=tcp_warm session=7001 generation=1 readiness=3 application_data=0"
+        ),
+        "{client_log}"
+    );
+    assert_eq!(
+        client_log
+            .matches("\"event\":\"tcp_warm_readiness\"")
+            .count(),
+        3
+    );
+    let warm = client_log.find("carrier_event name=tcp_warm").unwrap();
+    let failed = client_log
+        .find("carrier_event name=udp_health_failed")
+        .unwrap();
+    let data = client_log
+        .find("\"event\":\"tcp_delivery_ack_validated\"")
+        .unwrap();
+    assert!(
+        warm < failed && failed < data,
+        "warm setup/failure/data order violated: {client_log}"
     );
     assert!(
         client_log.contains("carrier_event name=tcp_resume_guard"),

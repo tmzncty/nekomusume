@@ -2120,9 +2120,21 @@ pub struct CarrierSwitchDecision {
 pub struct ReadinessObservation {
     pub target_path: PathId,
     pub generation: PathGeneration,
+    pub session_id: u64,
+    pub delivery_epoch: u64,
     pub observation_id: u64,
     pub authenticated: bool,
     pub resume_validated: bool,
+    pub resource_admitted: bool,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WarmCandidate {
+    pub target_path: PathId,
+    pub generation: PathGeneration,
+    pub session_id: u64,
+    pub delivery_epoch: u64,
+    pub ready_observations: u8,
+    pub warm: bool,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingCarrierSwitch {
@@ -2141,7 +2153,11 @@ pub struct CarrierManager {
     pub switches: u64,
     active_generation: Option<PathGeneration>,
     pending_switch: Option<PendingCarrierSwitch>,
+    warm_candidate: Option<WarmCandidate>,
     readiness_observation_ids: Vec<u64>,
+    pub warm_recoveries: u64,
+    pub cold_recoveries: u64,
+    pub failed_warm_attempts: u64,
     migration_hold: u32,
 }
 
@@ -2183,7 +2199,11 @@ impl CarrierManager {
             switches: 0,
             active_generation: None,
             pending_switch: None,
+            warm_candidate: None,
             readiness_observation_ids: Vec::new(),
+            warm_recoveries: 0,
+            cold_recoveries: 0,
+            failed_warm_attempts: 0,
             migration_hold: 0,
         })
     }
@@ -2223,6 +2243,7 @@ impl CarrierManager {
         self.active = Some(path);
         self.active_generation = Some(generation);
         self.pending_switch = None;
+        self.warm_candidate = None;
         self.readiness_observation_ids.clear();
         self.migration_hold = 0;
         Ok(())
@@ -2232,9 +2253,112 @@ impl CarrierManager {
         self.active = Some(path);
         self.active_generation = Some(generation);
         self.pending_switch = None;
+        self.warm_candidate = None;
         self.readiness_observation_ids.clear();
         self.migration_hold = 0;
     }
+    pub fn warm_candidate(&self) -> Option<WarmCandidate> {
+        self.warm_candidate
+    }
+
+    /// Installs or replaces one bounded standby generation. UDP remains active;
+    /// the standby cannot carry application data through this manager API.
+    pub fn prepare_warm_candidate(
+        &mut self,
+        target_path: PathId,
+        generation: PathGeneration,
+        session_id: u64,
+        delivery_epoch: u64,
+    ) -> Result<(), MigrationError> {
+        if self.active.is_none() || self.pending_switch.is_some() {
+            return Err(MigrationError::GenerationMismatch);
+        }
+        if generation.0
+            <= self
+                .active_generation
+                .ok_or(MigrationError::GenerationMismatch)?
+                .0
+        {
+            return Err(MigrationError::OldGeneration);
+        }
+        self.warm_candidate = Some(WarmCandidate {
+            target_path,
+            generation,
+            session_id,
+            delivery_epoch,
+            ready_observations: 0,
+            warm: false,
+        });
+        self.readiness_observation_ids.clear();
+        Ok(())
+    }
+
+    /// Accumulates exactly the bounded D064 readiness gate before failure.
+    /// Authentication, resume binding and resource admission are separate from
+    /// Session delivery and never change the active owner.
+    pub fn observe_warm_candidate_readiness(
+        &mut self,
+        observation: ReadinessObservation,
+    ) -> Result<bool, MigrationError> {
+        let candidate = self
+            .warm_candidate
+            .ok_or(MigrationError::GenerationMismatch)?;
+        if observation.generation.0 < candidate.generation.0 {
+            return Err(MigrationError::OldGeneration);
+        }
+        if observation.target_path != candidate.target_path
+            || observation.generation != candidate.generation
+            || observation.session_id != candidate.session_id
+            || observation.delivery_epoch != candidate.delivery_epoch
+        {
+            return Err(MigrationError::GenerationMismatch);
+        }
+        if !observation.authenticated
+            || !observation.resume_validated
+            || !observation.resource_admitted
+        {
+            self.readiness_observation_ids.clear();
+            if let Some(candidate) = self.warm_candidate.as_mut() {
+                candidate.ready_observations = 0;
+                candidate.warm = false;
+            }
+            return Err(MigrationError::Unvalidated);
+        }
+        if self
+            .readiness_observation_ids
+            .contains(&observation.observation_id)
+        {
+            return Ok(candidate.warm);
+        }
+        if self.readiness_observation_ids.len() < 3 {
+            self.readiness_observation_ids
+                .push(observation.observation_id);
+        }
+        let candidate = self.warm_candidate.as_mut().unwrap();
+        candidate.ready_observations = self.readiness_observation_ids.len() as u8;
+        candidate.warm = candidate.ready_observations == 3;
+        Ok(candidate.warm)
+    }
+
+    pub fn fail_warm_candidate(
+        &mut self,
+        target_path: PathId,
+        generation: PathGeneration,
+    ) -> Result<(), MigrationError> {
+        let candidate = self
+            .warm_candidate
+            .ok_or(MigrationError::GenerationMismatch)?;
+        if candidate.target_path != target_path || candidate.generation != generation {
+            return Err(MigrationError::GenerationMismatch);
+        }
+        if candidate.warm {
+            self.failed_warm_attempts = self.failed_warm_attempts.saturating_add(1);
+        }
+        self.warm_candidate = None;
+        self.readiness_observation_ids.clear();
+        Ok(())
+    }
+
     pub fn pending_switch(&self) -> Option<PendingCarrierSwitch> {
         self.pending_switch
     }
@@ -2266,44 +2390,52 @@ impl CarrierManager {
         };
         self.active = None;
         self.pending_switch = Some(pending);
-        self.readiness_observation_ids.clear();
+        if self.warm_candidate.is_some_and(|candidate| {
+            candidate.target_path != pending.target_path
+                || candidate.generation != pending.generation
+        }) {
+            self.warm_candidate = None;
+            self.readiness_observation_ids.clear();
+        }
         self.migration_hold = 0;
         Ok(pending)
     }
 
-    /// Records one target/generation-scoped readiness event. The event source supplies
-    /// each observation ID; the manager owns bounded accumulation and deduplication.
+    /// Legacy post-failure readiness is intentionally no longer a promotion
+    /// path: D064 readiness must have been accumulated while UDP was active.
     pub fn observe_failed_udp_target_readiness(
         &mut self,
-        observation: ReadinessObservation,
+        _observation: ReadinessObservation,
     ) -> Result<Option<CarrierSwitchDecision>, MigrationError> {
+        Err(MigrationError::Unvalidated)
+    }
+
+    pub fn promote_warm_authenticated_resume(
+        &mut self,
+        target_path: PathId,
+        generation: PathGeneration,
+        session_id: u64,
+        delivery_epoch: u64,
+    ) -> Result<CarrierSwitchDecision, MigrationError> {
         let pending = self
             .pending_switch
             .ok_or(MigrationError::GenerationMismatch)?;
-        if observation.generation.0 < pending.generation.0 {
-            return Err(MigrationError::OldGeneration);
-        }
-        if observation.target_path != pending.target_path
-            || observation.generation != pending.generation
+        let candidate = self.warm_candidate.ok_or(MigrationError::Unvalidated)?;
+        if pending.target_path != target_path
+            || pending.generation != generation
+            || candidate.target_path != target_path
+            || candidate.generation != generation
+            || candidate.session_id != session_id
+            || candidate.delivery_epoch != delivery_epoch
         {
             return Err(MigrationError::GenerationMismatch);
         }
-        if !observation.authenticated || !observation.resume_validated {
-            self.readiness_observation_ids.clear();
+        if !candidate.warm || candidate.ready_observations != 3 {
             return Err(MigrationError::Unvalidated);
         }
-        if self
-            .readiness_observation_ids
-            .contains(&observation.observation_id)
-        {
-            return Ok(None);
-        }
-        self.readiness_observation_ids
-            .push(observation.observation_id);
-        if self.readiness_observation_ids.len() < 3 {
-            return Ok(None);
-        }
-        self.promote_pending_target().map(Some)
+        let decision = self.promote_pending_target()?;
+        self.warm_recoveries = self.warm_recoveries.saturating_add(1);
+        Ok(decision)
     }
 
     /// Cold recovery has no pre-existing D064 readiness sequence. Promotion is
@@ -2327,7 +2459,9 @@ impl CarrierManager {
         if !authenticated || !resume_validated {
             return Err(MigrationError::Unvalidated);
         }
-        self.promote_pending_target()
+        let decision = self.promote_pending_target()?;
+        self.cold_recoveries = self.cold_recoveries.saturating_add(1);
+        Ok(decision)
     }
 
     fn promote_pending_target(&mut self) -> Result<CarrierSwitchDecision, MigrationError> {
@@ -2345,6 +2479,7 @@ impl CarrierManager {
         self.active = Some(pending.target_path);
         self.active_generation = Some(pending.generation);
         self.pending_switch = None;
+        self.warm_candidate = None;
         self.readiness_observation_ids.clear();
         self.migration_hold = 0;
         self.switches = self.switches.saturating_add(1);
@@ -2822,111 +2957,149 @@ mod health_evidence_tests {
             .unwrap();
         (manager, pending)
     }
-    fn readiness(id: u64) -> ReadinessObservation {
+    fn active_manager() -> CarrierManager {
+        let mut manager = CarrierManager::new(ManagerLimits {
+            min_hold_events: 1,
+            switch_margin: 0,
+            max_paths: 2,
+        })
+        .unwrap();
+        manager.set_active_udp(PathId(9), PathGeneration(1));
+        manager
+            .prepare_warm_candidate(PathId(10), PathGeneration(2), 7001, 4)
+            .unwrap();
+        manager
+    }
+
+    fn warm_readiness(id: u64) -> ReadinessObservation {
         ReadinessObservation {
             target_path: PathId(10),
             generation: PathGeneration(2),
+            session_id: 7001,
+            delivery_epoch: 4,
             observation_id: id,
             authenticated: true,
             resume_validated: true,
+            resource_admitted: true,
         }
     }
+
     #[test]
-    fn d064_readiness_is_observed_idempotent_and_exactly_once() {
-        let (mut manager, _) = failed_manager();
-        assert_eq!(
-            manager.observe_failed_udp_target_readiness(readiness(1)),
-            Ok(None)
+    fn d064_warm_readiness_is_prefailure_bounded_and_distinct() {
+        let mut manager = active_manager();
+        assert!(
+            !manager
+                .observe_warm_candidate_readiness(warm_readiness(1))
+                .unwrap()
         );
-        assert_eq!(
-            manager.observe_failed_udp_target_readiness(readiness(1)),
-            Ok(None)
+        assert!(
+            !manager
+                .observe_warm_candidate_readiness(warm_readiness(1))
+                .unwrap()
         );
-        assert_eq!(
-            manager.observe_failed_udp_target_readiness(readiness(2)),
-            Ok(None)
+        assert!(
+            !manager
+                .observe_warm_candidate_readiness(warm_readiness(2))
+                .unwrap()
         );
-        let decision = manager
-            .observe_failed_udp_target_readiness(readiness(3))
-            .unwrap()
-            .unwrap();
-        assert_eq!(decision.active_path, PathId(10));
-        assert_eq!(manager.active(), Some(PathId(10)));
-        assert_eq!(manager.switches, 1);
-        assert_eq!(
-            manager.observe_failed_udp_target_readiness(readiness(4)),
-            Err(MigrationError::GenerationMismatch)
+        assert_eq!(manager.active(), Some(PathId(9)));
+        assert!(
+            manager
+                .observe_warm_candidate_readiness(warm_readiness(3))
+                .unwrap()
         );
-        assert_eq!(manager.switches, 1);
+        assert_eq!(manager.active(), Some(PathId(9)));
+        assert_eq!(manager.warm_candidate().unwrap().ready_observations, 3);
+        assert!(
+            manager
+                .observe_warm_candidate_readiness(warm_readiness(4))
+                .unwrap()
+        );
+        assert_eq!(manager.warm_candidate().unwrap().ready_observations, 3);
     }
+
     #[test]
-    fn d064_readiness_rejects_wrong_stale_future_and_unvalidated_atomically() {
-        let (mut manager, pending) = failed_manager();
+    fn d064_wrong_dimensions_and_unvalidated_reset_fail_closed() {
         for (bad, error) in [
             (
                 ReadinessObservation {
-                    target_path: PathId(9),
-                    ..readiness(1)
+                    target_path: PathId(11),
+                    ..warm_readiness(1)
                 },
                 MigrationError::GenerationMismatch,
             ),
             (
                 ReadinessObservation {
                     generation: PathGeneration(1),
-                    ..readiness(2)
+                    ..warm_readiness(1)
                 },
                 MigrationError::OldGeneration,
             ),
             (
                 ReadinessObservation {
                     generation: PathGeneration(3),
-                    ..readiness(3)
+                    ..warm_readiness(1)
                 },
                 MigrationError::GenerationMismatch,
             ),
             (
                 ReadinessObservation {
-                    authenticated: false,
-                    ..readiness(4)
+                    session_id: 7002,
+                    ..warm_readiness(1)
                 },
-                MigrationError::Unvalidated,
+                MigrationError::GenerationMismatch,
             ),
             (
                 ReadinessObservation {
-                    resume_validated: false,
-                    ..readiness(5)
+                    delivery_epoch: 5,
+                    ..warm_readiness(1)
                 },
-                MigrationError::Unvalidated,
+                MigrationError::GenerationMismatch,
             ),
         ] {
-            assert_eq!(manager.observe_failed_udp_target_readiness(bad), Err(error));
-            assert_eq!(manager.active(), None);
-            assert_eq!(manager.pending_switch(), Some(pending));
-            assert_eq!(manager.switches, 0);
+            let mut manager = active_manager();
+            assert_eq!(manager.observe_warm_candidate_readiness(bad), Err(error));
+            assert_eq!(manager.active(), Some(PathId(9)));
+            assert_eq!(manager.warm_candidate().unwrap().ready_observations, 0);
         }
-        for id in 10..13 {
+        for bad in [
+            ReadinessObservation {
+                authenticated: false,
+                ..warm_readiness(2)
+            },
+            ReadinessObservation {
+                resume_validated: false,
+                ..warm_readiness(2)
+            },
+            ReadinessObservation {
+                resource_admitted: false,
+                ..warm_readiness(2)
+            },
+        ] {
+            let mut manager = active_manager();
+            manager
+                .observe_warm_candidate_readiness(warm_readiness(1))
+                .unwrap();
             assert_eq!(
-                manager
-                    .observe_failed_udp_target_readiness(readiness(id))
-                    .unwrap()
-                    .is_some(),
-                id == 12
+                manager.observe_warm_candidate_readiness(bad),
+                Err(MigrationError::Unvalidated)
             );
+            assert_eq!(manager.warm_candidate().unwrap().ready_observations, 0);
         }
-        assert_eq!(manager.active(), Some(PathId(10)));
-        assert_eq!(manager.switches, 1);
     }
+
     #[test]
-    fn next_generation_readiness_is_isolated_and_one_owner_remains() {
-        let (mut manager, _) = failed_manager();
-        manager
-            .promote_cold_authenticated_resume(PathId(10), PathGeneration(2), true, true)
-            .unwrap();
-        manager.set_active_udp(PathId(9), PathGeneration(2));
-        manager
+    fn exact_warm_generation_promotes_only_after_failure() {
+        let mut manager = active_manager();
+        for id in 1..=3 {
+            manager
+                .observe_warm_candidate_readiness(warm_readiness(id))
+                .unwrap();
+        }
+        let pending = manager
             .fail_udp_to_tcp(
                 PathId(9),
-                PathGeneration(2),
+                PathGeneration(1),
                 PathId(10),
                 HealthState::Failed,
                 CarrierSwitchReason::UdpPathDegraded,
@@ -2934,50 +3107,75 @@ mod health_evidence_tests {
             .unwrap();
         assert_eq!(manager.active(), None);
         assert_eq!(
-            manager.observe_failed_udp_target_readiness(readiness(1)),
-            Err(MigrationError::OldGeneration)
+            manager.promote_warm_authenticated_resume(PathId(10), PathGeneration(3), 7001, 4),
+            Err(MigrationError::GenerationMismatch)
         );
-        for id in 1..=3 {
-            let r = manager
-                .observe_failed_udp_target_readiness(ReadinessObservation {
-                    generation: PathGeneration(3),
-                    observation_id: id,
-                    ..readiness(id)
-                })
-                .unwrap();
-            assert_eq!(r.is_some(), id == 3);
-        }
+        let decision = manager
+            .promote_warm_authenticated_resume(PathId(10), pending.generation, 7001, 4)
+            .unwrap();
+        assert_eq!(decision.active_path, PathId(10));
         assert_eq!(manager.active(), Some(PathId(10)));
-        assert_eq!(manager.switches, 2);
+        assert_eq!(manager.warm_recoveries, 1);
+        assert_eq!(manager.cold_recoveries, 0);
     }
 
     #[test]
-    fn uncertain_replay_survives_readiness_rejection_and_single_promotion() {
+    fn absent_or_failed_warm_uses_new_generation_cold() {
+        let (mut cold, pending) = failed_manager();
+        cold.promote_cold_authenticated_resume(pending.target_path, pending.generation, true, true)
+            .unwrap();
+        assert_eq!((cold.warm_recoveries, cold.cold_recoveries), (0, 1));
+
+        let mut manager = active_manager();
+        for id in 1..=3 {
+            manager
+                .observe_warm_candidate_readiness(warm_readiness(id))
+                .unwrap();
+        }
+        manager
+            .fail_warm_candidate(PathId(10), PathGeneration(2))
+            .unwrap();
+        assert_eq!(manager.failed_warm_attempts, 1);
+        manager
+            .prepare_warm_candidate(PathId(10), PathGeneration(3), 7001, 4)
+            .unwrap();
+        manager
+            .fail_warm_candidate(PathId(10), PathGeneration(3))
+            .unwrap();
+        let pending = manager
+            .fail_udp_to_tcp(
+                PathId(9),
+                PathGeneration(1),
+                PathId(10),
+                HealthState::Failed,
+                CarrierSwitchReason::UdpPathDegraded,
+            )
+            .unwrap();
+        manager
+            .promote_cold_authenticated_resume(pending.target_path, pending.generation, true, true)
+            .unwrap();
+        assert_eq!(
+            (
+                manager.failed_warm_attempts,
+                manager.warm_recoveries,
+                manager.cold_recoveries
+            ),
+            (1, 0, 1)
+        );
+    }
+
+    #[test]
+    fn post_failure_readiness_cannot_manufacture_warm_or_delivery() {
         let (mut manager, _) = failed_manager();
+        assert_eq!(
+            manager.observe_failed_udp_target_readiness(warm_readiness(1)),
+            Err(MigrationError::Unvalidated)
+        );
+        assert_eq!(manager.active(), None);
+        assert_eq!(manager.switches, 0);
         let mut failover = FailoverController::new(3, 2, 32).unwrap();
         failover.track_uncertain(DataId(7), b"cat").unwrap();
-
-        assert_eq!(
-            manager.observe_failed_udp_target_readiness(ReadinessObservation {
-                target_path: PathId(9),
-                ..readiness(1)
-            }),
-            Err(MigrationError::GenerationMismatch)
-        );
-        for id in 1..=3 {
-            let decision = manager
-                .observe_failed_udp_target_readiness(readiness(id))
-                .unwrap();
-            if let Some(decision) = decision {
-                assert!(failover.apply_manager_decision(&decision));
-            }
-        }
-        assert_eq!(failover.active(), ActiveCarrier::Tcp);
-        assert_eq!(
-            failover.tcp_resend().unwrap(),
-            vec![(DataId(7), b"cat".to_vec())]
-        );
-        assert_eq!(manager.switches, 1);
+        assert_eq!(failover.tcp_resend(), Err(FailoverError::WrongCarrier));
     }
 
     #[test]
