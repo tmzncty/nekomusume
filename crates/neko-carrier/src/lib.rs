@@ -1475,21 +1475,21 @@ impl FailoverController {
             false
         }
     }
-    /// Switches an active UDP carrier only after the caller's carrier-health
-    /// contract has reached `Failed`. Degraded/healthy samples are not a hard
-    /// failure and cannot bypass the health model's threshold or hysteresis.
-    pub fn udp_health_at(&mut self, state: HealthState, now_us: u64) -> bool {
-        if self.active != ActiveCarrier::Udp || state != HealthState::Failed {
+    /// Applies a switch already owned and generation-checked by CarrierManager.
+    pub fn apply_manager_decision(&mut self, decision: &CarrierSwitchDecision) -> bool {
+        if self.active != ActiveCarrier::Udp
+            || decision.from != ActiveCarrier::Udp
+            || decision.to != ActiveCarrier::Tcp
+        {
             return false;
         }
-        self.failure_started_us.get_or_insert(now_us);
         self.active = ActiveCarrier::Tcp;
         self.metrics.switches = self.metrics.switches.saturating_add(1);
         self.metrics.recovery_events = self.metrics.recovery_events.saturating_add(1);
-        self.metrics.last_recovery_latency_us = self
-            .failure_started_us
-            .and_then(|started| now_us.checked_sub(started));
         true
+    }
+    pub fn record_recovery_latency(&mut self, latency_us: u64) {
+        self.metrics.last_recovery_latency_us = Some(latency_us);
     }
     pub fn tcp_resend(&self) -> Result<Vec<(DataId, Vec<u8>)>, FailoverError> {
         if self.active != ActiveCarrier::Tcp {
@@ -1784,6 +1784,16 @@ pub enum HealthState {
     Degraded,
     Failed,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthFailureCause {
+    AuthenticatedDeliveryAckTimeout,
+    MeasuredSample,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthObservation {
+    Progress,
+    Failure(HealthFailureCause),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HealthLimits {
@@ -1843,36 +1853,53 @@ impl CarrierHealth {
         path: PathId,
         sample: HealthSample,
     ) -> Result<HealthState, HealthError> {
+        let bad = sample.pto >= 3 || sample.loss_per_mille >= 500;
+        self.observe_event(
+            path,
+            if bad {
+                HealthObservation::Failure(HealthFailureCause::MeasuredSample)
+            } else {
+                HealthObservation::Progress
+            },
+        )
+    }
+    pub fn observe_event(
+        &mut self,
+        path: PathId,
+        observation: HealthObservation,
+    ) -> Result<HealthState, HealthError> {
         if !self.records.contains_key(&path) && self.records.len() >= self.limits.max_paths {
             return Err(HealthError::ResourceLimit);
         }
-        let bad = sample.pto >= 3 || sample.loss_per_mille >= 500;
         let r = self.records.entry(path).or_insert(HealthRecord {
             state: HealthState::Unknown,
             consecutive_bad: 0,
             consecutive_good: 0,
         });
-        if bad {
-            r.consecutive_bad = r.consecutive_bad.saturating_add(1);
-            r.consecutive_good = 0;
-            if r.consecutive_bad >= self.limits.fail_after {
-                r.state = HealthState::Failed;
-            } else if r.consecutive_bad >= self.limits.degrade_after {
-                r.state = HealthState::Degraded;
-            }
-        } else {
-            r.consecutive_good = r.consecutive_good.saturating_add(1);
-            r.consecutive_bad = 0;
-            match r.state {
-                HealthState::Unknown => r.state = HealthState::Healthy,
-                HealthState::Degraded if r.consecutive_good >= self.limits.recover_after => {
-                    r.state = HealthState::Healthy;
-                }
-                HealthState::Failed if r.consecutive_good >= self.limits.recover_after => {
+        match observation {
+            HealthObservation::Failure(_) => {
+                r.consecutive_bad = r.consecutive_bad.saturating_add(1);
+                r.consecutive_good = 0;
+                if r.consecutive_bad >= self.limits.fail_after {
+                    r.state = HealthState::Failed;
+                } else if r.consecutive_bad >= self.limits.degrade_after {
                     r.state = HealthState::Degraded;
-                    r.consecutive_good = 0;
                 }
-                _ => {}
+            }
+            HealthObservation::Progress => {
+                r.consecutive_good = r.consecutive_good.saturating_add(1);
+                r.consecutive_bad = 0;
+                match r.state {
+                    HealthState::Unknown => r.state = HealthState::Healthy,
+                    HealthState::Degraded if r.consecutive_good >= self.limits.recover_after => {
+                        r.state = HealthState::Healthy
+                    }
+                    HealthState::Failed if r.consecutive_good >= self.limits.recover_after => {
+                        r.state = HealthState::Degraded;
+                        r.consecutive_good = 0;
+                    }
+                    _ => {}
+                }
             }
         }
         Ok(r.state)
@@ -1898,6 +1925,12 @@ pub struct HealthSampleEvidence {
     pub state: HealthState,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HealthEventEvidence {
+    pub path: PathId,
+    pub observation: HealthObservation,
+    pub state: HealthState,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HealthTransitionEvidence {
     pub path: PathId,
     pub from: HealthState,
@@ -1908,6 +1941,7 @@ pub struct CarrierHealthEvidence {
     health: CarrierHealth,
     limits: HealthEvidenceLimits,
     samples: Vec<HealthSampleEvidence>,
+    events: Vec<HealthEventEvidence>,
     transitions: Vec<HealthTransitionEvidence>,
 }
 impl CarrierHealthEvidence {
@@ -1922,6 +1956,7 @@ impl CarrierHealthEvidence {
             health: CarrierHealth::new(health_limits)?,
             limits: evidence_limits,
             samples: Vec::new(),
+            events: Vec::new(),
             transitions: Vec::new(),
         })
     }
@@ -1952,6 +1987,36 @@ impl CarrierHealthEvidence {
         }
         Ok(state)
     }
+    pub fn observe_event(
+        &mut self,
+        path: PathId,
+        observation: HealthObservation,
+    ) -> Result<HealthState, HealthError> {
+        let previous = self.health.path(path).map(|record| record.state);
+        let state = self.health.observe_event(path, observation)?;
+        if self.events.len() == self.limits.max_samples {
+            self.events.remove(0);
+        }
+        self.events.push(HealthEventEvidence {
+            path,
+            observation,
+            state,
+        });
+        if let Some(from) = previous.filter(|from| *from != state) {
+            if self.transitions.len() == self.limits.max_samples {
+                self.transitions.remove(0);
+            }
+            self.transitions.push(HealthTransitionEvidence {
+                path,
+                from,
+                to: state,
+            });
+        }
+        Ok(state)
+    }
+    pub fn events(&self) -> &[HealthEventEvidence] {
+        &self.events
+    }
     pub fn samples(&self) -> &[HealthSampleEvidence] {
         &self.samples
     }
@@ -1976,9 +2041,40 @@ impl CarrierHealthEvidence {
             })
             .collect::<Vec<_>>()
             .join(",");
+        let events = self
+            .events
+            .iter()
+            .map(|e| {
+                let (event, cause) = match e.observation {
+                    HealthObservation::Progress => ("progress", None),
+                    HealthObservation::Failure(
+                        HealthFailureCause::AuthenticatedDeliveryAckTimeout,
+                    ) => ("failure", Some("authenticated_delivery_ack_timeout")),
+                    HealthObservation::Failure(HealthFailureCause::MeasuredSample) => {
+                        ("failure", Some("measured_sample"))
+                    }
+                };
+                match cause {
+                    Some(cause) => format!(
+                        "{{\"path\":{},\"event\":\"{}\",\"cause\":\"{}\",\"state\":\"{}\"}}",
+                        e.path.0,
+                        event,
+                        cause,
+                        health_state_name(e.state)
+                    ),
+                    None => format!(
+                        "{{\"path\":{},\"event\":\"{}\",\"state\":\"{}\"}}",
+                        e.path.0,
+                        event,
+                        health_state_name(e.state)
+                    ),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "{{\"samples\":[{}],\"transitions\":[{}]}}",
-            samples, transitions
+            "{{\"samples\":[{}],\"events\":[{}],\"transitions\":[{}]}}",
+            samples, events, transitions
         )
     }
 }
@@ -2002,6 +2098,25 @@ pub struct ManagerLimits {
     pub switch_margin: i64,
     pub max_paths: usize,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarrierSwitchReason {
+    UdpPathDegraded,
+}
+impl CarrierSwitchReason {
+    pub const fn as_str(self) -> &'static str {
+        "udp_path_degraded"
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CarrierSwitchDecision {
+    pub from: ActiveCarrier,
+    pub to: ActiveCarrier,
+    pub failed_path: PathId,
+    pub active_path: PathId,
+    pub generation: PathGeneration,
+    pub reason: CarrierSwitchReason,
+}
+
 #[derive(Debug)]
 pub struct CarrierManager {
     limits: ManagerLimits,
@@ -2090,6 +2205,46 @@ impl CarrierManager {
         self.active_generation = Some(generation);
         self.migration_hold = 0;
         Ok(())
+    }
+
+    pub fn set_active_udp(&mut self, path: PathId, generation: PathGeneration) {
+        self.active = Some(path);
+        self.active_generation = Some(generation);
+        self.migration_hold = 0;
+    }
+    pub fn fail_udp_to_tcp(
+        &mut self,
+        failed_path: PathId,
+        generation: PathGeneration,
+        fallback: PathId,
+        state: HealthState,
+        reason: CarrierSwitchReason,
+    ) -> Result<CarrierSwitchDecision, MigrationError> {
+        if self.active != Some(failed_path) {
+            return Err(MigrationError::NotTcp);
+        }
+        let current = self
+            .active_generation
+            .ok_or(MigrationError::GenerationMismatch)?;
+        if generation.0 < current.0 {
+            return Err(MigrationError::OldGeneration);
+        }
+        if generation != current || state != HealthState::Failed {
+            return Err(MigrationError::GenerationMismatch);
+        }
+        let next = PathGeneration(generation.0.saturating_add(1));
+        self.active = Some(fallback);
+        self.active_generation = Some(next);
+        self.migration_hold = 0;
+        self.switches = self.switches.saturating_add(1);
+        Ok(CarrierSwitchDecision {
+            from: ActiveCarrier::Udp,
+            to: ActiveCarrier::Tcp,
+            failed_path,
+            active_path: fallback,
+            generation: next,
+            reason,
+        })
     }
 
     /// Propose migration from active TCP back to UDP. Every gate is checked
@@ -2545,63 +2700,105 @@ mod health_evidence_tests {
     use super::*;
 
     #[test]
-    fn failed_health_state_is_the_only_failover_adapter_trigger() {
-        let limits = HealthLimits::default();
+    fn d064_events_require_three_failures_and_manager_owns_switch() {
+        let limits = HealthLimits {
+            degrade_after: 2,
+            fail_after: 3,
+            recover_after: 2,
+            max_paths: 2,
+        };
         let mut evidence =
             CarrierHealthEvidence::new(limits, HealthEvidenceLimits { max_samples: 16 }).unwrap();
-        let mut failover = FailoverController::new(limits.fail_after, 2, 32).unwrap();
-        let bad = HealthSample {
-            rtt_us: 100_000,
-            loss_per_mille: 1_000,
-            pto: 3,
-        };
-        for index in 1..limits.fail_after {
-            let state = evidence.observe(PathId(9), bad).unwrap();
-            assert!(!failover.udp_health_at(state, index as u64));
-            assert_eq!(failover.active(), ActiveCarrier::Udp);
-        }
-        let failed = evidence.observe(PathId(9), bad).unwrap();
-        assert_eq!(failed, HealthState::Failed);
-        assert!(failover.udp_health_at(failed, limits.fail_after as u64));
+        let mut manager = CarrierManager::new(ManagerLimits {
+            min_hold_events: 1,
+            switch_margin: 0,
+            max_paths: 2,
+        })
+        .unwrap();
+        manager.set_active_udp(PathId(9), PathGeneration(4));
+        let mut failover = FailoverController::new(3, 2, 32).unwrap();
+        let failure =
+            HealthObservation::Failure(HealthFailureCause::AuthenticatedDeliveryAckTimeout);
+        assert_ne!(
+            evidence.observe_event(PathId(9), failure).unwrap(),
+            HealthState::Failed
+        );
+        assert_eq!(manager.active(), Some(PathId(9)));
+        assert_ne!(
+            evidence.observe_event(PathId(9), failure).unwrap(),
+            HealthState::Failed
+        );
+        assert_eq!(manager.active(), Some(PathId(9)));
+        let failed = evidence.observe_event(PathId(9), failure).unwrap();
+        let decision = manager
+            .fail_udp_to_tcp(
+                PathId(9),
+                PathGeneration(4),
+                PathId(10),
+                failed,
+                CarrierSwitchReason::UdpPathDegraded,
+            )
+            .unwrap();
+        assert_eq!(decision.generation, PathGeneration(5));
+        assert_eq!(decision.reason.as_str(), "udp_path_degraded");
+        assert_eq!(manager.active(), Some(PathId(10)));
+        assert!(failover.apply_manager_decision(&decision));
         assert_eq!(failover.active(), ActiveCarrier::Tcp);
-        assert!(!failover.udp_health_at(failed, limits.fail_after as u64 + 1));
-        assert_eq!(failover.metrics.switches, 1);
+        assert!(!failover.apply_manager_decision(&decision));
+        assert_eq!(
+            manager.fail_udp_to_tcp(
+                PathId(9),
+                PathGeneration(3),
+                PathId(10),
+                failed,
+                CarrierSwitchReason::UdpPathDegraded
+            ),
+            Err(MigrationError::NotTcp)
+        );
     }
 
     #[test]
-    fn recovered_health_respects_hysteresis_and_never_switches() {
-        let limits = HealthLimits::default();
+    fn progress_resets_d064_failure_counter() {
+        let limits = HealthLimits {
+            degrade_after: 2,
+            fail_after: 3,
+            recover_after: 2,
+            max_paths: 2,
+        };
         let mut evidence =
             CarrierHealthEvidence::new(limits, HealthEvidenceLimits { max_samples: 16 }).unwrap();
-        let mut failover = FailoverController::new(limits.fail_after, 2, 32).unwrap();
-        let bad = HealthSample {
-            rtt_us: 100_000,
-            loss_per_mille: 1_000,
-            pto: 3,
-        };
-        let good = HealthSample {
-            rtt_us: 1_000,
-            loss_per_mille: 0,
-            pto: 0,
-        };
-        for _ in 0..limits.degrade_after {
-            assert_ne!(
-                evidence.observe(PathId(9), bad).unwrap(),
-                HealthState::Failed
-            );
-        }
-        assert_eq!(
-            evidence.path(PathId(9)).unwrap().state,
-            HealthState::Degraded
+        let failure =
+            HealthObservation::Failure(HealthFailureCause::AuthenticatedDeliveryAckTimeout);
+        assert_ne!(
+            evidence.observe_event(PathId(9), failure).unwrap(),
+            HealthState::Failed
+        );
+        assert_ne!(
+            evidence.observe_event(PathId(9), failure).unwrap(),
+            HealthState::Failed
+        );
+        evidence
+            .observe_event(PathId(9), HealthObservation::Progress)
+            .unwrap();
+        assert_eq!(evidence.path(PathId(9)).unwrap().consecutive_bad, 0);
+        assert_ne!(
+            evidence.observe_event(PathId(9), failure).unwrap(),
+            HealthState::Failed
+        );
+        assert_ne!(
+            evidence.observe_event(PathId(9), failure).unwrap(),
+            HealthState::Failed
         );
         assert_eq!(
-            evidence.observe(PathId(9), good).unwrap(),
-            HealthState::Degraded
+            evidence.observe_event(PathId(9), failure).unwrap(),
+            HealthState::Failed
         );
-        let recovered = evidence.observe(PathId(9), good).unwrap();
-        assert_eq!(recovered, HealthState::Healthy);
-        assert!(!failover.udp_health_at(recovered, 10));
-        assert_eq!(failover.active(), ActiveCarrier::Udp);
+        assert_eq!(
+            evidence.samples().len(),
+            0,
+            "events must not fabricate metrics"
+        );
+        assert_eq!(evidence.events().len(), 6);
     }
 
     #[test]
@@ -2640,7 +2837,7 @@ mod health_evidence_tests {
         );
         assert_eq!(
             evidence.json(),
-            "{\"samples\":[{\"path\":7,\"rtt_us\":9000,\"loss_per_mille\":500,\"pto\":3,\"state\":\"healthy\"},{\"path\":7,\"rtt_us\":9000,\"loss_per_mille\":500,\"pto\":3,\"state\":\"degraded\"}],\"transitions\":[{\"path\":7,\"from\":\"healthy\",\"to\":\"degraded\"}]}"
+            "{\"samples\":[{\"path\":7,\"rtt_us\":9000,\"loss_per_mille\":500,\"pto\":3,\"state\":\"healthy\"},{\"path\":7,\"rtt_us\":9000,\"loss_per_mille\":500,\"pto\":3,\"state\":\"degraded\"}],\"events\":[],\"transitions\":[{\"path\":7,\"from\":\"healthy\",\"to\":\"degraded\"}]}"
         );
     }
 

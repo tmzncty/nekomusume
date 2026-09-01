@@ -6,9 +6,10 @@ mod multistream;
 mod reachability;
 
 use neko_carrier::{
-    ActiveCarrier, CarrierHealthEvidence, DataId, FailoverController, FairScheduler, FlowLimits,
-    HealthEvidenceLimits, HealthLimits, HealthSample, HealthState, PathId,
-    StreamId as CarrierStreamId, StreamPriority,
+    ActiveCarrier, CarrierHealthEvidence, CarrierManager, CarrierSwitchReason, DataId,
+    FailoverController, FairScheduler, FlowLimits, HealthEvidenceLimits, HealthFailureCause,
+    HealthLimits, HealthObservation, HealthSample, HealthState, ManagerLimits, PathGeneration,
+    PathId, StreamId as CarrierStreamId, StreamPriority,
 };
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, ResumeGuard, TrustPolicy,
@@ -709,6 +710,56 @@ fn delivery_ack_matches(plain: &[u8], expected: &OutboundRecord) -> bool {
                 && len == expected.data.len()
     )
 }
+const MAX_POST_HANDSHAKE_MALFORMED: usize = 3;
+#[allow(clippy::too_many_arguments)]
+fn recv_udp_delivery_ack(
+    socket: &UdpSocket,
+    peer: SocketAddr,
+    secure: &mut neko_crypto::SecureSession,
+    expected: &OutboundRecord,
+    negotiation_response: &[u8],
+    noise_response: &[u8],
+    deadline: Instant,
+    diagnostic: &mut dyn FnMut(&'static str),
+) -> Result<usize, &'static str> {
+    let mut buf = [0u8; 65536];
+    let mut malformed = 0usize;
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            return Err("UDP delivery acknowledgement timeout");
+        }
+        socket
+            .set_read_timeout(Some((deadline - now).min(Duration::from_millis(100))))
+            .map_err(|_| "UDP delivery acknowledgement receive failed")?;
+        match socket.recv_from(&mut buf) {
+            Ok((_, source)) if source != peer => diagnostic("unexpected_peer"),
+            Ok((n, _)) if buf[..n] == *negotiation_response => {
+                diagnostic("duplicate_negotiation_response")
+            }
+            Ok((n, _)) if buf[..n] == *noise_response => diagnostic("duplicate_noise_response"),
+            Ok((n, _)) => match secure.open_unreliable(&buf[..n]) {
+                Ok(plain) if delivery_ack_matches(&plain, expected) => return Ok(n),
+                _ => {
+                    malformed += 1;
+                    diagnostic("malformed_or_unadmitted");
+                    if malformed >= MAX_POST_HANDSHAKE_MALFORMED {
+                        return Err("UDP delivery acknowledgement malformed bound exceeded");
+                    }
+                }
+            },
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue;
+            }
+            Err(_) => return Err("UDP delivery acknowledgement receive failed"),
+        }
+    }
+}
 fn runtime_limits(bytes: usize, count: usize) -> RuntimeLimits {
     RuntimeLimits {
         max_streams: 1,
@@ -795,6 +846,7 @@ fn failover_server(args: &[String]) {
     let mut pending: Option<PendingUdpNegotiation> = None;
     let mut secure = None;
     let mut handshake_cache: Option<(Vec<u8>, Vec<u8>)> = None;
+    let mut delayed_noise_duplicate_sent = false;
     let mut guard = None;
     let mut app = Vec::new();
     let udp_local_port = udp.local_addr().map(|a| a.port()).unwrap_or(up);
@@ -928,6 +980,23 @@ fn failover_server(args: &[String]) {
                             .encode()
                             .unwrap();
                             let ack = ss.seal_unreliable(&logical).unwrap();
+                            if !delayed_noise_duplicate_sent
+                                && args
+                                    .iter()
+                                    .any(|a| a == "--delay-noise-duplicate-until-application")
+                            {
+                                if let Some((_, response)) = handshake_cache.as_ref() {
+                                    udp.send_to(response, peer).unwrap();
+                                    delayed_noise_duplicate_sent = true;
+                                    emit_diagnostic(
+                                        args,
+                                        "server",
+                                        "udp_noise_response_delayed_duplicate_sent",
+                                        0,
+                                        "",
+                                    );
+                                }
+                            }
                             if cease_udp_replies_after.is_none_or(|point| udp_replies < point) {
                                 udp.send_to(&ack, peer).unwrap();
                                 udp_replies += 1;
@@ -1158,7 +1227,10 @@ fn failover_client(args: &[String]) {
         diag.timeout(args);
         fail("UDP handshake timeout")
     });
-    negotiation.client_accept_response(&buf[..n]).unwrap();
+    let negotiation_response = buf[..n].to_vec();
+    negotiation
+        .client_accept_response(&negotiation_response)
+        .unwrap();
     let binding = negotiation.authenticated_binding().unwrap();
     let mut hs = InitiatorHandshake::new_with_prologue_binding(
         &id,
@@ -1190,7 +1262,8 @@ fn failover_client(args: &[String]) {
         }
     }
     let n = response.unwrap_or_else(|| fail("UDP Noise timeout"));
-    let mut us = hs.finish(&buf[..n], context(1)).unwrap();
+    let noise_response = buf[..n].to_vec();
+    let mut us = hs.finish(&noise_response, context(1)).unwrap();
     let payload = vec![b'x'; bytes];
     let mut delivery =
         SessionRuntime::new(SessionId(7001), runtime_limits(bytes, count), 0).unwrap();
@@ -1229,18 +1302,27 @@ fn failover_client(args: &[String]) {
             udp_record.data.len()
         ),
     );
-    let (n, peer) = u
-        .recv_from(&mut buf)
-        .unwrap_or_else(|_| fail("UDP delivery acknowledgement timeout"));
-    if peer != target {
-        fail("UDP delivery acknowledgement peer changed")
-    }
-    let ack_plain = us
-        .open_unreliable(&buf[..n])
-        .unwrap_or_else(|_| fail("unauthenticated UDP delivery acknowledgement"));
-    if !delivery_ack_matches(&ack_plain, &udp_record) {
-        fail("invalid UDP delivery acknowledgement")
-    }
+    let application_deadline = Instant::now() + Duration::from_secs(secs);
+    let mut admission_diagnostic = |reason| {
+        emit_diagnostic(
+            args,
+            "client",
+            "udp_post_handshake_ignored",
+            1,
+            &format!(",\"reason\":\"{}\"", reason),
+        )
+    };
+    let n = recv_udp_delivery_ack(
+        &u,
+        target,
+        &mut us,
+        &udp_record,
+        &negotiation_response,
+        &noise_response,
+        application_deadline,
+        &mut admission_diagnostic,
+    )
+    .unwrap_or_else(|e| fail(e));
     delivery
         .delivery_ack(
             udp_record.stream,
@@ -1257,12 +1339,24 @@ fn failover_client(args: &[String]) {
         &format!(",\"ciphertext_bytes\":{}", n),
     );
     let automatic_health_failover = args.iter().any(|a| a == "--automatic-health-failover");
-    let health_limits = HealthLimits::default();
+    let health_limits = HealthLimits {
+        degrade_after: 2,
+        fail_after: 3,
+        recover_after: 2,
+        max_paths: 8,
+    };
     let mut health =
         CarrierHealthEvidence::new(health_limits, HealthEvidenceLimits { max_samples: 16 })
             .unwrap();
     let mut failover =
         FailoverController::new(health_limits.fail_after, count, count * bytes).unwrap();
+    let mut manager = CarrierManager::new(ManagerLimits {
+        min_hold_events: 1,
+        switch_margin: 0,
+        max_paths: 2,
+    })
+    .unwrap();
+    manager.set_active_udp(PathId(1), PathGeneration(0));
     failover.udp_progress();
     // Leave exactly the next logical range uncertain at the carrier boundary.
     // It is resent over TCP; the receiver's Session runtime deduplicates it if
@@ -1295,41 +1389,36 @@ fn failover_client(args: &[String]) {
             ),
         );
     }
+    let automatic_started = Instant::now();
+    let mut decision_at = None;
     if automatic_health_failover {
-        let bad = HealthSample {
-            rtt_us: 100_000,
-            loss_per_mille: 1_000,
-            pto: 3,
-        };
-        for sample_index in 1..=health_limits.fail_after {
-            match u.recv_from(&mut buf) {
-                Ok((n, peer)) if peer == target => {
-                    if us.open_unreliable(&buf[..n]).is_ok() {
-                        fail("unexpected authenticated UDP progress at degradation boundary")
-                    }
-                    emit_diagnostic(
-                        args,
-                        "client",
-                        "udp_signal_ignored",
-                        sample_index as usize,
-                        ",\"reason\":\"malformed_or_unadmitted\"",
-                    );
+        for observation_index in 1..=health_limits.fail_after {
+            let cause = match u.recv_from(&mut buf) {
+                Ok((n, peer)) if peer == target && us.open_unreliable(&buf[..n]).is_ok() => {
+                    health
+                        .observe_event(PathId(1), HealthObservation::Progress)
+                        .unwrap();
+                    fail("unexpected authenticated UDP progress at degradation boundary")
                 }
-                Ok(_) => emit_diagnostic(
-                    args,
-                    "client",
-                    "udp_signal_ignored",
-                    sample_index as usize,
-                    ",\"reason\":\"unexpected_peer\"",
-                ),
+                Ok((_, peer)) if peer != target => "unexpected_peer",
+                Ok(_) => "malformed_or_unadmitted",
                 Err(error)
                     if matches!(
                         error.kind(),
                         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) => {}
+                    ) =>
+                {
+                    "authenticated_delivery_ack_timeout"
+                }
                 Err(_) => fail("UDP health receive failed"),
-            }
-            let state = health.observe(PathId(1), bad).unwrap();
+            };
+            let observed_at = Instant::now();
+            let state = health
+                .observe_event(
+                    PathId(1),
+                    HealthObservation::Failure(HealthFailureCause::AuthenticatedDeliveryAckTimeout),
+                )
+                .unwrap();
             let state_name = match state {
                 HealthState::Unknown => "unknown",
                 HealthState::Healthy => "healthy",
@@ -1339,22 +1428,39 @@ fn failover_client(args: &[String]) {
             emit_diagnostic(
                 args,
                 "client",
-                "udp_health_sample",
-                sample_index as usize,
+                "udp_health_event",
+                observation_index as usize,
                 &format!(
-                    ",\"pto\":3,\"loss_per_mille\":1000,\"state\":\"{}\"",
-                    state_name
+                    ",\"event\":\"failure\",\"cause\":\"{}\",\"state\":\"{}\",\"elapsed_us\":{}",
+                    cause,
+                    state_name,
+                    observed_at.duration_since(automatic_started).as_micros()
                 ),
             );
-            if failover.udp_health_at(state, sample_index as u64 * 100_000) {
+            if state == HealthState::Failed {
+                let decision = manager
+                    .fail_udp_to_tcp(
+                        PathId(1),
+                        PathGeneration(0),
+                        PathId(2),
+                        state,
+                        CarrierSwitchReason::UdpPathDegraded,
+                    )
+                    .unwrap();
+                if !failover.apply_manager_decision(&decision) {
+                    fail("manager decision was not applied");
+                }
+                decision_at = Some(observed_at);
                 println!(
-                    "carrier_event name=udp_health_failed session=7001 generation=0 threshold={} reason=authenticated_delivery_ack_timeout",
-                    health_limits.fail_after
+                    "carrier_event name=udp_health_failed session=7001 generation={} threshold={} reason={} diagnostic_cause=authenticated_delivery_ack_timeout",
+                    decision.generation.0,
+                    health_limits.fail_after,
+                    decision.reason.as_str()
                 );
             }
         }
-        if failover.active() != ActiveCarrier::Tcp {
-            fail("carrier health threshold did not select TCP")
+        if manager.active() != Some(PathId(2)) || failover.active() != ActiveCarrier::Tcp {
+            fail("carrier manager did not select TCP")
         }
     } else {
         println!(
@@ -1364,11 +1470,13 @@ fn failover_client(args: &[String]) {
     let mut negotiation2 =
         VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
     let hello2 = negotiation2.client_hello().unwrap();
+    let tcp_connect_started = Instant::now();
     let mut tcp = TcpStream::connect_timeout(
         &format!("{addr}:{tp}").parse().unwrap(),
         Duration::from_secs(secs),
     )
     .unwrap();
+    let tcp_active_at = Instant::now();
     write_frame(&mut tcp, &hello2).unwrap();
     let response2 = read_frame(&mut tcp, MAX_NEGOTIATION_FRAME).unwrap();
     negotiation2.client_accept_response(&response2).unwrap();
@@ -1392,6 +1500,7 @@ fn failover_client(args: &[String]) {
     } else {
         count.saturating_sub(1)
     };
+    let mut first_resumed_data_at = None;
     for record in records.into_iter().skip(1).take(resend_records) {
         let logical = ProcessMessage::Data {
             session: SessionId(7001),
@@ -1401,6 +1510,7 @@ fn failover_client(args: &[String]) {
         .unwrap();
         let encrypted = ts.seal(&logical).unwrap();
         write_frame(&mut tcp, &encrypted).unwrap();
+        first_resumed_data_at.get_or_insert_with(Instant::now);
         let ack = read_frame(&mut tcp, PROCESS_FRAME_MAX)
             .unwrap_or_else(|_| fail("TCP delivery acknowledgement timeout"));
         let plain = ts
@@ -1428,6 +1538,25 @@ fn failover_client(args: &[String]) {
             &format!(",\"ciphertext_bytes\":{}", ack.len()),
         );
     }
+    if automatic_health_failover
+        && let (Some(decision), Some(first_data)) = (decision_at, first_resumed_data_at)
+    {
+        let latency = first_data.duration_since(decision).as_micros() as u64;
+        failover.record_recovery_latency(latency);
+        emit_diagnostic(
+            args,
+            "client",
+            "failover_timing",
+            count,
+            &format!(
+                ",\"fallback_class\":\"cold\",\"decision_to_tcp_active_us\":{},\"tcp_active_to_first_resumed_data_us\":{},\"recovery_latency_us\":{}",
+                tcp_active_at.duration_since(decision).as_micros(),
+                first_data.duration_since(tcp_active_at).as_micros(),
+                latency
+            ),
+        );
+    }
+    let _ = tcp_connect_started;
     println!(
         "carrier_event name=ordered_records_complete session=7001 count={count} bytes={bytes}"
     );
@@ -1897,6 +2026,85 @@ mod cli_regression_tests {
             .unwrap();
         let initiator = initiator.finish(&response, context(1)).unwrap();
         (initiator, responder)
+    }
+
+    #[test]
+    fn post_handshake_admission_ignores_exact_duplicates_and_wrong_peer() {
+        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let wrong = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let peer = server.local_addr().unwrap();
+        let expected = OutboundRecord {
+            stream: StreamId(1),
+            offset: 0,
+            data: vec![7; 4],
+        };
+        let (mut sender, mut receiver) = secure_pair();
+        let ack = ProcessMessage::DeliveryAck {
+            session: SessionId(7001),
+            stream: StreamId(1),
+            offset: 0,
+            len: 4,
+        }
+        .encode()
+        .unwrap();
+        let sealed = sender.seal_unreliable(&ack).unwrap();
+        let client_addr = client.local_addr().unwrap();
+        wrong.send_to(b"wrong-peer", client_addr).unwrap();
+        server.send_to(b"selection", client_addr).unwrap();
+        server.send_to(b"noise", client_addr).unwrap();
+        server.send_to(&sealed, client_addr).unwrap();
+        let mut diagnostics = Vec::new();
+        let n = recv_udp_delivery_ack(
+            &client,
+            peer,
+            &mut receiver,
+            &expected,
+            b"selection",
+            b"noise",
+            Instant::now() + Duration::from_secs(1),
+            &mut |d| diagnostics.push(d),
+        )
+        .unwrap();
+        assert_eq!(n, sealed.len());
+        assert_eq!(
+            diagnostics,
+            [
+                "unexpected_peer",
+                "duplicate_negotiation_response",
+                "duplicate_noise_response"
+            ]
+        );
+    }
+
+    #[test]
+    fn post_handshake_admission_fails_at_malformed_bound() {
+        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let peer = server.local_addr().unwrap();
+        let (_, mut receiver) = secure_pair();
+        let expected = OutboundRecord {
+            stream: StreamId(1),
+            offset: 0,
+            data: vec![7; 4],
+        };
+        for _ in 0..MAX_POST_HANDSHAKE_MALFORMED {
+            server
+                .send_to(b"garbage", client.local_addr().unwrap())
+                .unwrap();
+        }
+        let err = recv_udp_delivery_ack(
+            &client,
+            peer,
+            &mut receiver,
+            &expected,
+            b"selection",
+            b"noise",
+            Instant::now() + Duration::from_secs(1),
+            &mut |_| {},
+        )
+        .unwrap_err();
+        assert_eq!(err, "UDP delivery acknowledgement malformed bound exceeded");
     }
 
     #[test]

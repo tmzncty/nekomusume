@@ -447,20 +447,20 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
         client_log.contains("controlled_udp_stop=false"),
         "{client_log}"
     );
-    assert!(client_log.contains("carrier_event name=udp_health_failed session=7001 generation=0 threshold=4 reason=authenticated_delivery_ack_timeout"), "{client_log}");
+    assert!(client_log.contains("carrier_event name=udp_health_failed session=7001 generation=1 threshold=3 reason=udp_path_degraded diagnostic_cause=authenticated_delivery_ack_timeout"), "{client_log}");
     assert_eq!(
-        client_log
-            .matches("\"event\":\"udp_health_sample\"")
-            .count(),
-        4
+        client_log.matches("\"event\":\"udp_health_event\"").count(),
+        3
     );
     assert!(
         client_log.contains("\"state\":\"degraded\""),
         "{client_log}"
     );
     assert!(client_log.contains("\"state\":\"failed\""), "{client_log}");
+    assert!(!client_log.contains("\"rtt_us\""), "{client_log}");
+    assert!(!client_log.contains("\"loss_per_mille\""), "{client_log}");
     assert!(
-        client_log.contains("\"event\":\"udp_signal_ignored\""),
+        client_log.contains("\"fallback_class\":\"cold\""),
         "{client_log}"
     );
     assert!(
@@ -664,6 +664,7 @@ fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
             "--tcp-bind",
             &format!("127.0.0.1:{tcp}"),
             "--drop-first-udp-noise-response",
+            "--delay-noise-duplicate-until-application",
             "--diagnostic",
             "--experiment-id",
             "noise-retry-server",
@@ -722,6 +723,14 @@ fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
     assert!(
         server_log.contains("udp_noise_response_retried"),
         "{server_log}"
+    );
+    assert!(
+        server_log.contains("udp_noise_response_delayed_duplicate_sent"),
+        "{server_log}"
+    );
+    assert!(
+        client_log.contains("duplicate_noise_response"),
+        "{client_log}"
     );
     // A duplicate Noise first-message must replay only the cached response. It
     // must not renegotiate, reauthenticate, replace ResumeGuard/session state,
