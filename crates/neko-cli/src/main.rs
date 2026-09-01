@@ -53,7 +53,8 @@ const SUPPORTED_VERSIONS: &[u16] = &[NEGOTIATION_VERSION];
 const MAX_NEGOTIATION_FRAME: usize = 4 + neko_wire::MAX_NEGOTIATION_VERSIONS * 2;
 const READINESS_PROBES: u64 = 3;
 const READINESS_FRAME_MAX: usize = 128;
-const READINESS_DEADLINE: Duration = Duration::from_secs(1);
+const READINESS_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+const READINESS_SEQUENCE_TIMEOUT: Duration = Duration::from_secs(3);
 fn json_mode(args: &[String]) -> bool {
     args.iter().any(|a| a == "--json")
 }
@@ -1160,12 +1161,16 @@ fn failover_server(args: &[String]) {
                 write_frame(&mut stream, &resp).unwrap();
                 println!("carrier_event name=tcp_authenticated session=7001 generation=1");
                 println!("carrier_event name=tcp_resume_validated session=7001 generation=1");
-                let readiness_deadline =
-                    (Instant::now() + READINESS_DEADLINE).min(experiment_deadline);
+                let readiness_sequence_deadline =
+                    (Instant::now() + READINESS_SEQUENCE_TIMEOUT).min(experiment_deadline);
                 let mut readiness_response_bytes = 0usize;
                 for expected_challenge in 1..=READINESS_PROBES {
-                    bound_stream_to_deadline(&stream, readiness_deadline, None)
-                        .unwrap_or_else(|_| fail("readiness deadline elapsed"));
+                    bound_stream_to_deadline(
+                        &stream,
+                        readiness_sequence_deadline,
+                        Some(READINESS_PROBE_TIMEOUT),
+                    )
+                    .unwrap_or_else(|_| fail("readiness deadline elapsed"));
                     let ciphertext = read_frame(&mut stream, READINESS_FRAME_MAX)
                         .unwrap_or_else(|_| fail("bad readiness frame"));
                     let plain = ss
@@ -1199,6 +1204,26 @@ fn failover_server(args: &[String]) {
                     .encode()
                     .unwrap();
                     let encrypted = ss.seal(&response).unwrap();
+                    let readiness_delay = args
+                        .windows(2)
+                        .find(|w| w[0] == "--test-readiness-delay-ms")
+                        .map(|w| {
+                            w[1].parse::<u64>()
+                                .unwrap_or_else(|_| fail("invalid readiness delay"))
+                        })
+                        .unwrap_or(0);
+                    if readiness_delay > 3_000 {
+                        fail("readiness delay outside 0-3000")
+                    }
+                    if readiness_delay > 0 {
+                        std::thread::sleep(Duration::from_millis(readiness_delay));
+                    }
+                    bound_stream_to_deadline(
+                        &stream,
+                        readiness_sequence_deadline,
+                        Some(READINESS_PROBE_TIMEOUT),
+                    )
+                    .unwrap_or_else(|_| fail("readiness deadline elapsed"));
                     readiness_response_bytes =
                         readiness_response_bytes.saturating_add(encrypted.len());
                     if readiness_response_bytes > READINESS_FRAME_MAX * READINESS_PROBES as usize {
@@ -1597,7 +1622,8 @@ fn failover_client(args: &[String]) {
         manager
             .prepare_warm_candidate(PathId(2), PathGeneration(1), 7001, 1)
             .unwrap();
-        tcp.set_read_timeout(Some(READINESS_DEADLINE)).unwrap();
+        let readiness_sequence_deadline = (Instant::now() + READINESS_SEQUENCE_TIMEOUT)
+            .min(experiment_origin + Duration::from_secs(secs));
         let mut readiness_satisfied = authenticated;
         for observation_id in 1..=READINESS_PROBES {
             if observation_id == 3 && args.iter().any(|arg| arg == "--test-readiness-short") {
@@ -1605,7 +1631,7 @@ fn failover_client(args: &[String]) {
                 fail("test readiness sequence stopped before third request")
             }
             if observation_id == 3 && args.iter().any(|arg| arg == "--test-readiness-stall") {
-                std::thread::sleep(READINESS_DEADLINE + Duration::from_millis(200));
+                std::thread::sleep(READINESS_PROBE_TIMEOUT + Duration::from_millis(200));
             }
             let requested = Instant::now();
             let request = ProcessMessage::ReadinessRequest {
@@ -1634,7 +1660,19 @@ fn failover_client(args: &[String]) {
                 let last = encrypted.len() - 1;
                 encrypted[last] ^= 1;
             }
+            bound_stream_to_deadline(
+                &tcp,
+                readiness_sequence_deadline,
+                Some(READINESS_PROBE_TIMEOUT),
+            )
+            .unwrap_or_else(|_| fail("readiness request deadline elapsed"));
             write_frame(&mut tcp, &encrypted).unwrap();
+            bound_stream_to_deadline(
+                &tcp,
+                readiness_sequence_deadline,
+                Some(READINESS_PROBE_TIMEOUT),
+            )
+            .unwrap_or_else(|_| fail("readiness response deadline elapsed"));
             let ciphertext = read_frame(&mut tcp, READINESS_FRAME_MAX)
                 .unwrap_or_else(|_| fail("readiness response timeout or malformed frame"));
             let plain = session
@@ -1656,6 +1694,20 @@ fn failover_client(args: &[String]) {
                 })
                 .unwrap_or_else(|_| fail("readiness tuple unadmitted"));
             readiness_satisfied = Instant::now();
+            let sequence_pause = args
+                .windows(2)
+                .find(|w| w[0] == "--test-readiness-sequence-pause-ms")
+                .map(|w| {
+                    w[1].parse::<u64>()
+                        .unwrap_or_else(|_| fail("invalid readiness pause"))
+                })
+                .unwrap_or(0);
+            if sequence_pause > 1_000 {
+                fail("readiness pause outside 0-1000")
+            }
+            if observation_id < READINESS_PROBES && sequence_pause > 0 {
+                std::thread::sleep(Duration::from_millis(sequence_pause));
+            }
             emit_diagnostic(
                 args,
                 "client",
@@ -1892,7 +1944,7 @@ fn failover_client(args: &[String]) {
         let resp = read_frame(&mut tcp, 1024).unwrap();
         let mut session = hs2.finish(&resp, context(2)).unwrap();
         let authenticated = Instant::now();
-        tcp.set_read_timeout(Some(READINESS_DEADLINE)).unwrap();
+        let readiness_sequence_deadline = Instant::now() + READINESS_SEQUENCE_TIMEOUT;
         for challenge_id in 1..=READINESS_PROBES {
             let request = ProcessMessage::ReadinessRequest {
                 session: SessionId(7001),
@@ -1903,7 +1955,19 @@ fn failover_client(args: &[String]) {
             }
             .encode()
             .unwrap();
+            bound_stream_to_deadline(
+                &tcp,
+                readiness_sequence_deadline,
+                Some(READINESS_PROBE_TIMEOUT),
+            )
+            .unwrap_or_else(|_| fail("cold readiness request deadline elapsed"));
             write_frame(&mut tcp, &session.seal(&request).unwrap()).unwrap();
+            bound_stream_to_deadline(
+                &tcp,
+                readiness_sequence_deadline,
+                Some(READINESS_PROBE_TIMEOUT),
+            )
+            .unwrap_or_else(|_| fail("cold readiness response deadline elapsed"));
             let response = read_frame(&mut tcp, READINESS_FRAME_MAX)
                 .unwrap_or_else(|_| fail("cold readiness control timeout"));
             let plain = session

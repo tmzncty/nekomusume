@@ -9,6 +9,8 @@ const MAX_COUNT: usize = 600;
 const MAX_TOTAL_BYTES: usize = 1024 * 1024;
 const MIN_INTERVAL_MS: u64 = 100;
 const MAX_INTERVAL_MS: u64 = 5_000;
+const DEFAULT_SETUP_TIMEOUT_MS: u64 = 5_000;
+const MAX_SETUP_TIMEOUT_MS: u64 = 10_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Config {
@@ -17,6 +19,7 @@ struct Config {
     count: usize,
     duration: Duration,
     interval: Duration,
+    setup_timeout: Duration,
     ack_timeout: Duration,
 }
 
@@ -39,6 +42,8 @@ fn config(args: &[String]) -> Result<Config, &'static str> {
     let count = parse_u64("--count", "1")?;
     let duration = parse_u64("--duration", "10")?;
     let interval = parse_u64("--interval-ms", "1000")?;
+    let setup_timeout_default = DEFAULT_SETUP_TIMEOUT_MS.to_string();
+    let setup_timeout = parse_u64("--setup-timeout-ms", &setup_timeout_default)?;
     let ack_timeout = parse_u64("--ack-timeout-ms", "1000")?;
     if !(40080..=MAX_PORT as u64).contains(&port) {
         return Err("port outside 40080-40100");
@@ -55,6 +60,9 @@ fn config(args: &[String]) -> Result<Config, &'static str> {
     if !(MIN_INTERVAL_MS..=MAX_INTERVAL_MS).contains(&interval) {
         return Err("interval-ms outside 100-5000");
     }
+    if setup_timeout == 0 || setup_timeout > MAX_SETUP_TIMEOUT_MS {
+        return Err("setup-timeout-ms outside 1-10000");
+    }
     if ack_timeout == 0 || ack_timeout > 10_000 {
         return Err("ack-timeout-ms outside 1-10000");
     }
@@ -70,6 +78,7 @@ fn config(args: &[String]) -> Result<Config, &'static str> {
         count: count as usize,
         duration: Duration::from_secs(duration),
         interval: Duration::from_millis(interval),
+        setup_timeout: Duration::from_millis(setup_timeout),
         ack_timeout: Duration::from_millis(ack_timeout),
     })
 }
@@ -130,6 +139,10 @@ fn frame_or_fail(
     }
 }
 
+fn bound_setup(stream: &TcpStream, deadline: Instant, message: &str) {
+    bound_stream_to_deadline(stream, deadline, None).unwrap_or_else(|_| fail(message));
+}
+
 fn handshake_server(
     stream: &mut TcpStream,
     reader: &mut FramedReader,
@@ -137,6 +150,7 @@ fn handshake_server(
     id: &LocalIdentity,
     policy: TrustPolicy,
 ) -> neko_crypto::SecureSession {
+    bound_setup(stream, deadline, "setup deadline elapsed");
     let mut negotiation =
         VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS).unwrap();
     let hello = frame_or_fail(
@@ -149,6 +163,7 @@ fn handshake_server(
     let selection = negotiation
         .server_accept_hello(&hello)
         .unwrap_or_else(|_| fail("incompatible negotiation"));
+    bound_setup(stream, deadline, "setup deadline elapsed");
     write_frame(stream, &selection).unwrap_or_else(|_| fail("negotiation response failed"));
     let binding = negotiation.authenticated_binding().unwrap();
     let first = frame_or_fail(reader, stream, 1024, deadline, "bad handshake");
@@ -157,6 +172,7 @@ fn handshake_server(
             .unwrap()
             .receive_first(&first, context(0))
             .unwrap_or_else(|_| fail("unauthorized handshake"));
+    bound_setup(stream, deadline, "setup deadline elapsed");
     write_frame(stream, &response).unwrap_or_else(|_| fail("handshake response failed"));
     negotiation
         .admit_data()
@@ -171,9 +187,11 @@ fn handshake_client(
     id: &LocalIdentity,
     server_key: &[u8],
 ) -> neko_crypto::SecureSession {
+    bound_setup(stream, deadline, "setup deadline elapsed");
     let mut negotiation =
         VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
     let hello = negotiation.client_hello().unwrap();
+    bound_setup(stream, deadline, "setup deadline elapsed");
     write_frame(stream, &hello).unwrap_or_else(|_| fail("negotiation send failed"));
     let selection = frame_or_fail(
         reader,
@@ -195,6 +213,7 @@ fn handshake_client(
     )
     .unwrap();
     let first = hs.first_message().unwrap();
+    bound_setup(stream, deadline, "setup deadline elapsed");
     write_frame(stream, &first).unwrap_or_else(|_| fail("handshake send failed"));
     let response = frame_or_fail(reader, stream, 1024, deadline, "handshake response failed");
     let secure = hs
@@ -263,7 +282,23 @@ pub(super) fn server(args: &[String]) {
         .set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap();
     let mut framed = FramedReader::new(PROCESS_FRAME_MAX + 128);
-    let mut secure = handshake_server(&mut stream, &mut framed, start + cfg.duration, &id, policy);
+    let accepted_at = Instant::now();
+    let setup_deadline = (accepted_at + cfg.setup_timeout).min(start + cfg.duration);
+    let setup_delay = args
+        .windows(2)
+        .find(|w| w[0] == "--test-setup-delay-ms")
+        .map(|w| {
+            w[1].parse::<u64>()
+                .unwrap_or_else(|_| fail("invalid setup delay"))
+        })
+        .unwrap_or(0);
+    if setup_delay > MAX_SETUP_TIMEOUT_MS {
+        fail("setup delay outside 0-10000");
+    }
+    if setup_delay > 0 {
+        std::thread::sleep(Duration::from_millis(setup_delay));
+    }
+    let mut secure = handshake_server(&mut stream, &mut framed, setup_deadline, &id, policy);
     framed.set_max_frame_len(PROCESS_FRAME_MAX + 128).unwrap();
     println!("periodic_server_authenticated session=7201 stream=1");
     let mut runtime = SessionRuntime::new(SESSION, limits(cfg), 0).unwrap();
@@ -395,7 +430,7 @@ pub(super) fn client(args: &[String]) {
     )));
     println!("client_public_key={}", hex(id.public_key()));
     let start = Instant::now();
-    let mut stream = TcpStream::connect_timeout(&addr, cfg.ack_timeout)
+    let mut stream = TcpStream::connect_timeout(&addr, cfg.setup_timeout)
         .unwrap_or_else(|_| fail("connect failed; reconnect/resume unsupported"));
     stream
         .set_read_timeout(Some(Duration::from_millis(100)))
@@ -404,7 +439,7 @@ pub(super) fn client(args: &[String]) {
     let mut secure = handshake_client(
         &mut stream,
         &mut framed,
-        start + cfg.ack_timeout,
+        start + cfg.setup_timeout,
         &id,
         &server_key,
     );

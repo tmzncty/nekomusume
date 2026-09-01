@@ -57,19 +57,33 @@ incomplete. Conversely, `IMPLEMENTATION_COMPLETE=true` does not imply RC,
 release, freeze, reachability, security approval, or production readiness.
 The `reachability` and `production` rows above remain `blocked`.
 
-### D064 local readiness repair (2026-09-01)
+### D064 local readiness repair (2026-09-02)
 
-The bounded failover responder now requires exactly three authenticated,
-ordered, current-tuple readiness requests with live `admitted=true` before it
-emits `tcp_resource_admitted` or reads application data. Negotiation, handshake,
-readiness and data reads are bounded by the remaining experiment duration; the
-whole server readiness sequence has a one-second deadline. Process tests cover
-wrong tuple, explicit unadmitted response, replayed challenge, tampered
-ciphertext, fewer than three requests and stall/timeout, and assert no admitted,
-warm, resumed or data event. `ProcessMessage::decode` is included in the bounded
-fuzz target with readiness request/response seeds. This is local implementation
-evidence only; it does not add current-head VPS evidence or change any release,
-freeze, production or canonical-corpus flag.
+The bounded failover responder requires exactly three authenticated, ordered,
+current-tuple readiness requests with live `admitted=true` before it emits
+`tcp_resource_admitted` or reads application data. After negotiation, Noise
+authentication and resume validation, challenge 1 starts a three-second whole
+sequence budget; each request/response read and write is independently capped at
+one second and also by the remaining sequence and experiment budgets. Process
+tests prove three 400 ms responses succeed, an individual response above one
+second and cumulative work above three seconds fail closed, and all prior wrong
+tuple, unadmitted, replay, tamper and incomplete-proof failures remain before
+admission, warm transition, promotion or data. Exactly three valid observations
+emit one warm transition. This is local implementation evidence only; it does
+not add current-head VPS evidence or change any release, freeze, production or
+canonical-corpus flag.
+
+### Periodic setup deadline separation (2026-09-02)
+
+`periodic-client` now exposes `--setup-timeout-ms` with a 5000 ms default and a
+10000 ms maximum. Its setup budget begins before TCP connect and covers connect,
+canonical negotiation and Noise authentication; `--ack-timeout-ms` remains only
+the per-record authenticated `DeliveryAck` deadline. The server applies the same
+finite setup limit from accept, additionally bounded by workload duration.
+Process tests prove setup slower than the ACK timeout can succeed, delayed ACKs
+still fail independently, setup expiry admits zero records, and malformed setup
+never authenticates. Reconnect, wire and Session delivery semantics are
+unchanged.
 
 ### Reviewer 3978f3f Follow-up A-C evidence reconciliation (2026-09-02)
 

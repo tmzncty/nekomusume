@@ -144,6 +144,8 @@ readiness 独立于 carrier packet feedback 与 Session delivery，须绑定 Ses
 
 draining 不接新数据；无明确 logical Session delivery proof 的 assigned ranges 转为 `UNCERTAIN`，按稳定 Session/stream/offset（或后续批准的 DataId）有界保留、幂等去重、冲突 fail-closed；deadline 到期重放，不猜测已交付。完整 manager contract、方案比较及实现 gates 见 [`docs/adr/m3-concurrent-carrier-semantics.md`](adr/m3-concurrent-carrier-semantics.md)。
 
+**2026-09-02 runtime deadline addendum.** The three authenticated readiness observations remain sequential with one outstanding request and unchanged tuple/generation/epoch/challenge, live resource-admission, fail-closed and single-active rules. Runtime uses `READINESS_PROBE_TIMEOUT = 1 s` for each read/write and `READINESS_SEQUENCE_TIMEOUT = k_ready * READINESS_PROBE_TIMEOUT = 3 s` for the complete proof. The sequence clock starts immediately before challenge 1, after negotiation, Noise authentication and resume validation; every operation is bounded by the minimum of the per-probe, remaining sequence and remaining experiment budgets. This replaces the falsified one-second whole-sequence interpretation without changing wire or Session semantics.
+
 ## 未决事项
 
 - M0 crate/workspace 结构。

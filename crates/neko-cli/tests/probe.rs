@@ -449,6 +449,7 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
 
 #[test]
 fn executable_loopback_health_threshold_drives_udp_to_tcp() {
+    let _lock = FAILOVER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("health-failover-server");
     let cp = tmp("health-failover-client");
@@ -600,7 +601,7 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
 }
 #[test]
 fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
-    let _lock = FAILOVER_TEST_LOCK.lock().unwrap();
+    let _lock = FAILOVER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("warm-failover-server");
     let cp = tmp("warm-failover-client");
@@ -632,6 +633,8 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
             "--cease-udp-replies-after",
             "1",
             "--send-malformed-after-cessation",
+            "--test-readiness-delay-ms",
+            "400",
             "--diagnostic",
             "--experiment-id",
             "warm-failover-server",
@@ -729,6 +732,10 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
             .matches("\"event\":\"tcp_warm_readiness\"")
             .count(),
         3
+    );
+    assert_eq!(
+        client_log.matches("carrier_event name=tcp_warm ").count(),
+        1
     );
     let warm = client_log.find("carrier_event name=tcp_warm").unwrap();
     let failed = client_log
@@ -1706,6 +1713,137 @@ fn periodic_session_duplicate_ack_is_authenticated_and_idempotent() {
 }
 
 #[test]
+fn periodic_setup_timeout_is_separate_from_ack_timeout() {
+    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("periodic-setup-separated-server");
+    let cp = tmp("periodic-setup-separated-client");
+    let ck = key(bin, &cp);
+    let sk = key(bin, &sp);
+    let port = periodic_test_port();
+    let server = start_periodic_server(bin, port, &sp, &ck, &["--test-setup-delay-ms", "300"]);
+    let out = Command::new(bin)
+        .args([
+            "periodic-client",
+            "--port",
+            &port.to_string(),
+            "--addr",
+            &format!("127.0.0.1:{port}"),
+            "--identity",
+            cp.to_str().unwrap(),
+            "--server-key",
+            &sk,
+            "--duration",
+            "5",
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--interval-ms",
+            "100",
+            "--ack-timeout-ms",
+            "100",
+            "--setup-timeout-ms",
+            "1000",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("attempted=3 confirmed=3 missing=0"));
+    let (status, server_log) = finish_server(server);
+    assert!(status.success(), "{server_log}");
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+}
+
+#[test]
+fn periodic_setup_timeout_fails_before_application_records() {
+    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("periodic-setup-timeout-server");
+    let cp = tmp("periodic-setup-timeout-client");
+    let ck = key(bin, &cp);
+    let sk = key(bin, &sp);
+    let port = periodic_test_port();
+    let server = start_periodic_server(
+        bin,
+        port,
+        &sp,
+        &ck,
+        &["--setup-timeout-ms", "200", "--test-setup-delay-ms", "400"],
+    );
+    let out = Command::new(bin)
+        .args([
+            "periodic-client",
+            "--port",
+            &port.to_string(),
+            "--addr",
+            &format!("127.0.0.1:{port}"),
+            "--identity",
+            cp.to_str().unwrap(),
+            "--server-key",
+            &sk,
+            "--duration",
+            "2",
+            "--count",
+            "1",
+            "--bytes",
+            "16",
+            "--interval-ms",
+            "100",
+            "--ack-timeout-ms",
+            "100",
+            "--setup-timeout-ms",
+            "200",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let (status, server_log) = finish_server(server);
+    assert!(!status.success(), "{server_log}");
+    assert!(
+        !server_log.contains("periodic_server_authenticated"),
+        "{server_log}"
+    );
+    assert!(
+        !server_log.contains("periodic_server_interval"),
+        "{server_log}"
+    );
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+}
+
+#[test]
+fn periodic_malformed_setup_fails_unauthenticated() {
+    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("periodic-malformed-server");
+    let cp = tmp("periodic-malformed-client");
+    let ck = key(bin, &cp);
+    let port = periodic_test_port();
+    let server = start_periodic_server(bin, port, &sp, &ck, &["--setup-timeout-ms", "500"]);
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream.write_all(&[0, 0, 0, 1, 0xff]).unwrap();
+    drop(stream);
+    let (status, server_log) = finish_server(server);
+    assert!(!status.success(), "{server_log}");
+    assert!(
+        !server_log.contains("periodic_server_authenticated"),
+        "{server_log}"
+    );
+    assert!(
+        !server_log.contains("periodic_server_interval"),
+        "{server_log}"
+    );
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+}
+
+#[test]
 fn periodic_server_signal_cleanup_is_bounded() {
     let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
@@ -1724,7 +1862,7 @@ fn periodic_server_signal_cleanup_is_bounded() {
 
 #[test]
 fn warm_readiness_failures_close_before_admission_or_application_data() {
-    let _lock = FAILOVER_TEST_LOCK.lock().unwrap();
+    let _lock = FAILOVER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     for (name, seam, server_seam) in [
         (
@@ -1749,6 +1887,16 @@ fn warm_readiness_failures_close_before_admission_or_application_data() {
         ),
         ("fewer-than-three", "--test-readiness-short", "--diagnostic"),
         ("readiness-stall", "--test-readiness-stall", "--diagnostic"),
+        (
+            "probe-over-one-second",
+            "--diagnostic",
+            "--test-readiness-delay-1200",
+        ),
+        (
+            "sequence-over-three-seconds",
+            "--test-readiness-sequence-pause-200",
+            "--test-readiness-delay-950",
+        ),
     ] {
         let sp = tmp(&format!("negative-{name}-server"));
         let cp = tmp(&format!("negative-{name}-client"));
@@ -1783,8 +1931,22 @@ fn warm_readiness_failures_close_before_admission_or_application_data() {
                 "--diagnostic",
                 "--experiment-id",
                 &format!("negative-{name}-server"),
-                server_seam,
+                if matches!(
+                    server_seam,
+                    "--test-readiness-delay-1200" | "--test-readiness-delay-950"
+                ) {
+                    "--test-readiness-delay-ms"
+                } else {
+                    server_seam
+                },
             ])
+            .args(if server_seam == "--test-readiness-delay-1200" {
+                vec!["1200"]
+            } else if server_seam == "--test-readiness-delay-950" {
+                vec!["950"]
+            } else {
+                vec![]
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -1810,8 +1972,17 @@ fn warm_readiness_failures_close_before_admission_or_application_data() {
                 "--duration",
                 "2",
                 "--automatic-health-failover",
-                seam,
+                if seam == "--test-readiness-sequence-pause-200" {
+                    "--test-readiness-sequence-pause-ms"
+                } else {
+                    seam
+                },
             ])
+            .args(if seam == "--test-readiness-sequence-pause-200" {
+                vec!["200"]
+            } else {
+                vec![]
+            })
             .output()
             .unwrap();
         let server = server.wait_with_output().unwrap();
