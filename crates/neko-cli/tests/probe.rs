@@ -1223,3 +1223,222 @@ fn tcp_and_udp_reject_unsupported_selected_version_before_noise() {
         let _ = fs::remove_file(cp);
     }
 }
+
+static PERIODIC_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn periodic_test_port() -> u16 {
+    40088
+}
+
+fn start_periodic_server(
+    bin: &str,
+    port: u16,
+    identity: &std::path::Path,
+    client_key: &str,
+    extra: &[&str],
+) -> ReadyServer {
+    let mut command = Command::new(bin);
+    command
+        .args([
+            "periodic-server",
+            "--port",
+            &port.to_string(),
+            "--bind",
+            &format!("127.0.0.1:{port}"),
+            "--identity",
+            identity.to_str().unwrap(),
+            "--client-key",
+            client_key,
+            "--duration",
+            "5",
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--interval-ms",
+            "100",
+            "--ack-timeout-ms",
+            "500",
+        ])
+        .args(extra)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut startup_log = String::new();
+    loop {
+        let mut line = String::new();
+        assert_ne!(stdout.read_line(&mut line).unwrap(), 0, "{startup_log}");
+        startup_log.push_str(&line);
+        if line.contains("periodic_server_ready") {
+            break;
+        }
+    }
+    ReadyServer {
+        child,
+        stdout,
+        startup_log,
+    }
+}
+
+#[test]
+fn periodic_session_delayed_confirmations_are_counted_on_one_session() {
+    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("periodic-delay-server");
+    let cp = tmp("periodic-delay-client");
+    let ck = key(bin, &cp);
+    let sk = key(bin, &sp);
+    let port = periodic_test_port();
+    let server = start_periodic_server(bin, port, &sp, &ck, &["--test-ack-delay-ms", "150"]);
+    let out = Command::new(bin)
+        .args([
+            "periodic-client",
+            "--port",
+            &port.to_string(),
+            "--addr",
+            &format!("127.0.0.1:{port}"),
+            "--identity",
+            cp.to_str().unwrap(),
+            "--server-key",
+            &sk,
+            "--duration",
+            "5",
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--interval-ms",
+            "100",
+            "--ack-timeout-ms",
+            "500",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let log = String::from_utf8_lossy(&out.stdout);
+    assert!(log.contains("periodic_client_authenticated session=7201 stream=1"));
+    assert!(log.contains("attempted=3 confirmed=3 missing=0"), "{log}");
+    let (status, server_log) = finish_server(server);
+    assert!(status.success(), "{server_log}");
+    assert_eq!(
+        server_log.matches("periodic_server_authenticated").count(),
+        1
+    );
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+}
+
+#[test]
+fn periodic_session_accounts_missing_ack_and_fails_closed() {
+    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("periodic-missing-server");
+    let cp = tmp("periodic-missing-client");
+    let ck = key(bin, &cp);
+    let sk = key(bin, &sp);
+    let port = periodic_test_port();
+    let server = start_periodic_server(bin, port, &sp, &ck, &["--test-drop-ack", "3"]);
+    let out = Command::new(bin)
+        .args([
+            "periodic-client",
+            "--port",
+            &port.to_string(),
+            "--addr",
+            &format!("127.0.0.1:{port}"),
+            "--identity",
+            cp.to_str().unwrap(),
+            "--server-key",
+            &sk,
+            "--duration",
+            "2",
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--interval-ms",
+            "100",
+            "--ack-timeout-ms",
+            "200",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let log = String::from_utf8_lossy(&out.stdout);
+    assert!(log.contains("attempted=3 confirmed=2 missing=1"), "{log}");
+    let (status, server_log) = finish_server(server);
+    assert!(status.success(), "status={status:?} {server_log}");
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+}
+
+#[test]
+fn periodic_session_duplicate_ack_is_authenticated_and_idempotent() {
+    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("periodic-duplicate-server");
+    let cp = tmp("periodic-duplicate-client");
+    let ck = key(bin, &cp);
+    let sk = key(bin, &sp);
+    let port = periodic_test_port();
+    let server = start_periodic_server(bin, port, &sp, &ck, &["--test-duplicate-ack"]);
+    let out = Command::new(bin)
+        .args([
+            "periodic-client",
+            "--port",
+            &port.to_string(),
+            "--addr",
+            &format!("127.0.0.1:{port}"),
+            "--identity",
+            cp.to_str().unwrap(),
+            "--server-key",
+            &sk,
+            "--duration",
+            "5",
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--interval-ms",
+            "100",
+            "--ack-timeout-ms",
+            "500",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let log = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        log.contains("attempted=3 confirmed=3 missing=0 duplicates=2"),
+        "{log}"
+    );
+    let (status, server_log) = finish_server(server);
+    assert!(status.success(), "{server_log}");
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+}
+
+#[test]
+fn periodic_server_signal_cleanup_is_bounded() {
+    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("periodic-signal-server");
+    let cp = tmp("periodic-signal-client");
+    let ck = key(bin, &cp);
+    let port = periodic_test_port();
+    let server = start_periodic_server(bin, port, &sp, &ck, &[]);
+    signal_term(&server.child);
+    let (status, log) = finish_server(server);
+    assert!(status.success(), "{log}");
+    assert!(log.contains("cleanup=verified"), "{log}");
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+}

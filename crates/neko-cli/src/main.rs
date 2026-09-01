@@ -3,6 +3,7 @@ mod lifecycle;
 
 use lifecycle::ReadinessPrerequisite;
 mod multistream;
+mod periodic;
 mod reachability;
 
 use neko_carrier::{
@@ -35,9 +36,9 @@ use std::{
     },
     time::{Duration, Instant},
 };
-const USAGE: &str = "Usage: neko <server|client|probe|lab|failover-server|workload|failover-client|keygen|capabilities> [bounded options]
+const USAGE: &str = "Usage: neko <server|client|probe|periodic-server|periodic-client|lab|failover-server|workload|failover-client|keygen|capabilities> [bounded options]
 
-  --count N: bounded authenticated exchanges (1-64)\n  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
+  --count N: bounded authenticated exchanges (1-64; periodic 1-600)\n  periodic-*: one TCP Session, duration 1-600s, interval 100-5000ms, <=1MiB app data; reconnect unsupported\n  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
 const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
 const MAX_DURATION: u64 = 30;
@@ -1947,6 +1948,8 @@ fn main() {
         Some("client") | Some("probe") => client(&a),
         Some("lab") => lab(&a),
         Some("workload") => workload(&a),
+        Some("periodic-server") => periodic::server(&a),
+        Some("periodic-client") => periodic::client(&a),
         Some("scheduler-fairness") => scheduler_fairness(&a),
         Some("key-update") => key_update_fixture(&a),
         Some("health-observe") => health_observe(&a),
