@@ -783,7 +783,11 @@ fn failover_server(args: &[String]) {
                     .unwrap()
                     .receive_first(datagram, context(1))
                     .unwrap_or_else(|_| fail("unauthorized UDP handshake"));
-                    udp.send_to(&resp, peer).unwrap();
+                    if !args.iter().any(|a| a == "--drop-first-udp-noise-response") {
+                        udp.send_to(&resp, peer).unwrap();
+                    } else {
+                        emit_diagnostic(args, "server", "udp_noise_response_dropped", 0, "");
+                    }
                     guard = Some(
                         ResumeGuard::new_with_negotiation(
                             &client,
@@ -1121,6 +1125,10 @@ fn failover_client(args: &[String]) {
         records.push(record);
     }
     println!("carrier_event name=udp_authenticated session=7001 generation=0");
+    if args.iter().any(|a| a == "--send-late-udp-hello") {
+        u.send_to(&negotiation_hello, target).unwrap();
+        emit_diagnostic(args, "client", "late_udp_hello_sent", 0, "");
+    }
     let udp_record = records[0].clone();
     let logical = ProcessMessage::Data {
         session: SessionId(7001),

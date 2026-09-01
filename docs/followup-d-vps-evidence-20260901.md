@@ -1,5 +1,7 @@
 # Reviewer Follow-up D — bounded VPS negotiated failover evidence
 
+> **Supersession note (2026-09-01):** This pre-`f680702` run remains valid evidence only for canonical negotiation, authenticated UDP admission, authenticated TCP resume, ordered server receive, bounded parameters, and cleanup. Its `ACK observed` / `ACK sent` wording did **not** establish an authenticated, exact-semantic Session `DeliveryAck` and is disavowed for that claim. `f680702` repaired the runner; only post-fix runs may support authenticated Session-delivery acknowledgement claims.
+
 - experiment_id: `followup-d-vps-20260901`
 - endpoint labels: `self-owned-client` ↔ `self-owned-vps` (addresses intentionally redacted)
 - authorization: standing VPS lab authorization; temporary unprivileged high ports only

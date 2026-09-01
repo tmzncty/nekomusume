@@ -403,6 +403,7 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
             "13",
             "--duration",
             "4",
+            "--send-late-udp-hello",
             "--diagnostic",
             "--experiment-id",
             "selection-retry-client",
@@ -437,9 +438,141 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
     let log = String::from_utf8_lossy(&server.stdout);
     assert!(log.contains("udp_selection_dropped"), "{log}");
     assert!(log.contains("udp_selection_retried"), "{log}");
+    // The duplicate pending hello and a late post-auth hello cannot restart
+    // negotiation or reset ResumeGuard/session/path/delivery state.
+    assert_eq!(log.matches("carrier_event name=udp_negotiated").count(), 1);
+    assert_eq!(
+        log.matches("carrier_event name=udp_authenticated").count(),
+        1
+    );
+    assert_eq!(
+        log.matches("carrier_event name=tcp_resumed session=7001 generation=1")
+            .count(),
+        1
+    );
     assert!(
         log.contains("records=2 application_bytes_total=26"),
         "{log}"
+    );
+}
+
+#[test]
+fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("noise-retry-server");
+    let cp = tmp("noise-retry-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let udp = 40093u16;
+    let tcp = 40094u16;
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "2",
+            "--bytes",
+            "17",
+            "--duration",
+            "5",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--drop-first-udp-noise-response",
+            "--diagnostic",
+            "--experiment-id",
+            "noise-retry-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    thread::sleep(Duration::from_millis(150));
+    let client = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "2",
+            "--bytes",
+            "17",
+            "--duration",
+            "4",
+            "--diagnostic",
+            "--experiment-id",
+            "noise-retry-client",
+        ])
+        .output()
+        .unwrap();
+    let server = server.wait_with_output().unwrap();
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    assert!(
+        client.status.success(),
+        "client stdout={} stderr={}",
+        String::from_utf8_lossy(&client.stdout),
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(
+        server.status.success(),
+        "server stdout={} stderr={}",
+        String::from_utf8_lossy(&server.stdout),
+        String::from_utf8_lossy(&server.stderr)
+    );
+    let client_log = String::from_utf8_lossy(&client.stdout);
+    let server_log = String::from_utf8_lossy(&server.stdout);
+    assert!(
+        server_log.contains("udp_noise_response_dropped"),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("udp_noise_response_retried"),
+        "{server_log}"
+    );
+    // A duplicate Noise first-message must replay only the cached response. It
+    // must not renegotiate, reauthenticate, replace ResumeGuard/session state,
+    // increment path generation, or reset delivery state.
+    assert_eq!(
+        server_log
+            .matches("carrier_event name=udp_negotiated")
+            .count(),
+        1
+    );
+    assert_eq!(
+        server_log
+            .matches("carrier_event name=udp_authenticated")
+            .count(),
+        1
+    );
+    assert_eq!(
+        server_log
+            .matches("carrier_event name=tcp_resumed session=7001 generation=1")
+            .count(),
+        1
+    );
+    assert!(client_log.contains("carrier_event name=tcp_resume_guard session=7001 generation=1"));
+    assert!(client_log.contains("\"event\":\"udp_delivery_ack_validated\""));
+    assert!(client_log.contains("\"event\":\"tcp_delivery_ack_validated\""));
+    assert!(
+        server_log.contains("records=2 application_bytes_total=34"),
+        "{server_log}"
     );
 }
 

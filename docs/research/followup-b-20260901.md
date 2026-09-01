@@ -1,5 +1,7 @@
 # Follow-up B bounded process evidence (2026-09-01)
 
+> **Supersession note (2026-09-01):** This pre-`f680702` run retains its valid canonical-negotiation, authenticated-admission/resume, ordered server-receive, bounded-execution, and cleanup facts. Its acknowledgement wording did **not** prove authenticated, exact-semantic Session `DeliveryAck`; that claim is disavowed. `f680702` is the implementation repair, and only post-fix evidence may support authenticated Session-delivery acknowledgement claims.
+
 This is a small, redacted evidence summary. It intentionally contains no
 identity material, keys, payload bytes, raw logs, addresses beyond loopback,
 or packet capture.
