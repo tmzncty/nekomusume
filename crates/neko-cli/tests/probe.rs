@@ -317,21 +317,129 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
     }
     assert!(server_log.contains("carrier_event name=udp_authenticated"));
     assert!(server_log.contains("carrier_event name=tcp_resumed"));
+    assert!(client_log.contains("\"event\":\"udp_delivery_ack_validated\""));
+    assert_eq!(
+        client_log
+            .matches("\"event\":\"tcp_delivery_ack_validated\"")
+            .count(),
+        2
+    );
+    assert!(client_log.contains("\"event\":\"udp_uncertain_range_sent\""));
+    assert!(!client_log.contains("udp_ack_observed"));
     assert!(
         !server_log.contains("duplicates="),
         "server must not report an unmeasured duplicate constant: {server_log}"
     );
-    assert!(server_log.contains("records=3 payload_bytes=48"));
+    assert!(server_log.contains("records=3 application_bytes_total=48"));
     assert!(server_log.contains("controlled_udp_stop=true"));
     assert!(server_log.contains("\"count\":3"));
-    assert!(server_log.contains("\"payload_bytes\":16"));
+    assert!(server_log.contains("\"record_payload_bytes\":16"));
     assert!(server_log.contains("\"udp_port\":40089"));
     assert!(server_log.contains("\"tcp_port\":40090"));
     assert!(server_log.contains("\"max_seconds\":5"));
-    assert!(client_log.contains("\"payload_bytes\":48"));
+    assert!(client_log.contains("\"application_bytes_total\":48"));
     assert!(
         server_log.contains(&format!("bytes_hex={}", "78".repeat(48))),
         "incomplete ordered bytes: {server_log}"
+    );
+}
+
+#[test]
+fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("retry-server");
+    let cp = tmp("retry-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let udp = 40091u16;
+    let tcp = 40092u16;
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "2",
+            "--bytes",
+            "13",
+            "--duration",
+            "5",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--drop-first-udp-selection",
+            "--diagnostic",
+            "--experiment-id",
+            "selection-retry-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    thread::sleep(Duration::from_millis(150));
+    let client = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "2",
+            "--bytes",
+            "13",
+            "--duration",
+            "4",
+            "--diagnostic",
+            "--experiment-id",
+            "selection-retry-client",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // The first selection is deliberately lost, so this arrives while the
+    // legitimate peer owns the bounded pending slot.
+    thread::sleep(Duration::from_millis(30));
+    UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .send_to(b"unrelated", ("127.0.0.1", udp))
+        .unwrap();
+    let client = client.wait_with_output().unwrap();
+    let server = server.wait_with_output().unwrap();
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    assert!(
+        client.status.success(),
+        "client stdout={} stderr={}",
+        String::from_utf8_lossy(&client.stdout),
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(
+        server.status.success(),
+        "server stdout={} stderr={}",
+        String::from_utf8_lossy(&server.stdout),
+        String::from_utf8_lossy(&server.stderr)
+    );
+    let log = String::from_utf8_lossy(&server.stdout);
+    assert!(log.contains("udp_selection_dropped"), "{log}");
+    assert!(log.contains("udp_selection_retried"), "{log}");
+    assert!(
+        log.contains("records=2 application_bytes_total=26"),
+        "{log}"
     );
 }
 

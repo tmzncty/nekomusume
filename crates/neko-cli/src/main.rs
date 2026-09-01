@@ -14,7 +14,7 @@ use neko_crypto::{
     TrustRecord, TrustStatus,
 };
 use neko_session::{
-    InboundRecord, ProcessMessage, ResumeWireBinding, RuntimeLimits, SessionId, SessionRuntime,
+    InboundRecord, OutboundRecord, ProcessMessage, RuntimeLimits, SessionId, SessionRuntime,
     StreamId,
 };
 use neko_wire::{NEGOTIATION_VERSION, NegotiationRole, VersionNegotiator};
@@ -656,15 +656,15 @@ fn failover_binding(session: u64, generation: u64, expires: u64) -> neko_crypto:
         token: [9; 32],
     }
 }
-fn wire_binding(b: &neko_crypto::ResumeBinding) -> ResumeWireBinding {
-    ResumeWireBinding {
-        session_id: SessionId(b.session_id),
-        delivery_epoch: b.delivery_epoch,
-        key_phase: b.key_phase,
-        path_generation: b.path_generation,
-        expires_at_ms: b.expires_at_ms,
-        token: b.token,
-    }
+fn delivery_ack_matches(plain: &[u8], expected: &OutboundRecord) -> bool {
+    matches!(
+        ProcessMessage::decode(plain),
+        Ok(ProcessMessage::DeliveryAck { session, stream, offset, len })
+            if session == SessionId(7001)
+                && stream == expected.stream
+                && offset == expected.offset
+                && len == expected.data.len()
+    )
 }
 fn runtime_limits(bytes: usize, count: usize) -> RuntimeLimits {
     RuntimeLimits {
@@ -676,21 +676,19 @@ fn runtime_limits(bytes: usize, count: usize) -> RuntimeLimits {
         ..RuntimeLimits::default()
     }
 }
-#[allow(clippy::collapsible_if, clippy::collapsible_match)]
+type PendingUdpNegotiation = (SocketAddr, Vec<u8>, Vec<u8>, Vec<u8>);
+
+#[allow(clippy::collapsible_if)]
 fn failover_server(args: &[String]) {
     let mut diag = HandshakeDiagnostics::new("server");
     let count = exchange_count(args);
-    let (_t, _p, bytes, duration) = (
-        "failover",
-        0,
-        parse(args, "--bytes", Some("32"))
-            .parse()
-            .unwrap_or_else(|_| fail("invalid bytes")),
-        Duration::from_secs(
-            parse(args, "--duration", Some("10"))
-                .parse::<u64>()
-                .unwrap_or_else(|_| fail("invalid duration")),
-        ),
+    let bytes = parse(args, "--bytes", Some("32"))
+        .parse::<usize>()
+        .unwrap_or_else(|_| fail("invalid bytes"));
+    let duration = Duration::from_secs(
+        parse(args, "--duration", Some("10"))
+            .parse::<u64>()
+            .unwrap_or_else(|_| fail("invalid duration")),
     );
     if bytes == 0 || bytes > MAX_BYTES {
         fail("bytes outside 1-1200")
@@ -737,7 +735,10 @@ fn failover_server(args: &[String]) {
     diag.event(args, "socket_bind");
     let started = Instant::now();
     let mut buf = [0u8; 65536];
+    // Bounded one-peer pre-auth cache. It is discarded only after authentication.
+    let mut pending: Option<PendingUdpNegotiation> = None;
     let mut secure = None;
+    let mut handshake_cache: Option<(Vec<u8>, Vec<u8>)> = None;
     let mut guard = None;
     let mut app = Vec::new();
     let udp_local_port = udp.local_addr().map(|a| a.port()).unwrap_or(up);
@@ -751,9 +752,10 @@ fn failover_server(args: &[String]) {
         "start",
         0,
         &format!(
-            ",\"count\":{},\"payload_bytes\":{},\"udp_port\":{},\"tcp_port\":{},\"max_seconds\":{}",
+            ",\"count\":{},\"record_payload_bytes\":{},\"application_bytes_total\":{},\"udp_port\":{},\"tcp_port\":{},\"max_seconds\":{}",
             count,
             bytes,
+            count * bytes,
             udp_local_port,
             tcp_local_port,
             duration.as_secs()
@@ -762,71 +764,94 @@ fn failover_server(args: &[String]) {
     while started.elapsed() < duration {
         if secure.is_none() {
             if let Ok((n, peer)) = udp.recv_from(&mut buf) {
-                diag.event(args, "server_recv");
-                diag.event(args, "demux");
-                emit_diagnostic(args, "server", "udp_hello_received", 0, "");
-                let mut negotiation =
-                    VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS).unwrap();
-                let selection = negotiation
-                    .server_accept_hello(&buf[..n])
-                    .unwrap_or_else(|_| fail("incompatible negotiation"));
-                let binding = negotiation.authenticated_binding().unwrap();
-                udp.send_to(&selection, peer).unwrap();
-                let (n, handshake_peer) = udp
-                    .recv_from(&mut buf)
-                    .unwrap_or_else(|_| fail("handshake timeout"));
-                if handshake_peer != peer {
-                    fail("handshake peer changed");
-                }
-                diag.event(args, "client_recv");
-                let (resp, ss, remote, resume_binding) =
-                    ResponderHandshake::new_with_prologue_binding(
+                let datagram = &buf[..n];
+                if let Some((pending_peer, hello, selection, binding)) = pending.as_ref() {
+                    if peer != *pending_peer {
+                        continue;
+                    }
+                    if datagram == hello.as_slice() {
+                        udp.send_to(selection, peer).unwrap();
+                        emit_diagnostic(args, "server", "udp_selection_retried", 0, "");
+                        continue;
+                    }
+                    let (resp, ss) = ResponderHandshake::new_with_prologue_binding(
                         &id,
                         policy.clone(),
                         DOMAIN,
-                        binding.as_bytes(),
+                        binding,
                     )
                     .unwrap()
-                    .receive_first(&buf[..n], context(1))
-                    .map(|(resp, ss)| (resp, ss, client.clone(), failover_binding(7001, 0, 10_000)))
+                    .receive_first(datagram, context(1))
                     .unwrap_or_else(|_| fail("unauthorized UDP handshake"));
-                diag.event(args, "parse_auth");
-                udp.send_to(&resp, peer).unwrap();
-                diag.event(args, "reply_send");
-                emit_diagnostic(args, "server", "udp_hello_sent", 0, "");
-                diag.event(args, "server_response_sent");
-                guard = Some(
-                    ResumeGuard::new_with_negotiation(&remote, &resume_binding, binding.as_bytes())
+                    udp.send_to(&resp, peer).unwrap();
+                    guard = Some(
+                        ResumeGuard::new_with_negotiation(
+                            &client,
+                            &failover_binding(7001, 0, 10_000),
+                            binding,
+                        )
                         .unwrap(),
-                );
-                secure = Some((ss, peer));
-                println!("carrier_event name=udp_negotiated session=7001 generation=0 version=0");
-                println!("carrier_event name=udp_authenticated session=7001 generation=0");
+                    );
+                    handshake_cache = Some((datagram.to_vec(), resp));
+                    secure = Some((ss, peer));
+                    pending = None;
+                    println!(
+                        "carrier_event name=udp_negotiated session=7001 generation=0 version=0"
+                    );
+                    println!("carrier_event name=udp_authenticated session=7001 generation=0");
+                } else {
+                    let mut negotiation =
+                        VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
+                            .unwrap();
+                    if let Ok(selection) = negotiation.server_accept_hello(datagram) {
+                        let binding = negotiation
+                            .authenticated_binding()
+                            .unwrap()
+                            .as_bytes()
+                            .to_vec();
+                        diag.event(args, "server_recv");
+                        emit_diagnostic(args, "server", "udp_hello_received", 0, "");
+                        pending = Some((peer, datagram.to_vec(), selection.clone(), binding));
+                        if !args.iter().any(|a| a == "--drop-first-udp-selection") {
+                            udp.send_to(&selection, peer).unwrap();
+                        } else {
+                            emit_diagnostic(args, "server", "udp_selection_dropped", 0, "");
+                        }
+                    }
+                }
             }
         }
         if let Some((ref mut ss, peer)) = secure {
-            if let Ok((n, _)) = udp.recv_from(&mut buf) {
+            if let Ok((n, datagram_peer)) = udp.recv_from(&mut buf) {
+                if datagram_peer != peer {
+                    continue;
+                }
+                if let Some((first, response)) = handshake_cache.as_ref() {
+                    if buf[..n] == first[..] {
+                        udp.send_to(response, peer).unwrap();
+                        emit_diagnostic(args, "server", "udp_noise_response_retried", 0, "");
+                        continue;
+                    }
+                }
                 emit_diagnostic(
                     args,
                     "server",
                     "udp_datagram_received",
                     1,
-                    &format!(",\"bytes\":{}", n),
+                    &format!(",\"ciphertext_bytes\":{}", n),
                 );
                 if let Ok(plain) = ss.open_unreliable(&buf[..n]) {
-                    diag.event(args, "client_response_received");
-                    diag.event(args, "authenticated");
                     if let Ok(ProcessMessage::Data { session, record }) =
                         ProcessMessage::decode(&plain)
                     {
-                        let stream_id = record.stream;
+                        let stream = record.stream;
                         let offset = record.offset;
                         let len = record.data.len();
                         if session == SessionId(7001)
                             && runtime
                                 .receive(
                                     InboundRecord {
-                                        stream: stream_id,
+                                        stream,
                                         offset,
                                         data: record.data,
                                     },
@@ -834,21 +859,22 @@ fn failover_server(args: &[String]) {
                                 )
                                 .is_ok()
                         {
-                            let ack = ProcessMessage::DeliveryAck {
+                            let logical = ProcessMessage::DeliveryAck {
                                 session,
-                                stream: stream_id,
+                                stream,
                                 offset,
                                 len,
                             }
                             .encode()
                             .unwrap();
+                            let ack = ss.seal_unreliable(&logical).unwrap();
                             udp.send_to(&ack, peer).unwrap();
                             emit_diagnostic(
                                 args,
                                 "server",
-                                "udp_ack_sent",
+                                "udp_delivery_ack_sent",
                                 offset as usize / bytes.max(1),
-                                "",
+                                &format!(",\"ciphertext_bytes\":{}", ack.len()),
                             );
                             if let Some(delivered) = runtime.pop_receive(2).unwrap() {
                                 app.extend_from_slice(&delivered.data);
@@ -889,50 +915,56 @@ fn failover_server(args: &[String]) {
                 .unwrap_or(false)
             {
                 write_frame(&mut stream, &resp).unwrap();
-                let _ = read_frame(&mut stream, 128);
-                for _ in 0..count {
-                    if let Ok(m) = ProcessMessage::decode(
-                        &ss.open(&read_frame(&mut stream, PROCESS_FRAME_MAX).unwrap_or_default())
-                            .unwrap_or_default(),
-                    ) {
-                        if let ProcessMessage::Data { session, record } = m {
-                            let stream_id = record.stream;
-                            let offset = record.offset;
-                            let len = record.data.len();
-                            if session == SessionId(7001)
-                                && runtime
-                                    .receive(
-                                        InboundRecord {
-                                            stream: stream_id,
-                                            offset,
-                                            data: record.data,
-                                        },
-                                        2,
-                                    )
-                                    .is_ok()
-                            {
-                                write_frame(
-                                    &mut stream,
-                                    &ProcessMessage::DeliveryAck {
-                                        session,
+                for _ in 0..count.saturating_sub(1) {
+                    let ciphertext = read_frame(&mut stream, PROCESS_FRAME_MAX)
+                        .unwrap_or_else(|_| fail("bad TCP data frame"));
+                    let plain = ss
+                        .open(&ciphertext)
+                        .unwrap_or_else(|_| fail("unauthenticated TCP data"));
+                    if let Ok(ProcessMessage::Data { session, record }) =
+                        ProcessMessage::decode(&plain)
+                    {
+                        let stream_id = record.stream;
+                        let offset = record.offset;
+                        let len = record.data.len();
+                        if session == SessionId(7001)
+                            && runtime
+                                .receive(
+                                    InboundRecord {
                                         stream: stream_id,
                                         offset,
-                                        len,
-                                    }
-                                    .encode()
-                                    .unwrap(),
+                                        data: record.data,
+                                    },
+                                    2,
                                 )
-                                .unwrap();
-                                if let Some(delivered) = runtime.pop_receive(3).unwrap() {
-                                    app.extend_from_slice(&delivered.data);
-                                }
+                                .is_ok()
+                        {
+                            let logical = ProcessMessage::DeliveryAck {
+                                session,
+                                stream: stream_id,
+                                offset,
+                                len,
+                            }
+                            .encode()
+                            .unwrap();
+                            let encrypted = ss.seal(&logical).unwrap();
+                            write_frame(&mut stream, &encrypted).unwrap();
+                            emit_diagnostic(
+                                args,
+                                "server",
+                                "tcp_delivery_ack_sent",
+                                offset as usize / bytes.max(1),
+                                &format!(",\"ciphertext_bytes\":{}", encrypted.len()),
+                            );
+                            if let Some(delivered) = runtime.pop_receive(3).unwrap() {
+                                app.extend_from_slice(&delivered.data);
                             }
                         }
                     }
                 }
                 println!("carrier_event name=tcp_resumed session=7001 generation=1");
                 println!(
-                    "failover_server_ok session=7001 records={} payload_bytes={} bytes_hex={} controlled_udp_stop=true udp_port={} tcp_port={} carrier_events=udp_negotiated,udp_authenticated,controlled_udp_stop,tcp_negotiated,tcp_resumed",
+                    "failover_server_ok session=7001 records={} application_bytes_total={} bytes_hex={} controlled_udp_stop=true udp_port={} tcp_port={} carrier_events=udp_negotiated,udp_authenticated,controlled_udp_stop,tcp_negotiated,tcp_resumed",
                     app.len() / bytes.max(1),
                     app.len(),
                     hex(&app),
@@ -944,7 +976,11 @@ fn failover_server(args: &[String]) {
                     "server",
                     "summary",
                     count,
-                    &format!(",\"classification\":\"A\",\"records\":{}", count),
+                    &format!(
+                        ",\"classification\":\"A\",\"records\":{},\"application_bytes_total\":{}",
+                        count,
+                        app.len()
+                    ),
                 );
                 return;
             }
@@ -984,7 +1020,9 @@ fn failover_client(args: &[String]) {
         Some("neko-client.identity"),
     )));
     let sk = unhex(&parse(args, "--server-key", None));
-    let target = format!("{addr}:{up}");
+    let target = format!("{addr}:{up}")
+        .parse::<SocketAddr>()
+        .unwrap_or_else(|_| fail("bad UDP target"));
     let mut negotiation =
         VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
     let negotiation_hello = negotiation.client_hello().unwrap();
@@ -993,87 +1031,169 @@ fn failover_client(args: &[String]) {
     u.set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap();
     let mut buf = [0u8; 65536];
-    let mut handshake = None;
     emit_diagnostic(
         args,
         "client",
         "start",
         0,
         &format!(
-            ",\"count\":{},\"payload_bytes\":{},\"udp_port\":{},\"tcp_port\":{},\"max_seconds\":{}",
+            ",\"count\":{},\"record_payload_bytes\":{},\"application_bytes_total\":{},\"udp_port\":{},\"tcp_port\":{},\"max_seconds\":{}",
             count,
+            bytes,
             count * bytes,
             up,
             tp,
             secs
         ),
     );
+    let mut selection = None;
     for _ in 0..20 {
         diag.event(args, "client_send");
-        u.send_to(&negotiation_hello, &target).unwrap();
+        u.send_to(&negotiation_hello, target).unwrap();
         diag.event(args, "client_hello_sent");
         emit_diagnostic(args, "client", "udp_hello_sent", 0, "");
         match u.recv_from(&mut buf) {
-            Ok((n, _)) => {
+            Ok((n, peer)) if peer == target => {
                 diag.event(args, "client_recv");
-                handshake = Some(n);
-                emit_diagnostic(args, "client", "udp_hello_received", 0, "");
+                selection = Some(n);
                 break;
             }
+            Ok(_) => continue,
             Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
             {
-                std::thread::sleep(Duration::from_millis(20));
+                continue;
             }
             Err(_) => fail("UDP handshake receive failed"),
         }
     }
-    let n = match handshake {
-        Some(n) => n,
-        None => {
-            diag.timeout(args);
-            fail("UDP handshake timeout")
-        }
-    };
+    let n = selection.unwrap_or_else(|| {
+        diag.timeout(args);
+        fail("UDP handshake timeout")
+    });
     negotiation.client_accept_response(&buf[..n]).unwrap();
-    let negotiation_binding = negotiation.authenticated_binding().unwrap();
+    let binding = negotiation.authenticated_binding().unwrap();
     let mut hs = InitiatorHandshake::new_with_prologue_binding(
         &id,
         &sk,
         b"failover",
         DOMAIN,
-        negotiation_binding.as_bytes(),
+        binding.as_bytes(),
     )
     .unwrap();
     let first = hs.first_message().unwrap();
-    u.send_to(&first, &target).unwrap();
-    let n = u.recv_from(&mut buf).unwrap().0;
+    let mut response = None;
+    for _ in 0..20 {
+        u.send_to(&first, target).unwrap();
+        match u.recv_from(&mut buf) {
+            Ok((n, peer)) if peer == target => {
+                response = Some(n);
+                break;
+            }
+            Ok(_) => continue,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue;
+            }
+            Err(_) => fail("UDP Noise receive failed"),
+        }
+    }
+    let n = response.unwrap_or_else(|| fail("UDP Noise timeout"));
     let mut us = hs.finish(&buf[..n], context(1)).unwrap();
-    diag.event(args, "parse_auth");
     let payload = vec![b'x'; bytes];
-    let mut records = Vec::new();
+    let mut delivery =
+        SessionRuntime::new(SessionId(7001), runtime_limits(bytes, count), 0).unwrap();
+    delivery.open_stream(StreamId(1), 0).unwrap();
     for i in 0..count {
-        let msg = ProcessMessage::Data {
+        delivery
+            .queue_send(StreamId(1), &payload, i as u64 + 1)
+            .unwrap();
+    }
+    let mut records = Vec::new();
+    while let Some(record) = delivery.pop_send(count as u64 + 2).unwrap() {
+        records.push(record);
+    }
+    println!("carrier_event name=udp_authenticated session=7001 generation=0");
+    let udp_record = records[0].clone();
+    let logical = ProcessMessage::Data {
+        session: SessionId(7001),
+        record: udp_record.clone(),
+    }
+    .encode()
+    .unwrap();
+    let encrypted = us.seal_unreliable(&logical).unwrap();
+    u.send_to(&encrypted, target).unwrap();
+    emit_diagnostic(
+        args,
+        "client",
+        "udp_datagram_sent",
+        1,
+        &format!(
+            ",\"ciphertext_bytes\":{},\"record_payload_bytes\":{}",
+            encrypted.len(),
+            udp_record.data.len()
+        ),
+    );
+    let (n, peer) = u
+        .recv_from(&mut buf)
+        .unwrap_or_else(|_| fail("UDP delivery acknowledgement timeout"));
+    if peer != target {
+        fail("UDP delivery acknowledgement peer changed")
+    }
+    let ack_plain = us
+        .open_unreliable(&buf[..n])
+        .unwrap_or_else(|_| fail("unauthenticated UDP delivery acknowledgement"));
+    if !delivery_ack_matches(&ack_plain, &udp_record) {
+        fail("invalid UDP delivery acknowledgement")
+    }
+    delivery
+        .delivery_ack(
+            udp_record.stream,
+            udp_record.offset,
+            udp_record.data.len(),
+            count as u64 + 3,
+        )
+        .unwrap();
+    emit_diagnostic(
+        args,
+        "client",
+        "udp_delivery_ack_validated",
+        1,
+        &format!(",\"ciphertext_bytes\":{}", n),
+    );
+    // Leave exactly the next logical range uncertain at the controlled carrier
+    // stop. It is resent over TCP; the receiver's Session runtime deduplicates
+    // it if UDP delivery completed before the fault boundary.
+    if let Some(uncertain) = records.get(1) {
+        let logical = ProcessMessage::Data {
             session: SessionId(7001),
-            record: neko_session::OutboundRecord {
-                stream: StreamId(1),
-                offset: (i * bytes) as u64,
-                data: payload.clone(),
-            },
+            record: uncertain.clone(),
         }
         .encode()
         .unwrap();
-        records.push(msg);
+        let encrypted = us.seal_unreliable(&logical).unwrap();
+        u.send_to(&encrypted, target).unwrap();
+        emit_diagnostic(
+            args,
+            "client",
+            "udp_uncertain_range_sent",
+            2,
+            &format!(
+                ",\"ciphertext_bytes\":{},\"stream\":{},\"offset\":{},\"len\":{}",
+                encrypted.len(),
+                uncertain.stream.0,
+                uncertain.offset,
+                uncertain.data.len()
+            ),
+        );
     }
-    diag.event(args, "authenticated");
-    println!("carrier_event name=udp_authenticated session=7001 generation=0");
-    let rec = us.seal_unreliable(&records[0]).unwrap();
-    u.send_to(&rec, &target).unwrap();
-    emit_diagnostic(args, "client", "udp_datagram_sent", 1, ",\"bytes\":64");
-    let _ = u.recv_from(&mut buf);
-    diag.event(args, "client_recv");
-    emit_diagnostic(args, "client", "udp_ack_observed", 1, "");
     println!(
         "carrier_event name=controlled_udp_stop session=7001 generation=0 reason=bounded_application_fault_injection"
     );
@@ -1103,19 +1223,38 @@ fn failover_client(args: &[String]) {
     let resp = read_frame(&mut tcp, 1024).unwrap();
     let mut ts = hs2.finish(&resp, context(2)).unwrap();
     println!("carrier_event name=tcp_resume_guard session=7001 generation=1");
-    write_frame(
-        &mut tcp,
-        &ProcessMessage::Resume {
-            binding: wire_binding(&failover_binding(7001, 1, 10_000)),
+    for record in records.into_iter().skip(1) {
+        let logical = ProcessMessage::Data {
+            session: SessionId(7001),
+            record: record.clone(),
         }
         .encode()
-        .unwrap(),
-    )
-    .unwrap();
-    for msg in records {
-        let encrypted = ts.seal(&msg).unwrap();
+        .unwrap();
+        let encrypted = ts.seal(&logical).unwrap();
         write_frame(&mut tcp, &encrypted).unwrap();
-        let _ = read_frame(&mut tcp, PROCESS_FRAME_MAX);
+        let ack = read_frame(&mut tcp, PROCESS_FRAME_MAX)
+            .unwrap_or_else(|_| fail("TCP delivery acknowledgement timeout"));
+        let plain = ts
+            .open(&ack)
+            .unwrap_or_else(|_| fail("unauthenticated TCP delivery acknowledgement"));
+        if !delivery_ack_matches(&plain, &record) {
+            fail("invalid TCP delivery acknowledgement")
+        }
+        delivery
+            .delivery_ack(
+                record.stream,
+                record.offset,
+                record.data.len(),
+                count as u64 + 4,
+            )
+            .unwrap();
+        emit_diagnostic(
+            args,
+            "client",
+            "tcp_delivery_ack_validated",
+            record.offset as usize / bytes.max(1),
+            &format!(",\"ciphertext_bytes\":{}", ack.len()),
+        );
     }
     println!(
         "carrier_event name=ordered_records_complete session=7001 count={count} bytes={bytes}"
@@ -1125,7 +1264,11 @@ fn failover_client(args: &[String]) {
         "client",
         "summary",
         count,
-        &format!(",\"classification\":\"A\",\"records\":{}", count),
+        &format!(
+            ",\"classification\":\"A\",\"records\":{},\"application_bytes_total\":{}",
+            count,
+            count * bytes
+        ),
     );
     emit_diagnostic(
         args,
@@ -1135,9 +1278,9 @@ fn failover_client(args: &[String]) {
         ",\"capture\":\"metadata-only\",\"payload\":false,\"keys\":false,\"bounded\":true",
     );
     println!(
-        "failover_client_ok session=7001 count={count} payload_bytes={} controlled_udp_stop=true",
+        "failover_client_ok session=7001 count={count} application_bytes_total={} controlled_udp_stop=true",
         count * bytes
-    )
+    );
 }
 fn failover_gate(args: &[String]) {
     match args.first().map(String::as_str) {
@@ -1555,6 +1698,90 @@ mod cli_regression_tests {
         assert!(workload_duration_valid(600));
         assert!(!workload_duration_valid(601));
         assert!(!workload_duration_valid(u64::MAX));
+    }
+
+    fn secure_pair() -> (neko_crypto::SecureSession, neko_crypto::SecureSession) {
+        let client = LocalIdentity::generate().unwrap();
+        let server = LocalIdentity::generate().unwrap();
+        let policy = TrustPolicy::new(vec![TrustRecord {
+            version: 1,
+            public_key: client.public_key().to_vec(),
+            scope: b"failover".to_vec(),
+            status: TrustStatus::Active,
+        }]);
+        let mut initiator =
+            InitiatorHandshake::new(&client, server.public_key(), b"failover", DOMAIN).unwrap();
+        let first = initiator.first_message().unwrap();
+        let (response, responder) = ResponderHandshake::new(&server, policy, DOMAIN)
+            .unwrap()
+            .receive_first(&first, context(1))
+            .unwrap();
+        let initiator = initiator.finish(&response, context(1)).unwrap();
+        (initiator, responder)
+    }
+
+    #[test]
+    fn delivery_ack_requires_authenticated_exact_range_and_rejects_replay() {
+        let expected = OutboundRecord {
+            stream: StreamId(1),
+            offset: 32,
+            data: vec![7; 16],
+        };
+        let valid = ProcessMessage::DeliveryAck {
+            session: SessionId(7001),
+            stream: StreamId(1),
+            offset: 32,
+            len: 16,
+        }
+        .encode()
+        .unwrap();
+        let wrong_cases = [
+            ProcessMessage::DeliveryAck {
+                session: SessionId(7002),
+                stream: StreamId(1),
+                offset: 32,
+                len: 16,
+            },
+            ProcessMessage::DeliveryAck {
+                session: SessionId(7001),
+                stream: StreamId(2),
+                offset: 32,
+                len: 16,
+            },
+            ProcessMessage::DeliveryAck {
+                session: SessionId(7001),
+                stream: StreamId(1),
+                offset: 31,
+                len: 16,
+            },
+            ProcessMessage::DeliveryAck {
+                session: SessionId(7001),
+                stream: StreamId(1),
+                offset: 32,
+                len: 15,
+            },
+        ];
+        assert!(delivery_ack_matches(&valid, &expected));
+        for wrong in wrong_cases {
+            assert!(!delivery_ack_matches(&wrong.encode().unwrap(), &expected));
+        }
+        let (mut sender, mut receiver) = secure_pair();
+        assert!(
+            receiver.open_unreliable(&valid).is_err(),
+            "plaintext must not authenticate"
+        );
+        let encrypted = sender.seal_unreliable(&valid).unwrap();
+        assert!(delivery_ack_matches(
+            &receiver.open_unreliable(&encrypted).unwrap(),
+            &expected
+        ));
+        assert!(
+            receiver.open_unreliable(&encrypted).is_err(),
+            "replay must fail"
+        );
+        let mut tampered = sender.seal(&valid).unwrap();
+        *tampered.last_mut().unwrap() ^= 1;
+        assert!(receiver.open(&tampered).is_err(), "tamper must fail");
     }
 
     #[test]
