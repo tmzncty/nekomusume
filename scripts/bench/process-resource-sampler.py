@@ -26,7 +26,9 @@ def iso_utc(now: dt.datetime | None = None) -> str:
 
 
 def read_proc(pid: int, owned_ports: set[int]):
-    cpu = rss = fd_count = socket_count = None
+    # Keep a stable pair even when every /proc read races with process exit.
+    cpu = (None, None)
+    rss = fd_count = socket_count = None
     sources = {"cpu": None, "rss": None, "fd": None, "socket": None}
     try:
         stat = Path(f"/proc/{pid}/stat").read_text().split()

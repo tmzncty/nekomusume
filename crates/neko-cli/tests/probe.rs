@@ -1,5 +1,6 @@
 use neko_crypto::{
-    LocalIdentity, RecordContext, ResponderHandshake, TrustPolicy, TrustRecord, TrustStatus,
+    InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, TrustPolicy, TrustRecord,
+    TrustStatus,
 };
 use neko_wire::{NEGOTIATION_VERSION, NegotiationRole, VersionNegotiator};
 use std::{
@@ -41,6 +42,17 @@ fn start_server(
     identity: &std::path::Path,
     client_key: &str,
 ) -> ReadyServer {
+    start_server_for(bin, transport, port, identity, client_key, "5")
+}
+
+fn start_server_for(
+    bin: &str,
+    transport: &str,
+    port: u16,
+    identity: &std::path::Path,
+    client_key: &str,
+    duration: &str,
+) -> ReadyServer {
     let mut child = Command::new(bin)
         .args([
             "server",
@@ -55,7 +67,7 @@ fn start_server(
             "--client-key",
             client_key,
             "--duration",
-            "5",
+            duration,
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -668,6 +680,108 @@ fn load_test_identity(path: &std::path::Path) -> LocalIdentity {
             .collect::<Vec<_>>()
     };
     LocalIdentity::from_keypair(&decode(private), &decode(public)).unwrap()
+}
+
+fn authenticated_udp_client_with_data_delay(
+    port: u16,
+    client_identity_path: &std::path::Path,
+    server_key: &str,
+    delay: Duration,
+) -> std::io::Result<Vec<u8>> {
+    let socket = UdpSocket::bind("127.0.0.1:0")?;
+    socket.connect(("127.0.0.1", port))?;
+    socket.set_read_timeout(Some(Duration::from_secs(3)))?;
+    let mut negotiation =
+        VersionNegotiator::new(NegotiationRole::Client, &[NEGOTIATION_VERSION]).unwrap();
+    socket.send(&negotiation.client_hello().unwrap())?;
+    let mut buffer = [0; 2048];
+    let len = socket.recv(&mut buffer)?;
+    negotiation.client_accept_response(&buffer[..len]).unwrap();
+    let binding = negotiation.authenticated_binding().unwrap();
+    let identity = load_test_identity(client_identity_path);
+    let mut handshake = InitiatorHandshake::new_with_prologue_binding(
+        &identity,
+        &decode_key(server_key),
+        PROBE_SCOPE,
+        PROBE_DOMAIN,
+        binding.as_bytes(),
+    )
+    .unwrap();
+    socket.send(&handshake.first_message().unwrap())?;
+    let len = socket.recv(&mut buffer)?;
+    let mut session = handshake.finish(&buffer[..len], test_context()).unwrap();
+    negotiation.admit_data().unwrap();
+    thread::sleep(delay);
+    let payload = b"delayed authenticated application data";
+    socket.send(&session.seal_unreliable(payload).unwrap())?;
+    let len = socket.recv(&mut buffer)?;
+    Ok(session.open_unreliable(&buffer[..len]).unwrap())
+}
+
+#[test]
+fn udp_application_wait_uses_overall_duration_not_poll_interval() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("udp-delayed-data-server");
+    let cp = tmp("udp-delayed-data-client");
+    let server_key = key(bin, &sp);
+    let client_key = key(bin, &cp);
+    let server = start_server(bin, "udp", 40082, &sp, &client_key);
+    let echoed = authenticated_udp_client_with_data_delay(
+        40082,
+        &cp,
+        &server_key,
+        Duration::from_millis(250),
+    )
+    .unwrap();
+    let (status, log) = finish_server(server);
+    assert_eq!(echoed, b"delayed authenticated application data");
+    assert!(status.success(), "{log}");
+    assert!(log.contains("lifecycle_state=STOPPED readiness=false"));
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+}
+
+#[test]
+fn udp_application_wait_fails_at_bounded_overall_deadline() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("udp-data-deadline-server");
+    let cp = tmp("udp-data-deadline-client");
+    let server_key = key(bin, &sp);
+    let client_key = key(bin, &cp);
+    let mut server = start_server_for(bin, "udp", 40083, &sp, &client_key, "1");
+    // Complete negotiation/authentication, then intentionally cross the server's
+    // one-second application deadline before emitting the first data record.
+    let started = Instant::now();
+    let result = authenticated_udp_client_with_data_delay(
+        40083,
+        &cp,
+        &server_key,
+        Duration::from_millis(1_250),
+    );
+    let status = server.child.wait().unwrap();
+    let elapsed = started.elapsed();
+    let mut log = server.startup_log;
+    server.stdout.read_to_string(&mut log).unwrap();
+    assert!(result.is_err());
+    assert!(!status.success(), "{log}");
+    assert!(elapsed >= Duration::from_millis(900));
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "unbounded failure: {elapsed:?}"
+    );
+    let stderr = server
+        .child
+        .stderr
+        .take()
+        .map(|mut stream| {
+            let mut text = String::new();
+            stream.read_to_string(&mut text).unwrap();
+            text
+        })
+        .unwrap_or_default();
+    assert!(stderr.contains("data timeout"), "{stderr}");
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
 }
 
 fn run_client(

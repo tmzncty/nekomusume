@@ -322,6 +322,36 @@ fn write_frame(s: &mut TcpStream, b: &[u8]) -> std::io::Result<()> {
     s.write_all(b)?;
     s.flush()
 }
+enum UdpWait {
+    Datagram(usize, SocketAddr),
+    Shutdown,
+    Deadline,
+}
+
+fn recv_udp_until(
+    socket: &UdpSocket,
+    buffer: &mut [u8],
+    deadline: Instant,
+    shutdown: &AtomicBool,
+) -> std::io::Result<UdpWait> {
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            return Ok(UdpWait::Shutdown);
+        }
+        if Instant::now() >= deadline {
+            return Ok(UdpWait::Deadline);
+        }
+        match socket.recv_from(buffer) {
+            Ok((len, peer)) => return Ok(UdpWait::Datagram(len, peer)),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
 fn emit_lifecycle(lifecycle: &lifecycle::Lifecycle) {
     println!(
         "lifecycle_state={} readiness={}",
@@ -484,9 +514,21 @@ fn server(args: &[String]) {
                 negotiation
                     .admit_data()
                     .unwrap_or_else(|_| fail("data admission denied"));
+                let application_deadline = Instant::now() + d;
                 for _ in 0..count {
                     let (n, data_peer) =
-                        u.recv_from(&mut b).unwrap_or_else(|_| fail("data timeout"));
+                        match recv_udp_until(&u, &mut b, application_deadline, &shutdown)
+                            .unwrap_or_else(|_| fail("data receive failed"))
+                        {
+                            UdpWait::Datagram(n, data_peer) => (n, data_peer),
+                            UdpWait::Shutdown => {
+                                lifecycle.drain();
+                                lifecycle.stopped();
+                                println!("lifecycle_state=STOPPED readiness=false");
+                                return;
+                            }
+                            UdpWait::Deadline => fail("data timeout"),
+                        };
                     if data_peer != peer {
                         fail("data peer changed");
                     }

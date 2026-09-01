@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
 """Deterministic harmless process/FD/listener and validator regressions."""
-import json, os, pathlib, socket, subprocess, sys, tempfile, textwrap
+import importlib.util, json, os, pathlib, socket, subprocess, sys, tempfile, textwrap
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 SAMPLER=ROOT/"scripts/bench/process-resource-sampler.py"
 VALIDATOR=ROOT/"scripts/bench/validate-process-resource.py"
 
 def run(*args, check=True): return subprocess.run(args, text=True, capture_output=True, check=check)
+
+# Guaranteed-missing PID: every /proc read must fail without changing the
+# caller-visible return shape or inventing zero-valued metrics.
+spec=importlib.util.spec_from_file_location("process_resource_sampler", SAMPLER)
+sampler=importlib.util.module_from_spec(spec); spec.loader.exec_module(sampler)
+missing_pid=max(4_000_000, os.getpid()+1_000_000)
+assert not pathlib.Path(f"/proc/{missing_pid}").exists()
+cpu,rss,fds,sockets,sources=sampler.read_proc(missing_pid,{65535})
+assert cpu == (None,None) and rss is None and fds is None and sockets is None
+assert sources == {"cpu":None,"rss":None,"fd":None,"socket":None}
+
 with tempfile.TemporaryDirectory() as td_raw:
     td=pathlib.Path(td_raw)
     child=td/"known_child.py"
