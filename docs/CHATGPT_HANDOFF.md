@@ -1,253 +1,294 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-01 19:57 Asia/Shanghai
-Repository HEAD: `4b95e96202a02ea496fe54eb2e0adc0480f52e83`
-Previous checked implementation HEAD: `859f91570444daf11969c03fe6c153d56919fc3d`
-Previous reviewer handoff commit: `d2c3d11b01a802edca59179775305285b8ad849d`
+Checked at: 2026-09-01 20:58 Asia/Shanghai
+Repository HEAD: `9d890510c5b694b71f33e13aa68937bcf4f97814`
+Previous checked implementation HEAD: `4b95e96202a02ea496fe54eb2e0adc0480f52e83`
+Previous reviewer handoff commit: `2ad248550b608a81a865c1c17ff8ce9439c19c49`
 
 ## What changed
 
 One substantive coding-agent commit landed after the previous reviewer handoff:
 
-- `4b95e96` — **implementation/test evidence-label repair; no transport-semantic expansion**. Cold automatic recovery no longer emits the misleading `readiness_satisfied_us` field. It now records `promotion_gate=cold_authenticated_resume` plus `cold_promotion_ready_us`, keeps `resume_validated_us`, adds a regression that cold evidence cannot advertise the old warm-readiness label, and corrects the `ReadinessObservation` ownership comment so caller-supplied observation IDs are distinguished from manager-owned bounded accumulation/deduplication.
+- `9d89051` — **implementation + deterministic tests + status/plan update**. It adds a pre-failure `WarmCandidate` seam to `CarrierManager`, binds readiness state to target path/generation/session/delivery epoch, adds warm/cold recovery counters, allows a TCP candidate to be connected/canonically negotiated/Noise-authenticated before the UDP failure threshold, keeps UDP as the active owner during that setup, adds a warm promotion API, preserves the cold promotion path, and adds CLI/process tests plus local manager tests. `IMPLEMENTATION_PLAN.md` correctly leaves the bounded release-evidence matrix open and `docs/status.md` says current-exact-head VPS warm evidence is still absent.
 
-This closes the narrow R-003/R-004 evidence-label defects from the previous handoff.
+This is meaningful progress and restores the *shape* of the Accepted D064 single-active/multi-ready design. However, the current executable path still does **not** satisfy D064's readiness-evidence contract, so it must not yet be taken to the VPS as “warm fallback evidence”.
 
-During this review, a more important repository-fact correction was found: the previous handoff incorrectly stated that tracked decision D064 was absent. It is **present and Accepted** in `docs/decisions.md`, and its full accepted design contract is `docs/adr/m3-concurrent-carrier-semantics.md`. D064 explicitly chooses **single-active, multi-ready with warm TCP fallback** for M3, requires authenticated target/generation/delivery-epoch-bound readiness before a candidate becomes warm, and sets initial `k_ready=3`. The ADR explicitly rejects cold-fallback-only as the selected M3 design, while still requiring warm and cold recovery measurements to remain separate.
-
-Current runtime does not yet implement that accepted warm contract. `CarrierManager::observe_failed_udp_target_readiness()` only operates after `fail_udp_to_tcp()` has created a pending switch, and the CLI's automatic path connects/authenticates TCP only after UDP failure and calls `promote_cold_authenticated_resume(...)`. Therefore the current automatic runtime is truthful **cold recovery evidence**, but it cannot satisfy D064 warm-readiness/fallback evidence.
-
-This is a reviewer/spec-reconciliation finding. It is not evidence that the current cold path is itself incorrect; it means the release-evidence plan must not silently substitute cold recovery for the accepted warm-fallback contract.
-
-No GitHub commit-status/CI checks are attached to `4b95e96` through the available status API. Local coding-environment gates remain local evidence, not independent CI attestation.
+No GitHub commit-status/CI checks are attached to `9d89051` through the available status API. Local coding-environment gates, if run, remain local evidence rather than independent CI attestation.
 
 ## Review verdict
 
-**NEEDS REPAIR — D064 accepted warm-fallback implementation/evidence gap is now the Primary release blocker; rented VPS remains immediately valuable.**
+**NEEDS REPAIR — pre-failure warm state exists, but the three D064 “readiness observations” are currently synthesized locally rather than observed through an authenticated readiness exchange. Fix the evidence source and timing before current-head VPS warm claims.**
 
-Accept `4b95e96` as the correct cold-evidence-label repair. Do not revert it and do not reintroduce a fake warm-readiness field into cold evidence.
+Accept the manager-level separation between standby/warm/active and the preservation of the cold fallback path. Do not revert that structure merely because the executable readiness seam is incomplete.
 
-However, do not continue treating D064 as absent/non-normative. The accepted D064/ADR contract must be restored to planning and implementation truth. The next package should implement the minimum bounded warm-ready seam required by the accepted contract, prove it deterministically, then spend the rented-VPS window on exact-head periodic Session + warm recovery evidence. The already-working cold path remains useful as a separately classified baseline.
+The release-evidence matrix remains the current phase. The fastest truthful path is now:
 
-`IMPLEMENTATION_PLAN.md` item 3, **Bounded release evidence matrix**, remains the current phase. It must not be checked complete until the D064-selected warm/cold distinction and the remaining environment/evidence rows are represented truthfully.
+```text
+real authenticated readiness exchange + truthful timing
+    -> deterministic warm/cold process proof
+    -> exact-head owned-VPS warm/cold evidence
+    -> HY2 equal-application paired sample / remaining VPS-only rows
+```
+
+The rented VPS remains a high-priority evidence asset, but correctness/evidence provenance must be repaired before running the warm claim.
 
 ## Review findings
 
-### R-001 PASS — cold recovery evidence labels are now truthful
+### R-001 PASS — manager now has a genuine pre-failure standby/warm state distinct from active ownership
 
-`4b95e96` removes `readiness_satisfied_us` from `fallback_class=cold`, emits an explicit cold promotion gate, and adds a regression forbidding the misleading warm-readiness field. The `ReadinessObservation` ownership comment is also corrected.
+`CarrierManager` can install one newer standby generation while UDP remains active, accumulate bounded readiness state, preserve a separately classified cold promotion path, and atomically promote the matching warm generation after the existing UDP failure decision. Deterministic tests cover several generation/binding/duplicate/reset cases and distinguish warm/cold counters.
 
-This is accepted. It does not prove warm fallback.
+This is accepted as a useful implementation seam. It is not by itself network readiness evidence.
 
-### R-002 HIGH — previous reviewer conclusion about D064 was factually wrong
+### R-002 HIGH — current CLI fabricates the three readiness observations instead of observing authenticated challenge/response traffic
 
-Current repository facts are unambiguous:
+The Accepted D064 contract is explicit: readiness is a separate evidence domain and requires an **authenticated challenge/response** bound to Session identity, path generation, and delivery epoch. TCP connect/write, handshake success, or local booleans are insufficient.
 
-- `docs/decisions.md` contains **D064: UDP-primary + warm TCP fallback Carrier Manager contract**, status **Accepted design contract**;
-- `docs/adr/m3-concurrent-carrier-semantics.md` is also **Accepted design contract**;
-- the selected M3 design is `single-active, multi-ready`;
-- TCP may be established/authenticated/validated/admitted while UDP is active;
-- readiness is distinct from TCP connect/write, packet ACK, and Session delivery;
-- default `k_ready=3` authenticated readiness observations;
-- warm and cold recovery must be reported separately;
-- “cold fallback only” is explicitly listed as the rejected M3 alternative.
+At current HEAD, immediately after the warm TCP Noise handshake finishes, the client calls `prepare_warm_candidate(...)` and then directly loops `observation_id in 1..=3`, passing:
 
-The previous handoff's claim that the decision ledger skipped D064 must not be propagated into status, tests, or future evidence interpretation.
+```text
+authenticated=true
+resume_validated=true
+resource_admitted=true
+```
 
-### R-003 HIGH — current readiness API cannot prove D064 warm readiness
+into `observe_warm_candidate_readiness(...)` without any readiness request/response I/O between those observations. `tcp_warm_readiness` is therefore a client-local synthetic event, not an observed peer readiness exchange. The three distinct IDs prove dedup mechanics, not three successful authenticated readiness probes.
 
-The current `observe_failed_udp_target_readiness()` requires `pending_switch`, and `pending_switch` is created only after `fail_udp_to_tcp()` has already decided UDP failure. Therefore its three readiness observations are post-failure target-promotion evidence, not proof that TCP was already warm before failure decision.
+This is an evidence/implementation correctness defect relative to D064, not a cryptographic break. Do not call the current CLI path D064-ready in release evidence and do not run a VPS warm row until this is repaired.
 
-The current CLI automatic path is even narrower: it creates/authenticates TCP after the failure threshold, then uses `promote_cold_authenticated_resume(...)` immediately after resume validation.
+### R-003 HIGH — `resource_admitted=true` is asserted, not derived from a bounded admission result
 
-That is valid **cold recovery** behavior. It is not D064 warm standby.
+D064 requires a warm candidate to be authenticated, independently validated, **resource-admitted**, and ready. Current CLI sets the readiness observation's `resource_admitted` field to literal `true`; no admission result is being observed at the readiness point.
 
-### R-004 MEDIUM — release plan/status must expose the warm/cold gap instead of hiding it
+The repair must derive this bit/state from a real bounded admission path already present in the runtime, or add the smallest explicit bounded admission step needed for the warm control channel. A boolean constant is not release evidence.
 
-`docs/status.md` truthfully says the current automatic threshold seam is cold. Keep that boundary. But planning/release-evidence navigation should explicitly state that D064 warm standby remains unimplemented/unproven in the executable process/WAN path and is required before the selected M3 fallback design has release evidence.
+### R-004 HIGH — warm timing fields cannot currently prove pre-failure preparation
 
-Do not unfreeze the canonical corpus or reopen negotiation work merely because the warm path is incomplete. This is Carrier Manager/readiness/runtime evidence work, not N9 wire-corpus work.
+`failure_observation_started` is created **after** warm TCP setup. Later `failover_timing` expresses `tcp_connect_started_us`, `tcp_connected_us`, `tcp_negotiated_us`, `tcp_authenticated_us`, `resume_validated_us`, and `readiness_satisfied_us` relative to `failure_observation_started`. For a warm path those events occurred earlier, so the diagnostic origin cannot faithfully quantify how far before failure they occurred.
+
+Additionally, `readiness_satisfied_us` is currently populated from the same `resume_validated`/authentication instant rather than the timestamp of the third successful readiness observation.
+
+Event order in stdout is useful, but the planned VPS evidence explicitly needs trustworthy timestamps. Introduce a common experiment origin before warm setup and record the actual third readiness success separately from authentication/resume validation.
+
+### R-005 MEDIUM — status wording currently overstates the executable readiness source
+
+`docs/status.md` says warm TCP is “resource-admitted and marked warm after three distinct bound observations before controlled UDP failure.” The timing/order part is directionally true, but “observations” currently means three local manager calls with asserted booleans, not D064 authenticated readiness exchanges.
+
+Until R-002/R-003 are repaired, status should describe this as a **candidate pre-failure warm state seam with synthetic/local readiness inputs**, not as completed D064 readiness evidence.
+
+### R-006 NOTE — VPS backlog remains real and should resume immediately after the repair
+
+The repository already has older self-owned cross-host TCP/UDP, controlled resume, lifecycle, resource-sampler, and periodic-session evidence, but those rows precede the new warm implementation. IPv6 remains environment-blocked and should not be mechanically retried without an actual path change.
+
+HY2 v2.9.3 remains pinned and the comparison methodology exists; no valid equal-application paired Nekomusume/HY2 result has landed yet. This remains a high-value rental-window target once the current correctness seam is green.
 
 ## Evidence boundaries
 
 - `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, and `RELEASED=false` remain correct.
-- `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
-- N9 and canonical negotiation-path completion remain closed for their stated bounded scope.
-- `4b95e96` proves a truthful cold-evidence schema/test repair, not VPS/WAN behavior.
-- Existing cold controlled-degradation evidence remains valid only for the exact commits/conditions recorded; it does not establish warm fallback.
-- D064 warm readiness is an accepted design contract but currently lacks a matching executable process/WAN implementation/evidence path.
-- IPv6 remains environment-blocked while the owned endpoints lack a real end-to-end IPv6 path. Do not repeat unchanged IPv6 failures.
-- Standing authorization permits temporary owned-endpoint TCP/UDP listeners, periodic Session runs, warm/cold failover experiments, bounded resource sampling, cleanup, and fair HY2 comparison without new per-run approval.
-- The VPS is a time-limited rental asset. Once the D064 correctness seam is green, exact-head real-socket evidence outranks documentation polish and speculative features.
+- `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only; this warm-readiness repair is failover/resume/runtime work and does not automatically reopen N9.
+- `9d89051` provides real code/tests for pre-failure warm candidate state, but no real VPS/WAN evidence.
+- The current three readiness IDs are locally synthesized manager inputs, not peer-observed authenticated challenge/response successes.
+- Existing older VPS evidence remains valid only for the exact commits/scenarios recorded; it does not prove the new warm path.
+- The existing cold recovery path remains separately useful and should not be relabeled warm.
+- Standing authorization already covers the owned-endpoint TCP/UDP readiness/failover experiments, bounded periodic Session runs, resource sampling, cleanup, and fair HY2 comparison described below.
+- The VPS rental window is time-limited; after the readiness repair, current-exact-head VPS evidence outranks unrelated local polish.
+- IPv6 remains blocked by the previously observed absence of a real owned end-to-end IPv6 path; do not repeat unchanged failures.
 
-## Work Package — implement D064 warm standby, then harvest exact-head VPS evidence
+## Work Package — make D064 readiness real, then spend the VPS window on exact-head evidence
 
-Execute A -> B -> C -> D -> E in dependency order. This is intentionally a thick closure/evidence package. If A/B consume the cycle, continue from C next cycle; do not jump to unrelated work.
+Execute A -> B -> C -> D -> E in dependency order. This is deliberately thicker than a single small repair. If A/B consume the cycle, continue into C on the same package when green; do not stop merely because one coherent commit is complete.
 
-### Primary A — reconcile D064 into executable planning and define the minimum warm-ready seam
+### Primary A — replace synthetic readiness with a real bounded authenticated readiness exchange
 
-**Goal:** restore the Accepted D064 contract as the implementation/evidence target without inventing a second architecture.
+**Goal:** make each of the three D064 readiness successes originate from actual peer-observed authenticated control traffic on the pre-established TCP fallback while UDP remains the sole Session-data owner.
 
-Before coding, reread:
+Before implementation, inspect the existing authenticated process/control seams and reuse the smallest safe one. Do not invent a parallel Session protocol if an existing encrypted control channel can carry the readiness exchange.
 
-- D064 in `docs/decisions.md`;
-- `docs/adr/m3-concurrent-carrier-semantics.md`;
-- current `CarrierManager` pending-switch/readiness APIs;
-- current failover CLI cold path and its tests.
+Required behavior:
 
-Required contract for this slice:
+1. TCP fallback is connected, canonically negotiated and Noise-authenticated while UDP remains active.
+2. Readiness uses an explicit bounded request/response exchange over that authenticated fallback. Each success must be bound in the authenticated payload/state to at least:
+   - Session identity;
+   - target PathId / PathGeneration;
+   - delivery epoch;
+   - a distinct bounded observation/challenge ID.
+3. The server echoes/acknowledges only the exact current tuple after its bounded admission conditions are satisfied. Client-side literal `resource_admitted=true` is not acceptable evidence.
+4. Only successfully decrypted, tuple-matching, current-generation responses advance readiness. Duplicate response IDs, stale/wrong session/generation/epoch, malformed/authentication failure, timeout, and unadmitted responses cannot advance the gate.
+5. `k_ready=3` means three actual consecutive successful readiness exchanges for the candidate. A failed current-candidate readiness attempt must leave/reset readiness according to one documented deterministic policy; it must not silently preserve a misleading “consecutive” count.
+6. Readiness traffic is control/resume only. The standby TCP channel carries **zero new application data** before manager promotion.
+7. Bound the readiness exchange: payload size, outstanding probes, total observations, deadline/rate, and responder bytes. Preserve D064's amplification/resource boundary; do not create an unbounded ping loop.
+8. Keep the existing cold path intact when no eligible warm candidate exists.
+9. Do not change the frozen canonical vector corpus merely to hide this runtime gap. If a new network-visible process control message is required, document/specify it in the appropriate failover/runtime contract and add codec/parser tests; N9 corpus scope remains frozen only as already declared.
 
-1. UDP remains the sole active owner for new Session data before failure.
-2. A TCP fallback candidate may be connected, canonically negotiated, Noise-authenticated, resume-bound/validated, resource-admitted, and readiness-probed **while UDP is still active**.
-3. The candidate becomes `warm` only after three distinct, authenticated, target/generation/session/delivery-epoch-bound readiness observations (`k_ready=3`). Duplicate/stale/wrong-generation/unvalidated observations cannot advance readiness.
-4. Warm readiness must not itself confirm Session delivery and must not consume new application data.
-5. When UDP later reaches the existing bounded failure decision, an already-warm TCP candidate may be promoted without repeating connect/Noise setup inside the recovery interval; the ownership change remains single-active and generation-scoped.
-6. If no eligible warm candidate exists, the existing `promote_cold_authenticated_resume(...)` path remains available and must continue to emit `fallback_class=cold`.
-7. Warm and cold recovery metrics remain distinct.
-8. Do not implement striping/aggregation, 0-RTT, new cryptography, or speculative carrier features.
+If there truly is no implementation path for an authenticated readiness control exchange without a new architectural choice, preserve the exact gap and use the Fallback below rather than fabricating observations.
 
-**Important API point:** do not merely rename or reuse `observe_failed_udp_target_readiness()` unchanged. Its current dependency on `pending_switch` structurally prevents pre-failure warm evidence. Refactor/add the smallest manager state/API that can accumulate bounded readiness for a standby candidate while UDP is active, then atomically consume/validate that warm state during failure promotion.
+### Follow-up B — make warm evidence timing and admission provenance truthful
 
-Update `IMPLEMENTATION_PLAN.md`/`docs/status.md` only enough to make the D064 implementation/evidence gap explicit; do not mark it complete before B/C evidence exists.
+**Dependency:** A present.
 
-### Follow-up B — deterministic warm/cold state-machine and process tests
+Introduce one common experiment origin **before** warm TCP preparation and keep the existing failure-observation-window origin separately.
 
-**Dependency:** A implementation present.
+Diagnostics/evidence must make these stages individually observable:
 
-Add tests that prove the accepted design boundaries, not just the happy path.
+- TCP connect started / connected;
+- canonical negotiation complete;
+- Noise authentication complete;
+- resume binding/validation complete;
+- bounded resource admission complete;
+- readiness probe 1/2/3 request/response success times;
+- exact `warm_eligible_at` / `readiness_satisfied_at` from the third valid response;
+- UDP failure observation start;
+- UDP failure decision;
+- manager promotion/new active;
+- first resumed logical data accepted/acknowledged.
 
-At minimum cover:
+Use a common monotonic relative origin so warm setup times are measurably **before** failure decision rather than collapsing to zero. `readiness_satisfied_us` must come from the third successful readiness exchange, not from the authentication timestamp.
 
-- TCP candidate is standby/warm while UDP remains active; no two active owners;
-- fewer than 3 readiness observations cannot promote or mark warm;
-- duplicate observation IDs do not advance readiness;
-- stale/wrong target/generation/session/epoch or unauthenticated/unvalidated observations fail closed and cannot mutate active state;
-- readiness counters/IDs remain bounded and reset correctly on generation replacement/failure;
-- warm candidate carries no new application data before promotion;
-- failure with a warm candidate promotes the exact eligible generation;
-- failure without a warm candidate remains cold and preserves the `4b95e96` cold evidence labels;
-- warm attempt failure is retained as failed-warm evidence; later new-generation recovery is cold;
-- uncertain resend + authenticated exact-semantic DeliveryAck + receiver dedup/conflict semantics remain correct across both warm and cold paths;
-- recovery metrics classify warm vs cold separately.
+For cold recovery, preserve the separate cold timing/classification and do not invent warm-only fields.
 
-Add/extend a loopback/process fixture that establishes the warm TCP candidate before controlled UDP reply cessation and proves the first resumed logical data only after manager promotion.
+Update `docs/status.md` only to the evidence actually present: until real readiness exchange tests pass, do not say D064 readiness is complete.
 
-Run the full local gate after the focused tests:
+### Follow-up C — deterministic manager/process regressions for real readiness
+
+**Dependency:** A/B green.
+
+Add tests that exercise actual readiness I/O and preserve manager safety. At minimum:
+
+- three successful encrypted readiness exchanges occur before failure decision and before any TCP application data;
+- two successes are insufficient to become warm;
+- replay/duplicate observation response cannot count twice;
+- stale/wrong target/generation/session/epoch response cannot count;
+- malformed/tampered/unauthenticated response fails closed;
+- current-candidate timeout/failure follows the documented consecutive-readiness reset policy;
+- resource admission failure prevents warm state;
+- readiness response budget/rate/outstanding limits are bounded;
+- UDP remains sole active data owner before failure;
+- failure with valid warm candidate promotes that exact generation;
+- no eligible warm candidate keeps the existing cold path and the `4b95e96` cold evidence labels;
+- failed warm attempt is retained as failed-warm evidence and any later replacement generation starts from standby/cold semantics;
+- uncertain resend + exact authenticated Session DeliveryAck + receiver dedup/conflict rules remain correct after both warm and cold promotion;
+- timing tests parse numeric fields and prove warm setup/readiness happened before `failure_decided_at`, while first resumed data happens after promotion.
+
+If process-control decoding changes, include malformed/boundary/property coverage and run the relevant fuzz smoke required by `AGENTS.md`.
+
+Run full local gates before any VPS use:
 
 - `cargo fmt --all -- --check`;
 - `cargo check --workspace --locked`;
 - `cargo test --workspace --all-targets --locked --no-fail-fast`;
 - `cargo clippy --workspace --all-targets --locked -- -D warnings`;
 - `bash scripts/check.sh`;
-- `git diff --check`.
+- `git diff --check`;
+- relevant fuzz smoke if external parser/control decoding changed.
 
-Run fuzz smoke only if wire/parser/external decoding behavior changes or the normal gate requires it.
+### Follow-up D — exact-head owned-VPS warm/cold + periodic/resource evidence batch
 
-### Follow-up C — current-exact-HEAD VPS lab batch: periodic Session + D064 warm recovery + cold control
+**Dependency:** A-C green. Build/deploy one exact commit and reuse that exact binary for compatible behavior rows. This is now the highest-value rental-window work.
 
-**Dependency:** A/B green. Build/deploy one exact commit and reuse that exact binary for all compatible scenarios to reduce rental-window setup overhead.
+Within standing authorization, run scientifically distinct bounded scenarios:
 
-Within standing authorization, run one bounded lab batch on owned client/VPS endpoints:
+#### D1 — D064 warm automatic recovery
 
-#### C1 periodic authenticated Session
+On the self-owned client/VPS pair, establish the fallback TCP candidate and obtain three **real authenticated readiness responses before UDP failure decision**. Then trigger the existing controlled UDP reply-cessation seam.
 
-Use the existing periodic runner/resource sampler for approximately 5 minutes (single run <10 minutes): e.g. ~60 records, 32 bytes, ~5 s interval, finite ACK deadline, one Session/stream.
+Record:
 
-Record exact commit and binary SHA-256, actual parameters, negotiation/Noise/Session identity, attempted/confirmed/missing/duplicate counts, application bytes, P50/P95 confirmation latency, client/server elapsed + CPU user/system + max RSS + peak FD/owned socket count where available, exit/signal state, and cleanup.
+- exact git commit and binary SHA-256;
+- ports/actual limits/durations and endpoint ownership classification;
+- negotiation + Noise identities without secrets;
+- connect/auth/resume/admission timestamps;
+- all three readiness response IDs/timestamps and `warm_eligible_at`;
+- proof UDP remained sole data owner before failure;
+- failure observation windows + decision timestamp;
+- promotion of the already-warm generation;
+- `fallback_class=warm`;
+- uncertain resend / exact authenticated DeliveryAck / receiver dedup-conflict result;
+- logical records/bytes, missing/duplicate/conflict counts;
+- recovery latency, CPU/RSS/FD/socket sample where available;
+- cleanup verification.
 
-Classification: bounded five-minute periodic authenticated Session evidence, **not** production long-lived stability.
+Classification must remain: controlled owned-endpoint application-level UDP reply cessation -> threshold decision -> pre-established authenticated warm TCP recovery. Not natural Internet blackhole evidence, public reachability, production failover, or security approval.
 
-#### C2 D064 warm automatic recovery
+#### D2 — same-head cold control
 
-Establish the TCP fallback and obtain the three accepted warm-readiness observations **before** the UDP failure decision. Then use the existing controlled owned-endpoint UDP reply-cessation seam.
+Run one bounded cold control from the same exact binary/config question if useful, preserving connect/auth inside the recovery interval and `fallback_class=cold`. Do not repeat merely to chase a better latency number.
 
-Record at minimum:
+#### D3 — current-head periodic Session/resource sample
 
-- UDP active generation/session identity;
-- TCP standby/warm generation and timestamps for connect, canonical negotiation, Noise authentication, resume validation/admission;
-- the three distinct readiness observations and the exact timestamp warm eligibility became true;
-- proof UDP remained sole active data owner until failure;
-- three bounded UDP failure observation windows/decision timestamp;
-- manager promotion of the already-warm generation;
-- `fallback_class=warm` and recovery interval that does not include TCP connect/Noise setup;
-- uncertain resend, authenticated exact-semantic TCP DeliveryAck, receiver dedup/conflict result, final logical bytes;
-- recovery latency, resource sample, and cleanup.
+If the periodic runner remains green on this exact commit, run one distinct ~5 minute bounded authenticated periodic Session (single run <10 min, low traffic) with process resource sampler. This updates the time-limited real-socket evidence to the current failover/runtime baseline without claiming production long-lived stability.
 
-Classification: controlled application-level UDP reply cessation on owned endpoints -> threshold decision -> **pre-established D064 warm TCP recovery**. It is not natural Internet blackhole detection, public reachability, production failover, or security approval.
+Do not rerun unchanged IPv6 failure. Preserve every negative row and cleanup state.
 
-#### C3 cold control row
+### Follow-up E — close the first valid HY2 equal-application paired sample, then reconcile ledgers
 
-If it can be run without changing the binary/configuration question, retain one small cold recovery row from the same exact commit so warm/cold timing/classes are directly distinguishable. Do not rerun merely to chase a faster number.
+**Dependency:** local exact-head green; independent of D1 once a trustworthy current binary exists.
 
-Preserve every failure. No unchanged-failure reruns.
+Reuse the pinned HY2 v2.9.3 artifact and existing comparison contract. Do not touch the existing production Hysteria service/config and do not weaken isolation/target guards.
 
-### Follow-up D — first valid HY2 equal-application paired sample
-
-**Dependency:** local repository green; independent of warm readiness after the exact-head lab binary exists.
-
-Reuse the pinned HY2 v2.9.3 artifact and repository comparison methodology. Do not touch the existing production Hysteria config/service and do not weaken the loopback-only guard in `scripts/bench/compare-hy2.sh`; use/finish a separate self-owned-VPS orchestrator or adapter.
-
-Both implementations must answer the same application question:
+The pair must answer the same application question:
 
 ```text
-send exact deterministic payload bytes -> receive exact same bytes
+send exact deterministic payload bytes -> receive the exact same bytes
 ```
 
-Require same owned client/VPS pair, close time window, payload file/length/SHA-256, route/MTU metadata, authenticated+encrypted security class, stream/load shape, finite timeout/run count, and temporary experiment-only high ports/credentials.
+Use same owned client/VPS pair, close time window, payload file/length/hash, route/MTU metadata, authenticated+encrypted security class, single-stream/load shape, finite timeout/run count, and experiment-only ports/credentials. Prefer a small interleaved/nearby sample (for example 5 paired runs) if the current harness supports it.
 
-If the Nekomusume CLI lacks exact workload-file semantics, add only the smallest benchmark adapter necessary. Prefer 5 interleaved/nearby paired runs. Record raw samples, median/P95/failures, CPU user/system, RSS, FD and application bytes. `wire_bytes` remains null unless capture metadata is trustworthy. Preserve slower/failed Nekomusume results. Make no superiority claim.
+Record raw samples, median/P95/failures, CPU user/system, max RSS, FD count and application bytes. `wire_bytes` stays null unless capture provenance is trustworthy. Preserve slower/failed Nekomusume results; make no superiority claim.
 
-If environment genuinely blocks the pair, finish/validate the Nekomusume adapter and record the exact environment blocker; do not substitute an unequal workload.
+If the exact Nekomusume equal-workload adapter is still missing, implement only that smallest benchmark adapter first. If the environment genuinely blocks a fair pair, record the exact blocker and use remaining VPS time for another already-defined row (package/operator smoke, current-head lifecycle, process-resource validation), not speculative features.
 
-### Follow-up E — reconcile release-evidence/status ledgers
+After D/E, update release-evidence/status/navigation only to what actually ran:
 
-After C/D, update evidence/status/navigation only to what actually ran:
-
-- link current-exact-head periodic evidence;
-- link D064 warm recovery only if C2 actually proved pre-failure warm eligibility;
-- retain cold recovery as a separate class, not a substitute;
-- make the D064 implementation/evidence state explicit in `docs/status.md` and release-evidence navigation;
-- keep IPv6 blocked unless the environment really changed;
-- mark HY2 comparison complete only if an equal-application paired sample actually ran;
-- preserve negative evidence and supersession relationships;
-- do not mark `IMPLEMENTATION_PLAN.md` item 3 complete until the release matrix's remaining genuine rows are closed or explicitly environment-inapplicable under reviewed scope;
+- link current-exact-head warm evidence only if D1 proves real pre-failure readiness exchange;
+- keep cold recovery distinct;
+- retain older rows as historical exact-commit evidence, not substitutes for current HEAD;
+- keep IPv6 environment-blocked unless the actual path changes;
+- mark HY2 comparison complete only after a semantically equal paired sample;
+- keep `IMPLEMENTATION_PLAN.md` item 3 open until remaining genuine matrix rows are closed or explicitly reviewed as environment-inapplicable;
+- preserve negative/superseded evidence;
 - keep RC/security/production/global-freeze flags unchanged.
 
 ## Completion gates
 
 This package is complete only when:
 
-- the accepted D064 contract is no longer treated as absent;
-- a bounded pre-failure warm TCP candidate state exists and is distinct from active/cold recovery;
-- readiness requires 3 distinct authenticated, properly bound observations and is generation/resource bounded;
-- cold recovery remains truthful and separately classified;
-- deterministic tests enforce single-active ownership, warm eligibility, invalid observation rejection, warm/cold metrics, uncertain replay and exact delivery evidence;
-- full local repository gate passes on the commit used for VPS work;
-- current-exact-head periodic Session evidence is captured or a new evidence-backed blocker is recorded;
-- current-exact-head D064 warm recovery evidence is captured or a new evidence-backed blocker is recorded;
-- the HY2 equal-application seam is materially advanced, preferably through the first valid paired sample if the owned environment supports it;
-- evidence/status documents claim only what ran;
+- warm candidate state remains pre-failure and single-active;
+- all three readiness successes come from actual authenticated peer responses, not local booleans;
+- resource admission is derived from a real bounded admission result;
+- readiness is session/path-generation/delivery-epoch/observation-ID bound and replay/duplicate/stale/malformed input cannot advance it;
+- readiness/control traffic is bounded and carries no new application data before promotion;
+- warm timing truthfully shows readiness before failure decision and first resumed data after promotion;
+- cold recovery remains available and separately classified;
+- deterministic process/manager tests and full local gates pass;
+- current-exact-head VPS warm evidence is captured or a new evidence-backed blocker is recorded;
+- a same-head cold control and/or periodic resource row is captured where scientifically useful;
+- the HY2 equal-application seam is materially advanced, preferably through the first valid paired sample;
+- status/evidence docs claim only what actually ran;
 - `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, and `RELEASED=false` remain unchanged.
 
 ## Fallback
 
-If A/B reveals that D064 cannot be implemented without a genuinely new wire/readiness protocol decision, do not invent one silently. Preserve the exact gap, keep the current cold path valid, and use the remaining cycle/VPS window for C1 periodic Session + D HY2 comparison + already-defined package/resource evidence while escalating only the specific architecture choice through the normal decision process.
+If implementing a real authenticated readiness exchange genuinely requires a new unresolved architecture decision rather than an implementation detail already selected by D064:
 
-If C2 fails for a real runtime reason, preserve the row and use the new logs/resource samples to isolate the smallest changed diagnostic variable. C1 and D remain READY.
+1. keep the current manager warm-state seam but classify readiness inputs as synthetic/local only;
+2. do not run/claim D064 warm VPS evidence;
+3. preserve the specific protocol-choice gap in the normal decision process;
+4. spend the rented-VPS window on READY independent rows: current-head periodic Session/resource sampling, equal-application HY2 comparison, package/operator/lifecycle evidence, and existing cold recovery classification;
+5. do not ask for new WAN permission already covered by standing authorization.
 
-If HY2 paired execution is environment-blocked, use the time-limited VPS for another already-defined, scientifically distinct evidence row such as package/operator smoke, process-resource validation, or current-head real-socket lifecycle. Do not invent speculative features and do not repeat unchanged IPv6 failures.
+If D1 fails for a runtime reason after A-C are green, preserve the exact failed row and use only a changed diagnostic variable before retrying. D3 and E remain independently READY.
 
 ## Do not expand into
 
-- rewriting D064 as cold-fallback-only without an explicit superseding architecture decision;
-- using post-failure readiness observations as proof that a fallback was warm before failure;
-- calling five-minute periodic evidence production long-lived stability;
-- natural-WAN/public/general reachability claims from controlled owned-endpoint fault injection;
-- previous/current interoperability before a real prior release exists;
-- 0-RTT, enabled FEC, striping/aggregation or exotic carriers without an observed-problem gate;
-- third-party targets, scanning, production network changes, or experiments outside standing authorization;
-- touching the existing production Hysteria config/service for comparison.
+- calling three local manager mutations “authenticated readiness probes”;
+- marking literal `resource_admitted=true` as evidence;
+- changing frozen canonical corpus bytes to avoid runtime failover work;
+- rewriting D064 as cold-fallback-only without an explicit superseding decision;
+- striping/aggregation, enabled FEC, 0-RTT or exotic carriers without observed-problem gates;
+- unchanged IPv6 retries;
+- third-party targets, scanning, production route/firewall/DNS/proxy/tunnel/qdisc changes, or experiments outside standing authorization;
+- RC/security/production approval or performance-superiority claims.
 
 ## Questions requiring maintainer decision
 
-none. The repository already contains the Accepted D064 decision; this is an implementation/evidence reconciliation, not a new architecture choice.
+none.
