@@ -1,275 +1,291 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-01 10:59 Asia/Shanghai
-Repository HEAD: `4ecd29979e633cea02c17abb8e448e1e37ab8ad7`
-Previous reviewed implementation HEAD: `f680702a45a1bbbf0672a0b8d46b3756308c99b1`
-Previous reviewer handoff commit: `aa0c73970544c21c333ad6851abde650085efc3a`
+Checked at: 2026-09-01 12:02 Asia/Shanghai
+Reviewed implementation HEAD: `b191dd8181e3f6023eb4c1c43c43e5fd1ff0518c`
+Previous reviewed implementation HEAD: `4ecd29979e633cea02c17abb8e448e1e37ab8ad7`
+Previous reviewer handoff commit: `47b0de0a85b2b84ba2419ebd96be50257ffa85af`
+Reviewer research-support commit before this handoff: `f1bf9afe5d878cb787429eacc8fd42d2eab1f810`
 
 ## What changed
 
-One substantive coding-agent commit landed after the previous reviewer handoff:
+Two substantive coding-agent commits landed after the previous reviewed implementation HEAD.
 
-- `4ecd299` — **test seam + deterministic retry regression + evidence/status/documentation closure; no VPS run.** It adds a bounded `--drop-first-udp-noise-response` injection to the controlled failover server, sends an intentionally late UDP negotiation hello in the existing selection-loss regression, adds a process-level first-Noise-response-loss regression, asserts that selection/Noise retries do not re-negotiate, re-authenticate, replace the ResumeGuard/session identity, increment the path generation, or reset delivery state, and preserves the authenticated exact-semantic UDP/TCP `DeliveryAck` checks introduced by `f680702`.
+- `33310fc` — **real self-owned VPS behavior/evidence; no production claim.** It records replacement current-head cross-host IPv4 evidence:
+  - generic negotiated/authenticated TCP PASS;
+  - generic negotiated/authenticated UDP PASS;
+  - malformed TCP negotiation fail-closed;
+  - controlled UDP -> TCP resume PASS with encrypted exact-semantic `udp_delivery_ack_validated` and `tcp_delivery_ack_validated`, exactly 3 application records / 111 B observed at the server, no missing/duplicate application delivery in the final state;
+  - an 8-cycle alternating TCP/UDP lifecycle sample with **7 successes / 1 retained UDP failure**;
+  - IPv6 correctly classified as environment-blocked because no owned end-to-end IPv6 route existed;
+  - cleanup PASS with no experiment listeners/processes left.
+- `b191dd8` — **benchmark/evidence tooling + one measured VPS use; no protocol/runtime feature change.** It adds a bounded Linux direct-child process CPU/RSS/FD/owned-socket sampler, schema, validator, deterministic regression suite, `scripts/check.sh` integration, documentation, and one short measured current-head TCP VPS exchange. The measured row reports both roles exit 0 with small process CPU/RSS/FD observations and explicit direct-child-only scope.
 
-The same commit also adds explicit supersession notes to the pre-`f680702` failover evidence, updates `docs/m3-wan-failover-gate.md` to the current negotiated/authenticated controlled-stop runner and standing-authorization boundary, and updates `docs/status.md` so the CLI/failover row no longer claims that failover/resume negotiation is absent.
+Independent GitHub Actions evidence is green for exact implementation HEAD `b191dd8`: Rust CI run #80 completed successfully. The repository-wide check includes the new sampler regression.
 
-Independent GitHub Actions evidence is green for exact HEAD `4ecd299`: Rust CI run #77 completed successfully. The workflow runs `bash scripts/check.sh` on stable and the pinned nightly decode fuzz smoke separately. No post-`f680702` replacement VPS evidence has landed yet.
+Reviewer research support in `f1bf9a` records an official Hysteria2 comparison seam: current Hysteria2 client configuration supports local TCP forwarding through the temporary HY2 connection to a remote target, which can be used with a temporary loopback echo target on the owned VPS. This can provide equal application-level echo semantics without touching the existing production Hysteria service. It is a methodology note, not benchmark evidence.
 
 ## Review verdict
 
-**SAFE TO CONTINUE — Primary A from the previous handoff is accepted; the next Primary is the replacement rented-VPS evidence batch.**
+**CONTINUE WITH REQUIRED FIXES — VPS evidence harvesting is succeeding, but two newly observed correctness/evidence issues must drive the next batch before performance comparison.**
 
-The retry/evidence-contract closure is sufficient to move immediately to the time-limited VPS work already authorized by `docs/standing-vps-lab-authorization.md`. Do not spend another cycle on unrelated local polish before attempting the READY VPS rows.
+The project is not blocked. The previous A/B package produced valuable real-socket evidence and reusable instrumentation. However:
 
-The bounded release evidence matrix remains unchecked. The controlled runner still demonstrates an explicit application-level UDP stop, not automatic health/PTO-threshold-driven degradation detection. N9 remains closed as `CANONICAL_CORPUS_V1_FROZEN=true`, while global `FREEZE=false`, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, and `RELEASED=false` remain correct.
+1. the new process-resource sampler has a concrete exit-race bug in its evidence path; and
+2. the retained 7/8 lifecycle result exposed a real post-authenticated UDP data timeout that must be investigated rather than averaged away.
+
+Both issues are more important than unrelated local polish or an immediate HY2 performance run. They are also small enough to close while preserving the rented-VPS priority.
+
+The bounded release evidence matrix remains the first unchecked release-engineering item. `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, and `RELEASED=false` remain correct. N9 remains closed only for the canonical corpus (`CANONICAL_CORPUS_V1_FROZEN=true`).
 
 ## Evidence boundaries
 
-- `4ecd299` is deterministic process/test-seam + documentation/status work. It is **not** new WAN evidence.
-- The first-selection-loss and first-Noise-response-loss claims are now directly exercised by process tests, and GitHub CI is green at the exact commit.
-- The server retry cache is bounded to the same peer and replays the cached selection/Noise response rather than rerunning negotiation/authentication; the new regressions assert one negotiated/authenticated event and the same resumed Session/path generation.
-- A late post-auth UDP negotiation hello is ignored by the established secure-data path rather than restarting negotiation in the tested scenario.
-- The pre-`f680702` VPS run remains valid only for its preserved facts: canonical negotiation, authenticated UDP admission, authenticated TCP resume, ordered server receive, bounded execution and cleanup. Its old ACK wording is explicitly superseded.
-- `docs/status.md` truthfully keeps replacement authenticated-DeliveryAck VPS evidence pending and natural threshold-driven failover absent.
-- `IMPLEMENTATION_PLAN.md` correctly has N9 and negotiation path completion checked, while **Bounded release evidence matrix** remains the first unchecked release-engineering item.
-- Standing authorization permits the READY self-owned client/VPS TCP/UDP/failover/benchmark/capture/cleanup work without another per-run permission request, within the documented 10-minute / 256 MiB / 32-session maxima.
-- The VPS is a one-month time-limited research asset. VPS-only evidence now outranks unrelated local implementation or documentation work.
-- No performance superiority conclusion is currently supported.
+### Accepted new facts
 
-## Work Package — harvest replacement VPS evidence first, then convert the rented host into reusable release evidence
+- `33310fc` replaces the old pre-`f680702` ACK wording with real current-head authenticated exact-semantic Session DeliveryAck evidence on self-owned TCP/UDP sockets.
+- Controlled failover/resume is now proven on the owned cross-host path for the explicit `controlled_udp_stop` injection.
+- Exactly 3 application records / 111 B completed in that controlled failover run with no missing/duplicate final application delivery observed.
+- Generic current/current TCP and UDP authenticated cross-host echo both passed on IPv4.
+- A malformed TCP negotiation row failed closed before application success.
+- The lifecycle sample is **not** 8/8: one UDP cycle authenticated successfully and then ended with client `echo timeout` / server `data timeout`. This negative result is retained and is now an observed problem that should guide engineering.
+- IPv6 is currently `BLOCKED_ENVIRONMENT`, not a code/release PASS or permission blocker.
+- `b191dd8` provides one useful direct-child process-resource observation, but it is not capacity/stress evidence.
+- GitHub CI #80 is green at exact implementation HEAD `b191dd8`.
 
-Execute A -> B -> C -> D in order while dependencies stay green. A is the immediate Primary and should be attempted before unrelated local work. If an individual VPS row is environment-blocked, preserve the exact blocker and continue with the other READY rows or the local instrumentation fallback; do not turn one environment miss into a global stop.
+### Required repair findings
 
-### Primary A — Post-fix rented-VPS release-evidence lab batch
+**R-001 — evidence sampler immediate-exit race (required before HY2/resource comparison use).**
 
-**Goal**
+In `scripts/bench/process-resource-sampler.py`, `read_proc()` initializes `cpu` as `None` when `/proc/<pid>/stat` cannot be read, but the main sampling loop unconditionally evaluates `cpu[0]`. A sufficiently fast exit or `/proc` race can therefore raise `TypeError` instead of emitting truthful nullable metrics. The existing `/bin/true` regression makes the race *possible* but does not deterministically force the missing-`/proc` return contract, so green CI does not close this path.
 
-Replace the superseded pre-`f680702` ACK evidence with real self-owned-socket evidence from exact current code, then use the same cleanup-safe lab setup to collect several logically distinct, non-performance release rows before the VPS rental window expires.
+This is an evidence-tool correctness defect, not a Nekomusume transport defect. Fix it before using the sampler as part of HY2 comparative evidence or broader resource claims.
 
-**Preconditions**
+**R-002 — real UDP post-auth data timeout requires diagnosis/repair before lifecycle robustness claims.**
 
-- exact current commit/binary identity recorded;
-- self-owned client and self-owned VPS only;
-- fresh temporary unprivileged ports within the repository/standing-authorization limits;
-- temporary experiment identity/config only; do not read, copy or commit protected `neko-server.identity` or production secrets;
-- one cleanup trap/path that removes only this lab batch's listeners/processes/temp files;
-- preserve negative results.
+The B3 failure happened after negotiation/authentication. Current generic UDP server code configures a 100 ms socket read timeout and later uses `recv_from(...).unwrap_or_else(|_| fail("data timeout"))` for authenticated application data. The generic UDP client uses the requested bounded `--duration` as its read timeout. Therefore the server currently has a much shorter post-auth data wait than the client/experiment contract, and a transient scheduling/network gap can terminate a valid authenticated run after 100 ms.
 
-#### A1 — Generic negotiated TCP and UDP real-socket sanity
+Do not assume this is the sole cause until a deterministic regression proves it, but it is a concrete code/evidence mismatch worth testing immediately. The correct fix should separate short poll granularity (for shutdown responsiveness) from the overall bounded stage deadline, rather than merely replacing 100 ms with an arbitrary large constant.
 
-Run separate bounded current/current generic TCP and UDP authenticated exchanges using current HEAD. Record for each row:
+### Status/navigation drift
 
-- experiment id;
-- exact git/binary/package identity;
-- address-family label (`IPv4` / `IPv6`) without unnecessary addresses in Git;
-- actual ports, count, payload bytes and duration;
-- selected canonical version;
-- authentication/application success or exact failure;
-- start/end timestamps;
-- cleanup verification.
+`docs/status.md` is stale relative to `33310fc`:
 
-If the existing generic command makes it trivial and safe, add one bounded unsupported-version or malformed-negotiation negative row. Do not create a new malformed-input framework only for this run.
+- `live-tcp` still says replacement authenticated-DeliveryAck VPS evidence is pending;
+- `live-udp` still describes loopback-only evidence despite the new bounded self-owned cross-host authenticated UDP sanity row.
 
-This is reachability/behavior evidence, not a throughput comparison.
+Repair those evidence links/boundaries after the runtime/evidence repair. Do **not** promote public/general reachability, natural degradation failover, production readiness, or the overall release matrix.
 
-#### A2 — Replacement controlled UDP -> TCP resume with authenticated DeliveryAck
+`ROADMAP.md` correctly keeps real `UDP degradation / TCP fallback` unchecked because `controlled_udp_stop` is not automatic health/PTO-driven degradation. Keep that distinction.
 
-Run the corrected controlled-stop failover path on the self-owned client/VPS pair. The small committed evidence summary must make the event/evidence chain machine- or log-auditable enough to establish:
+## Work Package — close the observed UDP/evidence defects, then harvest automatic failover and comparison evidence
 
-```text
-UDP canonical negotiation
--> UDP Noise authentication
--> first UDP logical record
--> encrypted + exact-semantic udp_delivery_ack_validated
--> next logical range becomes uncertain at the controlled UDP stop
--> TCP canonical negotiation
--> fresh TCP Noise authentication
--> authenticated ResumeBinding / ResumeGuard
--> uncertain logical range resent
--> receiver dedup / exactly-once application delivery where applicable
--> encrypted + exact-semantic tcp_delivery_ack_validated
--> ordered application completion
--> cleanup
-```
+Execute A -> B -> C -> D in order while dependencies remain green. This package is intentionally thicker than one small fix: A includes deterministic repair + replacement VPS evidence; B moves directly into the highest-value remaining release behavior; C/D keep the rented VPS productive without inventing speculative features.
 
-Record application bytes and ciphertext bytes separately when emitted by the runner. Do not use `udp_ack_observed` / opaque-byte wording.
-
-Classification must remain explicit:
-
-```text
-real self-owned TCP/UDP sockets + controlled application endpoint stop
-!= automatic natural WAN degradation detection
-!= FailoverController health/PTO threshold evidence
-!= production failover
-```
-
-#### A3 — Repeated real-socket lifecycle sample
-
-If A1/A2 are green, run one bounded repeated open/exchange/close sample, e.g. 8-16 small cycles, comfortably below standing limits. Record:
-
-- cycles attempted/succeeded/failed;
-- records/application bytes;
-- duplicate/missing-delivery observation only if real Session state supports it;
-- final listener/process count relevant to the experiment;
-- cleanup result.
-
-This is lifecycle/leak-resilience evidence, not stress/capacity evidence.
-
-#### A4 — Real-socket retry rows using the newly tested response-loss seams
-
-If the commands accept the test injections safely on the self-owned pair, run the smallest separate real-socket rows for:
-
-1. first UDP negotiation-selection response dropped;
-2. first UDP Noise response dropped.
-
-Require eventual successful negotiated/authenticated application exchange and no duplicate negotiated/authenticated state transition in the structured events. These rows answer whether the deterministic retry seams also survive an actual remote socket path; they do not simulate arbitrary packet loss and must not be promoted to a general loss-tolerance claim.
-
-If either injection flag is intentionally local-only or unsuitable for remote use, record that exact limitation and continue; do not redesign the CLI solely for this row.
-
-#### A5 — Opportunistic IPv6 sanity only when the owned environment actually supports it
-
-If the current client and VPS both have a usable owned IPv6 path and the existing command accepts the address representation truthfully, repeat only the smallest generic A1 TCP and UDP sanity rows over IPv6. If IPv6 is unavailable or the CLI needs a bounded local address-format fix, record the blocker and continue with IPv4; IPv6 must not block A1-A4.
-
-**Evidence/cleanup requirements**
-
-For every executed row preserve small redacted summaries containing the required standing-authorization metadata: experiment id, exact implementation identity, parameters, timestamps, client/server result, structured event summary, capture metadata only if actually captured, and cleanup state. Large raw logs/pcaps stay outside Git with hashes/locations summarized when useful. Never commit private keys, production credentials, unnecessary addresses or plaintext payloads.
-
-**Completion definition**
-
-At minimum, unless the environment itself is genuinely unavailable:
-
-- current-head generic TCP and UDP real-socket sanity exists;
-- current-head controlled failover evidence proves authenticated exact-semantic Session DeliveryAck on UDP and resumed TCP;
-- old pre-fix ACK evidence remains superseded rather than rewritten;
-- one repeated lifecycle sample exists;
-- all experiment listeners/processes/temp files are cleaned;
-- `RELEASE_CANDIDATE=false` and the overall bounded release matrix remains unchecked.
-
-### Follow-up B — Reusable bounded process-resource sampler + one measured VPS use
-
-**Dependency:** A1/A2 green, or execute locally while one VPS row is temporarily environment-blocked.
-
-The repository still needs reusable process-scoped CPU/RSS/FD/socket evidence for both Nekomusume and the future HY2 paired comparison. Before inventing a new tool, inspect `scripts/bench/` for an exact-purpose sampler and extend it if suitable.
-
-Build a bounded sampler/collector with a small machine-readable schema and deterministic fixture/validator tests. Minimum fields per role/process:
-
-- experiment id;
-- implementation + role;
-- supplied git/binary identity;
-- start/end/elapsed;
-- exit status;
-- CPU user/system time where available;
-- max RSS or sampled RSS, units + collection source;
-- FD count/peak or sampled count, method identified;
-- owned experimental listener/socket count/peak without dumping unrelated socket details;
-- application bytes from workload metadata;
-- cleanup state;
-- unavailable metrics represented as unavailable/null, never fake zero.
-
-Requirements:
-
-- finite interval/count/duration;
-- no root requirement where `/proc`, `ps`, GNU `time`, `ss` or equivalent read-only sources suffice;
-- no unrelated process payload/secret inspection;
-- schema/validator fails closed on malformed required metadata;
-- deterministic local parsing/aggregation regression;
-- no CPU-heavy build/fuzz during measured network samples.
-
-After local validation, exercise it once on a short A1/A2-style Nekomusume VPS run and commit the small redacted summary. This first measured use is resource-observation evidence, not a capacity limit.
-
-### Follow-up C — Connect real carrier-health degradation to the real-socket failover runner
-
-**Dependency:** A2 green. This is the next major release-evidence implementation gap after controlled-stop evidence.
+### Primary A — Repair evidence sampler race and close the observed real-UDP lifecycle defect
 
 **Goal**
 
-Make the real-socket runner transition from UDP to TCP because the project's actual carrier-health/failure contract observes UDP degradation, rather than because the client executes an unconditional scripted stop.
+Make the resource evidence tool race-safe, determine whether the 100 ms server post-auth timeout explains the retained B3 failure, repair the bounded data-wait contract if proven, and immediately collect replacement lifecycle evidence on the rented VPS.
 
-Inspect and reuse the existing `CarrierState` / carrier-health / PTO / hysteresis / `CarrierManager` seams. Do not invent a parallel `if timeout { use_tcp }` state machine.
+#### A1 — Make the process-resource sampler race-safe
 
-Use the smallest bounded self-owned fault source that stays inside standing authorization. Prefer application-level experimental behavior such as the self-owned test server deliberately ceasing UDP replies after a deterministic point while leaving TCP available. Do not modify VPS production firewall, route or qdisc.
+Required behavior:
 
-Required implementation/test behavior:
+- `read_proc()` must have a stable return shape even when every `/proc/<pid>` read races with process exit; use `(None, None)` or an equivalent explicit CPU-value contract rather than a nullable tuple container that callers index unsafely;
+- the main loop must never crash merely because `/proc/<pid>/stat`, `/status`, `/fd` or `/proc/net/*` disappears during exit;
+- unavailable metrics remain `null`, never fake zero;
+- preserve the documented direct-child-only scope and bounded timeout/process-group behavior;
+- do not expand this into host-wide monitoring or cgroup accounting.
 
-- exact existing state/threshold events that move UDP from Active to Degraded/Failed (using actual repository vocabulary) are observable;
-- retries/timeouts/resources are bounded;
-- the same logical Session/DeliveryLedger state survives transition;
-- uncertain data is resent according to the current Session contract;
-- receiver dedup/exactly-once delivery is asserted where supported;
-- TCP resume keeps negotiation binding and ResumeGuard semantics;
-- deterministic local/process integration test proves the threshold drives failover;
-- the test/runner never calls an unconditional `controlled_udp_stop` and then labels the result automatic;
-- no new experimental carrier or aggregation behavior.
+Add a **deterministic** regression for the missing-process/read failure contract. Do not rely only on hoping `/bin/true` exits at the right microsecond. A direct unit/import test of `read_proc()` against a guaranteed-nonexistent PID, or a small explicit seam, is sufficient if it proves the caller-visible shape and no exception path.
 
-If the carrier model is not connected enough, do not declare a generic blocker. Produce a concrete dependency map and implement the smallest missing adapter/seam that connects the existing health state to the runner. Once green, a bounded VPS run is immediately READY under standing authorization and should be taken before unrelated work.
+Run the targeted sampler test, validator/schema checks, `bash scripts/check.sh`, and `git diff --check`.
 
-### Follow-up D — Prepare and execute a fair self-owned-VPS HY2 paired comparison
+#### A2 — Prove and repair the generic UDP post-auth data-wait mismatch
 
-**Dependency:** B sampler available or equivalent resource metrics already exist; A generic network sanity green. C can continue first when it is the more direct release blocker, but do not postpone HY2 until the end of the rental month.
+Use the retained B3 failure as the observed-problem gate.
 
-The repository already pins HY2 v2.9.3 and its hash and already has `docs/bench/hy2-comparison-workload.md`. Preserve the existing loopback-only `scripts/bench/compare-hy2.sh` fail-closed behavior; do not weaken its target guard just to reach the VPS.
+Current behavior to test:
 
-Build the smallest separate self-owned-VPS comparison seam or exact workload wrappers that provide **equal application semantics** to both implementations under the existing comparison contract.
+- server UDP socket uses a 100 ms read timeout;
+- after successful negotiation/Noise authentication, application `recv_from` treats the first timeout/error as terminal `data timeout`;
+- client application receive uses the bounded requested `--duration`.
 
-For HY2:
+Implement the smallest truthful bounded contract:
 
-- reuse the pinned v2.9.3 binary/hash already documented;
-- use fresh temporary experimental config/certificate/auth under a dedicated temp path;
-- never read/reuse `/etc/hysteria/server.yaml` secrets;
-- never restart/reconfigure/stop the existing HY2 service;
-- fresh high experimental port only;
-- trap cleanup and verify the experiment listener/process is gone.
+- keep short polling if needed for signal/shutdown responsiveness;
+- track an explicit overall application-stage deadline derived from the already bounded requested duration (max 30 s for the generic probe);
+- treat `WouldBlock`/`TimedOut` before that deadline as a poll miss, not immediate terminal failure;
+- fail deterministically once the overall deadline is exhausted;
+- preserve peer binding, authentication, payload bounds and fail-closed handling of real socket/auth errors;
+- do not turn the research probe into a long-lived service.
 
-For Nekomusume and HY2 fix the same:
+Add deterministic process/integration regressions:
 
-- payload bytes + SHA-256;
-- client/VPS pair and route/time window;
-- MTU metadata;
-- security class;
+1. complete negotiation/authentication, intentionally delay first application data for **>100 ms but < configured duration**, and prove the exchange still succeeds;
+2. delay beyond the configured overall deadline and prove bounded failure;
+3. preserve signal/lifecycle cleanup and existing negotiated/authenticated semantics.
+
+Prefer a test harness/client delay rather than adding a public production flag solely for this regression unless an existing diagnostic seam is the cleaner fit.
+
+If the test disproves the 100 ms hypothesis, keep the negative result and add stage-safe diagnostic instrumentation (no payload/secrets) to isolate the next cause before changing semantics.
+
+#### A3 — Replacement VPS lifecycle diagnostic after the code/instrumentation change
+
+Because A1/A2 materially change code/instrumentation/hypothesis, a new VPS run is permitted and scientifically distinct from the retained 7/8 sample.
+
+On the same class of self-owned IPv4 client/VPS path, run one bounded repeated lifecycle sample after the fix, preferably 12-16 alternating TCP/UDP cycles with small payload/count and total wall clock comfortably below 10 minutes. Record:
+
+- exact commit/binary identity;
+- cycles by transport, success/failure;
+- stage of any failure (negotiation / Noise / post-auth data send / post-auth data receive / close);
+- application bytes for successful cycles;
+- process-resource sampler data for representative or aggregated roles once A1 is green;
+- listener/process cleanup;
+- old B3 7/8 result remains immutable negative evidence and is not overwritten.
+
+Do not mechanically rerun a failed cycle within the same evidence row to manufacture 100% success.
+
+#### A4 — Reconcile status evidence after A3
+
+Update `docs/status.md` evidence/boundaries so they reflect repository facts:
+
+- `live-udp`: bounded self-owned cross-host negotiated/authenticated UDP echo evidence exists; retain the exact non-public/non-production boundary and any remaining lifecycle instability if A3 still fails;
+- `live-tcp`: replacement current-head controlled-resume authenticated DeliveryAck evidence exists; keep natural threshold-driven degradation absent until B is complete;
+- link the small replacement evidence documents where appropriate.
+
+Do not mark `reachability`, `production`, or the whole bounded release matrix PASS.
+
+**Primary A completion definition**
+
+- sampler exit race is deterministically closed;
+- the 100 ms post-auth UDP behavior is either proven causal and repaired, or disproven with a more precise new diagnostic finding;
+- replacement VPS lifecycle evidence exists after a meaningful code/instrumentation change;
+- old 7/8 negative evidence remains visible;
+- full repository local gate passes and exact-head CI is allowed to run normally.
+
+### Follow-up B — Connect actual carrier-health degradation to real failover, then take VPS evidence immediately
+
+**Dependency:** A green. Controlled-stop failover is already accepted; this closes the next real release-behavior gap.
+
+**Goal**
+
+Make UDP -> TCP transition occur because existing Nekomusume carrier-health/failure state observes bounded UDP degradation, not because the client executes an unconditional `controlled_udp_stop`.
+
+Repository fact to preserve: `CarrierState`/`CarrierHealthEvidence` already model health/path state, but the CLI failover runner is not currently driven by that state. The CLI's `health-observe` path is separate evidence, not integrated failover.
+
+Required engineering:
+
+1. map the smallest real-socket observation seam into the existing health model; do not create a parallel `if timeout { switch_to_tcp }` controller;
+2. use an application-level self-owned fault source within standing authorization, e.g. the experimental UDP server deliberately ceases authenticated application replies after a deterministic logical point while TCP remains available; do not modify VPS firewall/route/qdisc;
+3. reuse the repository's actual `HealthLimits` / PTO/failure/hysteresis vocabulary and thresholds, recording exact transition/reason events rather than inventing a new release-only threshold;
+4. keep the same logical Session/DeliveryLedger/ResumeGuard state across transition;
+5. mark the affected unconfirmed logical range uncertain, resend according to the Session contract, and assert receiver dedup/exactly-once final application delivery where supported;
+6. preserve canonical negotiation + fresh Noise authentication on resumed TCP;
+7. deterministic local/process test must prove the health transition drives failover without calling the controlled-stop path;
+8. all retries, samples and resource use remain bounded.
+
+If the existing health model lacks one adapter needed by the real runner, implement that smallest adapter and document the mapping. Do not redesign the Carrier Manager wholesale.
+
+**VPS opportunity immediately after local green:** run one bounded self-owned real-socket degradation -> TCP resume row with the repaired resource sampler. Record transition timestamps, health state/reason, recovery time, uncertain/replayed/duplicate/missing bytes or records, CPU/RSS/FD, and cleanup. Classify it as a controlled self-owned degradation injection, not arbitrary Internet blackhole proof or production failover.
+
+### Follow-up C — Add one real authenticated bounded resilience runner and harvest a 5-minute sample
+
+**Dependency:** A green; B may proceed first because it is the more direct release blocker. Use C while B is environment-blocked or immediately after B.
+
+The existing `workload` command is an in-process fixture and does **not** open real sockets. The generic probe is bounded to short exchanges. The rental-window backlog still needs a real authenticated longer-lived socket observation.
+
+Build the smallest **experimental, bounded, non-service** real-session runner that reuses the generic negotiated/Noise transport path and supports:
+
+- one self-owned TCP or UDP session;
+- total duration explicitly bounded `1..600 s`;
+- small periodic authenticated echo (fixed interval with a bounded minimum/maximum, not a tight loop);
+- bounded payload and total application bytes below standing limits;
+- structured counters: attempted/successful exchanges, failures, application bytes, last-success stage, start/end;
+- graceful signal stop/cleanup;
+- resource sampler integration;
+- no forwarding/proxy/tunnel behavior.
+
+After deterministic/local tests, run **one 5-minute** self-owned VPS scenario (prefer UDP steady/periodic first). Record failures, missing/duplicate observations only where the protocol proves them, CPU/RSS/FD/socket metrics, timestamps, binary identity and cleanup. This is resilience evidence, not capacity or production uptime.
+
+Do not chain multiple runs to simulate a forbidden >10-minute soak.
+
+### Follow-up D — Prepare the first fair HY2 v2.9.3 paired self-owned-VPS sample
+
+**Dependency:** A1 sampler repair green + generic network sanity green. B/C should not be abandoned, but HY2 should not be postponed to the end of the rental month.
+
+Read:
+
+- `docs/bench/hy2-vps-setup-20260830.md`;
+- `docs/bench/hy2-comparison-workload.md`;
+- `docs/research/hy2-forwarding-comparison-note-20260901.md`.
+
+Reviewer research confirms from official Hysteria2 documentation that client `tcpForwarding` can expose a local TCP listener and forward it through the temporary Hysteria connection to a remote target reachable by the HY2 server. Use this to avoid changing the production HY2 service:
+
+```text
+client payload/echo tool
+ -> temporary HY2 client local TCP forward
+ -> temporary HY2 v2.9.3 server on fresh high UDP port
+ -> temporary loopback TCP echo service on VPS
+ -> back through HY2
+```
+
+Use only experiment-generated config/cert/auth under disposable paths. Do not read/reuse `/etc/hysteria/server.yaml` secrets; do not stop/reconfigure the existing HY2 process. Do not use port hopping or Mimic.
+
+Preserve `scripts/bench/compare-hy2.sh`'s loopback-only guard; build a separate self-owned-VPS orchestrator/wrapper or reuse only its result schema/methodology.
+
+For both Nekomusume and HY2 fix the same application question and metadata:
+
+- exact payload bytes + SHA-256;
+- same client/VPS pair and close time window;
+- route/MTU metadata;
+- security class described truthfully as authenticated encrypted research configs (do not claim identical cipher/handshake);
 - stream/load shape;
-- finite timeout and run count.
+- run count 5 unless a smaller diagnostic set is needed first;
+- finite timeout;
+- process CPU/RSS/FD from the repaired sampler;
+- raw samples and failures retained;
+- `wire_bytes=null` unless a trustworthy bounded capture supplies it.
 
-Produce raw paired samples plus median/P95/failures, CPU user/system, RSS, FD and application bytes. `wire_bytes` stays null unless a trustworthy bounded capture supplies it. Preserve slower/failing Nekomusume samples exactly.
-
-A successful first paired sample set is comparison evidence only. Do not claim superiority or production capacity.
+Start with a small payload that both implementations can carry under their existing APIs without redesign; do not expand Nekomusume framing solely to win a throughput test. This first paired set is system-level application-exchange comparison evidence only, not a superiority or capacity claim.
 
 ## Completion gates for this handoff
 
-- `4ecd299` retry/evidence-contract closure remains green; exact-head GitHub Rust CI #77 is accepted independent repository evidence.
-- No pre-`f680702` ACK row is reused as authenticated Session DeliveryAck evidence.
-- Post-fix self-owned VPS TCP and UDP sanity is collected unless the environment itself is genuinely unavailable.
-- Post-fix controlled failover proves encrypted exact-semantic UDP and TCP Session DeliveryAck and keeps the controlled-stop/automatic-degradation distinction explicit.
-- Repeated real-socket lifecycle evidence records cycles/failures/cleanup without becoming a stress claim.
-- Real-socket response-loss retry rows are collected when the existing injection seam supports them without redesign; otherwise the limitation is explicit.
-- IPv6 absence never blocks available IPv4 evidence.
-- A bounded process-resource sampler becomes reusable, schema-validated and exercised once before HY2 comparison work.
-- Automatic health/PTO-driven failover remains unchecked until the actual existing health state drives the transition in deterministic tests and then a bounded VPS run.
-- HY2 comparison preserves equal semantics and does not touch the existing production HY2 configuration/service.
-- `IMPLEMENTATION_PLAN.md` Bounded release evidence matrix stays unchecked until the matrix criteria are actually met.
+- `33310fc` B1/B2 evidence is accepted within its explicit self-owned/controlled boundaries.
+- The B3 7/8 lifecycle result remains visible as negative evidence until a changed-code/instrumentation replacement run exists.
+- Resource sampler cannot crash on the missing-`/proc` direct-child exit race and has a deterministic regression for that path.
+- Generic UDP post-auth data waiting respects an overall bounded stage deadline rather than treating one 100 ms poll miss as the full experiment timeout, if the regression confirms that diagnosis.
+- Replacement lifecycle evidence records stage-specific failures and cleanup; no failed cycle is silently retried away.
+- `docs/status.md` no longer says cross-host UDP is loopback-only or replacement DeliveryAck VPS evidence is pending once the corresponding evidence is accepted.
+- Automatic health-driven failover remains unchecked until existing health state actually drives the transition in deterministic tests and a bounded VPS row.
+- A 5-minute real authenticated session sample, if C is reached, remains under standing limits and is not promoted to production uptime/capacity.
+- HY2 comparison uses the pinned v2.9.3 artifact, equal application semantics/metadata, disposable experiment config, repaired resource metrics and untouched production service.
+- `IMPLEMENTATION_PLAN.md` Bounded release evidence matrix remains unchecked until its actual matrix criteria are met.
 - `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, `RELEASED=false` remain unchanged.
 
 ## Fallback
 
-If any VPS/post-fix row exposes a new Session/crypto/correctness defect:
+If A2/A3 exposes a real crypto/Session correctness defect rather than timeout-policy fragility:
 
 1. preserve the exact negative evidence and minimal reproducer;
-2. stop additional release/performance claims on the affected path;
-3. make the correctness repair the next Primary;
-4. run the repository's required local/CI gates;
-5. only rerun the affected VPS scenario after code/instrumentation/hypothesis has materially changed.
+2. stop new performance/release claims on that path;
+3. repair correctness first and run required parser/fuzz gates if affected;
+4. rerun only after code/instrumentation/hypothesis materially changes.
 
-If VPS access/path is temporarily unavailable, do not idle: execute Follow-up B and/or the local implementation/test portion of Follow-up C that directly unlocks the next VPS evidence. If one address family is missing, continue with the other. If an action would exceed standing authorization, stop that action only and continue independent READY work.
+If VPS access is temporarily unavailable, do A1/A2 and the local implementation/test portion of B/C; these directly unlock the next VPS evidence. IPv6 remains environment-blocked and must not stop IPv4 work. If an action would exceed standing authorization, stop only that action and continue independent READY work.
 
 ## Do not expand into
 
 - RC/production/security approval;
-- claiming automatic failover from the controlled-stop runner;
+- erasing or rerunning away the B3 UDP failure;
+- calling controlled-stop failover automatic degradation;
 - weakening authentication/integrity/resource bounds for benchmark speed;
-- changing production HY2 config/service;
+- changing or reading production HY2 secrets/config/service;
+- weakening the local comparison harness's loopback guard;
 - third-party targets, scans, production firewall/route/DNS/proxy/tunnel/qdisc changes;
-- >10-minute single runs, >256 MiB single-run application traffic, >32 concurrent experimental sessions, or disguised split pressure tests without new authorization;
-- 0-RTT, enabled FEC, carrier striping/aggregation or exotic carriers without an observed-problem gate;
-- global/public reachability or superiority claims from self-owned one-off evidence.
+- >10-minute single runs, >256 MiB single-run application traffic, >32 concurrent experimental sessions, or disguised split pressure tests;
+- IPv6 code polish as a rental-window priority while no owned IPv6 path exists;
+- 0-RTT, enabled FEC, striping/aggregation or exotic carriers without an observed-problem gate;
+- public/general reachability, superiority or production claims from self-owned evidence.
 
 ## Questions requiring maintainer decision
 
