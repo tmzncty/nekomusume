@@ -1,153 +1,101 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-01 18:00 Asia/Shanghai
-Repository HEAD: `e24cc8d26f2c0652cb0d836234ac1c6929d1457a`
-Previous checked implementation HEAD: `c7e0a211cbc74f065d03b374bd3cc1bbf2a97356`
-Previous reviewer handoff commit: `8c835601bcce7eee38bc71b1baab8032d1245036`
+Checked at: 2026-09-01 19:00 Asia/Shanghai
+Repository HEAD: `859f91570444daf11969c03fe6c153d56919fc3d`
+Previous checked implementation HEAD: `e24cc8d26f2c0652cb0d836234ac1c6929d1457a`
+Previous reviewer handoff commit: `225abc5efdb285f3e6498a6f7f6ea32db9bc7131`
 
 ## What changed
 
-Two substantive coding-agent commits landed after the previous reviewed implementation state:
+One substantive coding-agent commit landed after the previous reviewer handoff:
 
-- `6b8a931` — **implementation/tests**. `CarrierManager::fail_udp_to_tcp()` no longer immediately promotes the TCP fallback. It creates a pending switch, clears the active owner, and adds target/generation-scoped `PromotionEvidence`; invalid target/generation/auth/resume/readiness fields fail closed in deterministic tests. This materially repairs the previous pre-connect promotion defect.
-- `e24cc8d` — **implementation/tests**. It adds a stateful bounded TCP `FramedReader` that preserves partial header/payload bytes across socket poll timeouts, adds a one-second `HealthObservationWindow` so short UDP socket timeouts are only polling quanta, distinguishes wrong-peer/malformed/stale traffic from exact permitted progress, and integrates the framed reader into the periodic authenticated TCP Session runner. This materially repairs the prior periodic framing defect and the prior “100 ms poll == one health failure” defect.
+- `859f915` — **implementation/tests/status repair**. The Carrier Manager no longer accepts a caller-authored integer readiness count. It now has target/generation-scoped readiness observations with duplicate IDs ignored, a separate cold authenticated+resume-validated promotion path, and deterministic generation/duplicate/uncertain-replay tests. `HealthObservationWindow` now returns a distinct `AdmissionBudgetExhausted` error instead of merely saturating a diagnostic counter; the CLI fails closed on that condition rather than turning junk into path-health evidence. `docs/status.md` narrows the executable automatic threshold seam to authenticated, resume-validated **cold** recovery and explicitly says it does not exercise D064 warm-readiness observations.
 
-The project remains in `IMPLEMENTATION_PLAN.md` item 3, **Bounded release evidence matrix**. N9 and negotiation-path completion remain closed; no RC/security/production state changed.
+This materially closes the previous junk-processing bound defect and avoids claiming that the current CLI executed an untracked warm-readiness contract. No current-exact-HEAD VPS run has yet been committed after `859f915`, so the time-limited VPS window should now be spent on exact-head evidence rather than more unrelated local polish.
 
-No new exact-head VPS replacement evidence was committed after these repairs. The latest implementation HEAD has no attached GitHub commit-status/CI checks through the available GitHub status API; local gates remain coding-environment evidence rather than independent CI attestation.
+No GitHub commit-status/CI checks are attached to `859f915` through the available status API. Local coding-environment gates remain local evidence, not independent CI attestation.
 
 ## Review verdict
 
-**CONTINUE WITH REQUIRED FIXES — R-001 and R-003 from the previous handoff are substantially repaired; fallback promotion is structurally improved, but the accepted-readiness subclaim is still not truthfully observed. One small resource-budget defect also remains. The periodic current-head VPS run is now READY and should be harvested immediately during the rental window.**
+**CONTINUE WITH ONE EVIDENCE-LABEL REPAIR, THEN IMMEDIATELY HARVEST CURRENT-HEAD VPS EVIDENCE.**
 
-Do not roll back the new pending-switch or stateful-framing work. Do not rerun the old pre-repair failover row as release evidence. Close the remaining readiness/evidence defect, then collect current-exact-HEAD VPS evidence in the same batch.
+The project is not blocked. The release plan remains at `IMPLEMENTATION_PLAN.md` item 3, **Bounded release evidence matrix**. N9 and negotiation-path completion remain closed. The highest-value next work is now the rented-VPS evidence path.
+
+Do not implement a new warm-readiness protocol. D064 is still absent from the tracked decision ledger, so warm-readiness remains non-normative/unproven. The current executable path is allowed to remain the narrower cold authenticated+resume-validated recovery path.
 
 ## Review findings
 
-### R-001 HIGH — TCP fallback readiness is still caller-asserted rather than observed
+### R-001 PASS — junk admission is now a real processing bound
 
-`6b8a931` correctly separates failure from promotion and scopes promotion to the pending target/generation. However, the current failover runner still does this immediately after Noise/resume setup:
+`HealthObservationWindow` now stops accepting ignored/wrong/stale datagrams when its bounded admission budget is exhausted and returns a distinct diagnostic error. The CLI fails closed on this condition. The budget does not increment the path-health failure count and therefore does not accelerate automatic fallback. Deterministic tests cover high junk count, exact permitted progress at the budget boundary, and unchanged health evidence.
+
+This closes the previous resource-bound finding sufficiently for bounded release-evidence experiments. It is not a general DoS/security proof.
+
+### R-002 PASS WITH NARROWED CLAIM — current runtime no longer pretends to exercise missing D064 warm readiness
+
+The tracked decision ledger still jumps from D063 to D065; no accepted D064 source was found in the current repository hierarchy. `859f915` takes the safe branch permitted by the previous handoff: current CLI evidence is narrowed to **cold authenticated, resume-validated recovery**. `docs/status.md` now says the automatic threshold seam does not exercise D064 warm-readiness observations.
+
+The separate `observe_failed_udp_target_readiness()` API therefore remains candidate/local code only. Do not use it for a release/WAN warm-readiness claim until a normal tracked decision/spec actually defines that contract.
+
+### R-003 HIGH — cold structured timing still emits a misleading warm-readiness field
+
+The runtime correctly calls `promote_cold_authenticated_resume(...)`, but the automatic failover timing event still does:
 
 ```text
-let resume_validated = tcp_authenticated;
-let readiness_satisfied = resume_validated;
-promote_failed_udp_target(PromotionEvidence {
-    target_path: PathId(2),
-    generation: PathGeneration(1),
-    authenticated: true,
-    resume_validated: true,
-    readiness_observations: 3,
-})
+resume_validated = tcp_authenticated
+readiness_satisfied = resume_validated
+...
+"fallback_class":"cold"
+"resume_validated_us": ...
+"readiness_satisfied_us": ...
 ```
 
-The three readiness observations are therefore a literal caller-supplied number, not three observed target-path readiness events. `readiness_satisfied` is also currently equal to the authentication timestamp. The manager checks the shape of evidence but does not own or verify its provenance.
+The duplicated `readiness_satisfied_us` field can be read as evidence that a readiness gate was observed even though the same event explicitly classifies the path as cold and no D064 warm-readiness sequence exists. That is evidence-label drift.
 
-This is better than pre-connect activation, but it still cannot support a claim that the accepted target-readiness gate was actually exercised. A code path that can write `readiness_observations: 3` without three observations has not proven readiness hysteresis.
+**Required correction before the next automatic-degradation VPS row:** for `fallback_class=cold`, remove the warm-readiness field or rename it to an unambiguous cold-promotion field such as `cold_promotion_ready_us` / `promotion_gate=cold_authenticated_resume`. Keep `resume_validated_us`. Add a regression that cold evidence cannot contain a warm-readiness claim. Do not invent new network observations to preserve the old field name.
 
-**Required correction:** promotion evidence must be produced by a bounded stateful readiness tracker tied to the pending target and pending generation, or the runtime/evidence claim must be narrowed so it does not say the target satisfied a multi-observation readiness gate. Do not invent new protocol bytes merely to manufacture three observations.
+This is a structured-evidence repair, not a transport behavior change.
 
-### R-002 HIGH — the current handoff relies on a “D064” contract that is not present in the repository decision ledger
+### R-004 LOW — readiness-observation ownership comment overstates what the API owns
 
-`docs/decisions.md` currently goes from D063 directly to D065. The previous reviewer handoff repeatedly called the failover/readiness contract “D064” and treated `k_failure=3` / `k_ready=3` as accepted architecture, but `AGENTS.md` explicitly says architecture changes must not live only in chat/commit messages/handoffs.
+`ReadinessObservation.observation_id` is supplied by the caller while `CarrierManager` owns the bounded accumulation/deduplication set. The current comment says observation IDs are manager-owned. Since this warm path is not used for current release evidence, this is not a blocker, but correct the comment or naming while touching the file so a future implementer does not mistake caller-provided IDs for manager-generated provenance.
 
-The coordination file is not a normative source. Before the repository can make a release-matrix claim whose meaning depends on this readiness contract, the agent must reconcile the provenance:
-
-1. search git history and tracked specs/ADRs for the actual accepted source of the missing D064 semantics;
-2. if a tracked accepted source exists, restore/link it without changing semantics;
-3. if no such source exists, do **not** silently promote reviewer prose into protocol architecture. Keep the evidence class narrower (“authenticated cold recovery succeeded; manager target/generation scoping enforced”) until the readiness semantics are recorded in the normal decision/spec hierarchy.
-
-This is a governance/spec-drift defect, not a reason to stop unrelated READY VPS evidence such as the periodic Session run.
-
-### R-003 MEDIUM — `max_ignored` caps diagnostics/counter value, not health-path packet processing
-
-`HealthObservationWindow` now prevents wrong-peer/malformed/stale traffic from advancing or resetting health state and prevents packet rate from making the deadline occur earlier. That closes the main correctness defect.
-
-But `max_ignored` currently uses a saturating counter only. Once the count reaches the configured maximum, the loop can still keep dequeuing and classifying an arbitrary number of junk datagrams until the one-second deadline. The observation is time-bounded, but the advertised bounded admission budget is not actually a packet-processing bound.
-
-For release/security review quality, add a fail-closed bounded policy that does not let junk force failover. Acceptable direction: on health-admission budget exhaustion, abort/mark that health observation as `admission_budget_exhausted` (or equivalent diagnostic failure of the experiment/path-assessment mechanism) without converting the junk count into a health failure/success. Do not let hitting the junk budget accelerate the TCP fallback transition.
-
-This should be a small local hardening slice; do not turn it into a general DoS framework.
-
-### R-004 PASS — periodic partial-frame state is now preserved
-
-The new `FramedReader` preserves partial length-header and payload bytes across `TimedOut`/`WouldBlock`, enforces maximum length before payload allocation, distinguishes clean EOF / partial truncation / idle deadline, uses caller absolute deadlines, and is integrated into the periodic handshake/data/DeliveryAck path. The deterministic tests deliberately fragment header/payload around timeout gaps.
-
-This closes the previous periodic framing blocker sufficiently to make a **current-exact-HEAD bounded periodic VPS run READY**. It is not evidence until rerun on the repaired commit family.
+Do not spend this rental window implementing a full warm-readiness protocol merely to address this wording.
 
 ## Evidence boundaries
 
 - `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, `RELEASED=false` remain correct.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
-- `6b8a931` proves pending-switch target/generation validation and no pre-connect active owner in deterministic code/tests; it does **not** yet prove three real readiness observations occurred.
-- `e24cc8d` proves a bounded stateful TCP framing mechanism and truthful one-second health observation windows in local code/tests; it does **not** itself create VPS/WAN evidence.
-- Existing historical five-minute periodic evidence remains valid only for its recorded source/binary; it is not current-head evidence.
-- Existing previous automatic-failover VPS rows remain valuable application-recovery evidence but must not be reinterpreted as proof of the repaired target-readiness contract.
-- IPv6 remains environment-blocked unless the owned endpoint environment actually changes; do not spend rental time repeating unchanged IPv6 failures.
-- Standing VPS authorization remains active. Current-head periodic TCP, current-head bounded failover replacement, process-resource sampling, cleanup, and the already-authorized HY2 comparison are not waiting on maintainer permission.
-- No superiority, public/general reachability, production, security-audit, or RC claim follows from any one replacement row.
+- `859f915` is local implementation/test/status evidence; it is not VPS/WAN evidence.
+- Current CLI automatic threshold mode may claim only controlled owned-endpoint UDP reply cessation -> threshold decision -> authenticated/resume-validated **cold** TCP recovery, once rerun on an exact commit after R-003 is fixed.
+- It may not claim D064 warm readiness, natural Internet blackhole detection, public/general reachability, production failover, or security approval.
+- Existing historical VPS rows remain valid for their recorded exact commits and conditions; they are not automatically promoted to current-head evidence.
+- IPv6 remains environment-blocked while the owned endpoints lack a real end-to-end IPv6 path. Do not repeat unchanged IPv6 failures.
+- Standing VPS authorization permits the periodic Session run, automatic controlled degradation row, bounded resource sampling, temporary listeners, cleanup, and equal-application HY2 comparison. None need renewed per-run approval.
+- The rented VPS is time-limited. Prefer exact-head real-socket evidence and the HY2 comparison seam over documentation polish or speculative features.
 
-## Work Package — close readiness provenance, then harvest exact-head VPS evidence
+## Work Package — repair one label, then run the rented-VPS evidence batch
 
-Execute A -> B -> C -> D -> E in dependency order where applicable. This is intentionally a thick package; do not stop after the first small helper if the next step is already READY.
+Execute A -> B -> C -> D -> E in dependency order where applicable. This package is deliberately thick enough to keep the coding agent moving; do not stop after A if B/C/D are READY.
 
-### Primary A — Make fallback readiness evidence real and bounded
+### Primary A — close the cold-evidence label defect and verify the exact candidate
 
-#### A1 — Reconcile the missing D064 provenance before encoding more semantics
+**Goal:** make the automatic cold-recovery structured event impossible to misread as warm-readiness evidence, then establish a green local candidate for VPS deployment.
 
-Search repository history/specs/ADRs for the source that actually established the current failure/readiness thresholds and activation semantics.
+Required changes:
 
-- If a tracked accepted source exists: restore/link/index it and make code/tests reference that contract.
-- If no accepted source exists: do not invent a new three-observation network protocol solely from the old reviewer handoff. Keep the runtime claim narrow and create/repair only the minimum governance record needed to describe already-existing manager semantics. If multiple materially different readiness meanings remain, do not choose one silently; leave the multi-observation `active` subclaim blocked and continue the independent periodic/HY2 VPS work below.
-
-The reviewer handoff itself must never become the normative architecture source.
-
-#### A2 — Replace caller-authored readiness count with stateful target/generation evidence
-
-For any path that claims a multi-observation readiness gate:
-
-- readiness state must live in a bounded object keyed to the pending target path and pending generation;
-- authentication and resume validation are prerequisites, not substitute readiness observations unless the tracked decision/spec explicitly defines them as such;
-- stale/wrong target/wrong generation events cannot advance readiness;
-- duplicate replay of the same evidence cannot advance the counter twice;
-- failed/rejected target attempts cannot leak readiness into a later generation;
-- `CarrierManager` remains the sole active-owner selector;
-- promotion consumes/validates stateful evidence rather than trusting a freely constructed integer.
-
-If the truthful tracked contract is only “authenticated + resume-validated cold recovery” and contains no `k_ready=3` requirement, remove the fabricated readiness-count claim rather than preserving a magic constant.
-
-Required deterministic tests:
-
-- no promotion from a fabricated `readiness_observations=3`-style caller assertion;
-- wrong target/generation rejected atomically;
-- duplicate/stale evidence does not accumulate;
-- rejected target attempt does not pollute the next generation;
-- promotion occurs exactly once after the tracked readiness contract is truly satisfied;
-- at most one active owner is visible;
-- uncertain replay/dedup state survives failed target attempts.
-
-#### A3 — Bound ignored health admission without converting junk into a path failure
-
-Turn the current diagnostic-only `max_ignored` into a real bounded processing/admission rule for the health observation mechanism.
-
-Required behavior:
-
-- wrong-peer/malformed/stale traffic still does not advance/reset health;
-- reaching the junk/admission budget must not count as one of the three path-health failures and must not accelerate fallback;
-- fail closed or yield a distinct bounded diagnostic result rather than spinning indefinitely on queued junk;
-- exact permitted authenticated progress remains detectable within the observation contract;
-- resource bounds and reason labels are deterministic/tested.
-
-Required tests include high junk count, junk followed by exact permitted progress, budget exhaustion, and proof that transition timing/counter cannot be attacker-accelerated.
-
-#### A4 — Local full gate
+1. For `fallback_class=cold`, remove `readiness_satisfied_us` or replace it with an explicitly cold name/enum such as `promotion_gate=cold_authenticated_resume` and/or `cold_promotion_ready_us`.
+2. Preserve the useful timestamps: failure decision, TCP connect start/connected, negotiation, authentication, resume validation, manager activation, first resumed data, recovery latency.
+3. Add a regression that a cold timing event cannot advertise D064/warm readiness.
+4. Correct the `ReadinessObservation` ownership comment: the manager owns bounded accumulation/deduplication; the current observation ID is supplied by the event source/caller.
+5. Do not wire `observe_failed_udp_target_readiness()` into the CLI or invent a D064 contract in this slice.
 
 Run at minimum:
 
-- targeted CarrierManager pending/promotion tests;
-- target-readiness provenance/generation tests;
-- health-window junk/admission-budget tests;
-- periodic FramedReader fragmentation/deadline tests;
-- focused failover process tests;
+- targeted automatic-health-failover diagnostics/tests;
+- CarrierManager cold-promotion/readiness-dedup/generation tests;
+- health-window admission-budget tests;
+- periodic `FramedReader` fragmentation/deadline tests;
 - `cargo fmt --all -- --check`;
 - `cargo check --workspace --locked`;
 - `cargo test --workspace --all-targets --locked --no-fail-fast`;
@@ -155,109 +103,123 @@ Run at minimum:
 - `bash scripts/check.sh`;
 - `git diff --check`.
 
-Run fuzz smoke only if wire/parser behavior changes or the repository gate requires it.
+Fuzz smoke is not required solely for an evidence-label/comment change unless parser/wire code changes or the normal gate requires it.
 
-### Follow-up B — current-exact-HEAD five-minute periodic Session VPS run
+After A is green, use the resulting exact commit for B and C so the rental-window evidence does not immediately become stale.
 
-**Dependency:** periodic framing repair is already present; run after A if A changes the shared binary so the evidence points at one final exact commit.
+### Follow-up B — current-exact-HEAD five-minute periodic authenticated Session VPS row
 
-Use the self-owned client/VPS path under standing authorization and the existing process-resource sampler. Reproduce a bounded profile comparable to the historical five-minute row, for example the existing 60-record / 32-byte / ~5-second interval profile if that remains the documented workload.
+**Dependency:** A green. The periodic framing path is already repaired and READY.
+
+Run one bounded self-owned client<->VPS periodic TCP Session using the existing periodic runner and process-resource sampler. Prefer the already documented comparable profile if still valid: approximately 60 records, 32 bytes each, ~5 s interval, ~5 minutes total, one Session/stream, finite ACK deadline. Keep the single run under the 10-minute standing-authorization limit.
 
 Record at minimum:
 
-- experiment ID, exact git commit, client/server binary SHA-256;
-- actual TCP port, duration/count/bytes/interval/ACK deadline;
-- authenticated negotiation/Noise/Session success;
-- attempted/confirmed/missing/duplicate records and application bytes;
-- P50/P95 confirmation latency already emitted by the runner;
-- server and client elapsed, CPU user/system, max RSS, peak FD, owned socket count where available;
-- signal/exit status;
-- cleanup verification: no experimental listener/process remains.
+- experiment ID; exact git commit; client/server binary SHA-256;
+- actual port, count, bytes, interval, duration, ACK timeout;
+- canonical negotiation + Noise authentication + Session identity;
+- attempted/confirmed/missing/duplicate record counts and application bytes;
+- P50/P95 confirmation latency from the runner;
+- client/server elapsed, CPU user/system, max RSS, peak FD and owned socket count where available;
+- exit/signal state;
+- cleanup: no experimental listener/process/temp runtime remains.
 
-Acceptance for this row is **current-head bounded periodic authenticated Session evidence**, not “production long-lived stability”. Preserve any failure exactly; do not rerun unchanged until there is a new diagnostic variable.
+Preserve any failure. Do not mechanically rerun an unchanged failure.
 
-### Follow-up C — replacement automatic-degradation -> TCP recovery VPS row
+Acceptance: **current-exact-commit bounded periodic authenticated Session evidence**. Do not call five minutes production long-lived stability.
 
-**Dependency:** A1/A2/A3 green and the exact runtime claim is now defined truthfully.
+### Follow-up C — current-exact-HEAD automatic controlled-degradation -> cold TCP recovery VPS row
 
-Run one small self-owned current-exact-commit automatic-degradation row using the existing explicit UDP reply-cessation seam. Record the complete current semantics:
+**Dependency:** A green. Run after or adjacent to B while the same exact binary is deployed.
 
-- failure observation window start and each failed observation timestamp;
-- ignored/admission-budget diagnostics without promoting them to health evidence;
-- manager pending-switch creation and target/generation;
-- TCP connect, canonical negotiation, Noise authentication, resume validation;
-- each **real** readiness event required by the tracked contract, if any;
-- manager promotion/new-active timestamp only after the actual gate;
-- uncertain ranges resent, deduplicated/conflict-free final application bytes;
-- first resumed logical data accepted and cold recovery interval;
-- process-resource samples if practical without obscuring the functional evidence;
+Use the existing explicit UDP reply-cessation/automatic-health-failover seam on self-owned endpoints with a small bounded count/payload. Record the real current semantics:
+
+- UDP canonical negotiation/Noise authentication and initial validated DeliveryAck;
+- uncertain logical range sent before reply cessation;
+- three one-second health failure observation windows and timestamps;
+- ignored/admission diagnostics, with no junk promoted into health success/failure;
+- pending manager switch target/generation;
+- TCP connect, canonical negotiation, Noise authentication, resume guard/validation;
+- **cold promotion only** (`promotion_gate=cold_authenticated_resume` or equivalent), with no warm-readiness field;
+- manager activation timestamp;
+- uncertain resend, authenticated exact-semantic TCP DeliveryAck, receiver dedup/conflict result, final logical bytes;
+- recovery latency and process-resource samples when practical;
 - cleanup verification.
 
-Keep the fault classification explicit: this is a bounded controlled application-level UDP reply-cessation scenario on owned endpoints, not natural Internet blackhole detection or general reachability.
+Classification must remain: controlled application-level UDP reply cessation on owned endpoints + bounded threshold-driven cold recovery. It is not natural Internet blackhole detection, D064 warm readiness, or general production failover.
 
-If the readiness contract remains intentionally unresolved after A1, do not fake this row. Preserve the narrower existing application-recovery evidence and move directly to D.
+### Follow-up D — make and execute the first fair HY2 equal-application paired sample if dependencies permit
 
-### Follow-up D — close the Nekomusume side of the HY2 equal-application comparison seam
+**Dependency:** local repository green; independent of D064 warm readiness.
 
-**Dependency:** independent of the fallback-readiness subclaim once the repository is locally green.
+The repository already pins HY2 v2.9.3 and the temporary forwarding seam. Do not weaken the loopback-only guard in `scripts/bench/compare-hy2.sh`; create/finish a separate fail-closed self-owned-VPS orchestrator or adapter that reuses the result schema/methodology.
 
-The HY2 v2.9.3 artifact, hash, and forwarding seam are already pinned. The remaining high-value rental-window gap is an equivalent Nekomusume application command/orchestrator that can satisfy `docs/bench/hy2-comparison-workload.md` without semantic cheating.
+First ensure Nekomusume and HY2 answer the same application question:
 
-Implement/verify the minimum adapter so both implementations receive the same deterministic payload/file, exact application byte count/hash, bounded timeout, same owned client/VPS route/time window/MTU/security class/load metadata, and emit the required comparison JSON fields.
+```text
+send exact deterministic payload bytes -> receive exact same bytes
+```
 
-Do not compare a one-record echo with a streaming/forwarding HY2 workload and call it fair. If the current Nekomusume runtime cannot yet express the same application workload, document the exact missing seam and implement only that seam; do not redesign the transport.
+Required fairness contract:
 
-Run local/loopback contract validation first. If an actually equivalent pair is READY in the same cycle, take a small first paired VPS sample (>= existing harness minimum runs) with raw samples, median/P95/failures, CPU/RSS/FD/application bytes. `wire_bytes` stays null unless capture metadata is trustworthy. No superiority claim.
+- same owned client/VPS pair and close time window;
+- same deterministic payload file/byte count/SHA-256;
+- same route and recorded MTU metadata;
+- both authenticated+encrypted with experiment-only credentials;
+- same stream/load shape, finite timeout and run count;
+- temporary high ports only; existing production HY2 process/config untouched;
+- Nekomusume and HY2 commands both emit/validate the required application-byte result contract.
 
-### Follow-up E — evidence/status reconciliation
+If the current Nekomusume CLI cannot consume the exact workload payload/file semantics required by the comparison, implement only the smallest benchmark adapter/seam needed; do not redesign the transport.
 
-After B/C/D results exist, update normal evidence documents and `docs/status.md`/`ROADMAP.md` only to the level actually proven.
+When an actually equivalent pair is executable, run the first small paired sample using the existing minimum-repeat methodology (normally 5 runs). Prefer interleaved/nearby runs rather than doing all of one implementation hours before the other. Record raw samples, median/P95/failures, CPU user/system, RSS, FD and application bytes. `wire_bytes` remains null unless capture metadata is trustworthy. Preserve slower/failed Nekomusume results exactly. No superiority claim.
 
-In particular:
+If a genuine environment dependency prevents the paired run (for example a missing usable experimental HY2 client artifact on the owned client), still finish and locally validate the Nekomusume-side adapter/orchestrator and record the exact environment gap; do not substitute an unequal workload.
 
-- link the new current-head periodic evidence if successful, but do not upgrade to production/sustained/general-WAN wording;
-- link the repaired automatic-failover evidence only if C actually passed the tracked readiness contract;
-- leave IPv6 blocked if the environment is unchanged;
-- preserve all negative rows and supersession relationships;
-- do not check HY2 comparison complete unless an equal-application paired run actually occurred;
-- keep RC/security/production flags unchanged.
+### Follow-up E — reconcile the bounded release-evidence ledger
+
+After B/C/D, update normal evidence documents, `docs/status.md`, `ROADMAP.md`, and any release-evidence matrix only to the level actually proven.
+
+- Link the new exact-head periodic row if it ran.
+- Link the new cold automatic-recovery row only with its narrow classification.
+- Keep D064 warm readiness unproven/non-normative.
+- Keep IPv6 environment-blocked unless the owned path actually changed.
+- Check HY2 comparison complete only if an equal-application paired run actually occurred.
+- Preserve negative evidence and supersession relationships.
+- Do not mark `IMPLEMENTATION_PLAN.md` item 3 complete merely because B/C pass; the matrix still includes environment-dependent/NAT/endpoint-change/comparison evidence.
+- Keep RC/security/production/global freeze flags unchanged.
 
 ## Completion gates
 
-This batch is complete only when:
+This package is complete only when:
 
-- readiness semantics have a real tracked normative/governance source rather than reviewer-only “D064” prose;
-- promotion evidence cannot be satisfied by a caller writing a magic readiness count;
-- target/generation/stale/duplicate readiness evidence is fail-closed;
-- junk/admission traffic has a real bounded processing policy and cannot become health success/failure;
-- the full local repository gate passes;
-- a current-exact-commit five-minute periodic VPS row is captured or a new evidence-backed blocker is recorded;
-- a replacement automatic-degradation row is captured if and only if the readiness contract is truthfully executable;
-- the HY2 equal-application seam is materially closer to an executable paired run, preferably with the first small paired sample if dependencies are satisfied;
-- cleanup and negative-result retention are verified;
-- `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, `RELEASED=false` remain unchanged.
+- cold structured evidence no longer contains a misleading warm-readiness field;
+- local full gate is green on the exact commit used for VPS work;
+- one current-exact-commit five-minute periodic authenticated Session row is captured or a new evidence-backed blocker is recorded;
+- one current-exact-commit controlled automatic-degradation -> cold TCP recovery row is captured or a new evidence-backed blocker is recorded;
+- both rows preserve resource/cleanup/negative evidence boundaries;
+- the HY2 equal-application seam is materially advanced, preferably through the first valid paired sample if the owned environment supports it;
+- evidence/status documents reflect only what actually ran;
+- `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, and `RELEASED=false` remain unchanged.
 
 ## Fallback
 
-If A1 shows there is genuinely no accepted readiness contract and multiple reasonable activation semantics exist:
+If B fails on the repaired exact commit, preserve the failure and use the new logs/resource samples to isolate the smallest new diagnostic variable; do not repeat unchanged. D remains independently READY.
 
-- do not invent one;
-- keep automatic manager-active release evidence blocked at that subclaim;
-- continue B (periodic current-head VPS evidence), D (HY2 equal-application seam), process-resource evidence, package/operator evidence, and other independent bounded rental-window work;
-- record exactly what architectural decision is missing for a later maintainer/reviewer decision.
+If C fails for a real runtime reason, preserve the row and keep cold automatic-failover release evidence blocked; B and D remain READY.
 
-If the periodic current-head run fails, preserve the exact failure and use its new logs/resource/framing state as the next diagnostic variable rather than mechanically rerunning.
+If HY2 paired execution is environment-blocked, finish/validate the Nekomusume comparison adapter and use remaining VPS time for another already-defined, scientifically distinct release-evidence task such as package/operator smoke or current-head process-resource validation. Do not invent a speculative feature and do not rerun unchanged IPv6 failures.
 
 ## Do not expand into
 
-- public/general reachability claims;
-- production exposure or production network changes;
-- third-party targets or scanning;
-- >10-minute runs, >256 MiB single-run traffic, or >32 experimental Sessions without new authorization;
-- enabled FEC, 0-RTT, striping/aggregation, exotic carriers, or unrelated feature work;
-- one-off HY2 superiority claims;
-- silently treating the reviewer handoff as a protocol/architecture specification.
+- inventing or implementing D064 warm-readiness semantics without a tracked decision;
+- calling five-minute periodic evidence production long-lived stability;
+- natural-WAN/public/general reachability claims from controlled owned-endpoint fault injection;
+- previous/current interoperability before a real prior release exists;
+- 0-RTT, enabled FEC, striping/aggregation or exotic carriers without an observed-problem gate;
+- third-party targets, scanning, production network changes, or experiments outside standing authorization;
+- touching the existing production Hysteria config/service for the comparison.
 
 ## Questions requiring maintainer decision
 
-none at this moment. If A1 confirms that no tracked readiness contract exists and there are multiple materially different architecture choices that cannot be resolved from existing repository facts, record that as the only maintainer-decision candidate while continuing the independent READY VPS work above.
+none.
