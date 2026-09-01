@@ -1,0 +1,9 @@
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-client","role":"client","event":"start","seq":0,"count":3,"record_payload_bytes":16,"application_bytes_total":48,"udp_port":40097,"tcp_port":40098,"max_seconds":5 }
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-client","role":"client","event":"udp_hello_sent","seq":0 }
+carrier_event name=udp_authenticated session=7001 generation=0
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-client","role":"client","event":"udp_datagram_sent","seq":1,"ciphertext_bytes":96,"record_payload_bytes":16 }
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-client","role":"client","event":"udp_delivery_ack_validated","seq":1,"ciphertext_bytes":86 }
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-client","role":"client","event":"udp_uncertain_range_sent","seq":2,"ciphertext_bytes":96,"stream":1,"offset":16,"len":16 }
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-client","role":"client","event":"tcp_warm_readiness","seq":1,"warm":false,"request_us":1047644,"response_us":1463124 }
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-client","role":"client","event":"tcp_warm_readiness","seq":2,"warm":false,"request_us":1463152,"response_us":1866848 }
+neko: readiness response timeout or malformed frame

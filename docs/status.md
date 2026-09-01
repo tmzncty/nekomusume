@@ -70,3 +70,34 @@ warm, resumed or data event. `ProcessMessage::decode` is included in the bounded
 fuzz target with readiness request/response seeds. This is local implementation
 evidence only; it does not add current-head VPS evidence or change any release,
 freeze, production or canonical-corpus flag.
+
+### Reviewer 3978f3f Follow-up A-C evidence reconciliation (2026-09-02)
+
+The reviewed tree remains green under its local and CI gates, but the three
+self-owned-lab follow-ups add blockers rather than positive release evidence:
+
+- **A — no current-head warm result.** The changed-path D064 run reached two
+  authenticated admitted readiness responses, then challenge 3 failed closed
+  (`readiness response timeout or malformed frame` / `bad readiness frame`).
+  The redacted raw JSONL is retained at
+  `artifacts/reviewer-3978f3f-primary-a/`; provenance, hashes and cleanup are in
+  `docs/research/reviewer-3978f3f-primary-a-d064-vps-20260901.md`. Older cold,
+  periodic and negative rows remain historical exact-commit evidence.
+- **B — no five-minute sample.** The server authenticated, but the client failed
+  to receive the handshake response before any periodic application record;
+  therefore application bytes were zero and no confirmation-latency sample
+  exists. See
+  `docs/research/reviewer-3978f3f-followup-b-periodic-vps-20260902.md`.
+- **C — adapter present, comparison absent.** The owned-lab fair-pair adapter and
+  exact-payload seam are implemented and pass the full repository gate. The
+  temporary HY2 QUIC/UDP path timed out before its forwarding listener became
+  ready, so there are no paired samples, comparative statistics or superiority
+  claim. See
+  `docs/research/reviewer-3978f3f-followup-c-hy2-owned-lab-20260902.md` and
+  `docs/research/reviewer-followup-c-equal-application-prerequisite-20260901.md`.
+
+All three attempts record successful cleanup. IPv6 remains environment-blocked.
+The bounded release-evidence matrix stays open; `RELEASE_CANDIDATE=false`,
+`FREEZE=false`, `PRODUCTION_READY=false`, and `RELEASED=false`. The frozen N9
+canonical corpus is untouched, and none of these self-owned-path results is
+public/general WAN evidence.

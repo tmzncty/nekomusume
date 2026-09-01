@@ -1,0 +1,14 @@
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-server","role":"server","event":"start","seq":0,"count":3,"record_payload_bytes":16,"application_bytes_total":48,"udp_port":40097,"tcp_port":40098,"max_seconds":8 }
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-server","role":"server","event":"udp_hello_received","seq":0 }
+carrier_event name=udp_negotiated session=7001 generation=0 version=0
+carrier_event name=udp_authenticated session=7001 generation=0
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-server","role":"server","event":"udp_datagram_received","seq":1,"ciphertext_bytes":96 }
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-server","role":"server","event":"udp_delivery_ack_sent","seq":0,"ciphertext_bytes":86 }
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-server","role":"server","event":"udp_datagram_received","seq":1,"ciphertext_bytes":96 }
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-server","role":"server","event":"udp_reply_ceased","seq":1,"reason":"bounded_test_seam" }
+carrier_event name=tcp_negotiated session=7001 generation=1 version=0
+carrier_event name=tcp_authenticated session=7001 generation=1
+carrier_event name=tcp_resume_validated session=7001 generation=1
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-server","role":"server","event":"tcp_readiness_response","seq":1,"admitted":true,"ciphertext_bytes":95 }
+{"experiment_id":"reviewer-3978f3f-a1-probe-20260901T153845Z-server","role":"server","event":"tcp_readiness_response","seq":2,"admitted":true,"ciphertext_bytes":95 }
+neko: bad readiness frame

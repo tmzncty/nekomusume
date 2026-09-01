@@ -131,7 +131,7 @@ fn rejects_unbounded_arguments() {
 #[test]
 fn authenticated_tcp_and_udp_loopback_probe_starts_after_ready() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
-    for (transport, port) in [("tcp", 40080u16), ("udp", 40081u16)] {
+    for (transport, port) in [("tcp", 40093u16), ("udp", 40094u16)] {
         let sp = tmp(&format!("{transport}-ready-server"));
         let cp = tmp(&format!("{transport}-ready-client"));
         let sk = key(bin, &sp);
@@ -175,6 +175,97 @@ fn authenticated_tcp_and_udp_loopback_probe_starts_after_ready() {
         assert!(server_status.success(), "{server_log}");
         assert!(server_log.contains("lifecycle_state=STOPPED readiness=false"));
     }
+}
+
+#[test]
+fn authenticated_tcp_benchmark_echoes_exact_payload_and_hash() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("benchmark-server");
+    let cp = tmp("benchmark-client");
+    let payload_path = tmp("benchmark-payload");
+    let payload = b"equal-application-payload";
+    fs::write(&payload_path, payload).unwrap();
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let server = start_server(bin, "tcp", 40081, &sp, &ck);
+
+    let out = Command::new(bin)
+        .args([
+            "client",
+            "--transport",
+            "tcp",
+            "--port",
+            "40081",
+            "--addr",
+            "127.0.0.1:40081",
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--bytes",
+            &payload.len().to_string(),
+            "--count",
+            "1",
+            "--duration",
+            "2",
+            "--payload-file",
+            payload_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let (server_status, server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let _ = fs::remove_file(payload_path);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let log = String::from_utf8(out.stdout).unwrap();
+    assert!(log.contains("\"application_bytes\":25"), "{log}");
+    assert!(
+        log.contains("\"payload_sha256\":\"cf241de87cf4e86eca5350ac13106043592ab1a8bceb97851833d90440b52cef\""),
+        "{log}"
+    );
+    assert!(log.contains("\"fd_count\":"), "{log}");
+    assert!(log.contains("\"wire_bytes\":null"), "{log}");
+    assert!(server_status.success(), "{server_log}");
+}
+
+#[test]
+fn benchmark_payload_mode_fails_closed_outside_exact_contract() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let payload_path = tmp("benchmark-invalid-payload");
+    fs::write(&payload_path, b"abcd").unwrap();
+    let identity_path = tmp("benchmark-invalid-identity");
+    for extra in [
+        vec!["--transport", "udp", "--count", "1", "--json"],
+        vec!["--transport", "tcp", "--count", "2", "--json"],
+        vec!["--transport", "tcp", "--count", "1"],
+    ] {
+        let mut args = vec![
+            "client",
+            "--port",
+            "40080",
+            "--addr",
+            "127.0.0.1:40080",
+            "--server-key",
+            "00",
+            "--bytes",
+            "4",
+            "--payload-file",
+            payload_path.to_str().unwrap(),
+            "--identity",
+            identity_path.to_str().unwrap(),
+        ];
+        args.extend(extra);
+        let out = Command::new(bin).args(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(2));
+    }
+    let _ = fs::remove_file(payload_path);
+    let _ = fs::remove_file(identity_path);
 }
 
 #[test]

@@ -21,6 +21,8 @@ bash scripts/check-status-coverage.sh
 bash scripts/check-status-coverage-test.sh
 bash scripts/check-shell-syntax.sh
 python3 scripts/bench/process-resource-sampler-test.py
+python3 scripts/bench/echo-payload-test.py
+bash scripts/bench/compare-hy2-test.sh
 bash scripts/check-observability-contract.sh
 bash scripts/check-observability-contract-test.sh
 bash scripts/check-markdown-links.sh
@@ -43,3 +45,5 @@ test -f docs/specs/nekomusume-session-v0.md
 test -f LICENSE-MIT
 test -f LICENSE-APACHE
 cargo metadata --locked --format-version 1 --no-deps | grep -q 'MIT OR Apache-2.0'
+
+bash scripts/bench/compare-hy2-owned-lab-test.sh

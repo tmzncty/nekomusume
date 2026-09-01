@@ -24,6 +24,7 @@ use neko_session::{
     StreamId,
 };
 use neko_wire::{NEGOTIATION_VERSION, NegotiationRole, VersionNegotiator};
+use sha2::{Digest, Sha256};
 use signal_hook::{
     consts::{SIGINT, SIGTERM},
     flag,
@@ -136,12 +137,58 @@ fn emit_diagnostic(args: &[String], role: &str, event: &str, seq: usize, fields:
         );
     }
 }
-fn emit_probe(args: &[String], transport: &str, bytes: usize, elapsed_ms: u128) {
+fn benchmark_payload(
+    args: &[String],
+    transport: &str,
+    bytes: usize,
+    count: usize,
+) -> Option<(Vec<u8>, String)> {
+    let path = args
+        .windows(2)
+        .find(|w| w[0] == "--payload-file")
+        .map(|w| PathBuf::from(&w[1]))?;
+    if transport != "tcp" || count != 1 || !json_mode(args) {
+        fail("--payload-file requires TCP, --count 1, and --json");
+    }
+    let metadata = fs::metadata(&path).unwrap_or_else(|_| fail("payload file unreadable"));
+    if !metadata.is_file() || metadata.len() != bytes as u64 {
+        fail("payload file length must equal bounded --bytes");
+    }
+    let mut payload = Vec::with_capacity(bytes);
+    fs::File::open(path)
+        .unwrap_or_else(|_| fail("payload file unreadable"))
+        .take((MAX_BYTES + 1) as u64)
+        .read_to_end(&mut payload)
+        .unwrap_or_else(|_| fail("payload file unreadable"));
+    if payload.len() != bytes || payload.is_empty() || payload.len() > MAX_BYTES {
+        fail("payload file changed or exceeds bounded --bytes");
+    }
+    let hash = format!("{:x}", Sha256::digest(&payload));
+    Some((payload, hash))
+}
+
+fn emit_probe(
+    args: &[String],
+    transport: &str,
+    bytes: usize,
+    elapsed_ms: u128,
+    payload_sha256: Option<&str>,
+) {
     if json_mode(args) {
-        println!(
-            "{{\"ok\":true,\"transport\":\"{}\",\"bytes\":{},\"elapsed_ms\":{}}}",
-            transport, bytes, elapsed_ms
-        );
+        if let Some(hash) = payload_sha256 {
+            let fd_count = fs::read_dir("/proc/self/fd")
+                .unwrap_or_else(|_| fail("benchmark FD inventory unavailable"))
+                .count();
+            println!(
+                "{{\"ok\":true,\"transport\":\"{}\",\"application_bytes\":{},\"payload_sha256\":\"{}\",\"elapsed_ms\":{},\"fd_count\":{},\"wire_bytes\":null}}",
+                transport, bytes, hash, elapsed_ms, fd_count
+            );
+        } else {
+            println!(
+                "{{\"ok\":true,\"transport\":\"{}\",\"bytes\":{},\"elapsed_ms\":{}}}",
+                transport, bytes, elapsed_ms
+            );
+        }
     } else {
         println!(
             "probe_ok transport={} bytes={} elapsed_ms={}",
@@ -591,7 +638,11 @@ fn client(args: &[String]) {
     if !json_mode(args) {
         println!("client_public_key={}", hex(id.public_key()));
     }
-    let payload = vec![b'x'; max];
+    let benchmark = benchmark_payload(args, &t, max, count);
+    let payload = benchmark
+        .as_ref()
+        .map(|(payload, _)| payload.clone())
+        .unwrap_or_else(|| vec![b'x'; max]);
     let start = Instant::now();
     let cs = if t == "tcp" {
         let mut s =
@@ -694,7 +745,7 @@ fn client(args: &[String]) {
                 fail("echo mismatch");
             }
         }
-        emit_probe(args, "udp", max, start.elapsed().as_millis());
+        emit_probe(args, "udp", max, start.elapsed().as_millis(), None);
         return;
     };
     let (mut s, mut ss) = cs.unwrap();
@@ -712,7 +763,13 @@ fn client(args: &[String]) {
             fail("echo mismatch");
         }
     }
-    emit_probe(args, "tcp", max, start.elapsed().as_millis())
+    emit_probe(
+        args,
+        "tcp",
+        max,
+        start.elapsed().as_millis(),
+        benchmark.as_ref().map(|(_, hash)| hash.as_str()),
+    )
 }
 fn failover_binding(session: u64, generation: u64, expires: u64) -> neko_crypto::ResumeBinding {
     neko_crypto::ResumeBinding {
