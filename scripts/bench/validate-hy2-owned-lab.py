@@ -103,12 +103,21 @@ def make_sample(implementation, run, return_code, time_path, resource_path, outp
         resource = load_json(resource_path)
     except (OSError, ValueError, json.JSONDecodeError):
         resource = {}
+    cpu = resource.get("cpu", {}) if isinstance(resource, dict) else {}
+    rss = resource.get("rss", {}) if isinstance(resource, dict) else {}
     fd_count = resource.get("fd", {}).get("peak_count") if isinstance(resource, dict) else None
+    cpu_user, cpu_system, rss_kib = cpu.get("user_seconds"), cpu.get("system_seconds"), rss.get("max_kib")
+    expected_identity = "sha256:" + ("66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1" if implementation == "hy2" else resource.get("identity", "").removeprefix("sha256:"))
     resource_ok = (validate_resource(resource)
                    and resource.get("implementation") == implementation
                    and resource.get("role") == "client"
+                   and resource.get("identity") == expected_identity
                    and resource.get("experiment_id") == f"{implementation}-owned-lab-{run}"
-                   and resource.get("sampling", {}).get("scope") == "sampler-created process group")
+                   and resource.get("sampling", {}).get("scope") == "sampler-created process group"
+                   and all(finite_nonnegative(v) for v in (cpu_user, cpu_system))
+                   and finite_nonnegative(rss_kib, True)
+                   and resource.get("exit", {}).get("code") == exit_code
+                   and resource.get("exit", {}).get("timed_out") is (exit_code == 124))
     if not finite_nonnegative(fd_count, True):
         fd_count = None
     application_bytes = output.get("application_bytes")
@@ -133,9 +142,9 @@ def make_sample(implementation, run, return_code, time_path, resource_path, outp
         "name": f"{implementation}-{run}", "implementation": implementation,
         "run": run, "failures": failure,
         "elapsed_seconds": timing["elapsed_seconds"] if timing else None,
-        "cpu_user_seconds": timing["cpu_user_seconds"] if timing else None,
-        "cpu_system_seconds": timing["cpu_system_seconds"] if timing else None,
-        "rss_kib": timing["rss_kib"] if timing else None,
+        "cpu_user_seconds": cpu_user if resource_ok else None,
+        "cpu_system_seconds": cpu_system if resource_ok else None,
+        "rss_kib": rss_kib if resource_ok else None,
         "fd_count": fd_count, "application_bytes": application_bytes,
         "payload_sha256": observed_hash, "wire_bytes": None,
         "exit_code": exit_code, "failure_stage": stage,
@@ -211,7 +220,10 @@ def validate_resource(resource):
     if not isinstance(resource, dict):
         return False
     cleanup = resource.get("cleanup")
-    return isinstance(cleanup, dict) and cleanup.get("process_reaped") is True and cleanup.get("process_group_empty") is True and cleanup.get("owned_sockets_after_exit") == 0 and cleanup.get("complete") is True
+    cpu = resource.get("cpu", {}); rss = resource.get("rss", {}); fd = resource.get("fd", {})
+    return (isinstance(cleanup, dict) and cleanup.get("process_reaped") is True and cleanup.get("process_group_empty") is True and cleanup.get("owned_sockets_after_exit") == 0 and cleanup.get("complete") is True
+            and all(finite_nonnegative(cpu.get(k)) for k in ("user_seconds", "system_seconds"))
+            and finite_nonnegative(rss.get("max_kib"), True) and finite_nonnegative(fd.get("peak_count"), True))
 
 
 def validate_result(path):
