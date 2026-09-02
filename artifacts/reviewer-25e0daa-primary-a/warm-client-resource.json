@@ -1,0 +1,47 @@
+{
+  "application_bytes": 48,
+  "cleanup": {
+    "complete": true,
+    "owned_sockets_after_exit": 0,
+    "process_reaped": true,
+    "scope": "sampled direct child only"
+  },
+  "cpu": {
+    "source": "wait4 rusage",
+    "system_seconds": 0.006959,
+    "user_seconds": 0.0
+  },
+  "elapsed_seconds": 7.475284,
+  "ended_at": "2026-09-02T02:07:00.881Z",
+  "exit": {
+    "code": 0,
+    "signal": null,
+    "timed_out": false
+  },
+  "experiment_id": "reviewer-25e0daa-primary-a-warm-diagnostic-client",
+  "fd": {
+    "peak_count": 5,
+    "source": "/proc/<pid>/fd"
+  },
+  "identity": "git:25e0daa4e74b3239568067afa967412ec4c0ebc7",
+  "implementation": "nekomusume",
+  "owned_experimental_sockets": {
+    "peak_count": null,
+    "ports_supplied_count": 0,
+    "source": null
+  },
+  "role": "client",
+  "rss": {
+    "max_kib": 10032,
+    "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+    "unit": "KiB"
+  },
+  "sampling": {
+    "interval_ms": 20,
+    "max_seconds": 18.0,
+    "sample_count": 368,
+    "scope": "direct child process only"
+  },
+  "schema_version": "nekomusume.process-resource.v1",
+  "started_at": "2026-09-02T02:06:53.406Z"
+}

@@ -1,0 +1,27 @@
+{"ok":true,"subsystem":"udp_handshake","role":"client","stage":"socket_bind","last_success_stage":"socket_bind"}
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"start","seq":0,"count":3,"record_payload_bytes":16,"application_bytes_total":48,"udp_port":40085,"tcp_port":40086,"max_seconds":12 }
+{"ok":true,"subsystem":"udp_handshake","role":"client","stage":"client_send","last_success_stage":"client_send"}
+{"ok":true,"subsystem":"udp_handshake","role":"client","stage":"client_hello_sent","last_success_stage":"client_hello_sent"}
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"udp_hello_sent","seq":0 }
+{"ok":true,"subsystem":"udp_handshake","role":"client","stage":"client_recv","last_success_stage":"client_recv"}
+carrier_event name=udp_authenticated session=7001 generation=0
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"udp_datagram_sent","seq":1,"ciphertext_bytes":96,"record_payload_bytes":16 }
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"udp_post_handshake_ignored","seq":1,"reason":"duplicate_noise_response" }
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"udp_delivery_ack_validated","seq":1,"ciphertext_bytes":86 }
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"udp_uncertain_range_sent","seq":2,"ciphertext_bytes":96,"stream":1,"offset":16,"len":16 }
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"tcp_warm_readiness","seq":1,"warm":false,"request_us":1419318,"response_us":1901513 }
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"tcp_warm_readiness","seq":2,"warm":false,"request_us":1901541,"response_us":2431182 }
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"tcp_warm_readiness","seq":3,"warm":true,"request_us":2431204,"response_us":2962996 }
+carrier_event name=tcp_warm session=7001 generation=1 readiness=3 application_data=0
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"udp_health_event","seq":1,"event":"failure","cause":"authenticated_delivery_ack_timeout","state":"unknown","failure_observation_started_us":2963020,"failure_observation_elapsed_us":1040053 }
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"udp_health_event","seq":2,"event":"failure","cause":"authenticated_delivery_ack_timeout","state":"degraded","failure_observation_started_us":4003073,"failure_observation_elapsed_us":1040002 }
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"udp_health_event","seq":3,"event":"failure","cause":"authenticated_delivery_ack_timeout","state":"failed","failure_observation_started_us":5043076,"failure_observation_elapsed_us":1039989 }
+carrier_event name=udp_health_failed session=7001 generation=1 threshold=3 reason=udp_path_degraded diagnostic_cause=authenticated_delivery_ack_timeout
+carrier_event name=tcp_resume_guard session=7001 generation=1
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"tcp_delivery_ack_validated","seq":1,"ciphertext_bytes":86 }
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"tcp_delivery_ack_validated","seq":2,"ciphertext_bytes":86 }
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"failover_timing","seq":3,"fallback_class":"warm","promotion_gate":"warm_authenticated_resume","failure_decided_at_us":6083065,"tcp_connect_started_us":303197,"tcp_connected_us":468900,"tcp_negotiated_us":910367,"tcp_authenticated_us":1419317,"resume_validated_us":1419317,"readiness_satisfied_us":2962996,"new_active_at_us":6083108,"first_resumed_data_accepted_us":6517353,"recovery_latency_us":434287 }
+carrier_event name=ordered_records_complete session=7001 count=3 bytes=16
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"summary","seq":3,"classification":"A","records":3,"application_bytes_total":48 }
+{"experiment_id":"reviewer-25e0daa-primary-a-warm-diagnostic-client","role":"client","event":"capture_metadata","seq":4,"capture":"metadata-only","payload":false,"keys":false,"bounded":true }
+failover_client_ok session=7001 count=3 application_bytes_total=48 failover_mode=automatic_health_failure controlled_udp_stop=false
