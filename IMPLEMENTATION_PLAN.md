@@ -33,6 +33,8 @@ not be promoted to public-WAN reachability.
   TCP/UDP evidence reaches READY before traffic and STOPPED on signal. Historical
   N8 raw logs remain immutable and their old FAILED readiness subclaim is
   superseded only by the repair evidence.
+- [x] **HY2 changed-hypothesis harness repair:** typed failure-row generation retains the first identified attempt without `jq --argjson` diagnostics; ordered local/remote process-group reaping precedes runtime deletion, and cleanup blockers remain truthful artifacts. This is local deterministic harness evidence only; no new VPS comparison was run.
+
 - [x] **N5 package lifecycle:** reproducible x86_64 package install A -> upgrade B
   -> rollback A with retained external state and cleanup evidence.
 - [x] **N6 architecture audit:** first-RC target, if later approved, is

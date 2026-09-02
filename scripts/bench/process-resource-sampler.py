@@ -137,8 +137,15 @@ def main():
     last_sources = {"cpu": None, "rss": None, "fd": None, "socket": None}
     last_cpu = (None, None)
     timed_out = False
+    interrupted_signal = None
     status = usage = None
     deadline = start_mono + a.max_seconds
+
+    def request_stop(signum, _frame):
+        nonlocal interrupted_signal
+        interrupted_signal = signum
+
+    previous_handlers = {signum: signal.signal(signum, request_stop) for signum in (signal.SIGTERM, signal.SIGINT)}
     while status is None:
         cpu, rss, fds, sockets, sources = read_proc(pid, set(a.owned_port))
         samples += 1
@@ -150,8 +157,8 @@ def main():
         if waited == pid:
             status, usage = raw_status, rusage
             break
-        if time.monotonic() >= deadline:
-            timed_out = True
+        if interrupted_signal is not None or time.monotonic() >= deadline:
+            timed_out = interrupted_signal is None
             try:
                 os.killpg(pid, signal.SIGTERM)
             except ProcessLookupError:
@@ -171,6 +178,8 @@ def main():
                 _, status, usage = os.wait4(pid, 0)
             break
         time.sleep(a.interval_ms / 1000)
+    for signum, handler in previous_handlers.items():
+        signal.signal(signum, handler)
     end_wall = dt.datetime.now(dt.timezone.utc)
     elapsed = time.monotonic() - start_mono
     if usage is not None:
@@ -206,6 +215,8 @@ def main():
     finally:
         try: tmp.unlink()
         except FileNotFoundError: pass
+    if interrupted_signal is not None:
+        return 128 + interrupted_signal
     return exit_code if exit_code >= 0 else 128 - exit_code
 
 if __name__ == "__main__":

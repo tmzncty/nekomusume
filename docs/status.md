@@ -28,6 +28,9 @@
 | reachability | bounded probe / public-network experiments | blocked | `docs/vps-experiment-2026-08-29.md` | Standing authorization permits bounded self-owned VPS TCP/UDP execution; public/general reachability evidence, required environments, sustained release evidence, third-party targets, security/release approval and production exposure remain blocked; no public listener |
 | production | production deployment/readiness | blocked | `docs/spec/m5-release-readiness-gate.md` | Research-only repository; WAN/reachability, independent review and release evidence absent; no production or security approval |
 
+
+> **HY2 harness repair (local-only):** deterministic regression coverage now retains the first nonzero/diagnostic Nekomusume sample as valid typed JSON and verifies ordered process-group reaping/listener checks before runtime deletion. Cleanup failure remains `BLOCKED_HARNESS`. No VPS/network comparison was run and no performance conclusion changed.
+
 ## Status vocabulary
 
 - **implemented** — repository evidence exists and is exercised, without implying protocol/security readiness.

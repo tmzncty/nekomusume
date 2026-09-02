@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Deterministic harmless process/FD/listener and validator regressions."""
-import importlib.util, json, os, pathlib, socket, subprocess, sys, tempfile, textwrap
+import importlib.util, json, os, pathlib, signal, socket, subprocess, sys, tempfile, textwrap, time
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 SAMPLER=ROOT/"scripts/bench/process-resource-sampler.py"
 VALIDATOR=ROOT/"scripts/bench/validate-process-resource.py"
@@ -76,4 +76,25 @@ with tempfile.TemporaryDirectory() as td_raw:
     badout=td/"bad-output.json"
     cp=run(sys.executable, str(SAMPLER), "--experiment-id", "../bad", "--implementation", "fixture", "--role", "client", "--identity", "git:x", "--application-bytes", "0", "--output", str(badout), "--", "/bin/true", check=False)
     assert cp.returncode == 1 and not badout.exists()
+
+# TERM and INT must stop and reap the sampler-owned child before executable-path deletion.
+for stop_signal in (signal.SIGTERM, signal.SIGINT):
+    with tempfile.TemporaryDirectory() as race_raw:
+        race = pathlib.Path(race_raw)
+        child = race / "child.py"
+        child.write_text("import socket,time,sys\ns=socket.socket(); s.bind(('127.0.0.1',int(sys.argv[1]))); s.listen(); time.sleep(60)\n")
+        probe = socket.socket(); probe.bind(("127.0.0.1", 0)); race_port = probe.getsockname()[1]; probe.close()
+        race_out = race / "race.json"
+        proc = subprocess.Popen([sys.executable, str(SAMPLER), "--experiment-id", "signal-race", "--implementation", "fake", "--role", "client", "--identity", "sha256:00", "--application-bytes", "0", "--owned-port", str(race_port), "--interval-ms", "10", "--max-seconds", "60", "--output", str(race_out), "--", sys.executable, str(child), str(race_port)])
+        for _ in range(100):
+            try:
+                with socket.create_connection(("127.0.0.1", race_port), timeout=.02): break
+            except OSError: time.sleep(.01)
+        else: raise AssertionError("race listener did not start")
+        proc.send_signal(stop_signal); assert proc.wait(timeout=3) == 128 + stop_signal
+        with socket.socket() as check:
+            try: check.connect(("127.0.0.1", race_port))
+            except OSError: pass
+            else: raise AssertionError("listener remained after sampler signal")
+        child.unlink(); assert not child.exists()
 print("process resource sampler tests: PASS")

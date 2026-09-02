@@ -22,4 +22,13 @@ for bad in (rows+[rows[0]], [rows[1],rows[0]], [dict(rows[0],application_bytes=1
  try: v.validate_samples(bad,doc['contract'],False)
  except ValueError: pass
  else: raise AssertionError('invalid samples accepted')
+# Diagnostic/multiline non-JSON output with nonzero status is typed, retained and valid.
+diag=tmp/'diagnostic'; diag.write_text('first diagnostic\nsecond diagnostic\n')
+good.write_text('Command exited with non-zero status 9\n{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":.2,"cpu_user_seconds":0,"cpu_system_seconds":0,"rss_kib":1,"exit_code":9}\n')
+failed=v.make_sample('nekomusume',1,9,good,diag,1200,h)
+assert failed['failures']==1 and failed['exit_code']==9 and failed['application_bytes']==0 and failed['payload_sha256'] is None
+failed_doc=dict(doc, samples=[failed], failure_stage='nekomusume-1-client')
+failed_doc['cleanup_status']='failed'; failed_doc['cleanup_evidence']=dict(failed_doc['cleanup_evidence'], local_processes_reaped=False)
+v.atomic_write(blocked,failed_doc); v.validate_result(blocked)
+assert json.load(open(blocked))['status']=='BLOCKED_HARNESS'
 print('validate-hy2-owned-lab-test-ok')

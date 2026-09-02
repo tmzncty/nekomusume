@@ -54,4 +54,35 @@ grep -Fq 'trap on_exit EXIT; trap on_signal INT TERM' "$source_script"
 grep -Fq 'wait "$pid" 2>/dev/null || true' "$source_script"
 grep -Fq 'remote_process_groups_reaped' "$source_script"
 grep -Fq 'atomic_append "$row"' "$source_script"
+# Changed-hypothesis regression: first Nekomusume diagnostic/nonzero output becomes
+# one typed retained failure row; record construction never feeds diagnostics to jq.
+hash0=$(printf test-payload | sha256sum | awk '{print $1}')
+printf '%s\n' 'client diagnostic: connection refused' 'second diagnostic line' >"$tmp/neko-first.out"
+printf '%s\n' 'Command exited with non-zero status 9' '{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":0.25,"cpu_user_seconds":0.01,"cpu_system_seconds":0.02,"rss_kib":9,"exit_code":9}' >"$tmp/neko-first.time"
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation nekomusume --run 1 --return-code 9 --time "$tmp/neko-first.time" --client-output "$tmp/neko-first.out" --bytes 1200 --payload-hash "$hash0" >"$tmp/first.jsonl" 2>"$tmp/make.err"
+[ ! -s "$tmp/make.err" ]; [ "$(wc -l <"$tmp/first.jsonl")" -eq 1 ]
+jq -e '.name=="nekomusume-1" and .failures==1 and .exit_code==9 and .failure_stage=="client_exit" and .application_bytes==0 and .payload_sha256==null' "$tmp/first.jsonl" >/dev/null
+! grep -q -- '--argjson' "$source_script"
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" blocked --records "$tmp/first.jsonl" --output "$tmp/blocked.json" --stage nekomusume-1-client --commit "$(printf %040d 0)" --runs 5 --bytes 1200 --payload-hash "$hash0" --local-reaped 1 --local-listeners 0 --remote-reaped 1 --remote-listeners 0 --remote-path-removed 1
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" validate-result "$tmp/blocked.json" | grep -qx validated
+jq -e '.status=="BLOCKED_HARNESS" and (.samples|length)==1 and .cleanup_status=="verified"' "$tmp/blocked.json" >/dev/null
+# Executable/path deletion race: kill and reap the process group before deleting its path.
+mkdir "$tmp/race"; cat >"$tmp/race/child" <<'RACE'
+#!/bin/sh
+trap 'exit 0' TERM INT
+while :; do sleep 1; done
+RACE
+chmod +x "$tmp/race/child"
+setsid "$tmp/race/child" & race_pid=$!
+for _ in $(seq 1 50); do kill -0 "$race_pid" 2>/dev/null && break; sleep .01; done
+sleep .05
+kill -TERM -- "-$race_pid" 2>/dev/null || kill -TERM "$race_pid" 2>/dev/null || true
+wait "$race_pid" || true
+! kill -0 "$race_pid" 2>/dev/null
+rm -rf "$tmp/race"; [ ! -e "$tmp/race" ]
+# Cleanup order and idempotent signal/exit guards remain explicit.
+grep -Fq '[ "$cleanup_done" -eq 0 ] || return "$rc"' "$source_script"
+grep -Fq 'terminate_local && local_processes_reaped=1' "$source_script"
+grep -Fq 'remote_temp_path_removed=1' "$source_script"
+grep -Fq 'trap - EXIT INT TERM' "$source_script"
 echo compare-hy2-owned-lab-test-ok

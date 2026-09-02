@@ -77,6 +77,62 @@ def atomic_write(path, value):
             os.unlink(temporary)
 
 
+def _nullable_nonnegative(value, integer=False):
+    return value is None or finite_nonnegative(value, integer)
+
+
+def read_client_output(path):
+    try:
+        value = json.loads(pathlib.Path(path).read_text(errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def make_sample(implementation, run, return_code, time_path, output_path,
+                payload_bytes, payload_hash):
+    if implementation not in ("nekomusume", "hy2") or not isinstance(run, int) or run < 1:
+        raise ValueError("invalid sample identity")
+    exit_code = return_code if isinstance(return_code, int) and 0 <= return_code <= 255 else None
+    try:
+        timing = parse_time(time_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        timing = None
+    output = read_client_output(output_path)
+    fd_count = output.get("fd_count")
+    if not finite_nonnegative(fd_count, True):
+        fd_count = None
+    application_bytes = output.get("application_bytes")
+    if not finite_nonnegative(application_bytes, True):
+        application_bytes = 0
+    observed_hash = output.get("payload_sha256")
+    if not isinstance(observed_hash, str) or not SHA256.fullmatch(observed_hash):
+        observed_hash = None
+    stage = None
+    if exit_code != 0:
+        stage = "client_exit"
+    elif timing is None:
+        stage = "time_parse"
+    elif application_bytes != payload_bytes:
+        stage = "application_bytes"
+    elif observed_hash != payload_hash:
+        stage = "payload_hash"
+    elif fd_count is None:
+        stage = "resource_evidence"
+    failure = int(stage is not None)
+    return {
+        "name": f"{implementation}-{run}", "implementation": implementation,
+        "run": run, "failures": failure,
+        "elapsed_seconds": timing["elapsed_seconds"] if timing else None,
+        "cpu_user_seconds": timing["cpu_user_seconds"] if timing else None,
+        "cpu_system_seconds": timing["cpu_system_seconds"] if timing else None,
+        "rss_kib": timing["rss_kib"] if timing else None,
+        "fd_count": fd_count, "application_bytes": application_bytes,
+        "payload_sha256": observed_hash, "wire_bytes": None,
+        "exit_code": exit_code, "failure_stage": stage,
+    }
+
+
 def validate_samples(samples, contract, require_complete):
     runs = contract.get("runs_per_implementation")
     payload_bytes = contract.get("payload_bytes")
@@ -99,11 +155,17 @@ def validate_samples(samples, contract, require_complete):
             raise ValueError("sample name mismatch")
         if row["failures"] not in (0, 1):
             raise ValueError("sample failure count must be zero or one")
-        if not isinstance(row["exit_code"], int) or not 0 <= row["exit_code"] <= 255:
+        if row["exit_code"] is not None and (not isinstance(row["exit_code"], int) or not 0 <= row["exit_code"] <= 255):
             raise ValueError("invalid sample exit code")
         success = row["failures"] == 0
         numeric = ("elapsed_seconds", "cpu_user_seconds", "cpu_system_seconds", "rss_kib", "fd_count")
-        if success and any(not finite_nonnegative(row[key], key in ("rss_kib", "fd_count")) for key in numeric):
+        if any(not _nullable_nonnegative(row[key], key in ("rss_kib", "fd_count")) for key in numeric):
+            raise ValueError("sample has invalid timing/resource evidence")
+        if not finite_nonnegative(row["application_bytes"], True):
+            raise ValueError("sample has invalid application byte evidence")
+        if row["payload_sha256"] is not None and (not isinstance(row["payload_sha256"], str) or not SHA256.fullmatch(row["payload_sha256"])):
+            raise ValueError("sample has invalid payload hash")
+        if success and any(row[key] is None for key in numeric):
             raise ValueError("successful sample lacks valid timing/resource evidence")
         if success and (row["exit_code"] != 0 or row["application_bytes"] != payload_bytes or row["payload_sha256"] != payload_hash or row["failure_stage"] is not None):
             raise ValueError("successful sample violates exit/app-byte/hash evidence")
@@ -154,8 +216,19 @@ def validate_result(path):
         validate_samples(doc["samples"], contract, False)
         if "summary" in doc:
             raise ValueError("blocked artifact must not contain a partial summary")
-        if doc["cleanup_status"] != "verified" or doc["cleanup_evidence"] != {"local_processes_reaped": True, "local_listeners_remaining": 0, "remote_process_groups_reaped": True, "remote_listeners_remaining": 0, "remote_temp_path_removed": True}:
-            raise ValueError("blocked artifact lacks verified cleanup evidence")
+        cleanup = doc["cleanup_evidence"]
+        cleanup_required = {"local_processes_reaped", "local_listeners_remaining", "remote_process_groups_reaped", "remote_listeners_remaining", "remote_temp_path_removed"}
+        if not isinstance(cleanup, dict) or set(cleanup) != cleanup_required:
+            raise ValueError("blocked artifact lacks cleanup evidence")
+        for key in ("local_processes_reaped", "remote_process_groups_reaped", "remote_temp_path_removed"):
+            if not isinstance(cleanup[key], bool):
+                raise ValueError("blocked artifact has invalid cleanup evidence")
+        for key in ("local_listeners_remaining", "remote_listeners_remaining"):
+            if not finite_nonnegative(cleanup[key], True):
+                raise ValueError("blocked artifact has invalid cleanup evidence")
+        verified = cleanup == {"local_processes_reaped": True, "local_listeners_remaining": 0, "remote_process_groups_reaped": True, "remote_listeners_remaining": 0, "remote_temp_path_removed": True}
+        if doc["cleanup_status"] != ("verified" if verified else "failed"):
+            raise ValueError("blocked artifact cleanup status is untruthful")
         return
     if schema != "nekomusume.benchmark-result.v1":
         raise ValueError("unexpected result schema")
@@ -176,20 +249,32 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     parse = sub.add_parser("parse-time"); parse.add_argument("path")
     validate = sub.add_parser("validate-result"); validate.add_argument("path")
+    sample = sub.add_parser("make-sample")
+    sample.add_argument("--implementation", required=True); sample.add_argument("--run", required=True, type=int)
+    sample.add_argument("--return-code", required=True, type=int); sample.add_argument("--time", required=True)
+    sample.add_argument("--client-output", required=True); sample.add_argument("--bytes", required=True, type=int)
+    sample.add_argument("--payload-hash", required=True)
     blocked = sub.add_parser("blocked")
     blocked.add_argument("--records", required=True); blocked.add_argument("--output", required=True)
     blocked.add_argument("--stage", required=True); blocked.add_argument("--commit", required=True)
     blocked.add_argument("--runs", required=True, type=int); blocked.add_argument("--bytes", required=True, type=int)
-    blocked.add_argument("--payload-hash", required=True); blocked.add_argument("--cleanup-ok", required=True)
+    blocked.add_argument("--payload-hash", required=True)
+    blocked.add_argument("--local-reaped", required=True, type=int); blocked.add_argument("--local-listeners", required=True, type=int)
+    blocked.add_argument("--remote-reaped", required=True, type=int); blocked.add_argument("--remote-listeners", required=True, type=int)
+    blocked.add_argument("--remote-path-removed", required=True, type=int)
     args = parser.parse_args()
     if args.command == "parse-time":
         print(json.dumps(parse_time(args.path), sort_keys=True, separators=(",", ":")))
+    elif args.command == "make-sample":
+        value = make_sample(args.implementation, args.run, args.return_code, args.time,
+                            args.client_output, args.bytes, args.payload_hash)
+        print(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False))
     elif args.command == "blocked":
-        ok = args.cleanup_ok == "1"
-        doc = {"schema":"nekomusume.benchmark-blocked-harness.v1","experiment_id":"hy2-owned-lab-paired","git_commit":args.commit,"status":"BLOCKED_HARNESS","failure_stage":args.stage,"contract":{"runs_per_implementation":args.runs,"payload_bytes":args.bytes,"payload_sha256":args.payload_hash},"samples":load_jsonl(args.records),"cleanup_status":"verified" if ok else "failed","cleanup_evidence":{"local_processes_reaped":ok,"local_listeners_remaining":0 if ok else 1,"remote_process_groups_reaped":ok,"remote_listeners_remaining":0 if ok else 1,"remote_temp_path_removed":ok}}
+        cleanup = {"local_processes_reaped":args.local_reaped == 1,"local_listeners_remaining":args.local_listeners,"remote_process_groups_reaped":args.remote_reaped == 1,"remote_listeners_remaining":args.remote_listeners,"remote_temp_path_removed":args.remote_path_removed == 1}
+        ok = cleanup == {"local_processes_reaped":True,"local_listeners_remaining":0,"remote_process_groups_reaped":True,"remote_listeners_remaining":0,"remote_temp_path_removed":True}
+        doc = {"schema":"nekomusume.benchmark-blocked-harness.v1","experiment_id":"hy2-owned-lab-paired","git_commit":args.commit,"status":"BLOCKED_HARNESS","failure_stage":args.stage,"contract":{"runs_per_implementation":args.runs,"payload_bytes":args.bytes,"payload_sha256":args.payload_hash},"samples":load_jsonl(args.records),"cleanup_status":"verified" if ok else "failed","cleanup_evidence":cleanup}
         atomic_write(args.output, doc)
-        if ok:
-            validate_result(args.output)
+        validate_result(args.output)
     else:
         validate_result(args.path)
         print("validated")

@@ -4,16 +4,216 @@
   "title": "Nekomusume benchmark harness blocker with retained samples",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "experiment_id", "git_commit", "status", "failure_stage", "contract", "samples", "cleanup_status", "cleanup_evidence"],
+  "required": [
+    "schema",
+    "experiment_id",
+    "git_commit",
+    "status",
+    "failure_stage",
+    "contract",
+    "samples",
+    "cleanup_status",
+    "cleanup_evidence"
+  ],
   "properties": {
-    "schema": {"const": "nekomusume.benchmark-blocked-harness.v1"},
-    "experiment_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]{8,64}$"},
-    "git_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-    "status": {"const": "BLOCKED_HARNESS"},
-    "failure_stage": {"type": "string", "minLength": 1, "maxLength": 96},
-    "contract": {"type": "object"},
-    "samples": {"type": "array", "items": {"type": "object"}, "maxItems": 20},
-    "cleanup_status": {"enum": ["verified", "failed"]},
-    "cleanup_evidence": {"type": "object"}
+    "schema": {
+      "const": "nekomusume.benchmark-blocked-harness.v1"
+    },
+    "experiment_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{8,64}$"
+    },
+    "git_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "status": {
+      "const": "BLOCKED_HARNESS"
+    },
+    "failure_stage": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runs_per_implementation",
+        "payload_bytes",
+        "payload_sha256"
+      ],
+      "properties": {
+        "runs_per_implementation": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 10
+        },
+        "payload_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1200
+        },
+        "payload_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "samples": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "implementation",
+          "run",
+          "failures",
+          "elapsed_seconds",
+          "cpu_user_seconds",
+          "cpu_system_seconds",
+          "rss_kib",
+          "fd_count",
+          "application_bytes",
+          "payload_sha256",
+          "wire_bytes",
+          "exit_code",
+          "failure_stage"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^(nekomusume|hy2)-[1-9][0-9]*$"
+          },
+          "implementation": {
+            "enum": [
+              "nekomusume",
+              "hy2"
+            ]
+          },
+          "run": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "failures": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "elapsed_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cpu_user_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cpu_system_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "rss_kib": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "fd_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "application_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "payload_sha256": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            ]
+          },
+          "wire_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 255
+          },
+          "failure_stage": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 96
+          }
+        }
+      }
+    },
+    "cleanup_status": {
+      "enum": [
+        "verified",
+        "failed"
+      ]
+    },
+    "cleanup_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "local_processes_reaped",
+        "local_listeners_remaining",
+        "remote_process_groups_reaped",
+        "remote_listeners_remaining",
+        "remote_temp_path_removed"
+      ],
+      "properties": {
+        "local_processes_reaped": {
+          "type": "boolean"
+        },
+        "local_listeners_remaining": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remote_process_groups_reaped": {
+          "type": "boolean"
+        },
+        "remote_listeners_remaining": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remote_temp_path_removed": {
+          "type": "boolean"
+        }
+      }
+    }
   }
 }
