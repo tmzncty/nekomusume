@@ -1,0 +1,15 @@
+experiment_id=reviewer-25e0daa-followup-b-periodic-addr-direct
+parent=25e0daa4e74b3239568067afa967412ec4c0ebc7
+binary_sha256=8ede1564015561498559586a83c6aeea2a75171bd2ae45b93e547e1793082852
+path=self-owned-direct-tcp
+endpoint=redacted
+port=40096
+count=60
+bytes=32
+interval_ms=5000
+duration_s=300
+setup_timeout_ms=5000
+ack_timeout_ms=1000
+concurrency=1
+client_exit=0
+server_ssh_exit=0
