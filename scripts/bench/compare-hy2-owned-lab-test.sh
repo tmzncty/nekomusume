@@ -29,11 +29,32 @@ if env $base LAB_REMOTE_BIND_ADDRESS=192.0.2.10 MOCK_REMOTE_INTERFACES="$interfa
 if env $base LAB_REMOTE_BIND_ADDRESS=192.0.2.9 MOCK_REMOTE_INTERFACES="$interfaces" "$source_script" --validate >/dev/null 2>&1; then echo 'unpinned HY2 accepted' >&2; exit 1; fi
 # Static safety contracts: exact dedicated-address YAML; no wildcard HY2 or production config/service operations.
 grep -Fq 'listen: ${bind_authority}:${ports[1]}' "$source_script"
-grep -Fq 'server: ${bind_authority}:${ports[1]}' "$source_script"
+grep -Fq 'server: ${connect_authority}:${ports[1]}' "$source_script"
+grep -Fq -- '--addr '"'"'${connect_authority}:${ports[0]}'"'"'' "$source_script"
+grep -Fq 'ip route get "$LAB_REMOTE_ADDRESS"' "$source_script"
+! grep -Fq 'ip route get "$LAB_REMOTE_BIND_ADDRESS"' "$source_script"
 grep -Fq -- '--bind '"'"'${bind_authority}:${ports[0]}'"'"'' "$source_script"
 ! grep -Eq 'listen: :|listen: 0\.0\.0\.0:|listen: \[::\]:' "$source_script"
 ! grep -Eq '/etc/hysteria|systemctl|pkill.*hysteria|0\.0\.0\.0.*hy2' "$source_script"
 grep -q "HY2 artifact is not pinned" "$source_script"
+# Exact disposable-certificate pin is mandatory; bare insecure is forbidden.
+grep -Fq 'pinSHA256: $cert_pin' "$source_script"
+grep -Fq 'openssl x509 -in "$run/tls/cert.pem" -noout -fingerprint -sha256' "$source_script"
+python3 - "$source_script" <<'PYTLS'
+from pathlib import Path
+import re, sys
+text=Path(sys.argv[1]).read_text()
+tls=re.search(r'cat >"\$run/hy2-client.yaml".*?<<CFG\n(.*?)\nCFG', text, re.S).group(1)
+assert 'insecure: true' in tls and 'pinSHA256: $cert_pin' in tls
+assert not re.search(r'insecure: true\s*\ntcpForwarding:', text)
+PYTLS
+# A fresh transport client runs inside every HY2 timed sampler process group.
+grep -Fq "hysteria' client -c" "$source_script"
+grep -Fq 'run_client hy2 "$i"' "$source_script"
+grep -Fq 'sampler-created process group' "$root/scripts/bench/validate-hy2-owned-lab.py"
+! grep -Fq 'hy2_client_pid' "$source_script"
+grep -Fq 'client_lifecycle:"fresh transport per timed sample"' "$source_script"
+grep -Fq 'observed_clients != expected_clients' "$root/scripts/bench/validate-hy2-owned-lab.py"
 # Endpoint mismatch and unsafe output remain rejected.
 if env $base LAB_ENDPOINT_SHA256=$(printf %064d 0) LAB_REMOTE_BIND_ADDRESS=192.0.2.9 MOCK_REMOTE_INTERFACES="$interfaces" "$s" --validate >/dev/null 2>&1; then exit 1; fi
 grep -q "BENCH_RUNS must be 3..10" "$source_script"; grep -q "ports must be distinct" "$source_script"
@@ -59,7 +80,8 @@ grep -Fq 'atomic_append "$row"' "$source_script"
 hash0=$(printf test-payload | sha256sum | awk '{print $1}')
 printf '%s\n' 'client diagnostic: connection refused' 'second diagnostic line' >"$tmp/neko-first.out"
 printf '%s\n' 'Command exited with non-zero status 9' '{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":0.25,"cpu_user_seconds":0.01,"cpu_system_seconds":0.02,"rss_kib":9,"exit_code":9}' >"$tmp/neko-first.time"
-python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation nekomusume --run 1 --return-code 9 --time "$tmp/neko-first.time" --client-output "$tmp/neko-first.out" --bytes 1200 --payload-hash "$hash0" >"$tmp/first.jsonl" 2>"$tmp/make.err"
+printf '%s\n' '{"experiment_id":"nekomusume-owned-lab-1","implementation":"nekomusume","role":"client","fd":{"peak_count":4},"sampling":{"scope":"sampler-created process group"},"cleanup":{"process_reaped":true,"process_group_empty":true,"owned_sockets_after_exit":0,"complete":true}}' >"$tmp/neko-first.resource"
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation nekomusume --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output "$tmp/neko-first.out" --bytes 1200 --payload-hash "$hash0" >"$tmp/first.jsonl" 2>"$tmp/make.err"
 [ ! -s "$tmp/make.err" ]; [ "$(wc -l <"$tmp/first.jsonl")" -eq 1 ]
 jq -e '.name=="nekomusume-1" and .failures==1 and .exit_code==9 and .failure_stage=="client_exit" and .application_bytes==0 and .payload_sha256==null' "$tmp/first.jsonl" >/dev/null
 ! grep -q -- '--argjson' "$source_script"

@@ -191,9 +191,29 @@ def main():
 
     previous_handlers = {signum: signal.signal(signum, request_stop) for signum in (signal.SIGTERM, signal.SIGINT)}
     while status is None:
-        cpu, rss, fds, sockets, sources = read_proc(pid, set(a.owned_port))
+        members = process_group_members(pid) or {pid}
+        group_cpu = [0.0, 0.0]
+        group_rss = group_fd = group_socket = 0
+        observed = {"cpu": False, "rss": False, "fd": False, "socket": False}
+        sources = {"cpu": None, "rss": None, "fd": None, "socket": None}
+        for member in members:
+            cpu, rss, fds, sockets, member_sources = read_proc(member, set(a.owned_port))
+            if cpu[0] is not None:
+                group_cpu[0] += cpu[0]; group_cpu[1] += cpu[1]; observed["cpu"] = True
+            for key, value in (("rss", rss), ("fd", fds), ("socket", sockets)):
+                if value is not None:
+                    if key == "rss": group_rss += value
+                    elif key == "fd": group_fd += value
+                    else: group_socket += value
+                    observed[key] = True
+            for key, value in member_sources.items():
+                if value is not None: sources[key] = value
+        cpu = tuple(group_cpu) if observed["cpu"] else (None, None)
+        rss = group_rss if observed["rss"] else None
+        fds = group_fd if observed["fd"] else None
+        sockets = group_socket if observed["socket"] else None
         samples += 1
-        if cpu[0] is not None: last_cpu = cpu
+        if cpu[0] is not None: last_cpu = (maximum(last_cpu[0], cpu[0]), maximum(last_cpu[1], cpu[1]))
         for key, value in sources.items():
             if value is not None: last_sources[key] = value
         peak_rss, peak_fd, peak_socket = maximum(peak_rss, rss), maximum(peak_fd, fds), maximum(peak_socket, sockets)
@@ -228,7 +248,8 @@ def main():
     end_wall = dt.datetime.now(dt.timezone.utc)
     elapsed = time.monotonic() - start_mono
     if usage is not None:
-        cpu_user, cpu_system = usage.ru_utime, usage.ru_stime
+        cpu_user = maximum(last_cpu[0], usage.ru_utime)
+        cpu_system = maximum(last_cpu[1], usage.ru_stime)
         cpu_source = "wait4 rusage"
         peak_rss = maximum(peak_rss, usage.ru_maxrss)
         rss_source = "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB"
@@ -250,7 +271,7 @@ def main():
         "fd": {"peak_count": peak_fd, "source": last_sources["fd"] if peak_fd is not None else None},
         "owned_experimental_sockets": {"peak_count": peak_socket, "ports_supplied_count": len(a.owned_port), "source": last_sources["socket"] if peak_socket is not None else None},
         "application_bytes": a.application_bytes,
-        "sampling": {"interval_ms": a.interval_ms, "sample_count": samples, "max_seconds": a.max_seconds, "scope": "direct child process only"},
+        "sampling": {"interval_ms": a.interval_ms, "sample_count": samples, "max_seconds": a.max_seconds, "scope": "sampler-created process group"},
         "cleanup": {"process_reaped": True, "process_group_empty": group_empty, "owned_sockets_after_exit": owned_sockets_after_exit, "complete": group_empty, "scope": "sampler-created process group"},
     }
     tmp = Path(str(a.output) + ".tmp")

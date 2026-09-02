@@ -89,7 +89,7 @@ def read_client_output(path):
     return value if isinstance(value, dict) else {}
 
 
-def make_sample(implementation, run, return_code, time_path, output_path,
+def make_sample(implementation, run, return_code, time_path, resource_path, output_path,
                 payload_bytes, payload_hash):
     if implementation not in ("nekomusume", "hy2") or not isinstance(run, int) or run < 1:
         raise ValueError("invalid sample identity")
@@ -99,7 +99,16 @@ def make_sample(implementation, run, return_code, time_path, output_path,
     except (OSError, ValueError, json.JSONDecodeError):
         timing = None
     output = read_client_output(output_path)
-    fd_count = output.get("fd_count")
+    try:
+        resource = load_json(resource_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        resource = {}
+    fd_count = resource.get("fd", {}).get("peak_count") if isinstance(resource, dict) else None
+    resource_ok = (validate_resource(resource)
+                   and resource.get("implementation") == implementation
+                   and resource.get("role") == "client"
+                   and resource.get("experiment_id") == f"{implementation}-owned-lab-{run}"
+                   and resource.get("sampling", {}).get("scope") == "sampler-created process group")
     if not finite_nonnegative(fd_count, True):
         fd_count = None
     application_bytes = output.get("application_bytes")
@@ -117,7 +126,7 @@ def make_sample(implementation, run, return_code, time_path, output_path,
         stage = "application_bytes"
     elif observed_hash != payload_hash:
         stage = "payload_hash"
-    elif fd_count is None:
+    elif fd_count is None or not resource_ok:
         stage = "resource_evidence"
     failure = int(stage is not None)
     return {
@@ -240,8 +249,20 @@ def validate_result(path):
     validate_samples(doc["samples"], doc["contract"], True)
     if doc["summary"] != expected_summary(doc["samples"]):
         raise ValueError("summary does not match complete retained sample set")
-    if not isinstance(doc["resources"], list) or not doc["resources"] or not all(validate_resource(item) for item in doc["resources"]):
+    resources = doc["resources"]
+    if not isinstance(resources, list) or not resources or not all(validate_resource(item) for item in resources):
         raise ValueError("resource evidence is missing or incomplete")
+    contract = doc["contract"]
+    if contract.get("client_lifecycle") != "fresh transport per timed sample" or contract.get("client_resource_scope") != "sampler-created process group":
+        raise ValueError("client lifecycle/resource contract is missing")
+    expected_clients = {(implementation, f"{implementation}-owned-lab-{run}")
+                        for implementation in ("nekomusume", "hy2")
+                        for run in range(1, contract["runs_per_implementation"] + 1)}
+    observed_clients = {(item.get("implementation"), item.get("experiment_id"))
+                        for item in resources if item.get("role") == "client"
+                        and item.get("sampling", {}).get("scope") == "sampler-created process group"}
+    if observed_clients != expected_clients:
+        raise ValueError("per-sample client transport resource evidence is incomplete")
     if doc["cleanup_status"] != "verified" or doc["cleanup_evidence"] != {"local_processes_reaped": True, "local_listeners_remaining": 0, "remote_process_groups_reaped": True, "remote_listeners_remaining": 0, "remote_temp_path_removed": True}:
         raise ValueError("cleanup evidence is missing")
 
@@ -253,7 +274,7 @@ def main():
     validate = sub.add_parser("validate-result"); validate.add_argument("path")
     sample = sub.add_parser("make-sample")
     sample.add_argument("--implementation", required=True); sample.add_argument("--run", required=True, type=int)
-    sample.add_argument("--return-code", required=True, type=int); sample.add_argument("--time", required=True)
+    sample.add_argument("--return-code", required=True, type=int); sample.add_argument("--time", required=True); sample.add_argument("--resource", required=True)
     sample.add_argument("--client-output", required=True); sample.add_argument("--bytes", required=True, type=int)
     sample.add_argument("--payload-hash", required=True)
     blocked = sub.add_parser("blocked")
@@ -268,7 +289,7 @@ def main():
     if args.command == "parse-time":
         print(json.dumps(parse_time(args.path), sort_keys=True, separators=(",", ":")))
     elif args.command == "make-sample":
-        value = make_sample(args.implementation, args.run, args.return_code, args.time,
+        value = make_sample(args.implementation, args.run, args.return_code, args.time, args.resource,
                             args.client_output, args.bytes, args.payload_hash)
         print(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False))
     elif args.command == "blocked":

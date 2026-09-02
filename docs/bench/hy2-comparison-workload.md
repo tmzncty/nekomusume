@@ -28,3 +28,20 @@ The existing `compare-hy2.sh` remains loopback-only and now rejects an adapter
 that returns the right byte count with the wrong hash. It must not be repurposed
 as a WAN orchestrator. A self-owned-VPS run still requires a separate disposable
 orchestrator to own both remote process lifecycles and cleanup.
+
+## Owned-lab fair-pair execution contract
+
+The owned-lab adapter treats remote listener binding and client connection as
+separate authorities. Servers bind only to the verified assigned
+`LAB_REMOTE_BIND_ADDRESS`; both clients and client-side route/MTU discovery use
+the SSH-reachable `LAB_REMOTE_ADDRESS`. The values may differ on a NAT-shaped
+VPS.
+
+Each run creates a fresh authenticated client transport/session, performs one
+exact payload exchange, and tears that client down before the next run. The
+HY2 disposable self-signed certificate is authenticated with its exact
+SHA-256 certificate fingerprint (`insecure: true` plus `pinSHA256`); bare
+insecure TLS is not an admissible benchmark configuration. Per-run client
+resource evidence covers the sampler-created process group, including the HY2
+transport and its local payload helper. Persistent server resources remain
+separately labelled and are not treated as client-startup measurements.

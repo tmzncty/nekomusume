@@ -44,7 +44,7 @@ def validate(d):
     number(d["application_bytes"], 0, 268435456, "application_bytes", integer=True)
     q=d["sampling"]; exact(q, {"interval_ms", "sample_count", "max_seconds", "scope"}, "sampling")
     number(q["interval_ms"], 10, 5000, "interval", integer=True); number(q["sample_count"], 1, 60001, "samples", integer=True); number(q["max_seconds"], .1, 600, "max_seconds")
-    if q["scope"] != "direct child process only": bad("sampling.scope")
+    if q["scope"] not in ("direct child process only", "sampler-created process group"): bad("sampling.scope")
     c=d["cleanup"]; exact(c, {"process_reaped", "process_group_empty", "owned_sockets_after_exit", "complete", "scope"}, "cleanup")
     if c != {"process_reaped": True, "process_group_empty": True, "owned_sockets_after_exit": 0, "complete": True, "scope": "sampler-created process group"}: bad("cleanup")
     for metric in (d["cpu"], d["rss"], d["fd"], s):

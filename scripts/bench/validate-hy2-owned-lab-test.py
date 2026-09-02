@@ -25,7 +25,8 @@ for bad in (rows+[rows[0]], [rows[1],rows[0]], [dict(rows[0],application_bytes=1
 # Diagnostic/multiline non-JSON output with nonzero status is typed, retained and valid.
 diag=tmp/'diagnostic'; diag.write_text('first diagnostic\nsecond diagnostic\n')
 good.write_text('Command exited with non-zero status 9\n{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":.2,"cpu_user_seconds":0,"cpu_system_seconds":0,"rss_kib":1,"exit_code":9}\n')
-failed=v.make_sample('nekomusume',1,9,good,diag,1200,h)
+resource=tmp/'resource'; resource.write_text(json.dumps({'experiment_id':'nekomusume-owned-lab-1','implementation':'nekomusume','role':'client','fd':{'peak_count':4},'sampling':{'scope':'sampler-created process group'},'cleanup':{'process_reaped':True,'process_group_empty':True,'owned_sockets_after_exit':0,'complete':True}}))
+failed=v.make_sample('nekomusume',1,9,good,resource,diag,1200,h)
 assert failed['failures']==1 and failed['exit_code']==9 and failed['application_bytes']==0 and failed['payload_sha256'] is None
 failed_doc=dict(doc, samples=[failed], failure_stage='nekomusume-1-client')
 failed_doc['cleanup_status']='failed'; failed_doc['cleanup_evidence']=dict(failed_doc['cleanup_evidence'], local_processes_reaped=False)
@@ -43,4 +44,18 @@ bad=dict(pre,cleanup_status='verified'); v.atomic_write(blocked,bad)
 try: v.validate_result(blocked)
 except ValueError: pass
 else: raise AssertionError('unknown cleanup accepted as verified')
+# Complete results require one process-group resource row for every fresh client sample.
+complete_rows=[]
+for i in range(1,6): complete_rows += [row('nekomusume',i),row('hy2',i)]
+def client_resource(impl,run):
+ return {'experiment_id':f'{impl}-owned-lab-{run}','implementation':impl,'role':'client','sampling':{'scope':'sampler-created process group'},'cleanup':{'process_reaped':True,'process_group_empty':True,'owned_sockets_after_exit':0,'complete':True}}
+complete_contract={'runs_per_implementation':5,'payload_bytes':1200,'payload_prepared':True,'payload_sha256':h,'client_lifecycle':'fresh transport per timed sample','client_resource_scope':'sampler-created process group'}
+complete={'schema':'nekomusume.benchmark-result.v1','experiment_id':'hy2-owned-lab-paired','git_commit':'0'*40,'contract':complete_contract,'samples':complete_rows,'summary':v.expected_summary(complete_rows),'resources':[client_resource(impl,i) for impl in ('nekomusume','hy2') for i in range(1,6)],'cleanup_status':'verified','cleanup_evidence':doc['cleanup_evidence']}
+result=tmp/'result.json'; v.atomic_write(result,complete); v.validate_result(result)
+for bad in (dict(complete,resources=complete['resources'][:-1]),dict(complete,contract=dict(complete_contract,client_lifecycle='persistent'))):
+ v.atomic_write(result,bad)
+ try: v.validate_result(result)
+ except ValueError: pass
+ else: raise AssertionError('unfair lifecycle/resource result accepted')
+
 print('validate-hy2-owned-lab-test-ok')
