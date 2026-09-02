@@ -48,9 +48,9 @@ else: raise AssertionError('unknown cleanup accepted as verified')
 complete_rows=[]
 for i in range(1,6): complete_rows += [row('nekomusume',i),row('hy2',i)]
 def client_resource(impl,run):
- return {'experiment_id':f'{impl}-owned-lab-{run}','implementation':impl,'role':'client','sampling':{'scope':'sampler-created process group'},'cpu':{'user_seconds':.2,'system_seconds':.3},'rss':{'max_kib':9},'fd':{'peak_count':4},'exit':{'code':9,'timed_out':False},'cleanup':{'process_reaped':True,'process_group_empty':True,'owned_sockets_after_exit':0,'complete':True}}
-complete_contract={'runs_per_implementation':5,'payload_bytes':1200,'payload_prepared':True,'payload_sha256':h,'client_lifecycle':'fresh transport per timed sample','client_resource_scope':'sampler-created process group'}
-complete={'schema':'nekomusume.benchmark-result.v1','experiment_id':'hy2-owned-lab-paired','git_commit':'0'*40,'contract':complete_contract,'samples':complete_rows,'summary':v.expected_summary(complete_rows),'resources':[client_resource(impl,i) for impl in ('nekomusume','hy2') for i in range(1,6)],'cleanup_status':'verified','cleanup_evidence':doc['cleanup_evidence']}
+ return {'experiment_id':f'{impl}-owned-lab-{run}','implementation':impl,'identity':'sha256:'+('a'*64 if impl=='nekomusume' else 'b'*64),'role':'client','sampling':{'scope':'sampler-created process group'},'cpu':{'user_seconds':.2,'system_seconds':.3},'rss':{'max_kib':9},'fd':{'peak_count':4},'exit':{'code':9,'timed_out':False},'cleanup':{'process_reaped':True,'process_group_empty':True,'owned_sockets_after_exit':0,'complete':True}}
+complete_contract={'runs_per_implementation':5,'payload_bytes':1200,'payload_prepared':True,'payload_sha256':h,'client_lifecycle':'fresh transport per timed sample','client_resource_scope':'sampler-created process group','enforced_global_deadline_ms':540000,'nekomusume_binary_sha256':'a'*64,'hy2_binary_sha256':'b'*64}
+complete={'schema':'nekomusume.benchmark-result.v1','experiment_id':'hy2-owned-lab-paired','git_commit':'0'*40,'contract':complete_contract,'samples':complete_rows,'summary':v.expected_summary(complete_rows),'bounds':{'maximum_duration_ms':540000,'application_bytes_max':1200*5*2},'resources':[client_resource(impl,i) for impl in ('nekomusume','hy2') for i in range(1,6)],'cleanup_status':'verified','cleanup_evidence':doc['cleanup_evidence']}
 result=tmp/'result.json'; v.atomic_write(result,complete); v.validate_result(result)
 for bad in (dict(complete,resources=complete['resources'][:-1]),dict(complete,contract=dict(complete_contract,client_lifecycle='persistent'))):
  v.atomic_write(result,bad)
@@ -68,8 +68,8 @@ for key in ('cpu', 'rss', 'fd'):
  else: raise AssertionError('missing resource metric accepted')
 # make_sample attributes transport metrics, not GNU time wrapper values.
 resource.write_text(json.dumps({'experiment_id':'nekomusume-owned-lab-1','implementation':'nekomusume','role':'client','identity':'sha256:7','cpu':{'user_seconds':7,'system_seconds':8},'rss':{'max_kib':99},'fd':{'peak_count':11},'exit':{'code':0,'timed_out':False},'sampling':{'scope':'sampler-created process group'},'cleanup':{'process_reaped':True,'process_group_empty':True,'owned_sockets_after_exit':0,'complete':True}}))
-good.write_text('{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":1,"cpu_user_seconds":.1,"cpu_system_seconds":.2,"rss_kib":1,"exit_code":0}\n')
-out=v.make_sample('nekomusume',1,0,good,resource,diag,1200,h)
+good.write_text('{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":1,"cpu_user_seconds":0.1,"cpu_system_seconds":0.2,"rss_kib":1,"exit_code":0}\n')
+out=v.make_sample('nekomusume',1,0,good,resource,diag,1200,h,'sha256:7')
 assert (out['cpu_user_seconds'],out['cpu_system_seconds'],out['rss_kib'],out['fd_count'])==(7,8,99,11)
 
 print('validate-hy2-owned-lab-test-ok')

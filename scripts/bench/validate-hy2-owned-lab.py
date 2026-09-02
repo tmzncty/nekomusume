@@ -90,7 +90,7 @@ def read_client_output(path):
 
 
 def make_sample(implementation, run, return_code, time_path, resource_path, output_path,
-                payload_bytes, payload_hash):
+                payload_bytes, payload_hash, expected_identity=None):
     if implementation not in ("nekomusume", "hy2") or not isinstance(run, int) or run < 1:
         raise ValueError("invalid sample identity")
     exit_code = return_code if isinstance(return_code, int) and 0 <= return_code <= 255 else None
@@ -107,7 +107,7 @@ def make_sample(implementation, run, return_code, time_path, resource_path, outp
     rss = resource.get("rss", {}) if isinstance(resource, dict) else {}
     fd_count = resource.get("fd", {}).get("peak_count") if isinstance(resource, dict) else None
     cpu_user, cpu_system, rss_kib = cpu.get("user_seconds"), cpu.get("system_seconds"), rss.get("max_kib")
-    expected_identity = "sha256:" + ("66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1" if implementation == "hy2" else resource.get("identity", "").removeprefix("sha256:"))
+    expected_identity = expected_identity or ("sha256:" + ("66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1" if implementation == "hy2" else resource.get("identity", "").removeprefix("sha256:")))
     resource_ok = (validate_resource(resource)
                    and resource.get("implementation") == implementation
                    and resource.get("role") == "client"
@@ -117,7 +117,8 @@ def make_sample(implementation, run, return_code, time_path, resource_path, outp
                    and all(finite_nonnegative(v) for v in (cpu_user, cpu_system))
                    and finite_nonnegative(rss_kib, True)
                    and resource.get("exit", {}).get("code") == exit_code
-                   and resource.get("exit", {}).get("timed_out") is (exit_code == 124))
+                   and resource.get("exit", {}).get("timed_out") is (exit_code == 124)
+                   and timing is not None and timing.get("exit_code") == exit_code)
     if not finite_nonnegative(fd_count, True):
         fd_count = None
     application_bytes = output.get("application_bytes")
@@ -265,6 +266,17 @@ def validate_result(path):
     if not isinstance(resources, list) or not resources or not all(validate_resource(item) for item in resources):
         raise ValueError("resource evidence is missing or incomplete")
     contract = doc["contract"]
+    bounds = doc.get("bounds")
+    if not isinstance(bounds, dict) or set(bounds) != {"maximum_duration_ms", "application_bytes_max"}:
+        raise ValueError("result bounds are missing")
+    maximum = bounds["maximum_duration_ms"]
+    expected_maximum = contract.get("enforced_global_deadline_ms")
+    if not finite_nonnegative(maximum, True) or maximum <= 0 or maximum > 600_000:
+        raise ValueError("invalid result duration bound")
+    if expected_maximum != maximum:
+        raise ValueError("result bound does not match enforced global deadline")
+    if not finite_nonnegative(bounds["application_bytes_max"], True) or bounds["application_bytes_max"] != contract["payload_bytes"] * contract["runs_per_implementation"] * 2:
+        raise ValueError("invalid application bounds")
     if contract.get("client_lifecycle") != "fresh transport per timed sample" or contract.get("client_resource_scope") != "sampler-created process group":
         raise ValueError("client lifecycle/resource contract is missing")
     expected_clients = {(implementation, f"{implementation}-owned-lab-{run}")
@@ -275,6 +287,9 @@ def validate_result(path):
                         and item.get("sampling", {}).get("scope") == "sampler-created process group"}
     if observed_clients != expected_clients:
         raise ValueError("per-sample client transport resource evidence is incomplete")
+    pinned = {"nekomusume": "sha256:" + contract.get("nekomusume_binary_sha256", ""), "hy2": "sha256:" + contract.get("hy2_binary_sha256", "")}
+    if any(item.get("implementation") in pinned and item.get("identity") != pinned[item["implementation"]] for item in resources if item.get("role") == "client"):
+        raise ValueError("client resource identity is not pinned to contract")
     if doc["cleanup_status"] != "verified" or doc["cleanup_evidence"] != {"local_processes_reaped": True, "local_listeners_remaining": 0, "remote_process_groups_reaped": True, "remote_listeners_remaining": 0, "remote_temp_path_removed": True}:
         raise ValueError("cleanup evidence is missing")
 
@@ -288,7 +303,7 @@ def main():
     sample.add_argument("--implementation", required=True); sample.add_argument("--run", required=True, type=int)
     sample.add_argument("--return-code", required=True, type=int); sample.add_argument("--time", required=True); sample.add_argument("--resource", required=True)
     sample.add_argument("--client-output", required=True); sample.add_argument("--bytes", required=True, type=int)
-    sample.add_argument("--payload-hash", required=True)
+    sample.add_argument("--payload-hash", required=True); sample.add_argument("--expected-identity")
     blocked = sub.add_parser("blocked")
     blocked.add_argument("--records", required=True); blocked.add_argument("--output", required=True)
     blocked.add_argument("--stage", required=True); blocked.add_argument("--commit", required=True)
@@ -302,7 +317,7 @@ def main():
         print(json.dumps(parse_time(args.path), sort_keys=True, separators=(",", ":")))
     elif args.command == "make-sample":
         value = make_sample(args.implementation, args.run, args.return_code, args.time, args.resource,
-                            args.client_output, args.bytes, args.payload_hash)
+                            args.client_output, args.bytes, args.payload_hash, args.expected_identity)
         print(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False))
     elif args.command == "blocked":
         truth=lambda x: None if x=="unknown" else x=="true"
