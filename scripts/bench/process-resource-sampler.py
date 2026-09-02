@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import datetime as dt
 import json
 import os
@@ -86,6 +87,48 @@ def maximum(current, candidate):
     return candidate if current is None else current if candidate is None else max(current, candidate)
 
 
+def process_group_members(pgid: int) -> set[int]:
+    members = set()
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = entry.joinpath("stat").read_text().rsplit(")", 1)[1].split()
+            if int(fields[2]) == pgid:
+                members.add(int(entry.name))
+        except (OSError, ValueError, IndexError):
+            pass
+    return members
+
+
+def reap_group_children(pgid: int) -> None:
+    while True:
+        try:
+            waited, _ = os.waitpid(-pgid, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if waited == 0:
+            return
+
+
+def stop_and_verify_group(pgid: int) -> bool:
+    for signum, grace in ((signal.SIGTERM, 1.0), (signal.SIGKILL, 1.0)):
+        if not process_group_members(pgid):
+            return True
+        try:
+            os.killpg(pgid, signum)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            reap_group_children(pgid)
+            if not process_group_members(pgid):
+                return True
+            time.sleep(0.01)
+    reap_group_children(pgid)
+    return not process_group_members(pgid)
+
+
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--experiment-id", required=True)
@@ -120,6 +163,7 @@ def main():
     a = parse_args()
     start_wall = dt.datetime.now(dt.timezone.utc)
     start_mono = time.monotonic()
+    ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)
     pid = os.fork()
     if pid == 0:
         try:
@@ -178,6 +222,7 @@ def main():
                 _, status, usage = os.wait4(pid, 0)
             break
         time.sleep(a.interval_ms / 1000)
+    group_empty = stop_and_verify_group(pid)
     for signum, handler in previous_handlers.items():
         signal.signal(signum, handler)
     end_wall = dt.datetime.now(dt.timezone.utc)
@@ -191,6 +236,7 @@ def main():
         cpu_user, cpu_system = last_cpu
         cpu_source, rss_source = last_sources["cpu"], last_sources["rss"]
     exit_code = os.waitstatus_to_exitcode(status)
+    owned_sockets_after_exit = 0 if group_empty else None
     result = {
         "schema_version": SCHEMA_VERSION,
         "experiment_id": a.experiment_id,
@@ -205,7 +251,7 @@ def main():
         "owned_experimental_sockets": {"peak_count": peak_socket, "ports_supplied_count": len(a.owned_port), "source": last_sources["socket"] if peak_socket is not None else None},
         "application_bytes": a.application_bytes,
         "sampling": {"interval_ms": a.interval_ms, "sample_count": samples, "max_seconds": a.max_seconds, "scope": "direct child process only"},
-        "cleanup": {"process_reaped": True, "owned_sockets_after_exit": 0, "complete": True, "scope": "sampled direct child only"},
+        "cleanup": {"process_reaped": True, "process_group_empty": group_empty, "owned_sockets_after_exit": owned_sockets_after_exit, "complete": group_empty, "scope": "sampler-created process group"},
     }
     tmp = Path(str(a.output) + ".tmp")
     try:

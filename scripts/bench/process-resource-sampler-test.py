@@ -40,6 +40,16 @@ with tempfile.TemporaryDirectory() as td_raw:
     assert d["application_bytes"] == 1234 and d["cleanup"]["complete"] is True
     run(sys.executable, str(VALIDATOR), str(sample))
 
+    # Normal direct-child exit must terminate a same-group listener grandchild.
+    grand=td/"grand.py"; pidfile=td/"grand.pid"; normal=td/"normal.json"
+    grand.write_text("import os,socket,subprocess,sys\ns=socket.socket(); s.bind(('127.0.0.1',int(sys.argv[1]))); s.listen()\np=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\nopen(sys.argv[2],'w').write(str(p.pid))\n")
+    probe=socket.socket(); probe.bind(('127.0.0.1',0)); grand_port=probe.getsockname()[1]; probe.close()
+    run(sys.executable,str(SAMPLER),'--experiment-id','fixture.normal-group','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(grand_port),'--interval-ms','10','--max-seconds','2','--output',str(normal),'--',sys.executable,str(grand),str(grand_port),str(pidfile))
+    n=json.loads(normal.read_text()); assert n['cleanup']['process_group_empty'] is True and n['cleanup']['owned_sockets_after_exit']==0
+    gpid=int(pidfile.read_text()); assert not pathlib.Path(f'/proc/{gpid}').exists()
+    with socket.socket() as check:
+        assert check.connect_ex(('127.0.0.1',grand_port)) != 0
+
     # Exit-race: a child that is gone before the first sleep still yields wait4
     # CPU/RSS and a truthful null sampled-FD metric rather than fake zero.
     short=td/"short.json"

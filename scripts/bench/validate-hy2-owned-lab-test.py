@@ -16,7 +16,7 @@ rows=[]
 for i in range(1,5): rows += [row('nekomusume',i),row('hy2',i)]
 rows += [row('nekomusume',5,1)]
 records=tmp/'records.jsonl'; records.write_text(''.join(json.dumps(x)+'\n' for x in rows))
-blocked=tmp/'blocked.json'; doc={'schema':'nekomusume.benchmark-blocked-harness.v1','experiment_id':'hy2-owned-lab-paired','git_commit':'0'*40,'status':'BLOCKED_HARNESS','failure_stage':'hy2-5-client','contract':{'runs_per_implementation':5,'payload_bytes':1200,'payload_sha256':h},'samples':v.load_jsonl(records),'cleanup_status':'verified','cleanup_evidence':{'local_processes_reaped':True,'local_listeners_remaining':0,'remote_process_groups_reaped':True,'remote_listeners_remaining':0,'remote_temp_path_removed':True}}
+blocked=tmp/'blocked.json'; doc={'schema':'nekomusume.benchmark-blocked-harness.v1','experiment_id':'hy2-owned-lab-paired','git_commit':'0'*40,'status':'BLOCKED_HARNESS','failure_stage':'hy2-5-client','contract':{'runs_per_implementation':5,'payload_bytes':1200,'payload_prepared':True,'payload_sha256':h},'samples':v.load_jsonl(records),'cleanup_status':'verified','cleanup_evidence':{'local_processes_reaped':True,'local_listeners_remaining':0,'remote_process_groups_reaped':True,'remote_listeners_remaining':0,'remote_temp_path_removed':True}}
 v.atomic_write(blocked,doc); v.validate_result(blocked); assert len(json.load(open(blocked))['samples'])==9 and 'summary' not in doc
 for bad in (rows+[rows[0]], [rows[1],rows[0]], [dict(rows[0],application_bytes=1)]+rows[1:]):
  try: v.validate_samples(bad,doc['contract'],False)
@@ -31,4 +31,16 @@ failed_doc=dict(doc, samples=[failed], failure_stage='nekomusume-1-client')
 failed_doc['cleanup_status']='failed'; failed_doc['cleanup_evidence']=dict(failed_doc['cleanup_evidence'], local_processes_reaped=False)
 v.atomic_write(blocked,failed_doc); v.validate_result(blocked)
 assert json.load(open(blocked))['status']=='BLOCKED_HARNESS'
+# Pre-payload failure is valid only with explicit absent provenance.
+pre=dict(doc); pre['contract']=dict(doc['contract'],payload_prepared=False,payload_sha256=None); pre['samples']=[]; pre['cleanup_status']='failed'; pre['cleanup_evidence']=dict(doc['cleanup_evidence'],remote_process_groups_reaped=None,remote_listeners_remaining=None,remote_temp_path_removed=None)
+v.atomic_write(blocked,pre); v.validate_result(blocked)
+for contract in (dict(pre['contract'],payload_sha256=h),dict(doc['contract'],payload_prepared=False)):
+ bad=dict(pre,contract=contract); v.atomic_write(blocked,bad)
+ try: v.validate_result(blocked)
+ except ValueError: pass
+ else: raise AssertionError('contradictory payload evidence accepted')
+bad=dict(pre,cleanup_status='verified'); v.atomic_write(blocked,bad)
+try: v.validate_result(blocked)
+except ValueError: pass
+else: raise AssertionError('unknown cleanup accepted as verified')
 print('validate-hy2-owned-lab-test-ok')

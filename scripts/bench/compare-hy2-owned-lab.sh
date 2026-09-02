@@ -44,7 +44,7 @@ root=$(git rev-parse --show-toplevel); cd "$root"; mkdir -p "$(dirname "$out")"
 run=$(mktemp -d /tmp/neko-hy2-owned.XXXXXXXX); remote="/tmp/$(basename "$run")"; records="$out.samples.jsonl"; touch "$records"
 validator=$root/scripts/bench/validate-hy2-owned-lab.py
 cleanup_done=0; cleanup_ok=0; failure_stage=setup; local_pids=(); active_spid=; remote_started=0; remote_resources=$run/remote-resources.json
-local_processes_reaped=0; local_listeners_remaining=0; remote_process_groups_reaped=0; remote_listeners_remaining=0; remote_temp_path_removed=0
+local_processes_reaped=false; local_listeners_remaining=unknown; remote_process_groups_reaped=unknown; remote_listeners_remaining=unknown; remote_temp_path_removed=unknown; payload_prepared=false
 atomic_append(){ local source=$1 temporary; temporary=$(mktemp "$(dirname "$records")/.samples.XXXXXXXX"); cat "$records" "$source" >"$temporary"; mv -f "$temporary" "$records"; }
 terminate_group(){
   local pid=$1 i
@@ -66,7 +66,7 @@ cleanup(){
   local rc=${1:-$?} p remote_cleanup
   [ "$cleanup_done" -eq 0 ] || return "$rc"
   cleanup_done=1; set +e; trap - EXIT INT TERM
-  terminate_local && local_processes_reaped=1
+  terminate_local && local_processes_reaped=true
   local_listeners_remaining=0
   for p in "${ports[@]}"; do ss -H -lntup "sport = :$p" | grep -q . && local_listeners_remaining=$((local_listeners_remaining+1)); done
   if [ "$remote_started" -eq 1 ]; then
@@ -92,17 +92,17 @@ REMOTE
     sed '$d' "$remote_resources.tmp" >"$remote_resources"; rm -f "$remote_resources.tmp"
     remote_process_groups_reaped=$(printf '%s' "$marker" | awk '/^__CLEANUP__ [01] [0-9]+$/{print $2}')
     remote_listeners_remaining=$(printf '%s' "$marker" | awk '/^__CLEANUP__ [01] [0-9]+$/{print $3}')
-    : "${remote_process_groups_reaped:=0}"; : "${remote_listeners_remaining:=1}"
-    if [ "$remote_rc" -eq 0 ] && [ "$remote_process_groups_reaped" -eq 1 ] && [ "$remote_listeners_remaining" -eq 0 ]; then
-      ssh -o BatchMode=yes "$LAB_SSH_TARGET" "rm -rf '$remote'; test ! -e '$remote'" >/dev/null 2>&1 && remote_temp_path_removed=1
+    : "${remote_process_groups_reaped:=unknown}"; : "${remote_listeners_remaining:=unknown}"
+    if [ "$remote_rc" -eq 0 ] && [ "$remote_process_groups_reaped" = 1 ] && [ "$remote_listeners_remaining" -eq 0 ]; then
+      ssh -o BatchMode=yes "$LAB_SSH_TARGET" "rm -rf '$remote'; test ! -e '$remote'" >/dev/null 2>&1 && remote_temp_path_removed=true
     fi
-  else remote_process_groups_reaped=1; remote_temp_path_removed=1; fi
-  [ "$local_processes_reaped" -eq 1 ] && [ "$local_listeners_remaining" -eq 0 ] && [ "$remote_process_groups_reaped" -eq 1 ] && [ "$remote_listeners_remaining" -eq 0 ] && [ "$remote_temp_path_removed" -eq 1 ] && cleanup_ok=1
+  else remote_process_groups_reaped=true; remote_listeners_remaining=0; remote_temp_path_removed=true; fi
+  [ "$local_processes_reaped" = true ] && [ "$local_listeners_remaining" -eq 0 ] && [ "$remote_process_groups_reaped" = 1 ] && [ "$remote_listeners_remaining" -eq 0 ] && [ "$remote_temp_path_removed" = true ] && cleanup_ok=1
   return "$rc"
 }
 blocked(){
   local stage=$1; failure_stage=$stage; cleanup 0
-  python3 "$validator" blocked --records "$records" --output "$out" --stage "$stage" --commit "$(git rev-parse HEAD)" --runs "$RUNS" --bytes "$BYTES" --payload-hash "${payload_hash:-$(printf empty | sha256sum | awk '{print $1}')}" --local-reaped "$local_processes_reaped" --local-listeners "$local_listeners_remaining" --remote-reaped "$remote_process_groups_reaped" --remote-listeners "$remote_listeners_remaining" --remote-path-removed "$remote_temp_path_removed"
+  python3 "$validator" blocked --records "$records" --output "$out" --stage "$stage" --commit "$(git rev-parse HEAD)" --runs "$RUNS" --bytes "$BYTES" --payload-prepared "$payload_prepared" ${payload_hash:+--payload-hash "$payload_hash"} --local-reaped "$local_processes_reaped" --local-listeners "$local_listeners_remaining" --remote-reaped "$remote_process_groups_reaped" --remote-listeners "$remote_listeners_remaining" --remote-path-removed "$remote_temp_path_removed"
   [ "$cleanup_ok" -eq 0 ] || rm -rf "$run"
   echo "$out" >&2; exit 2
 }
@@ -110,7 +110,7 @@ on_signal(){ blocked signal; }
 on_exit(){ local rc=$?; [ "$rc" -eq 0 ] || blocked "$failure_stage"; }
 trap on_exit EXIT; trap on_signal INT TERM
 for p in "${ports[@]}"; do ! ss -H -lntup "sport = :$p" | grep -q . || fail "local experimental port $p occupied"; ssh -o BatchMode=yes "$LAB_SSH_TARGET" "! ss -H -lntup 'sport = :$p' | grep -q ." || fail "remote experimental port $p occupied"; done
-payload=$run/payload.bin; dd if=/dev/zero of="$payload" bs=1 count="$BYTES" status=none; payload_hash=$(sha256sum "$payload"|awk '{print $1}')
+payload=$run/payload.bin; dd if=/dev/zero of="$payload" bs=1 count="$BYTES" status=none; payload_prepared=true; payload_hash=$(sha256sum "$payload"|awk '{print $1}')
 cp "$NEKO_BIN" "$run/neko-cli"; cp "$HY2_BIN" "$run/hysteria"; cp scripts/bench/process-resource-sampler.py scripts/bench/echo-payload.py "$run/"
 "$run/neko-cli" keygen --identity "$run/client.identity" >"$run/client-key"; "$run/neko-cli" keygen --identity "$run/server.identity" >"$run/server-key"
 client_pub=$(sed -n 's/^client_public_key=//p' "$run/client-key"); server_pub=$(sed -n 's/^client_public_key=//p' "$run/server-key"); [ -n "$client_pub" ] && [ -n "$server_pub" ] || fail 'identity generation failed'

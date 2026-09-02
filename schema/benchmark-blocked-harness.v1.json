@@ -41,6 +41,7 @@
       "required": [
         "runs_per_implementation",
         "payload_bytes",
+        "payload_prepared",
         "payload_sha256"
       ],
       "properties": {
@@ -55,8 +56,18 @@
           "maximum": 1200
         },
         "payload_sha256": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "payload_prepared": {
+          "type": "boolean"
         }
       }
     },
@@ -197,21 +208,36 @@
       ],
       "properties": {
         "local_processes_reaped": {
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "local_listeners_remaining": {
-          "type": "integer",
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 0
         },
         "remote_process_groups_reaped": {
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "remote_listeners_remaining": {
-          "type": "integer",
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 0
         },
         "remote_temp_path_removed": {
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       }
     }

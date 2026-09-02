@@ -22,13 +22,16 @@ not addresses, peer details, environment, payload, or secrets. TCP counts only
 LISTEN sockets. UDP counts a bound socket on an owned port because Linux UDP has
 no LISTEN state.
 
-Scope is deliberately the direct child only. Descendants, cgroups, containers,
-non-Linux systems, kernel/network wire bytes, and host-wide resources are not
-claimed. Metrics unavailable because `/proc` or a process sample raced with
+Resource sampling is deliberately limited to the direct child. Cleanup is
+scoped more broadly but still safely: the sampler creates one process group,
+adopts orphaned descendants, and verifies that group is empty after normal,
+signal, and timeout exits. Containers, non-Linux systems, kernel/network wire
+bytes, and host-wide resources are not claimed. Metrics unavailable because `/proc` or a process sample raced with
 exit are JSON `null`, never invented zero. `application_bytes` is caller-owned
-workload metadata, not inferred traffic. Cleanup means the sampled child was
-reaped and therefore its process-owned FDs are closed; it does not certify
-unrelated processes or files.
+workload metadata, not inferred traffic. Cleanup completion means the direct child was reaped and the sampler-created
+process group was observed empty. `owned_sockets_after_exit=0` is emitted only
+after that direct post-exit observation; it does not certify unrelated processes
+or files.
 
 ## Example
 
@@ -49,7 +52,9 @@ python3 scripts/bench/validate-process-resource.py "$out/server.json"
 ```
 
 The sampler returns the child's exit status (or `128 + signal`) after writing
-the record. A timeout sends `SIGTERM`, waits one second, then uses `SIGKILL`.
+the record. Normal exit, timeout, SIGTERM, and SIGINT all terminate remaining same-group
+descendants if needed and prove the group empty. A timeout sends `SIGTERM`, waits
+one second, then uses `SIGKILL`.
 Callers needing server/client orchestration should start a bounded server under
 one sampler and separately sample the client; cleanup traps remain the
 orchestrator's responsibility.

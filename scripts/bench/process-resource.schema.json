@@ -21,7 +21,7 @@
     "owned_experimental_sockets": {"$ref": "#/$defs/sockets"},
     "application_bytes": {"type": "integer", "minimum": 0, "maximum": 268435456},
     "sampling": {"type": "object", "additionalProperties": false, "required": ["interval_ms", "sample_count", "max_seconds", "scope"], "properties": {"interval_ms": {"type": "integer", "minimum": 10, "maximum": 5000}, "sample_count": {"type": "integer", "minimum": 1, "maximum": 60001}, "max_seconds": {"type": "number", "minimum": 0.1, "maximum": 600}, "scope": {"const": "direct child process only"}}},
-    "cleanup": {"type": "object", "additionalProperties": false, "required": ["process_reaped", "owned_sockets_after_exit", "complete", "scope"], "properties": {"process_reaped": {"const": true}, "owned_sockets_after_exit": {"const": 0}, "complete": {"const": true}, "scope": {"const": "sampled direct child only"}}}
+    "cleanup": {"type": "object", "additionalProperties": false, "required": ["process_reaped", "process_group_empty", "owned_sockets_after_exit", "complete", "scope"], "properties": {"process_reaped": {"const": true}, "process_group_empty": {"const": true}, "owned_sockets_after_exit": {"const": 0}, "complete": {"const": true}, "scope": {"const": "sampler-created process group"}}}
   },
   "$defs": {
     "source": {"type": ["string", "null"], "maxLength": 256},

@@ -63,7 +63,7 @@ python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementa
 [ ! -s "$tmp/make.err" ]; [ "$(wc -l <"$tmp/first.jsonl")" -eq 1 ]
 jq -e '.name=="nekomusume-1" and .failures==1 and .exit_code==9 and .failure_stage=="client_exit" and .application_bytes==0 and .payload_sha256==null' "$tmp/first.jsonl" >/dev/null
 ! grep -q -- '--argjson' "$source_script"
-python3 "$root/scripts/bench/validate-hy2-owned-lab.py" blocked --records "$tmp/first.jsonl" --output "$tmp/blocked.json" --stage nekomusume-1-client --commit "$(printf %040d 0)" --runs 5 --bytes 1200 --payload-hash "$hash0" --local-reaped 1 --local-listeners 0 --remote-reaped 1 --remote-listeners 0 --remote-path-removed 1
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" blocked --records "$tmp/first.jsonl" --output "$tmp/blocked.json" --stage nekomusume-1-client --commit "$(printf %040d 0)" --runs 5 --bytes 1200 --payload-prepared true --payload-hash "$hash0" --local-reaped true --local-listeners 0 --remote-reaped true --remote-listeners 0 --remote-path-removed true
 python3 "$root/scripts/bench/validate-hy2-owned-lab.py" validate-result "$tmp/blocked.json" | grep -qx validated
 jq -e '.status=="BLOCKED_HARNESS" and (.samples|length)==1 and .cleanup_status=="verified"' "$tmp/blocked.json" >/dev/null
 # Executable/path deletion race: kill and reap the process group before deleting its path.
@@ -82,7 +82,7 @@ wait "$race_pid" || true
 rm -rf "$tmp/race"; [ ! -e "$tmp/race" ]
 # Cleanup order and idempotent signal/exit guards remain explicit.
 grep -Fq '[ "$cleanup_done" -eq 0 ] || return "$rc"' "$source_script"
-grep -Fq 'terminate_local && local_processes_reaped=1' "$source_script"
-grep -Fq 'remote_temp_path_removed=1' "$source_script"
+grep -Fq 'terminate_local && local_processes_reaped=true' "$source_script"
+grep -Fq 'remote_temp_path_removed=true' "$source_script"
 grep -Fq 'trap - EXIT INT TERM' "$source_script"
 echo compare-hy2-owned-lab-test-ok

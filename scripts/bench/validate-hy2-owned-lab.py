@@ -137,12 +137,14 @@ def validate_samples(samples, contract, require_complete):
     runs = contract.get("runs_per_implementation")
     payload_bytes = contract.get("payload_bytes")
     payload_hash = contract.get("payload_sha256")
+    payload_prepared = contract.get("payload_prepared")
     if not isinstance(runs, int) or not 3 <= runs <= 10:
         raise ValueError("invalid runs_per_implementation")
     if not isinstance(payload_bytes, int) or payload_bytes <= 0:
         raise ValueError("invalid payload_bytes")
-    if not isinstance(payload_hash, str) or not SHA256.fullmatch(payload_hash):
-        raise ValueError("invalid payload_sha256")
+    if not isinstance(payload_prepared, bool): raise ValueError("invalid payload_prepared")
+    if payload_prepared != (isinstance(payload_hash, str) and SHA256.fullmatch(payload_hash) is not None): raise ValueError("contradictory payload evidence")
+    if require_complete and not payload_prepared: raise ValueError("complete result lacks payload")
     expected = [(implementation, run) for run in range(1, runs + 1) for implementation in ("nekomusume", "hy2")]
     seen = []
     for index, row in enumerate(samples):
@@ -200,7 +202,7 @@ def validate_resource(resource):
     if not isinstance(resource, dict):
         return False
     cleanup = resource.get("cleanup")
-    return isinstance(cleanup, dict) and cleanup.get("process_reaped") is True and cleanup.get("owned_sockets_after_exit") == 0 and cleanup.get("complete") is True
+    return isinstance(cleanup, dict) and cleanup.get("process_reaped") is True and cleanup.get("process_group_empty") is True and cleanup.get("owned_sockets_after_exit") == 0 and cleanup.get("complete") is True
 
 
 def validate_result(path):
@@ -221,10 +223,10 @@ def validate_result(path):
         if not isinstance(cleanup, dict) or set(cleanup) != cleanup_required:
             raise ValueError("blocked artifact lacks cleanup evidence")
         for key in ("local_processes_reaped", "remote_process_groups_reaped", "remote_temp_path_removed"):
-            if not isinstance(cleanup[key], bool):
+            if cleanup[key] is not None and not isinstance(cleanup[key], bool):
                 raise ValueError("blocked artifact has invalid cleanup evidence")
         for key in ("local_listeners_remaining", "remote_listeners_remaining"):
-            if not finite_nonnegative(cleanup[key], True):
+            if cleanup[key] is not None and not finite_nonnegative(cleanup[key], True):
                 raise ValueError("blocked artifact has invalid cleanup evidence")
         verified = cleanup == {"local_processes_reaped": True, "local_listeners_remaining": 0, "remote_process_groups_reaped": True, "remote_listeners_remaining": 0, "remote_temp_path_removed": True}
         if doc["cleanup_status"] != ("verified" if verified else "failed"):
@@ -258,10 +260,10 @@ def main():
     blocked.add_argument("--records", required=True); blocked.add_argument("--output", required=True)
     blocked.add_argument("--stage", required=True); blocked.add_argument("--commit", required=True)
     blocked.add_argument("--runs", required=True, type=int); blocked.add_argument("--bytes", required=True, type=int)
-    blocked.add_argument("--payload-hash", required=True)
-    blocked.add_argument("--local-reaped", required=True, type=int); blocked.add_argument("--local-listeners", required=True, type=int)
-    blocked.add_argument("--remote-reaped", required=True, type=int); blocked.add_argument("--remote-listeners", required=True, type=int)
-    blocked.add_argument("--remote-path-removed", required=True, type=int)
+    blocked.add_argument("--payload-prepared", choices=("true", "false"), required=True); blocked.add_argument("--payload-hash")
+    blocked.add_argument("--local-reaped", required=True); blocked.add_argument("--local-listeners", required=True)
+    blocked.add_argument("--remote-reaped", required=True); blocked.add_argument("--remote-listeners", required=True)
+    blocked.add_argument("--remote-path-removed", required=True)
     args = parser.parse_args()
     if args.command == "parse-time":
         print(json.dumps(parse_time(args.path), sort_keys=True, separators=(",", ":")))
@@ -270,9 +272,11 @@ def main():
                             args.client_output, args.bytes, args.payload_hash)
         print(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False))
     elif args.command == "blocked":
-        cleanup = {"local_processes_reaped":args.local_reaped == 1,"local_listeners_remaining":args.local_listeners,"remote_process_groups_reaped":args.remote_reaped == 1,"remote_listeners_remaining":args.remote_listeners,"remote_temp_path_removed":args.remote_path_removed == 1}
+        truth=lambda x: None if x=="unknown" else x=="true"
+        count=lambda x: None if x=="unknown" else int(x)
+        cleanup = {"local_processes_reaped":truth(args.local_reaped),"local_listeners_remaining":count(args.local_listeners),"remote_process_groups_reaped":truth(args.remote_reaped),"remote_listeners_remaining":count(args.remote_listeners),"remote_temp_path_removed":truth(args.remote_path_removed)}
         ok = cleanup == {"local_processes_reaped":True,"local_listeners_remaining":0,"remote_process_groups_reaped":True,"remote_listeners_remaining":0,"remote_temp_path_removed":True}
-        doc = {"schema":"nekomusume.benchmark-blocked-harness.v1","experiment_id":"hy2-owned-lab-paired","git_commit":args.commit,"status":"BLOCKED_HARNESS","failure_stage":args.stage,"contract":{"runs_per_implementation":args.runs,"payload_bytes":args.bytes,"payload_sha256":args.payload_hash},"samples":load_jsonl(args.records),"cleanup_status":"verified" if ok else "failed","cleanup_evidence":cleanup}
+        doc = {"schema":"nekomusume.benchmark-blocked-harness.v1","experiment_id":"hy2-owned-lab-paired","git_commit":args.commit,"status":"BLOCKED_HARNESS","failure_stage":args.stage,"contract":{"runs_per_implementation":args.runs,"payload_bytes":args.bytes,"payload_prepared":args.payload_prepared=="true","payload_sha256":args.payload_hash},"samples":load_jsonl(args.records),"cleanup_status":"verified" if ok else "failed","cleanup_evidence":cleanup}
         atomic_write(args.output, doc)
         validate_result(args.output)
     else:
