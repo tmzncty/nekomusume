@@ -1,268 +1,218 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-02 07:58 Asia/Shanghai
-Repository HEAD: `62d4d3576e24d4b0f951a615b0d116a74f5d7a73`
-Previous reviewed implementation HEAD: `a9a96b16050e38de158033de5e9bb4406414df58`
-Previous reviewer handoff commit: `06abe32668310b401523f9120ca9cba88b705e3e`
+Checked at: 2026-09-02 08:59 Asia/Shanghai
+Repository HEAD: `e07066b4c3f8e3ad8b33af08f27682173f415a9c`
+Previous reviewed implementation HEAD: `62d4d3576e24d4b0f951a615b0d116a74f5d7a73`
+Previous reviewer handoff commit: `9df7d251ab0f8f2be84be466955208f9b42edd5e`
 
 ## What changed
 
-One substantive coding-agent commit landed after the previous reviewer handoff:
+One meaningful coding-agent commit is visible since the previous reviewer handoff:
 
-- `62d4d35` — **HY2 comparison harness/evidence-retention repair; no Nekomusume production runtime change and no new VPS/WAN result.** It adds a `BLOCKED_HARNESS` artifact/schema, atomically retained per-sample JSONL, a strict GNU-time sentinel parser, complete-set summary validation, stronger cleanup bookkeeping, new validator/mutation tests, and wires the validator test into `scripts/check.sh`.
+- `e07066b` — **benchmark harness / cleanup / test / documentation repair; no production protocol semantic change and no new VPS experiment.** It makes the process-resource sampler respond to SIGTERM/SIGINT by terminating its owned child process group, moves several local/remote benchmark wrappers into explicit process groups with `setsid`, adds signal/listener regressions, and retains typed benchmark failure-row generation.
 
-The intent is correct: a failed paired comparison should retain already-observed raw samples and cleanup facts instead of disappearing or emitting a misleading partial performance summary. However, this commit is **not green** and is not safe to use as the next VPS comparison harness yet.
+The current GitHub Actions result materially changes the previous review state: the `CI` workflow for `e07066b` is green in both the stable job and the fuzz job. The stable job completed format/check/workspace tests/Clippy/`scripts/check.sh`/`git diff --check`; the fuzz job also completed successfully. Therefore the previous R-310 “current-head CI failure must be reproduced before VPS work” blocker is closed at this exact HEAD.
 
-GitHub Actions `Rust CI` run 108 for exact HEAD `62d4d35` completed with:
+The repair is useful but does not close every evidence-truthfulness concern in the HY2 paired harness. In particular, the blocked-result path still synthesizes a SHA-256 for literal `empty` when the intended payload has not been generated, and missing remote-cleanup observations can still be coerced into a numeric listener count instead of represented as unknown/not-observed. The process sampler also reports cleanup fields such as zero owned sockets after exit without an explicit post-exit observation in the generic sampler contract, and its current deterministic grandchild coverage does not yet prove normal-exit descendant cleanup in every same-process-group case.
 
-- `nightly decode fuzz smoke`: **PASS**;
-- `stable checks` / `bash scripts/check.sh`: **FAIL**.
-
-The immediate regression is therefore in the ordinary repository gate introduced or exposed by the benchmark-harness change, not in the nightly decode fuzz target. Parent implementation HEAD `a9a96b1` had a green Rust CI run 106.
-
-Independent code review also found a cleanup/evidence-integrity issue that must be fixed before this harness is executed on the rented VPS: `process-resource-sampler.py` forks the sampled command into a separate process group, while the new harness cleanup kills/waits the sampler wrapper PID. Killing the wrapper does not prove or guarantee that the sampled HY2 child process group is terminated. Both the local HY2 client and remote HY2 server use this wrapper. The harness can therefore detect a residual listener, but can still leave an orphaned experimental child after the wrapper is killed; conversely, the successful result currently hard-codes `*_processes_reaped=true` without independently proving every tracked child/group is gone. This conflicts with the standing cleanup requirement and with the result's claimed cleanup semantics.
-
-A second evidence issue exists in blocked artifacts: if failure occurs after traps are installed but before the deterministic payload is constructed, the fallback currently supplies `sha256("empty")` while still declaring the configured `payload_bytes`. That is not the hash of the declared payload and must not be represented as exact payload evidence. Cleanup failure also collapses actual/unknown residual state into fixed synthetic `1` counts for both local and remote listeners rather than preserving what was really observed.
+These remaining HY2-harness issues are important for fair-comparison evidence, but they do **not** block the separately implemented D064 failover/resume path or the periodic authenticated-session path. Because the VPS rental window is time-limited and current-head stable/fuzz CI is green, the release-evidence matrix should resume VPS-first work while the HY2 evidence contract is repaired before any HY2 rerun.
 
 ## Review verdict
 
-**HOLD VPS HARVEST ON CURRENT HEAD — repair exact-head stable CI plus process-tree/blocked-evidence truthfulness, then immediately resume the rented-VPS evidence batch without waiting for another reviewer.**
+**continue with required fixes — bounded release-evidence matrix is READY; HY2 comparison branch remains evidence-blocked until its cleanup/provenance contract is truthful**
 
-This is a bounded harness/safety repair, not a Session/Carrier architecture blocker. Do not spend the cycle on unrelated local polish. The previous D064 and periodic runtime repairs remain accepted; the VPS window is still the highest-value resource immediately after this harness gate turns green.
+Do not serialize all work behind HY2 harness polish. Use the current exact HEAD for the two high-value self-owned VPS rows whose hypotheses have changed since their retained negative evidence:
 
-## Review findings
+1. D064 warm/cold failover/recovery after the reviewed three-second readiness-sequence repair;
+2. five-minute periodic authenticated Session after setup timeout was separated from per-record ACK timeout.
 
-### R-310 BLOCKER — exact HEAD fails the stable repository gate
-
-Rust CI run 108 for `62d4d35` failed in `bash scripts/check.sh`; the nightly bounded decode fuzz job passed. The coding agent must inspect/reproduce the exact failing stable sub-check and repair it rather than relying on the commit message or reported local success.
-
-Because the parent `a9a96b1` was green and `62d4d35` changes only benchmark/docs/schema/test/check infrastructure, keep the repair scoped to the changed harness/evidence path unless the reproduced failure proves otherwise.
-
-Do not remove the new tests, skip `scripts/check.sh`, weaken fail-closed validation, or mark CI failure as irrelevant merely because production Rust runtime code did not change.
-
-### R-311 BLOCKER — cleanup does not prove sampled child process groups are reaped
-
-`process-resource-sampler.py` forks the sampled command and calls `setpgid(child, child)`. The harness records and later terminates the sampler wrapper PID. External termination of the wrapper currently has no signal-forwarding/finally contract that guarantees the sampled child process group is terminated and reaped.
-
-This matters in both directions:
-
-- local HY2 client: `local_pids` contains the sampler wrapper, not proof of the HY2 child group;
-- remote HY2 server: the remote `pids` file contains the sampler wrapper, not proof of the Hysteria child group.
-
-A residual-port check is useful but insufficient to assert `local_processes_reaped=true` / `remote_process_groups_reaped=true`: a child may remain without the checked listener, and killing the supervisor may remove the only component enforcing its bounded max duration.
-
-**Required repair:** establish one explicit bounded process-tree ownership contract. Preferred options are:
-
-1. make `process-resource-sampler.py` handle external `SIGTERM`/`SIGINT`, terminate the sampled child's process group, wait/reap it, and still emit truthful cleanup/result state; or
-2. change the orchestrator so it tracks and terminates/verifies the actual sampled child process groups directly without orphaning the sampler.
-
-Whichever option is chosen, tests must prove externally interrupted samplers do not leave a child/listener behind. The final harness may claim a process/group is reaped only after direct PID/PGID disappearance verification, not merely because the experiment port is closed.
-
-Do not solve this with broad `pkill hysteria`, production service operations, or unscoped process killing.
-
-### R-312 BLOCKER — blocked artifacts must not synthesize payload or cleanup facts
-
-The current blocked path can create a contract with configured `payload_bytes` plus a fallback SHA-256 of the literal string `empty` before the intended deterministic payload exists. That is not exact payload evidence.
-
-Likewise, when cleanup is not verified, the blocked artifact currently substitutes fixed nonzero listener counts rather than carrying the actual measured count or an explicit unknown/not-observed state.
-
-**Required repair:** make phase boundaries truthful. Acceptable designs include:
-
-- construct and hash the deterministic payload before any trapped execution stage that can emit a blocked artifact declaring payload identity; or
-- allow a pre-payload blocked artifact to represent `payload_prepared=false` / null payload hash and validate that distinction explicitly.
-
-For cleanup, preserve actual measured residual PID/PGID/listener/temp-path facts. If a fact could not be observed, represent it as unknown/not-verified rather than inventing a count. `cleanup_status=failed` must not imply a fabricated topology of failure.
-
-### R-313 PASS WITH GATE — raw sample retention and no-partial-summary direction is sound
-
-Atomic per-sample retention, complete-set validation, strict GNU-time sentinel parsing, and a separate `BLOCKED_HARNESS` document are appropriate release-evidence infrastructure. Preserve these properties while repairing R-310/R-312.
-
-A blocked comparison may retain a valid prefix of the planned interleaved sample order, but it must not calculate or publish a partial median/P95 comparison as if the pair completed.
-
-### R-314 PASS — no new release/runtime claim was made by `62d4d35`
-
-The commit changes benchmark/evidence infrastructure only. It does not create a HY2 result, D064 result, periodic result, public-WAN claim, security approval, or RC state. Keep that boundary.
+In parallel sequence after those runs, close the HY2 harness truthfulness gaps, get the new repair through the full gate/CI, and only then perform a changed-hypothesis HY2 diagnostic or paired run.
 
 ## Evidence boundaries
 
-- `IMPLEMENTATION_COMPLETE=true` remains the bounded research-baseline status.
-- `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific.
-- `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, `RELEASED=false` remain correct.
-- Parent runtime repair state `a9a96b1` had green CI; exact current repository HEAD `62d4d35` has a failing stable gate and must not be described as fully gated.
-- Nightly decode fuzz passing at `62d4d35` does not cancel the failed stable gate.
-- No new VPS/WAN evidence landed after the previous handoff.
-- The earlier D064 negative row remains immutable: two readiness observations succeeded and challenge 3 failed; no warm promotion/resumed application delivery was proven by that row.
-- The earlier periodic negative row remains immutable: server authentication succeeded but no application record was confirmed.
-- The earlier HY2 negative row remains immutable: temporary QUIC/UDP setup did not reach a usable forwarding path; no fair paired sample exists.
-- Standing authorization still covers bounded self-owned TCP/UDP experiments, temporary HY2 lab services, resource sampling, capture and cleanup. It does **not** permit leaving experimental processes/listeners behind.
-- IPv6 remains environment-blocked unless a genuinely usable owned path appears; do not repeat unchanged failure.
-- Production route/firewall/DNS/proxy/tunnel/qdisc changes, third-party targets and scope expansion remain prohibited.
+- `IMPLEMENTATION_COMPLETE=true` remains the bounded research baseline status.
+- `CANONICAL_CORPUS_V1_FROZEN=true` remains a corpus-specific fact only.
+- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain correct.
+- N9 corpus freeze and negotiation-path completion are already complete; the first unchecked implementation-plan item is the bounded release-evidence matrix.
+- Current-head GitHub Actions stable and fuzz jobs are green. This is independent CI evidence for repository gates, not a security audit or release approval.
+- `e07066b` changes benchmark-harness lifecycle/evidence handling and tests; it does not add a new Nekomusume wire, crypto, Session, failover or carrier semantic.
+- Current exact-head positive D064 warm VPS evidence is still absent. The retained changed-path run from an older HEAD reached two authenticated admitted readiness responses and failed closed at challenge 3. The D064 runtime contract has since changed to a one-second per-probe / three-second whole-sequence policy, so a current-head run is a changed-hypothesis experiment, not an unchanged retry.
+- Current exact-head five-minute periodic VPS evidence is still absent. The retained older attempt authenticated the server but exchanged zero application bytes because setup/handshake timing was coupled to the ACK deadline. Current code now has a distinct setup deadline, so a current-head run is also a changed-hypothesis experiment.
+- HY2 paired comparison remains absent. The pinned HY2 v2.9.3 artifact and fair-pair adapter exist, but the prior temporary QUIC/UDP path timed out before the forwarding listener was ready; no paired samples or statistics exist.
+- IPv6 remains environment-blocked unless a real owned IPv6 endpoint becomes available. Do not synthesize an IPv6 row.
+- Standing self-owned VPS authorization remains active. No new per-run WAN permission is required for the bounded TCP/UDP work below.
 
-## Work Package — repair the comparison harness gate, then spend the VPS window
+## Work Package — VPS-First Release Evidence + HY2 Truthfulness Repair
 
-Execute A -> B -> C/D/E -> F. C/D/E are independent after B and cleanup. This is deliberately thick: once A/B are green, do not wait for another reviewer before collecting the already-READY VPS evidence.
+### Primary A — Current-exact-head D064 warm/cold failover evidence
 
-### Primary A — reproduce and close the exact stable-check regression
+**Goal**
 
-**Goal:** restore the normal repository gate without weakening the new evidence-retention contract.
+Use the exact current reviewed implementation to determine whether the accepted D064 readiness/failover contract now survives the self-owned client↔VPS path after the deadline repair.
 
-1. Fetch exact `62d4d35` and inspect Rust CI run 108 stable-check output.
-2. Reproduce the failing `bash scripts/check.sh` sub-check locally.
-3. Identify the exact failure before editing. Because `62d4d35` changed benchmark/docs/schema/test/check files only, start with:
-   - `scripts/bench/compare-hy2-owned-lab.sh`;
-   - `scripts/bench/compare-hy2-owned-lab-test.sh`;
-   - `scripts/bench/validate-hy2-owned-lab.py`;
-   - `scripts/bench/validate-hy2-owned-lab-test.py`;
-   - `schema/benchmark-blocked-harness.v1.json`;
-   - `docs/bench/result-schema-v1.md`;
-   - `scripts/check.sh`.
-4. Fix the cause; do not delete/skip the failing assertion unless the contract itself is demonstrably wrong and the replacement is stricter/truthful.
-5. Run the narrow changed tests first, then full `bash scripts/check.sh` and `git diff --check`.
+**Why now**
 
-### Follow-up B — make process-tree cleanup and blocked evidence truthful
+The previous negative run is preserved and scientifically useful, but its failure hypothesis changed: current D064 code now gives the three authenticated readiness observations a one-second per-probe and three-second whole-sequence budget after negotiation, Noise authentication and resume validation. Current GitHub CI is green, and this row is VPS-only evidence that becomes harder to obtain after the rental window closes.
 
-**Dependency:** A diagnosis available; may be combined with A if the same code path caused CI failure.
+**Required behavior**
 
-#### B1 sampler external-termination contract
+1. Build/use a binary whose identity is tied to the exact implementation HEAD being tested; record git/binary identity.
+2. Use only administrator-controlled client/VPS endpoints and standing-authorized temporary high ports.
+3. Exercise the existing D064 controlled failure seam. Do not introduce production route/firewall/qdisc changes to manufacture degradation.
+4. For the warm path, record the complete authenticated readiness chronology: negotiation complete, Noise authenticated, resume validated, challenge/response 1..3, admission state, warm transition, controlled UDP failure, promotion/fallback and post-promotion application delivery.
+5. Prove that warm TCP carries no new application data before atomic promotion.
+6. Record Session/failover accounting that the implementation actually exposes: confirmed, uncertain, replayed, duplicate and lost bytes/records; failure and new-active timestamps; generations/epoch/reason where available.
+7. If the existing harness supports the cold control without widening scope, run it as a bounded comparison row in the same lab session. Do not invent a cold path just for symmetry.
+8. Preserve a negative result exactly if readiness or promotion still fails. A failed current-head run is valid evidence.
+9. Verify cleanup: no experiment listener/process/temp runtime remains.
 
-Add executable tests around `process-resource-sampler.py` proving that when the sampler is externally interrupted while its child is alive:
+**Completion definition**
 
-- the child process group receives bounded termination;
-- the child is reaped or independently proven gone;
-- owned listener/socket state reaches zero;
-- the sampler does not leave an orphan;
-- result/cleanup state does not falsely say complete if cleanup could not be proven.
+A current-head positive or negative D064 artifact is committed with exact parameters, binary identity, client/server evidence, event chronology and verified cleanup. A positive row may support bounded controlled-fault failover evidence only; it is not natural-WAN degradation or production proof.
 
-Keep termination scoped to the sampler-owned child PGID.
+### Follow-up B — Current-exact-head five-minute periodic authenticated Session
 
-#### B2 harness cleanup verification
+**Dependency:** Primary A completed or failed with a retained, cleanup-verified artifact. A negative A does not block this independent row.
 
-For local and remote experiment processes, track enough identity to verify the specific experiment-owned wrapper/child process groups disappear. Preserve port checks and temp-path removal as additional evidence; do not use them as a substitute for process disappearance.
+**Goal**
 
-A successful final result may set process/group cleanup booleans true only after direct verification. A failed cleanup must preserve actual observed residual/unknown facts.
+Test the repaired setup/ACK deadline separation on the owned VPS with one bounded five-minute authenticated periodic workload.
 
-#### B3 blocked payload/cleanup schema
+**Required behavior**
 
-Repair the pre-payload blocked-artifact ambiguity and validate it with mutation tests. Never pair configured payload length with a fabricated fallback hash. Never turn an unknown cleanup count into a made-up integer.
+1. Use the current exact implementation/binary identity and the existing periodic client/server path.
+2. Run one approximately five-minute scenario, remaining below the standing ten-minute single-run limit.
+3. Record setup timing separately from per-record ACK/confirmation timing.
+4. Record expected/sent/confirmed application records and bytes, missing/duplicate records, failures/timeouts, and confirmation-latency samples that are actually observable.
+5. Collect process-scoped CPU/RSS/FD/socket evidence using the existing sampler only to the extent its fields are directly observed/truthful; do not upgrade unavailable metrics to zero.
+6. Record start/end timestamps and cleanup state.
+7. If setup or application delivery fails again, retain the exact negative row and stop unchanged retries until a new hypothesis/instrumentation/code change exists.
 
-Add tests for failures at at least:
+**Completion definition**
 
-- post-trap/pre-payload or earliest artifact-producing setup stage;
-- client sample failure after some retained rows;
-- resource evidence failure;
-- cleanup verification failure;
-- final assembly/validation failure.
+A current-head positive or negative five-minute periodic artifact exists with non-ambiguous application-delivery accounting and cleanup. A positive result is one bounded self-owned-path sample, not sustained production proof.
 
-Each case must retain the valid sample prefix that actually existed and must not emit a partial performance summary.
+### Follow-up C — Close remaining HY2 harness evidence-truthfulness gaps locally
 
-#### B4 full green gate
+**Dependency:** A/B evidence has been pushed, or one of those paths is independently blocked by a retained technical failure. This repair must complete before another HY2 comparison attempt.
 
-Run:
+#### C1. Payload provenance must never be synthetic
 
-- changed benchmark shell tests;
-- validator tests;
-- sampler tests;
-- shell syntax gate;
-- `bash scripts/check.sh`;
-- `git diff --check`.
+The blocked-result path currently falls back to SHA-256 of literal `empty` if failure happens before payload creation. Replace this with a truthful representation.
 
-Push the repair. Confirm the new exact-head GitHub Actions stable job is green before using the repaired HY2 harness for a comparative VPS run. The nightly fuzz job is not a substitute for the stable gate.
+Required contract:
 
-### Follow-up C — exact-head D064 warm/cold VPS evidence
+- configured/intended `payload_bytes` may remain part of the experiment contract;
+- observed payload artifact/hash must be nullable or explicitly `not_generated` / `not_observed` when creation did not occur;
+- a blocked artifact must never present a hash for bytes that were not the experiment payload;
+- validator/schema tests must reject contradictory combinations such as nonzero configured payload bytes + synthetic/claimed observed hash when no payload artifact existed.
 
-**Dependency:** B local gate green. This branch does not depend on HY2 path viability.
+#### C2. Cleanup unknown must remain unknown
 
-Use a fresh clean worktree and exact repaired HEAD. Record git/tree, native release binary SHA-256, rustc/Cargo versions and cleanup baseline. Use the known self-owned established path; do not rediscover blocked public ingress.
+Do not coerce a missing remote cleanup marker into `remote_listeners_remaining=1` or another invented measurement.
 
-Run one changed-code warm D064 sample requiring canonical UDP negotiation + Noise, logical delivery proof, controlled UDP reply cessation, TCP negotiation + Noise + resume, exactly three authenticated readiness observations, atomic promotion before resumed data, exact DeliveryAck and complete uncertain/dedup accounting.
+Required contract:
 
-If warm succeeds, continue in the same batch with interleaved **5 warm + 5 cold** raw samples, concurrency 1, small payloads, retaining recovery latency/failures and existing resource samples. If warm fails with a new defect, retain it and stop only C.
+- cleanup measurements may be `null` / not-observed when the observation itself failed;
+- `cleanup_status=verified` is legal only when every required cleanup observation was explicitly made and showed the expected true/zero state;
+- missing/parse-failed cleanup evidence yields an unverified/failed status without inventing listener counts;
+- schema/validator and blocked-result tests cover this distinction.
 
-Do not reclassify controlled application-level reply cessation as a natural Internet blackhole.
+#### C3. Process-group cleanup must be proved, not inferred from direct-child reap
 
-### Follow-up D — exact-head five-minute periodic/resource VPS observation
+The sampler now sends TERM/KILL to the child process group on timeout/signal, which is a good repair. Harden the generic cleanup contract so `cleanup.complete=true` cannot be produced merely because the direct child was reaped.
 
-**Dependency:** B green; independent of C after cleanup.
+At minimum:
 
-Use the already repaired setup/ACK separation with the prior bounded profile:
+- after normal child exit, check whether the sampler-owned process group still contains descendants before declaring cleanup complete; terminate/reap/wait for owned descendants when safely possible;
+- after SIGTERM/SIGINT/timeout, verify the group is empty after termination;
+- do not hardcode `owned_sockets_after_exit=0` unless a post-exit owned-socket observation proves zero; otherwise make it nullable/not-observed;
+- add deterministic harmless tests where the direct child spawns a same-process-group grandchild/listener and then exits normally;
+- add signal/timeout variants that assert the descendant PID is gone and listener is absent, not only that the sampler/direct child exited;
+- preserve strict scope: only sampler-created process groups/owned test ports, never arbitrary host processes.
 
-```text
-duration <= 300 s
-concurrency = 1
-records = 60
-bytes = 32 / record
-interval = 5000 ms
-setup_timeout = 5000 ms
-ack_timeout = 1000 ms
-```
+#### C4. Failure-path regression matrix
 
-Require authenticated setup before record 1. Retain attempted/confirmed/missing/duplicate/conflict counts, raw confirmation latencies, actual application bytes, CPU/RSS/FD/owned-socket samples, exact binary identity, exit status and cleanup.
+Add/retain deterministic tests for:
 
-If setup succeeds and later application ACK misses its 1000 ms bound, classify it as application-delivery failure, not handshake failure. A full success remains only a five-minute bounded self-owned resilience/resource observation.
+- failure before payload generation;
+- malformed/missing cleanup marker;
+- normal child exit leaving a descendant;
+- SIGTERM/SIGINT descendant cleanup;
+- timeout descendant cleanup;
+- output/runtime deletion only after owned processes are verified gone;
+- blocked artifacts remain machine-valid but cannot contain comparative summary/statistics.
 
-### Follow-up E — repaired HY2 explicit-bind diagnostic and first fair pair
+Run the complete local repository gate. Push the repair and require the next GitHub Actions stable/fuzz run to be green before using the repaired harness on VPS.
 
-**Dependency:** B green including process-tree cleanup tests; independent of C/D after cleanup.
+### Follow-up D — Changed-hypothesis HY2 owned-lab diagnostic / paired run
 
-1. Read only current owned VPS interface metadata and select the already-authorized explicit assigned bind address; do not modify firewall/route/NAT/provider policy.
-2. Run adapter preflight and one short changed-harness HY2 diagnostic with bounded capture on the experiment UDP port if needed.
-3. Classify exactly: no datagrams arrive / datagrams arrive but no usable response / QUIC+TLS+auth+forwarding ready.
-4. If path is viable, run interleaved **5 Nekomusume + 5 HY2** equal-application samples with pinned HY2 v2.9.3 and the existing exact-payload contract.
-5. Retain raw samples, failures, median/P95 only for a complete valid set, CPU/RSS/FD/application bytes, binary identities and verified process/listener/temp cleanup. `wire_bytes` remains null unless capture provenance is truly comparable.
-6. Make no superiority claim from the first pair.
+**Dependency:** C complete and current repair CI green.
 
-If the environment remains non-viable, preserve one changed diagnostic and stop E. Do not rerun unchanged or widen network policy.
+**Goal**
 
-### Follow-up F — evidence/status reconciliation
+Use the time-limited VPS to learn why the prior temporary HY2 QUIC/UDP path never reached forwarding readiness, then obtain paired samples only if both sides satisfy the same application contract.
 
-**Dependency:** after each C/D/E branch reaches one retained positive or negative terminal row.
+**Required behavior**
 
-- preserve exact experiment ID, commit/tree/binary hashes, actual parameters, time window, path/endpoint ownership class, raw results and cleanup;
-- preserve older negative rows rather than overwrite them;
-- update only evidence/status claims actually changed by the new row;
-- distinguish authorized execution, self-owned cross-host evidence, public/general reachability, release evidence, security approval and production readiness;
-- keep `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, `RELEASED=false`.
+1. Reuse the pinned HY2 v2.9.3 artifact/hash and the existing dedicated non-wildcard `LAB_REMOTE_BIND_ADDRESS` contract.
+2. This must be a changed-hypothesis run: add/use instrumentation or capture targeted at the prior HY2 server/client/QUIC readiness timeout. Do not blindly repeat the old attempt.
+3. Keep Nekomusume and HY2 on the same owned client/VPS, comparable route/time window, MTU, security class, payload, run count and load.
+4. Preserve typed failure rows if either implementation fails. Partial runs are diagnostic evidence only.
+5. Produce median/P95/failure comparison only if the complete required paired sample set succeeds for both implementations.
+6. CPU/RSS/FD/application-byte fields must be observed under the same contract; `wire_bytes` remains null unless bounded capture metadata makes it trustworthy.
+7. Verify cleanup of all temporary Nekomusume/HY2 processes/listeners/config/cert/temp paths.
+8. No superiority claim from a single successful batch.
 
-## Fallback / spare VPS opportunity
+### Follow-up E — Use remaining VPS session time for the next genuinely missing row
 
-If one VPS branch is blocked, continue the other independent READY branch. If C/D/E all terminate in distinct retained blockers, use remaining rental-window effort only for a question made scientifically distinct by current code:
+**Dependency:** A/B complete and D either complete or honestly environment-blocked; do not rerun failed unchanged experiments.
 
-1. exact-head package install/smoke/readiness/shutdown/cleanup with binary/package SHA-256;
-2. bounded authenticated TCP/UDP process-resource sample if current runtime differs from the older resource row;
-3. repeated native microbenchmark only with explicit warm-up/sample protocol and no concurrent CPU-heavy work;
-4. parser/property/fuzz only if relevant parser/wire code changed.
+Choose the highest-value dependency-satisfied row still absent from the release matrix, not a speculative feature. Prefer in this order:
 
-Do not keep the VPS busy with unchanged failed scenarios.
+1. a distinct bounded real-socket failover/recovery lifecycle sample if A was a single transition and the existing harness already supports repetition without changing semantics;
+2. a real-session resource/leak observation with repeated open/exchange/close if current evidence does not already answer it;
+3. real-session key update or PMTUD observation only if there is already a truthful executable path/instrumentation at current HEAD;
+4. package/readiness/cleanup revalidation only if meaningful release-relevant code changed since N5.
+
+Do not repeat already-sufficient UDP/TCP baseline rows merely to keep the VPS busy.
+
+### Fallback
+
+If A or B fails on the changed current-head hypothesis:
+
+- retain the negative evidence and verified cleanup;
+- do not mechanically retry;
+- make the exact failure stage/event boundary the next local diagnostic slice;
+- continue independent READY VPS rows that do not depend on that failure;
+- never convert the failure into a generic `need WAN authorization` blocker.
+
+If HY2 still cannot establish the temporary QUIC/UDP path after C and a changed-instrumentation D run, preserve the diagnostic artifact and classify it as an environment/path/implementation-evidence blocker. Continue other Nekomusume release-matrix evidence rather than looping on HY2.
 
 ## Completion gates
 
-This batch is complete only when:
+This package is complete when the applicable items below are true:
 
-- the exact-head stable CI regression is repaired and a new exact-head stable job is green;
-- sampler/harness cleanup proves experiment-owned child process groups are gone, not merely that a wrapper PID was waited;
-- blocked artifacts carry truthful payload and cleanup facts without synthetic hashes/counts;
-- no partial failed comparison can produce a misleading summary;
-- one exact-head D064 terminal VPS row is retained, and 5+5 warm/cold follows if warm is correct;
-- one exact-head five-minute periodic terminal row is retained;
-- one changed HY2 explicit-bind terminal diagnostic is retained, and a complete 5+5 fair pair follows only if viable;
-- every experiment records provenance, actual parameters and verified cleanup;
-- no production network policy or third-party target is touched;
-- status/evidence docs reflect only observed facts;
-- `RELEASE_CANDIDATE=false`, global `FREEZE=false`, `PRODUCTION_READY=false`, `RELEASED=false` remain unchanged.
+- current GitHub Actions stable/fuzz success for `e07066b` is preserved as the starting gate;
+- a current-head D064 warm/cold result, positive or negative, exists with exact chronology and cleanup;
+- a current-head five-minute periodic result, positive or negative, exists with application accounting and cleanup;
+- HY2 blocked-result payload provenance no longer invents a hash for a payload that was not generated;
+- unavailable cleanup observations remain unknown rather than fabricated numeric values;
+- process-resource cleanup cannot claim complete solely from direct-child reap and is regression-tested with descendants;
+- the HY2 repair passes the full local gate and its GitHub stable/fuzz CI before another VPS comparison run;
+- any HY2 diagnostic/comparison result is preserved with fair-pair boundaries and verified cleanup;
+- no negative result is deleted or promoted to a PASS;
+- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain unchanged.
 
 ## Do not expand into
 
-- Session/Carrier architecture redesign;
-- reducing readiness proof count merely to make D064 pass;
-- weakening authentication/admission/tuple-generation-epoch binding;
-- UDP+TCP striping/aggregation;
-- durable Session restart persistence;
-- production Hysteria/firewall/NAT/route/provider changes;
-- broad process killing such as production-scoped `pkill hysteria`;
-- third-party targets/scanning;
-- repeated unchanged IPv6/public-path/HY2 failures;
-- performance-superiority claims from one paired batch;
-- unrelated experimental carriers/speculative features.
+- third-party targets or scanning;
+- production firewall/route/DNS/proxy/tunnel/qdisc changes;
+- a single run longer than the standing ten-minute limit or mechanically split long soak/pressure tests;
+- public/general reachability or production claims from self-owned paths;
+- RC/security approval before the bounded release matrix and independent review are complete;
+- 0-RTT, enabled FEC, striping/aggregation, exotic carriers or other experimental features without an observed-problem gate;
+- changing the frozen N9 canonical corpus unless a genuine corpus correctness defect is discovered.
 
 ## Questions requiring maintainer decision
 
