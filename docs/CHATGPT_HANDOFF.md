@@ -1,257 +1,239 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-02 11:59 Asia/Shanghai
-Repository HEAD: `ee371694eaa9aff782ee5e5b7e933144447b4d46`
-Previous reviewed implementation HEAD: `e07066b4c3f8e3ad8b33af08f27682173f415a9c`
-Previous reviewer handoff commit: `25e0daa4e74b3239568067afa967412ec4c0ebc7`
+Checked at: 2026-09-03 02:01 Asia/Shanghai
+Repository HEAD: `63958278a291613c44f936b27157ae97e0359cfd`
+Previous reviewed implementation HEAD: `ee371694eaa9aff782ee5e5b7e933144447b4d46`
+Previous reviewer handoff commit: `d3bb1dc0e74c2c38fa8760d2f52240e8c86fa4b4`
 
 ## What changed
 
-Four commits are visible after the previous reviewed implementation HEAD: one reviewer handoff plus three coding-agent commits.
+One coding-agent commit is visible after the previous reviewer handoff:
 
-- `25e0daa` — reviewer handoff only; resumed VPS-first release evidence and kept HY2 evidence truthfulness as a prerequisite for another comparison run.
-- `53cb859` — **real self-owned VPS evidence; no production semantic change.** It records one exact-`25e0daa` D064 warm controlled-fault run. Canonical UDP negotiation and Noise authentication completed, one record was confirmed on UDP, two ranges became uncertain after the bounded application-level UDP reply-cessation seam, warm TCP completed negotiation/authentication/resume and three authenticated readiness responses before promotion, no TCP application data was sent before promotion, the two uncertain ranges were replayed and acknowledged on TCP, and final application accounting was 3/3 records = 48 bytes, uncertain/replayed 2 records = 32 bytes, duplicate 0, lost 0. Recorded recovery from failure decision to first resumed data acceptance was 434,287 us. Client/server exited 0 and separate post-run observations found no experiment process/listener residue.
-- `4e1ef88` — **real self-owned VPS periodic evidence; no production semantic change.** It records one corrected direct-path approximately five-minute authenticated TCP Session from exact parent `25e0daa`: 60 records × 32 bytes = 1,920 application bytes, 60/60 confirmed, missing/duplicate/conflict 0, runtime confirmation-latency median 272 ms and P95 510 ms, client/server exit 0, plus direct-child CPU/RSS/FD observations and explicit post-exit process/listener cleanup. This is one bounded sample, not production/sustained proof.
-- `ee37169` — **benchmark-harness/schema/test/documentation repair; no Nekomusume wire/Session/failover semantic change and no new VPS comparison.** It makes HY2 payload provenance prepared-or-null, keeps missing cleanup observations nullable rather than inventing values, strengthens sampler-owned process-group descendant cleanup/verification, and updates blocked-result validators/tests. The current GitHub Actions run is green: both `stable checks` and the nightly 30-second decode fuzz smoke completed successfully.
+- `6395827` — **benchmark harness / validator / resource-sampler / regression / documentation repair; no Nekomusume production wire, Session or failover semantic change; no new VPS run.** It separates server bind authority from client connect authority, uses the SSH-reachable endpoint for both clients and client-side route/MTU lookup, pins the disposable HY2 self-signed certificate with its exact SHA-256 fingerprint, creates a fresh HY2 transport client for each timed sample, moves each timed client command beneath the process-group sampler, strengthens complete-result client-resource membership checks, and documents the fresh-client fair-pair contract.
 
-The previous handoff's D064 and periodic VPS rows are therefore closed with positive bounded evidence, and its HY2 local truthfulness repair is closed at the current HEAD. The bounded release-evidence matrix remains open.
+The exact `6395827` GitHub Actions run is green. `stable checks` completed successfully and the nightly 30-second `decode` fuzz smoke also completed successfully.
 
-A new reviewer finding blocks an immediate HY2 comparison run: the current owned-lab adapter still conflates the **remote listen/bind address** with the **client connect address**, and its per-sample lifecycle/resource accounting is not yet symmetric enough for a fair paired claim.
+The previous handoff's topology/TLS/lifecycle direction is therefore materially implemented. Two evidence-contract defects remain before another VPS comparison should be spent, plus one readiness/diagnostic hardening item that should be closed in the same batch.
 
 ## Review verdict
 
-**continue with required benchmark-contract repair — two high-value VPS rows accepted; HY2 paired comparison is READY only after topology/security/lifecycle comparability is repaired**
+**continue with required benchmark-evidence repair — `6395827` is useful and CI-green, but do not run the paired VPS comparison yet**
 
-There is no new production-runtime correctness blocker in D064 or periodic Session behavior from this review. Do not rerun those successful rows just to consume VPS time.
+The next VPS run is still high priority because the rental window is time-limited, but the current result path can misattribute client CPU/RSS and the harness parameter space can exceed the standing ten-minute wall-clock authorization while claiming a smaller hard-coded bound. Fix those locally first, then immediately run the changed-hypothesis paired experiment with bounded path diagnostics.
 
-Before spending another VPS window on HY2, repair the paired harness so it cannot repeat a NAT-shaped address error or compare a fresh Nekomusume Session against a pre-established HY2 tunnel under unequal security/resource measurement. Then run one changed-hypothesis owned-lab attempt with bounded capture/diagnostics.
+This is a benchmark/evidence integrity gate, not a production protocol correctness finding. Do not change Nekomusume wire/Session semantics to fix it.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains the bounded research baseline status.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain correct.
-- Current GitHub Actions at `ee37169` are independently green for the repository stable gate and nightly decode fuzz smoke. This is CI evidence, not a security audit or release approval.
-- The positive D064 artifact is tied to exact implementation parent/binary identity `25e0daa` / SHA-256 `8ede1564...`. Later commits in this reviewed delta are evidence/harness changes; do not rewrite the artifact as if it had run at `ee37169`.
-- D064 proves one **controlled application-level UDP reply-cessation** warm failover on self-owned cross-host sockets. It does not prove natural Internet loss/PTO blackhole behavior, public reachability or production resilience.
-- The periodic row proves one approximately five-minute self-owned direct-path authenticated Session with 60/60 confirmations. It is not a long-duration production soak or a reliability rate estimate.
-- The resource JSON generated for D064/periodic predates `ee37169`'s stronger process-group sampler contract. Preserve those resource records at their original direct-child scope. The evidence docs separately record explicit post-exit exact-process/listener observations; do not retroactively upgrade old sampler fields to the new group-cleanup semantics.
-- HY2 paired comparative samples, medians/P95 and superiority evidence remain absent.
-- IPv6 remains environment-blocked; no real owned end-to-end IPv6 path is currently demonstrated.
-- `IMPLEMENTATION_PLAN.md` and `docs/status.md` are now stale with respect to the new positive D064/periodic evidence: they still say current-exact-head warm/periodic evidence is absent. This is status/evidence drift to repair after the next benchmark-contract/VPS step; it must not erase the historical negative rows.
+- `6395827` contains no new real WAN/VPS comparative samples and no performance conclusion.
+- The accepted D064 controlled-fault warm evidence and approximately five-minute periodic direct-path evidence remain valid at their original exact implementation identities; do not rerun them merely to consume VPS time.
+- IPv6 remains environment-blocked unless a genuinely owned end-to-end IPv6 path becomes available.
+- `docs/status.md` and `IMPLEMENTATION_PLAN.md` still contain stale text saying current-lineage D064 warm / periodic VPS evidence is absent. Preserve that drift until the benchmark-contract/VPS step below is closed, then reconcile it without deleting historical negative attempts.
+- Official Hysteria 2 documentation supports the `insecure: true` + exact `pinSHA256` pattern for a self-signed certificate; `6395827` now follows that upstream security pattern. The fair lifecycle/measurement design remains a Nekomusume project decision.
 
-### HY2 reviewer research finding
+### Reviewer finding R-HY2-01 — successful sample CPU/RSS are not yet transport-group metrics
 
-The current `scripts/bench/compare-hy2-owned-lab.sh` has two concrete comparability defects that should be repaired before execution:
+`run_client` now correctly places the actual client lifecycle under `process-resource-sampler.py`, and that sampler records process-group CPU/RSS/FD/socket evidence. However the executable result adapter does not actually use all of those process-group values for the sample row:
 
-1. **Bind/connect conflation.** `LAB_REMOTE_BIND_ADDRESS` is separately required to be an address assigned to a VPS interface, but the generated HY2 client uses that bind address as `server:` and the Nekomusume client also uses it as `--addr`; local MTU route lookup also targets the bind address. `LAB_REMOTE_ADDRESS` is separately verified as the client/SSH-reachable endpoint. On a NAT-shaped VPS, the server must listen on an assigned local address while the client connects to the reachable endpoint; those values are allowed to differ by the current contract. The prior HY2 evidence explicitly encountered a NAT/public-bind setup defect before the later timeout. Reusing the bind address as the client target can therefore recreate the failure for the wrong reason.
-2. **Security/lifecycle/resource asymmetry.** The generated HY2 client currently uses `tls.insecure: true` without pinning, and one HY2 client/tunnel is started before all timed samples while each Nekomusume sample creates a fresh client/session. Per-sample HY2 GNU-time data then measures the local echo helper through the already-running tunnel, not the transport client lifecycle, while Nekomusume's timed command includes its transport client. Those numbers are not a fair same-lifecycle CPU/RSS/latency comparison.
+- GNU `time` wraps the **Python resource sampler**;
+- `make_sample()` takes `cpu_user_seconds`, `cpu_system_seconds`, and `rss_kib` from that outer GNU-time sentinel;
+- only `fd_count` is taken from the process-resource JSON;
+- the separate resource artifact does contain transport process-group CPU/RSS/FD, but `validate_resource()` currently checks mainly cleanup, identity/role/experiment/scope membership and does not require complete non-null group CPU/RSS/FD for a successful comparative sample;
+- the validator regression's synthetic complete `client_resource()` rows omit CPU/RSS/FD entirely and still validate.
 
-Official Hysteria 2 client documentation states that a self-signed certificate should use a custom CA or, when `insecure` is used, should pair it with `pinSHA256`; bare `insecure` is explicitly not recommended. Relevant upstream references:
+Therefore a result can claim a successful fair sample while its sample-level CPU/RSS fields describe sampler/wrapper resource use rather than the actual transport group. This violates the current owned-lab contract that per-sample CPU/RSS/FD cover the actual transport client process/group.
 
-- https://v2.hysteria.network/docs/getting-started/Client/
-- https://v2.hysteria.network/docs/advanced/Full-Client-Config/
+### Reviewer finding R-HY2-02 — whole-lab duration bound is not fail-closed
 
-This is upstream Hysteria behavior; the exact fair-pair lifecycle remains a Nekomusume benchmark design choice.
+Standing authorization limits a single public/VPS experiment to at most 10 minutes. The owned-lab harness currently accepts:
 
-## Work Package — Fair HY2 Contract Repair -> VPS Paired Evidence -> Matrix Reconciliation
+```text
+BENCH_RUNS = 3..10
+BENCH_TIMEOUT_SEC = 1..30
+```
 
-### Primary A — Make the owned-lab pair topology, security and timed lifecycle genuinely comparable
+and each pair contains two client regions bounded approximately by `TIMEOUT + 2` seconds. At the allowed maximum this alone can exceed 640 seconds before setup, SSH operations, server readiness, diagnostics and cleanup. Even the default five-run / 30-second configuration has a client-region worst-case above 300 seconds once wrapper margins are included, while final result assembly currently hard-codes:
+
+```text
+bounds.maximum_duration_ms = 300000
+```
+
+That field is not an enforced whole-lab wall bound. The harness must not admit a configuration outside standing authorization and must not emit a bound smaller than the actually enforced budget.
+
+### Reviewer finding R-HY2-03 — timed samples should start only after observable server readiness
+
+The prior HY2 attempt failed during QUIC establishment. `6395827` fixes the address hypothesis, but the current orchestrator still relies on background startup timing and a fixed short sleep for the per-run Nekomusume server rather than a bounded, observed readiness gate before entering a timed client region. Before the next paid-VPS run, make server/listener readiness explicit enough to distinguish startup race from path failure. This is benchmark harness instrumentation, not a release capability promotion.
+
+## Work Package — Evidence Attribution Repair -> Exact-Head CI -> VPS Fair Pair -> Matrix Reconciliation
+
+### Primary A — Make fair-pair resource and wall-clock evidence fail closed
 
 **Goal**
 
-Repair `scripts/bench/compare-hy2-owned-lab.sh` and its validator/tests so the next VPS run answers the intended comparison question instead of measuring address mistakes, bare-insecure TLS, or a pre-warmed HY2 tunnel against a fresh Nekomusume Session.
+Close R-HY2-01 and R-HY2-02 without changing Nekomusume protocol semantics, so every successful sample has attributable transport-client resource evidence and every admitted owned-lab run is mechanically inside standing authorization.
 
-**A1. Separate listen authority from connect authority**
+#### A1. Use process-group resource evidence for comparative CPU/RSS/FD
 
-- Keep `LAB_REMOTE_BIND_ADDRESS` only for remote listener binding and verification that the address is actually assigned to a VPS interface.
-- Derive a distinct client `connect_authority` from the already verified `LAB_REMOTE_ADDRESS`, with correct IPv4/IPv6 authority formatting.
-- HY2 server `listen:` and Nekomusume server `--bind` use the bind authority.
-- HY2 client `server:` and Nekomusume client `--addr` use the connect authority.
-- Client-side `ip route get` / MTU metadata must target the connect address, not the remote local bind address.
-- Do not silently require bind == connect. Add a deterministic NAT-shaped test where they are intentionally different and verify generated/client command targets use the correct side.
-- Preserve the existing endpoint SHA/SSH verification and non-wildcard bind-address checks.
+For successful owned-lab sample rows:
 
-**A2. Make HY2 server authentication truthful**
+- use the process-resource artifact as the authoritative source for client transport `cpu_user_seconds`, `cpu_system_seconds`, `rss_kib`, and `fd_count`;
+- use GNU time only for the elapsed wall/lifecycle timing if that remains the selected clock source;
+- require non-null valid process-group CPU, RSS and FD evidence for a successful comparative sample;
+- keep the resource row's `sampling.scope == "sampler-created process group"` requirement;
+- require the resource experiment id / implementation / role / application-byte contract to match the sample;
+- bind resource binary identity to the corresponding pinned implementation identity strongly enough that a stale/wrong resource file cannot satisfy a new sample;
+- require the resource process exit/timed-out state and the GNU-time sentinel exit to agree with the observed command return code. Any disagreement is typed evidence failure, not a success row.
 
-For the disposable self-signed experiment certificate, do not use bare `tls.insecure: true`.
+If wrapper/sampler CPU/RSS are still useful diagnostics, keep them separately and label them as wrapper metrics; do not put them into fields documented as transport-client resource evidence.
 
-Preferred minimal contract for this IP/NAT-shaped lab:
+Update the complete-result validator so a synthetic resource object missing group CPU/RSS/FD cannot pass merely because cleanup is complete.
 
-- keep a unique disposable certificate/key per run;
-- compute its SHA-256 certificate fingerprint locally;
-- configure HY2 client with `insecure: true` **plus `pinSHA256`** for that exact disposable certificate, following upstream Hysteria 2 documentation;
-- retain password authentication as the bounded client-authentication mechanism;
-- add a deterministic config/source test proving a HY2 owned-lab config cannot be generated with bare insecure TLS and no pin.
+#### A2. Enforce a truthful whole-lab wall budget
 
-Using a custom CA instead is acceptable only if hostname/IP validation remains truthful when bind and connect addresses differ; do not weaken the existing security class just to make the comparison run.
+Before any remote setup or experiment process starts:
 
-**A3. Make timed client/session lifecycle symmetric**
+- compute an explicit worst-case whole-lab budget from run count, per-sample timeout, paired lifecycle count and finite setup/cleanup/readiness/diagnostic allowances;
+- reject parameter combinations whose enforced worst-case can exceed 600 seconds;
+- leave meaningful margin for cleanup rather than treating 600 seconds as useful workload time;
+- give remote SSH/readiness/capture steps finite deadlines so one stalled control-plane operation cannot silently escape the experiment bound;
+- make the emitted `bounds.maximum_duration_ms` equal the actual enforced whole-lab bound (or a truthful parameter-derived upper bound), not a hard-coded 300000 ms unrelated to admitted parameters;
+- keep application traffic and concurrency inside the existing standing limits.
 
-Choose one explicit lifecycle and apply it to both implementations. Prefer:
+It is acceptable to narrow the owned-lab comparison profile (for example, a smaller maximum run count) if that is the simplest truthful contract. Do not split one over-limit benchmark into repeated nominally separate runs to evade the standing limit.
 
-```text
-fresh client/session start
--> transport handshake/authentication
--> exact payload exchange
--> successful application echo
--> client/session close
-```
+#### A3. Tests for the two evidence contracts
 
-for every timed sample.
+Add deterministic regressions proving at least:
 
-The current persistent HY2 client established once before all runs is not acceptable against a fresh Nekomusume client per sample.
+- complete result rejects a client resource row with missing CPU, RSS or FD evidence;
+- sample CPU/RSS/FD come from the process-group resource artifact rather than arbitrary GNU-time wrapper values;
+- GNU-time exit / resource exit / command return-code mismatch is rejected or typed failed;
+- wrong/stale resource identity is rejected;
+- maximum accepted owned-lab parameters are demonstrably within the enforced whole-lab budget;
+- one just-over-budget parameter combination fails before remote execution;
+- result `maximum_duration_ms` cannot disagree with the enforced configured bound.
 
-Required properties:
+Do not weaken the existing payload/hash, cleanup, partial-prefix retention or client-resource membership gates.
 
-- each HY2 timed sample must include the HY2 client/session establishment needed for that sample, not only `echo-payload.py` through a pre-established local forward;
-- each Nekomusume timed sample must represent the same lifecycle class;
-- if servers are persistent or per-run, make that policy symmetric where practical and explicitly record it; if server lifecycle cannot be made symmetric, exclude server-startup numbers from the comparative summary and label server resource rows separately;
-- per-sample CPU/RSS/FD evidence must cover the actual transport client process/group for both implementations. Do not compare Nekomusume transport-process resource use against only the HY2 local echo helper;
-- application bytes and payload SHA remain exact and equal;
-- failed/incomplete samples remain typed failures and never enter success medians/P95.
+### Follow-up B — Make pre-sample server readiness observable and rerun the full exact-head gate
 
-If the existing sampler cannot attribute a fresh HY2 client plus helper descendants truthfully, extend only the benchmark sampler/orchestrator contract needed for this comparison. Do not change Nekomusume protocol semantics.
+**Dependency:** A green.
 
-**A4. Preserve result truthfulness**
+Close R-HY2-03 before spending the VPS window:
 
-- Comparative summary is legal only for a complete required paired set.
-- Resource evidence may be aggregate/non-comparative only when labeled as such; do not silently place asymmetric aggregate metrics beside per-sample transport metrics.
-- Keep `wire_bytes=null` unless a bounded capture has trustworthy metadata.
-- Keep the existing prepared-or-null payload provenance and nullable cleanup observations.
-- Cleanup remains scoped only to experiment-owned process groups, ports and temp paths.
+1. For the persistent HY2 server, require a bounded observation that the experiment-owned UDP listener is actually present on the intended remote bind address/port before admitting timed HY2 samples.
+2. For each Nekomusume per-sample server, replace the fixed startup sleep as the sole gate with a bounded readiness/listener observation before starting that sample's timer. The readiness check itself is not part of client latency.
+3. Fail closed with a typed setup/readiness stage if the listener never becomes observable; do not reinterpret it as transport performance.
+4. Preserve non-wildcard bind, connect-vs-bind separation, exact certificate pin, fresh HY2 client per sample, process-group cleanup and negative-result retention.
+5. Run the full local gate and push the repair.
+6. Wait for exact repair-HEAD GitHub `stable checks` and nightly decode fuzz smoke to be green. Do not use an older green commit as authorization for the new VPS result.
 
-### Follow-up B — Deterministic regression + local rehearsal + CI gate
-
-**Dependency:** A complete.
-
-Before touching the VPS again:
-
-1. Add a deterministic test with `LAB_REMOTE_ADDRESS != LAB_REMOTE_BIND_ADDRESS` and assert:
-   - remote listeners bind only to the bind address;
-   - both clients target only the connect address;
-   - route/MTU metadata is based on the connect address.
-2. Add a config regression that proves HY2 owned-lab TLS uses the exact disposable certificate pin and rejects/removes bare insecure-only generation.
-3. Add lifecycle regression showing a new HY2 transport client/session is created per timed sample (or the selected symmetric alternative), and that the timed/resource region covers the actual transport process rather than only the local echo helper.
-4. Keep failure-before-payload, missing-cleanup, normal-descendant, SIGTERM/SIGINT, timeout and partial-sample truthfulness regressions green.
-5. Run the complete local gate (`cargo fmt/check/test/clippy`, `scripts/check.sh`, `git diff --check`; fuzz only as required by the repository gate or relevant parser changes).
-6. Push the repair and wait for the new exact-head GitHub `stable checks` and nightly fuzz jobs to be green before the VPS comparison run.
-
-Do not spend a VPS run validating a harness whose current CI is red or pending after a substantive harness change.
-
-### Follow-up C — Changed-hypothesis HY2/Nekomusume owned-lab paired run with bounded path diagnostics
+### Follow-up C — Run one changed-hypothesis owned-lab HY2/Nekomusume paired batch with bounded path diagnostics
 
 **Dependency:** B complete and exact repair HEAD CI green.
 
-**Goal**
+Use the VPS rental window immediately after the local gate closes.
 
-Use the rental window to either obtain the first semantically fair paired sample set or classify the remaining HY2 path failure with enough packet-direction evidence that another unchanged retry is unnecessary.
+Recommended profile remains:
 
-**Recommended bounded profile**
+```text
+self-owned client <-> owned VPS only
+HY2 v2.9.3 pinned SHA-256 already recorded
+5 paired runs
+1200-byte deterministic payload
+concurrency 1
+fresh unprivileged experiment ports
+whole-lab enforced wall budget < 10 minutes
+```
 
-- self-owned client + owned VPS only;
-- pinned HY2 v2.9.3 SHA-256 already recorded in the repository;
-- 5 paired runs;
-- 1,200-byte deterministic payload per sample;
-- concurrency 1;
-- fresh unprivileged experiment ports;
-- finite per-sample timeout, with the complete lab session remaining below the standing ten-minute single-run limit;
-- no firewall/route/qdisc/DNS/proxy/tunnel/production-service change.
+Do not modify production firewall, route, qdisc, DNS, proxy/tunnel or the existing production HY2 service/config.
 
-**Changed-hypothesis diagnostics**
+Because the previous changed attempt reached `server up and running` but the client QUIC path timed out, add bounded packet-direction evidence around only the new temporary HY2 UDP port:
 
-Because the previous HY2 attempt timed out during QUIC establishment, use the newly separated connect/bind contract and add bounded capture/observation around the temporary HY2 UDP port only:
+- record that the remote HY2 listener exists on the intended bind address/port;
+- record that the client targets the verified connect address/port;
+- bounded client/VPS capture or equivalent metadata should determine whether client UDP packets leave, arrive at the VPS, elicit replies, and whether replies return;
+- record packet counts/timestamps/capture hashes or compact redacted metadata; raw pcap need not be committed;
+- retain HY2 client/server diagnostic logs with secrets and unnecessary addresses redacted;
+- distinguish path/NAT/provider failure from TLS/auth/config failure rather than merely recording another timeout.
 
-- confirm the remote HY2 server is bound on the intended local bind address/port;
-- confirm the client sends QUIC/UDP packets to the reachable connect address/port;
-- if the client still times out, use bounded client/VPS capture metadata to classify whether packets (a) leave client, (b) arrive at VPS, (c) elicit server responses, and (d) return to client;
-- retain capture metadata/hash/packet counts/timestamps; raw pcap need not be committed if it contains unnecessary address material;
-- distinguish network/path failure from TLS/auth/config failure using HY2 logs and packet direction. Do not modify provider/firewall policy to force success.
+If every required paired sample succeeds:
 
-If all required paired samples succeed:
+- preserve the complete raw paired set;
+- calculate median/P95/failure counts only under the complete-success contract;
+- report exact application bytes/hash and the repaired transport-process CPU/RSS/FD evidence;
+- keep `wire_bytes=null` unless capture accounting is trustworthy enough to support it;
+- make no superiority/general-WAN claim from one self-owned batch.
 
-- retain raw per-sample rows;
-- calculate median/P95/failures only from the complete success contract;
-- report exact application bytes/hash and symmetric client transport CPU/RSS/FD evidence under the repaired measurement contract;
-- keep all comparison language bounded to this self-owned route/time window and one batch; no superiority claim.
+If any required pair fails, preserve one typed blocked/diagnostic artifact with no comparative summary. Do not rerun unchanged.
 
-If any required pair fails, preserve a typed diagnostic/blocked artifact with no comparative summary.
+Always verify cleanup of experiment-owned local/remote process groups, listeners and temporary paths.
 
-Always verify cleanup of experiment-owned processes/listeners/temp config/cert/key paths.
+### Follow-up D — Reconcile release-matrix status after C
 
-### Follow-up D — Reconcile release-matrix status with the accepted evidence
+**Dependency:** C succeeds or closes honestly with a retained changed-hypothesis blocker artifact.
 
-**Dependency:** A/B complete; C complete or honestly blocked with a retained changed-hypothesis artifact.
-
-Repair repository status/evidence drift without erasing historical negatives:
+Repair the current status/evidence drift without erasing historical negatives:
 
 1. `docs/status.md`
-   - replace the stale claim that current-lineage D064 warm VPS evidence is absent with the exact positive `25e0daa` controlled-fault evidence and its boundary;
-   - add the positive five-minute periodic direct-path sample and keep it explicitly one bounded sample;
-   - replace the old local-only HY2 harness-repair note with the `ee37169` truthfulness repair and the actual C outcome;
-   - do not promote controlled application fault to natural-WAN degradation.
+   - record the accepted `25e0daa`-lineage positive D064 controlled-fault warm result and its exact boundary;
+   - record the accepted approximately five-minute periodic direct-path result as one bounded sample, not general long-lived proof;
+   - replace the stale local-only HY2 note with the latest fair-harness repair and actual C outcome;
+   - do not promote controlled application fault to natural UDP/PTO degradation.
 2. `IMPLEMENTATION_PLAN.md`
-   - update bounded release-evidence narrative so D064 and periodic are no longer listed as absent;
-   - keep item 3 unchecked while HY2, IPv6/environment, NAT/endpoint-change or other declared matrix requirements remain open;
-   - record HY2 comparison as positive only if C produced a complete valid paired set.
+   - remove stale language saying current-lineage warm/periodic evidence is absent;
+   - keep bounded release matrix item 3 unchecked while declared HY2/IPv6/NAT/endpoint-change or other required rows remain unresolved;
+   - record comparison evidence as positive only if C produced a complete valid paired set.
 3. `ROADMAP.md`
-   - keep `UDP degradation / TCP fallback` unchecked if the only positive evidence is the controlled application fault seam; annotate that bounded controlled cross-host failover is positive while natural degradation remains unproven;
-   - keep long-lived production wording bounded: the five-minute periodic sample is useful evidence but not a general long-connection stability conclusion;
-   - keep IPv6/NAT/endpoint-change/HY2 rows truthful to actual evidence.
+   - preserve the distinction between controlled cross-host failover evidence and natural WAN degradation;
+   - preserve the distinction between one five-minute periodic sample and general long-connection stability;
+   - update HY2 only to the exact C outcome.
 
 Governance flags remain unchanged.
 
-### Follow-up E — Spend remaining VPS opportunity only on a genuinely missing READY row
+### Follow-up E — Spend one additional VPS opportunity only if a genuinely missing row is already executable
 
-**Dependency:** C/D complete or C honestly blocked.
+**Dependency:** D complete.
 
-Do not repeat already-sufficient generic TCP/UDP baselines, the accepted exact D064 warm row, or the accepted five-minute periodic row.
+Audit current runtime surfaces before selecting the next VPS row. Do not repeat generic TCP/UDP baselines, the accepted D064 warm controlled-fault run, the accepted periodic sample, or the HY2 attempt without a changed hypothesis.
 
-Audit the remaining release matrix against executable runtime surfaces and choose at most one next row that is already dependency-ready:
-
-1. **NAT / source-endpoint change:** run only if the existing runtime can produce and observe a genuine source endpoint/path change within owned endpoints without production route/firewall modification. If no live runtime seam exists, record `BLOCKED_IMPLEMENTATION` rather than inventing a fake NAT row.
-2. **Real-session migration-back / key update / PMTUD:** run only if a current live CLI/runtime path and truthful instrumentation already exist. Current capabilities still describe `key-update` as a fixture; a fixture is not permission to claim real-session key-update evidence.
-3. **Current package/operator revalidation:** use only if release-relevant package/lifecycle code changed enough since N5 that old package evidence no longer answers the current release question.
-
-If no additional VPS-only row is truly READY, stop rather than manufacture activity; the next genuine gate is independent release/security review once the bounded matrix is as complete as the available environment permits.
-
-## Fallback
-
-If Primary A shows that a fair same-lifecycle HY2 comparison cannot be constructed from the existing public Nekomusume/HY2 surfaces without a new product/runtime feature:
-
-- do not add a large proxy/tunnel feature merely for benchmarking;
-- preserve a precise `BLOCKED_COMPARABILITY` record describing the missing equivalent surface;
-- continue Follow-up D and the highest-value genuinely READY VPS row from E;
-- carry the comparison blocker into independent release review.
-
-If Follow-up C still shows no HY2 UDP reachability after the connect/bind correction and bounded dual-endpoint observation, preserve the diagnostic result and stop unchanged HY2 retries. Do not turn it into `need WAN authorization` and do not modify production/provider firewall policy under this handoff.
+Candidate rows include NAT/source-endpoint change, real-session migration-back, real-session key update or live PMTUD only when a current executable CLI/runtime seam and truthful instrumentation already exist. A model/fixture alone is not a live-runtime seam. If none is READY, record the exact implementation dependency and move to local work that directly unlocks the highest-value row rather than fabricating WAN evidence.
 
 ## Completion gates
 
-This package is complete only when the applicable items below are true:
+This package is complete only when:
 
-- D064 `53cb859` and periodic `4e1ef88` are preserved as bounded positive VPS evidence with their exact-parent boundaries;
-- current `ee37169` stable and nightly fuzz CI success is recognized as the starting gate;
-- HY2 remote bind authority and client connect authority are separate and regression-tested with a NAT-shaped differing-address fixture;
-- HY2 disposable self-signed TLS is authenticated by a custom CA or exact certificate pin; bare insecure-only config is gone from the owned-lab comparison;
-- timed sample lifecycle and client transport resource measurement are symmetric enough that the same metric names mean the same thing for Nekomusume and HY2;
-- local full gate and exact repair-head GitHub CI are green before VPS execution;
-- the next HY2 VPS attempt is changed-hypothesis and retains either a complete paired result or a packet-direction-classified blocked artifact;
-- no partial/failed run produces comparative median/P95 or superiority language;
-- repository status/plan/roadmap no longer say D064/periodic evidence is absent;
-- no evidence is promoted beyond self-owned bounded scope;
+- successful paired samples source CPU/RSS/FD from the actual sampler-created client transport process group;
+- missing/stale/mismatched resource evidence cannot validate as success;
+- timing/resource/return-code provenance is internally consistent;
+- the owned-lab whole-run budget is mechanically bounded below the standing ten-minute limit and the emitted bound is truthful;
+- both remote server paths have explicit bounded readiness evidence before timed client admission;
+- exact repair-HEAD CI stable + nightly fuzz are green before the VPS run;
+- the changed-hypothesis VPS attempt either produces a complete fair paired set or a packet-direction-classified blocker artifact;
+- cleanup is verified;
+- status/plan/roadmap preserve historical negatives and reflect accepted positive rows truthfully;
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain unchanged.
+
+## Fallback
+
+If the repaired C run shows that temporary HY2 UDP packets leave the owned client but do not arrive at the owned VPS (or replies do not traverse the provider/NAT path), preserve that as an environment/path blocker. Do not modify provider/firewall/production network policy to force success. Move to the next dependency-ready VPS-only evidence row or the local instrumentation/runtime slice that directly unlocks one.
+
+If A/B exposes a Nekomusume production correctness defect rather than benchmark-harness evidence drift, stop comparison work, preserve a minimal reproducer, repair correctness first, run the required parser/fuzz/security gates, and only then return to C.
 
 ## Do not expand into
 
-- third-party targets, scanning, or production network changes;
-- provider/firewall/qdisc changes to make HY2 pass;
-- runs above standing duration/traffic/concurrency limits;
-- bare insecure TLS or disabled authentication for benchmark convenience;
-- treating a pre-warmed HY2 tunnel and fresh Nekomusume Session as equivalent performance samples;
-- public/general WAN, capacity, security or production claims from these self-owned samples;
-- 0-RTT, enabled FEC, striping/aggregation, exotic carriers or other speculative features;
-- changing the frozen N9 canonical corpus without a genuine correctness defect.
+- changing Nekomusume wire/Session semantics to make the benchmark pass;
+- production HY2 config/service changes;
+- third-party targets, scanning, production firewall/route/DNS/proxy/tunnel/qdisc changes;
+- benchmark security downgrade;
+- repeated unchanged HY2 timeout attempts;
+- over-10-minute experiments or pressure/capacity testing outside standing authorization;
+- previous/current interoperability without a prior frozen release;
+- 0-RTT, enabled FEC, striping/aggregation or exotic carriers without an observed-problem gate;
+- RC/security/production approval from this evidence batch.
 
 ## Questions requiring maintainer decision
 
