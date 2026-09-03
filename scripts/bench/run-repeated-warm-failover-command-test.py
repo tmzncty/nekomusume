@@ -18,15 +18,15 @@ def rejected(value, text="invalid"):
 def test_malformed_and_missing_json_fail_closed():
     rejected("{")
     rejected({}, "exactly")
-    plan = module.fake_plan(); plan["cycles"][0]["server_command"] = "env failover-server,"
-    rejected(plan, "server_command")
-    plan = module.fake_plan(); plan["cycles"][0]["client_command"] = ["ok", ""]
-    rejected(plan, "client_command")
+    plan = module.fake_plan(); plan["cycles"][0]["endpoints"][0]["argv"] = "env failover-server,"
+    rejected(plan, "endpoint argv")
+    plan = module.fake_plan(); plan["cycles"][0]["endpoints"][1]["argv"] = ["ok", ""]
+    rejected(plan, "endpoint argv")
 
 def test_shell_boundary_strings_remain_single_argv_entries():
     plan = module.fake_plan(); loaded = module.load_plan(write(plan))
     env = module.adapter_env(loaded, 1)
-    server = json.loads(env["NEKO_FAILOVER_SERVER_COMMAND_JSON"])
+    server = json.loads(env["NEKO_FAILOVER_ENDPOINTS_JSON"])[0]["argv"]
     assert server == ["/harmless/fake binary", "failover-server", "failover-server,", "--label", "comma,quote\"kept"]
     assert "failover-server," in server and server.index("failover-server,") == 2
 
@@ -46,7 +46,7 @@ def test_preflight_enters_runner_and_dispatches_six_without_shell():
         for index, item in enumerate(report["dispatches"], 1):
             assert item["cycle_index"] == index
             assert item["adapter_argv"] == [sys.executable, str(SCRIPT.with_name("run-live-warm-failover-cycle.py"))]
-            assert json.loads(item["environment"]["NEKO_FAILOVER_SERVER_COMMAND_JSON"])[2] == "failover-server,"
+            assert json.loads(item["environment"]["NEKO_FAILOVER_ENDPOINTS_JSON"])[0]["argv"][2] == "failover-server,"
 
 def test_dispatch_uses_argv_and_exact_environment():
     plan = module.fake_plan(); path = write(plan)
@@ -65,9 +65,19 @@ def test_dispatch_uses_argv_and_exact_environment():
     assert seen["command"] == [sys.executable, str(SCRIPT.with_name("run-live-warm-failover-cycle.py"))]
     assert seen["env"]["NEKO_FAILOVER_GIT_COMMIT"] == "0" * 40
     assert seen["env"]["NEKO_FAILOVER_UDP_PORT"] == "40091"
-    assert json.loads(seen["env"]["NEKO_FAILOVER_CLIENT_COMMAND_JSON"])[3] == "client,'quoted'"
+    endpoints = json.loads(seen["env"]["NEKO_FAILOVER_ENDPOINTS_JSON"])
+    assert endpoints[1]["argv"][3] == "client,'quoted'"
+    assert [endpoint["role"] for endpoint in endpoints] == ["server", "client"]
 
 def main():
     for name, value in sorted(globals().items()):
         if name.startswith("test_"): value()
 if __name__ == "__main__": main()
+
+def test_structured_ssh_descriptor_survives_without_shell_reparse():
+    plan = module.fake_plan(); endpoint = plan["cycles"][0]["endpoints"][0]
+    endpoint["execution"] = "ssh"; endpoint["transport_argv"] = [sys.executable, "transport helper,quoted"]
+    endpoint["ssh_executable"] = sys.executable
+    loaded = module.load_plan(write(plan)); env = module.adapter_env(loaded, 1)
+    actual = json.loads(env["NEKO_FAILOVER_ENDPOINTS_JSON"])[0]
+    assert actual["execution"] == "ssh" and actual["transport_argv"][1] == "transport helper,quoted"

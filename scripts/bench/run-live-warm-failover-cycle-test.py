@@ -59,7 +59,9 @@ if mode == "failover-client":
   if scenario == "duplicate_summary": j("summary",3,records=3,application_bytes_total=48)
  sys.exit(124 if scenario=="timeout" else 0)
 if mode == "cleanup":
- print(json.dumps({"listeners_remaining":1 if scenario=="cleanup" else 0})); sys.exit(1 if scenario=="cleanup" else 0)
+ value={"listeners_remaining":1 if scenario=="cleanup" else 0}
+ if scenario != "missing_remote_process_postcheck": value["processes_remaining"]=0
+ print(json.dumps(value)); sys.exit(1 if scenario=="cleanup" else 0)
 '''
 
 HEAD = subprocess.run(
@@ -108,7 +110,7 @@ p,row=invoke("boundary_timing"); runner.validate_cycle(row, 1); assert p.returnc
 p,row=invoke("success", "super-secret-key")
 assert p.returncode==0 and "super-secret-key" not in p.stdout and "super-secret-key" not in json.dumps(row)
 
-# A no-network transport relays the structured request to the checked-in remote verifier.
+# A no-network transport may exercise the generic request shape, but cannot claim verified SSH.
 def fake_cross_host(fake):
  binary=pathlib.Path(sys.executable); data=binary.read_bytes()
  identity={"path":str(binary),"sha256":__import__("hashlib").sha256(data).hexdigest(),"bytes":len(data),"git_commit":HEAD}
@@ -117,13 +119,21 @@ def fake_cross_host(fake):
   argv=[str(binary),str(fake),"failover-"+role,"--diagnostic","--experiment-id","warm-cycle-1-"+role]
   argv += ["--cease-udp-replies-after","1"] if role=="server" else ["--automatic-health-failover"]
   value={"role":role,"execution":execution,"binary":identity,"argv":argv}
-  if execution=="ssh": value["transport_argv"]=[sys.executable,helper]
+  if execution=="ssh": value["transport_argv"]=[sys.executable,helper]; value["ssh_executable"]="/definitely/not/the/python/executable"
   return value
  return [endpoint("server","ssh"),endpoint("client","local")]
-p,row=invoke(endpoints=fake_cross_host); runner.validate_cycle(row,1)
+p,row=invoke(endpoints=fake_cross_host)
+assert p.returncode==2 and p.stdout=="" and row is None
+# A same-file declared transport is accepted as the mechanically verified class.
+def verified_cross_host(fake):
+ values=fake_cross_host(fake); values[0]["ssh_executable"]=sys.executable; return values
+p,row=invoke(endpoints=verified_cross_host); runner.validate_cycle(row,1)
 assert p.returncode==0 and row["result"]["status"]=="passed"
 assert [(e["role"],e["execution"]) for e in row["endpoint_provenance"]]==[("server","ssh"),("client","local")]
+assert row["resources"]["server"] == {"status":"not_collected_remote"} and row["resources"]["client"] is not None
+p,row=invoke(scenario="missing_remote_process_postcheck", endpoints=verified_cross_host)
+assert p.returncode==2 and p.stdout=="" and row is None
 def confused(fake):
- values=fake_cross_host(fake); values[0]["argv"][0]=sys.executable+"-wrapper"; return values
+ values=verified_cross_host(fake); values[0]["argv"][0]=sys.executable+"-wrapper"; return values
 p,row=invoke(endpoints=confused); assert p.returncode==2 and p.stdout=="" and row is None
 print("live warm failover adapter tests: ok")

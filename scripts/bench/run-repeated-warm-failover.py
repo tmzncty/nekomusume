@@ -57,9 +57,9 @@ def validate_cycle(raw: Any, expected_index: int) -> dict[str, Any]:
     row = obj(raw, "cycle")
     required = {
         "cycle_index", "git_commit", "binary_sha256", "binary_bytes", "parameters",
-        "semantic", "accounting", "timing", "classification", "result", "cleanup",
+        "semantic", "accounting", "timing", "classification", "result", "cleanup", "endpoint_provenance",
     }
-    exact_keys(row, required, {"resources", "endpoint_provenance"}, "cycle")
+    exact_keys(row, required, {"resources"}, "cycle")
     if row["cycle_index"] != expected_index:
         raise EvidenceError("cycle_index does not match sequential invocation")
     if not isinstance(row["git_commit"], str) or not HEX40.fullmatch(row["git_commit"]):
@@ -68,8 +68,8 @@ def validate_cycle(raw: Any, expected_index: int) -> dict[str, Any]:
         raise EvidenceError("binary_sha256 must be lowercase SHA-256")
     if nonnegative_int(row["binary_bytes"], "binary_bytes") == 0:
         raise EvidenceError("binary_bytes must be positive")
-    if "endpoint_provenance" in row:
-        provenance = row["endpoint_provenance"]
+    provenance = row["endpoint_provenance"]
+    if True:
         if not isinstance(provenance, list) or len(provenance) != 2:
             raise EvidenceError("endpoint_provenance must contain server and client")
         for expected_role, endpoint in zip(("server", "client"), provenance):

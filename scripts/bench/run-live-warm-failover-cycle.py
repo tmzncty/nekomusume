@@ -104,9 +104,12 @@ def endpoints(binary: pathlib.Path, binary_sha: str, binary_bytes: int, commit: 
         raise CollectionError("invalid endpoint descriptors")
     result: dict[str, dict[str, Any]] = {}
     for item in value:
-        if not isinstance(item, dict) or set(item) not in ({"role", "execution", "binary", "argv"}, {"role", "execution", "binary", "argv", "transport_argv"}):
+        role=item.get("role") if isinstance(item, dict) else None
+        execution=item.get("execution") if isinstance(item, dict) else None
+        expected_keys = {"role", "execution", "binary", "argv"} | ({"transport_argv", "ssh_executable"} if execution == "ssh" else set())
+        if not isinstance(item, dict) or set(item) != expected_keys:
             raise CollectionError("invalid endpoint descriptor")
-        role=item.get("role"); execution=item.get("execution"); declared=item.get("binary")
+        declared=item.get("binary")
         if role not in ("server", "client") or role in result or execution not in ("local", "ssh"):
             raise CollectionError("invalid endpoint role or execution")
         if (not isinstance(declared, dict) or set(declared) != {"path", "sha256", "bytes", "git_commit"} or
@@ -122,6 +125,14 @@ def endpoints(binary: pathlib.Path, binary_sha: str, binary_bytes: int, commit: 
             require_same_executable(argv,binary)
         else:
             transport=valid_argv(item.get("transport_argv"),"SSH transport argv")
+            declared_ssh=item.get("ssh_executable")
+            if not isinstance(declared_ssh, str) or not declared_ssh:
+                raise CollectionError("invalid SSH executable")
+            try:
+                if not os.path.samefile(executable_path(transport[0]), executable_path(declared_ssh)):
+                    raise CollectionError("SSH transport executable differs from declared SSH executable")
+            except OSError as exc:
+                raise CollectionError("cannot compare SSH transport executable") from exc
             normalized["transport_argv"]=transport
         result[role]=normalized
     if set(result) != {"server","client"}: raise CollectionError("missing endpoint role")
@@ -290,6 +301,7 @@ def main() -> int:
         server_endpoint, client_endpoint = endpoints(binary, binary_sha, binary_bytes, commit)
         server_argv, client_argv = server_endpoint["argv"], client_endpoint["argv"]
         cleanup_argv = command("NEKO_FAILOVER_CLEANUP_COMMAND_JSON")
+        remote_server = server_endpoint["execution"] == "ssh"
         requires(server_argv, "failover-server")
         requires(server_argv, "--diagnostic")
         requires(server_argv, "--cease-udp-replies-after", "1")
@@ -306,7 +318,11 @@ def main() -> int:
         identity = f"git:{commit}"
         server_exec, server_input = execution_argv(server_endpoint)
         client_exec, client_input = execution_argv(client_endpoint)
-        server_cmd, server_resource_path = sampled_command(tmp_path, "server", identity, [udp_port, tcp_port], server_exec)
+        server_resource_path = tmp_path / "server-resource.json"
+        if remote_server:
+            server_cmd = server_exec
+        else:
+            server_cmd, server_resource_path = sampled_command(tmp_path, "server", identity, [udp_port, tcp_port], server_exec)
         client_cmd, client_resource_path = sampled_command(tmp_path, "client", identity, [], client_exec)
         server_log = open(tmp_path / "server.log", "xb")
         client_log = open(tmp_path / "client.log", "xb")
@@ -329,7 +345,12 @@ def main() -> int:
         try:
             cleanup_value = json.loads(cleanup.stdout)
             listeners = cleanup_value["listeners_remaining"]
-            if set(cleanup_value) != {"listeners_remaining"} or isinstance(listeners, bool) or not isinstance(listeners, int) or listeners < 0:
+            allowed_cleanup = {"listeners_remaining", "processes_remaining"}
+            if (not set(cleanup_value) <= allowed_cleanup or isinstance(listeners, bool) or
+                    not isinstance(listeners, int) or listeners < 0):
+                raise ValueError
+            processes = cleanup_value.get("processes_remaining")
+            if remote_server and (isinstance(processes, bool) or not isinstance(processes, int) or processes < 0):
                 raise ValueError
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             raise CollectionError("cleanup command did not return bounded evidence")
@@ -451,7 +472,7 @@ def main() -> int:
         if accounting_event is not None and not accounting_valid:
             raise CollectionError("invalid failover accounting")
         client_reaped = bool(cr and cr.get("cleanup", {}).get("complete"))
-        server_reaped = bool(sr and sr.get("cleanup", {}).get("complete"))
+        server_reaped = (cleanup.returncode == 0 and listeners == 0 and processes == 0) if remote_server else bool(sr and sr.get("cleanup", {}).get("complete"))
         cleanup_verified = cleanup.returncode == 0 and listeners == 0 and client_reaped and server_reaped
         evidence_pass = (complete and all(semantic[key] for key in ("udp_negotiated", "udp_authenticated", "tcp_negotiated", "tcp_authenticated", "resume_validated", "readiness_completed", "udp_confirmed_before_failure")) and
                          semantic["readiness_proofs"] == 3 and accounting_valid and timing_valid and
@@ -475,7 +496,7 @@ def main() -> int:
                        "failure_stage": failure_stage, "failure_reason": failure_reason},
             "cleanup": {"status": "verified" if cleanup_verified else "failed", "client_process_reaped": client_reaped,
                         "server_process_reaped": server_reaped, "listeners_remaining": listeners, "temporary_files_removed": True},
-            "resources": {"client": cr, "server": sr} if cr and sr else None,
+            "resources": {"client": cr, "server": {"status": "not_collected_remote"} if remote_server else sr},
         }
         shutil.rmtree(tmp_path); tmp_path = None
         print(json.dumps(row, sort_keys=True, separators=(",", ":")))

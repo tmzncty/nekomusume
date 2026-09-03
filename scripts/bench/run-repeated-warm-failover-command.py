@@ -47,19 +47,42 @@ def load_plan(path: str) -> dict[str, Any]:
         raise PlanError("plan must contain exactly six cycles")
     cycles = []
     for index, value in enumerate(raw["cycles"], 1):
-        if not isinstance(value, dict) or set(value) != {"udp_port", "tcp_port", "server_command", "client_command", "cleanup_command"}:
+        if not isinstance(value, dict) or set(value) != {"udp_port", "tcp_port", "endpoints", "cleanup_command"}:
             raise PlanError(f"invalid cycle {index}")
         udp, tcp = value["udp_port"], value["tcp_port"]
         if (isinstance(udp, bool) or isinstance(tcp, bool) or not isinstance(udp, int) or
                 not isinstance(tcp, int) or not 40080 <= udp <= 40100 or
                 not 40080 <= tcp <= 40100 or udp == tcp):
             raise PlanError(f"invalid cycle {index} ports")
-        cycles.append({
-            "udp_port": udp, "tcp_port": tcp,
-            "server_command": argv(value["server_command"], f"cycle {index} server_command"),
-            "client_command": argv(value["client_command"], f"cycle {index} client_command"),
-            "cleanup_command": argv(value["cleanup_command"], f"cycle {index} cleanup_command"),
-        })
+        endpoints = value["endpoints"]
+        if not isinstance(endpoints, list) or len(endpoints) != 2:
+            raise PlanError(f"invalid cycle {index} endpoints")
+        normalized = []
+        for expected_role, endpoint in zip(("server", "client"), endpoints):
+            if not isinstance(endpoint, dict) or endpoint.get("role") != expected_role:
+                raise PlanError(f"invalid cycle {index} endpoint role")
+            execution = endpoint.get("execution")
+            required = {"role", "execution", "binary", "argv"}
+            if execution == "ssh": required |= {"transport_argv", "ssh_executable"}
+            if execution not in ("local", "ssh") or set(endpoint) != required:
+                raise PlanError(f"invalid cycle {index} endpoint")
+            binary = endpoint["binary"]
+            if (not isinstance(binary, dict) or set(binary) != {"path", "sha256", "bytes", "git_commit"} or
+                    not isinstance(binary["path"], str) or not binary["path"] or "\0" in binary["path"] or
+                    not isinstance(binary["sha256"], str) or len(binary["sha256"]) != 64 or
+                    isinstance(binary["bytes"], bool) or not isinstance(binary["bytes"], int) or binary["bytes"] <= 0 or
+                    binary["git_commit"] != raw["git_commit"]):
+                raise PlanError(f"invalid cycle {index} endpoint binary")
+            item = {"role": expected_role, "execution": execution, "binary": binary,
+                    "argv": argv(endpoint["argv"], f"cycle {index} endpoint argv")}
+            if execution == "ssh":
+                item["transport_argv"] = argv(endpoint["transport_argv"], f"cycle {index} transport_argv")
+                if not isinstance(endpoint["ssh_executable"], str) or not endpoint["ssh_executable"]:
+                    raise PlanError(f"invalid cycle {index} ssh_executable")
+                item["ssh_executable"] = endpoint["ssh_executable"]
+            normalized.append(item)
+        cycles.append({"udp_port": udp, "tcp_port": tcp, "endpoints": normalized,
+                       "cleanup_command": argv(value["cleanup_command"], f"cycle {index} cleanup_command")})
     return {"git_commit": raw["git_commit"], "binary": raw["binary"], "cycles": cycles}
 
 def adapter_env(plan: dict[str, Any], index: int) -> dict[str, str]:
@@ -69,8 +92,7 @@ def adapter_env(plan: dict[str, Any], index: int) -> dict[str, str]:
         "NEKO_FAILOVER_BINARY": plan["binary"],
         "NEKO_FAILOVER_UDP_PORT": str(cycle["udp_port"]),
         "NEKO_FAILOVER_TCP_PORT": str(cycle["tcp_port"]),
-        "NEKO_FAILOVER_SERVER_COMMAND_JSON": json.dumps(cycle["server_command"], separators=(",", ":")),
-        "NEKO_FAILOVER_CLIENT_COMMAND_JSON": json.dumps(cycle["client_command"], separators=(",", ":")),
+        "NEKO_FAILOVER_ENDPOINTS_JSON": json.dumps(cycle["endpoints"], separators=(",", ":")),
         "NEKO_FAILOVER_CLEANUP_COMMAND_JSON": json.dumps(cycle["cleanup_command"], separators=(",", ":")),
     }
 
@@ -79,6 +101,7 @@ def preflight_row(plan: dict[str, Any], index: int) -> dict[str, Any]:
     return {
         "cycle_index": index, "git_commit": plan["git_commit"],
         "binary_sha256": "0" * 64, "binary_bytes": 1,
+        "endpoint_provenance": [{"role": role, "execution": "local", "underlying_binary_path": "/synthetic/not-executed", "binary_sha256": "0" * 64, "binary_bytes": 1, "git_commit": plan["git_commit"]} for role in ("server", "client")],
         "parameters": {"record_count": 3, "record_payload_bytes": 16, "client_max_seconds": 12, "server_max_seconds": 15, "concurrency": 1, "udp_port": cycle["udp_port"], "tcp_port": cycle["tcp_port"]},
         "semantic": {"selected_version": 0, "udp_negotiated": True, "udp_authenticated": True, "tcp_negotiated": True, "tcp_authenticated": True, "resume_validated": True, "readiness_proofs": 3, "readiness_completed": True, "udp_confirmed_before_failure": True},
         "accounting": {"udp_confirmed_records": 1, "udp_confirmed_bytes": 16, "uncertain_records": 2, "uncertain_bytes": 32, "replayed_records": 2, "replayed_bytes": 32, "confirmed_records": 3, "confirmed_bytes": 48, "duplicate_records": 0, "duplicate_bytes": 0, "lost_records": 0, "lost_bytes": 0, "conflicting_records": 0, "conflicting_bytes": 0},
@@ -133,8 +156,10 @@ def fake_plan() -> dict[str, Any]:
     for index in range(CYCLES):
         cycles.append({
             "udp_port": 40081 + index * 2, "tcp_port": 40080 + index * 2,
-            "server_command": ["/harmless/fake binary", "failover-server", "failover-server,", "--label", "comma,quote\"kept"],
-            "client_command": ["/harmless/fake binary", "failover-client", "--label", "client,'quoted'"],
+            "endpoints": [
+                {"role": "server", "execution": "local", "binary": {"path": "/harmless/fake binary", "sha256": "0" * 64, "bytes": 1, "git_commit": "0" * 40}, "argv": ["/harmless/fake binary", "failover-server", "failover-server,", "--label", "comma,quote\"kept"]},
+                {"role": "client", "execution": "local", "binary": {"path": "/harmless/fake binary", "sha256": "0" * 64, "bytes": 1, "git_commit": "0" * 40}, "argv": ["/harmless/fake binary", "failover-client", "--label", "client,'quoted'"]},
+            ],
             "cleanup_command": ["/harmless/fake cleanup", "--ports", f"{40080 + index * 2},{40081 + index * 2}"],
         })
     return {"git_commit": "0" * 40, "binary": "/harmless/fake binary", "cycles": cycles}

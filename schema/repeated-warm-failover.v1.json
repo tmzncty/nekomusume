@@ -29,7 +29,7 @@
     "endpointProvenance": {"type": "object", "additionalProperties": false, "required": ["role", "execution", "underlying_binary_path", "binary_sha256", "binary_bytes", "git_commit"], "properties": {"role": {"enum": ["server", "client"]}, "execution": {"enum": ["local", "ssh"]}, "underlying_binary_path": {"type": "string", "minLength": 1, "maxLength": 4096}, "binary_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "binary_bytes": {"type": "integer", "minimum": 1}, "git_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}}},
     "cycle": {
       "type": "object", "additionalProperties": false,
-      "required": ["cycle_index", "git_commit", "binary_sha256", "binary_bytes", "parameters", "semantic", "accounting", "timing", "classification", "result", "cleanup"],
+      "required": ["cycle_index", "git_commit", "binary_sha256", "binary_bytes", "endpoint_provenance", "parameters", "semantic", "accounting", "timing", "classification", "result", "cleanup"],
       "properties": {
         "cycle_index": {"type": "integer", "minimum": 1, "maximum": 6},
         "git_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
@@ -43,7 +43,7 @@
         "classification": {"type": "object", "additionalProperties": false, "required": ["failure_seam", "natural_blackhole", "pto_blackhole"], "properties": {"failure_seam": {"const": "controlled_application_reply_cessation"}, "natural_blackhole": {"const": false}, "pto_blackhole": {"const": false}}},
         "result": {"type": "object", "additionalProperties": false, "required": ["status", "client_exit_code", "server_exit_code", "failure_stage", "failure_reason"], "properties": {"status": {"enum": ["passed", "failed"]}, "client_exit_code": {"type": "integer"}, "server_exit_code": {"type": "integer"}, "failure_stage": {"type": ["string", "null"]}, "failure_reason": {"type": ["string", "null"]}}},
         "cleanup": {"type": "object", "additionalProperties": false, "required": ["status", "client_process_reaped", "server_process_reaped", "listeners_remaining", "temporary_files_removed"], "properties": {"status": {"enum": ["verified", "failed"]}, "client_process_reaped": {"type": "boolean"}, "server_process_reaped": {"type": "boolean"}, "listeners_remaining": {"type": "integer", "minimum": 0}, "temporary_files_removed": {"type": "boolean"}}},
-        "resources": {"type": ["object", "null"]}
+        "resources": {"type": ["object", "null"], "properties": {"server": {"oneOf": [{"type": "object"}, {"const": null}]}, "client": {"type": ["object", "null"]}}}
       }
     }
   }
