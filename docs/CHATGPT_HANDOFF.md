@@ -1,209 +1,172 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-04 01:00 Asia/Shanghai
-Repository HEAD reviewed: `269c90ee80cb59be467e57bf334e7ad24b22f6da`
-Previous reviewed coding/evidence HEAD: `a117086fa69553a36021137900b6052050624a8b`
-Previous reviewer handoff commit: `6eea387f79de9baf3419a2fb836bdf436e921d6d`
+Checked at: 2026-09-04 02:02 Asia/Shanghai
+Repository HEAD reviewed: `340f74ec76b0e6312219dc96a35c783eda790570`
+Previous reviewed coding/evidence HEAD: `269c90ee80cb59be467e57bf334e7ad24b22f6da`
+Previous reviewer handoff commit: `4f7e24e0061a88f02ba42ce0ad6358168c039677`
 
 ## What changed
 
-Two coding-agent commits landed after the previous reviewer handoff.
+Three coding-agent commits are newly reviewed after the previous reviewed coding/evidence HEAD. The `4f7e24e` commit between them is reviewer-handoff-only and is not counted as coding progress.
 
-- `c6ab8fd` — **privacy-preserving collector-diagnostic repair; no protocol/runtime semantic change.** It closes the previous R-005 evidence-loss defect by retaining bounded private diagnostic sidecars with restrictive permissions, while the tracked batch receives only a bounded hash/length/truncation/classification object. It adds regression coverage that secret/endpoint/path material does not enter the tracked result and keeps success-row semantics unchanged. Exact-head GitHub Actions run `33778250170` completed successfully.
-- `269c90e` — **real self-owned VPS typed negative archive/status update; no runtime semantic change.** It preserves the one-and-only exact-`c6ab8fd` live repeated-failover invocation: 0/6 completed cycles, cycle 1 `invalid_cycle_evidence`, collector exit 2, no valid stdout row, 3.597 s outer elapsed time, zero retries, exact staged binary SHA-256/size recorded, and separate external cleanup reporting zero experiment process/listener/temp-path residue. The bounded private diagnostic now discriminates the immediate collector failure as `missing JSON event: start`; its sanitized private diagnostic is 51 bytes with SHA-256 `6f1f1c44a571fb2f9638887e736cd70de6466fc918e54547dec9fd843ecbe686`. The committed evidence correctly does not guess whether the missing start event came from server-side event absence, client-side event absence, remote output framing, or early endpoint exit. Exact current HEAD GitHub Actions run `33781229303` completed successfully.
+- `67453d5` — **initial shell-free periodic Session wrapper; local evidence/tooling only.** It introduced a JSON argv plan, validate/dry-run modes, bounded timeout/cleanup, and deterministic dispatch tests. The initial form was local-only and therefore did not yet satisfy the cross-host C0 contract.
+- `177f373` — **A3 startup-observability repair; evidence/orchestration only, no wire/Session/Noise/failover semantic change.** It makes required `start` failures role-specific, removes the blind fixed startup sleep, and waits on one validated server `start` event before launching the client. It fails closed on early server exit, malformed/missing start, or bounded startup timeout and adds deterministic delayed-start/early-exit/missing-client-start/malformed-start regressions. The real `failover-server` emits its `server/start` diagnostic only after UDP and TCP listeners are successfully bound/configured and the Session runtime stream has been opened, so this observed readiness is materially stronger than “SSH process exists”. R-006 is closed.
+- `340f74e` — **periodic cross-host endpoint/provenance upgrade; evidence/tooling only.** It replaces the local-only periodic plan with structured local/SSH endpoint semantics, uses `remote-endpoint-exec.py` for remote binary hash/size/commit verification immediately before direct spawn, keeps the local client process distinct from SSH transport, labels remote server resources `not_collected_remote`, requires separate remote/local cleanup checks, and adds NAT/path-independent shell-free literal/cleanup/provenance regressions. Exact-head GitHub Actions run `33785234307` completed successfully: `stable checks` and `nightly decode fuzz smoke` both passed.
 
-A1 is therefore closed and A2 produced a **useful discriminating typed negative**, not a protocol failure. The repeated-failover lane should not receive another broad harness rewrite. One final narrowly targeted startup-observability repair is justified by the new live evidence; after that, spend at most one materially changed retry on this lane before moving on to other VPS-only evidence.
+The coding agent therefore consumed two independent queued lanes without waiting: A3 is closed and the transport/provenance portion of C0 is substantially closed. The final repeated-failover retry is now dependency-ready on exact current green HEAD and should use the rented VPS immediately.
 
-### R-006 HIGH — live startup readiness is role-blind and still time-based on the remote path
+### R-007 HIGH — periodic wrapper is transport-truthful but not yet application-evidence-truthful
 
-The new private diagnostic proves only `missing JSON event: start`. Current `run-live-warm-failover-cycle.py` has two concrete properties that make another live retry insufficiently discriminating:
+Do **not** spend the longer-periodic VPS window yet. Current `scripts/bench/run-periodic-command.py` still cannot support the C1 evidence claim for three concrete reasons:
 
-1. `one_event(..., "start", required=True)` raises the same message for client and server, so the retained collector diagnostic cannot identify which endpoint lacked the required start event.
-2. The client is launched after a fixed `NEKO_FAILOVER_SERVER_STARTUP_SECONDS` sleep (default 0.2 s), not after observed server readiness. That may be adequate locally but is not a truthful synchronization contract for an SSH-launched remote server. A delayed or early-exiting remote server can therefore be conflated with the actual failover experiment.
+1. It launches the periodic client immediately after spawning the server transport and does not wait for the real `periodic_server_ready` line. On an SSH server path this can turn remote startup latency into a client `connect failed` negative.
+2. It redirects both server and client stdout/stderr to `DEVNULL`. The real periodic runtime already emits `periodic_server_ready`, authentication lines, per-record interval rows, `periodic_server_summary`, and the client `periodic_summary` containing attempted/confirmed/missing/duplicates, P50/P95 confirmation latency, elapsed time and application bytes. The wrapper currently discards exactly the semantics C1 is supposed to preserve.
+3. Its public report copies raw endpoint `binary.path` and complete argv vectors. A real plan may contain addresses, identity paths and key arguments. The private plan may retain them, but a tracked evidence artifact must not copy private endpoint/topology/path/key material into Git merely because the wrapper knows it.
 
-This is an **orchestration/evidence blocker for one more paid repeated-failover attempt**, not evidence of a Nekomusume runtime correctness defect. Repair only this seam. Do not reopen endpoint abstraction, provenance, parser architecture, Session/Carrier semantics or the remote resource model.
+This is a **lane-specific evidence blocker for C1**, not a production runtime defect and not a blocker for A4. Repair only the minimum periodic observation/sanitization seam after the final repeated-failover attempt. Do not create another generic orchestration framework.
 
 ## Review verdict
 
-**CONTINUE_WITH_REQUIRED_FIXES — A1 accepted; A2 retained as a discriminating typed negative; close one bounded startup-observability seam, allow one final materially changed repeated-failover retry, and continuously consume the independent periodic/HY2/review-prep queue instead of waiting**
+**CONTINUE_WITH_REQUIRED_FIXES — A3 accepted and exact current CI green; run the one final materially changed repeated-failover VPS batch now. Periodic C0 transport/provenance work is accepted, but close R-007 before the longer periodic VPS sample.**
 
-The project is not globally blocked. The time-limited VPS remains the scarce asset. If the final repeated-failover retry still produces a zero-row orchestration negative after R-006 is closed, mark this lane blocked and move on; do not keep repairing runners indefinitely.
+The project is not globally blocked. Do not wait for another reviewer interval after each slice. Consume the rolling queue continuously until a listed stop condition is reached.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains the bounded research baseline.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain correct.
-- `c6ab8fd` changes evidence diagnostics only. It does not add WAN/runtime success evidence.
-- `269c90e` is a real VPS **negative at the orchestration/evidence-collection boundary**, not a failover runtime failure.
-- Exact current HEAD `269c90e` has green independent repository CI/fuzz smoke. This is CI evidence, not WAN evidence, security audit or release approval.
+- `177f373` and `340f74e` are harness/evidence infrastructure. They do not themselves add new WAN/runtime success evidence.
+- Exact `340f74e` has independent green `stable checks` and 30-second decode fuzz-smoke CI. This is CI evidence, not WAN evidence, security audit or release approval.
 - Exact `25e0daa` remains the accepted single controlled application-level UDP reply-cessation warm-fallback row: 3/3 logical records, 48 application bytes, two uncertain/replayed ranges, duplicate/lost 0, about 434 ms failure-decision-to-first-resumed-data. It is not natural degradation/PTO-blackhole evidence.
-- Exact `25e0daa` also remains one accepted approximately five-minute direct periodic Session: 60 x 32 B, 60/60 confirmed, no missing/duplicate/conflict. It is one bounded sample, not a reliability rate or production long-lived conclusion.
-- Exact `9fd2411`, `a117086`, and `c6ab8fd` repeated-failover attempts remain historical typed negatives at distinct orchestration/evidence stages. Do not rewrite any of them into runtime evidence.
-- The `c6ab8fd` private diagnostic says only `missing JSON event: start`; deeper cause is currently unknown and must not be inferred retrospectively.
+- Exact `25e0daa` also remains one accepted approximately five-minute direct periodic Session: 60 x 32 B, 60/60 confirmed, no missing/duplicate/conflict. It is one bounded sample only.
+- Exact `9fd2411`, `a117086`, `c6ab8fd`, and the later archived A2 negative remain historical orchestration/evidence negatives. Do not rewrite them into runtime failures or successes.
+- NAT/source-endpoint change, live migration-back, live key update and live PMTUD remain implementation-blocked unless executable reality changes. IPv6 remains environment-blocked.
 - Historical HY2 negatives remain valid; there is still no complete fair paired comparison.
-- NAT/source-endpoint change, live migration-back, live key update and live PMTUD remain implementation-blocked until executable reality changes. IPv6 remains environment-blocked.
-- Endpoint/user/address/private topology and raw/private diagnostics remain local/untracked. Repository artifacts retain only bounded non-sensitive metadata/hashes/classifications.
-- Standing authorization covers bounded self-owned TCP/UDP failover, periodic Session, diagnostics/capture, resource observation, HY2 comparison and cleanup within <=10 minutes / <=256 MiB / <=32 sessions. No per-run WAN approval is required.
+- Endpoint/user/address/private topology, private plans, identity paths, keys and raw diagnostics remain local/untracked. Tracked artifacts may retain bounded hashes/classifications/ownership classes but not raw secrets/topology/path strings.
+- Standing authorization covers the bounded self-owned TCP/UDP work below within <=10 minutes / <=256 MiB / <=32 sessions. No per-run WAN approval is required.
 
 ## Rolling Work Queue
 
-This is a multi-hour capacity queue. **Complete a coherent slice -> validate -> commit/push -> immediately continue to the next dependency-satisfied pre-authorized slice.** Do not stop after one commit, one hour, CI submission or reviewer interval. CI pending blocks only the live slice that requires that exact green HEAD; use the wait for independent local slices below.
-
-### A0 — Cross-host truthfulness/provenance integration
-
-**Status: CLOSED** by `a117086`; exact-head CI was green.
-
-Do not reopen unless a new concrete defect proves it necessary.
-
-**Continue immediately:** yes.
-
----
-
-### A1 — Preserve bounded private collector diagnostics
-
-**Status: CLOSED** by `c6ab8fd`; exact-head CI green.
-
-Accepted boundary: tracked evidence contains only bounded non-sensitive diagnostic metadata; private sidecar remains local/restrictive and bounded. `diagnostic.bytes`/SHA describe the retained private sanitized bytes, not a claim about full raw stderr.
-
-**Continue immediately:** yes.
-
----
-
-### A2 — First changed-hypothesis six-cycle VPS batch
-
-**Status: COMPLETE AS TYPED NEGATIVE** and archived by `269c90e`.
-
-Result: 0/6, cycle 1 `invalid_cycle_evidence`, collector exit 2, private diagnostic `missing JSON event: start`, no retry, external cleanup zero. This is a useful orchestration negative.
-
-**Continue immediately to A3:** yes; do not rerun unchanged.
-
----
-
-### A3 — Close only the role/startup-observability seam exposed by exact `c6ab8fd`
-
-**Status:** `READY_LOCAL`; one bounded precursor to the final failover retry.
-
-**Goal**
-
-Make the next failure distinguish `server never reached start`, `client never reached start`, `endpoint exited before start`, and `start observed -> later collector failure`, while removing the fixed-sleep race from the remote-server startup boundary.
-
-**Likely files**
-
-- `scripts/bench/run-live-warm-failover-cycle.py` + deterministic tests;
-- `scripts/bench/run-repeated-warm-failover.py` / schema only if one new non-sensitive fixed startup classification must be propagated.
-
-**Required behavior**
-
-1. Make required-event errors role/stage-specific (`missing server JSON event: start`, `missing client JSON event: start`) without embedding endpoint/user/path details.
-2. Before launching the client, wait for **observed server start readiness** rather than a blind 0.2 s sleep. Use a small bounded polling window against the private server log/process state. The observed readiness condition should be the actual diagnostic `server/start` event with the expected experiment identity and bounded start fields, not merely “SSH process exists”.
-3. If the remote server exits before start, fail closed immediately with a fixed non-sensitive classification and retain the bounded private server log diagnostic/hash locally. Do not launch the client in that case.
-4. If the startup window expires while the remote process is still alive, classify `server_start_timeout`; preserve bounded private diagnostics and cleanup; do not proceed into application traffic.
-5. Preserve shell-free argv, exact binary/commit provenance, endpoint provenance, remote resource truthfulness and remote cleanup postcheck from A0.
-6. Do not redesign the general event parser. This slice is only startup synchronization + role-specific diagnostics.
-7. Add deterministic tests for: delayed-but-valid remote start; remote early exit; missing server start; missing client start; malformed start event; and unchanged normal local success path.
-
-**Validation:** targeted live-cycle/repeated-runner regressions, `bash scripts/check.sh`, `git diff --check`; protocol fuzz only if production input/parser semantics change (they should not).
-
-**Commit/push condition:** one coherent harness/evidence commit, normal push; require exact-head CI green before A4.
-
-**While CI waits:** immediately work C0, F or H below. Do not idle.
-
-**Continue immediately to A4 when CI green:** yes.
-
----
+This is a multi-hour capacity queue. **Complete a coherent slice -> validate -> commit/push -> immediately continue to the next dependency-satisfied pre-authorized slice.** Do not stop after one commit, one hour, CI submission or reviewer interval. A lane-specific blocker does not idle independent lanes.
 
 ### A4 — One final materially changed repeated warm-failover VPS attempt
 
-**Dependency:** A3 pushed + exact-head CI green.
+**Status:** `READY_LIVE_NOW`.
 
-This is the **last automatically pre-authorized repeated-failover retry in the current instrumentation line**. It is materially changed by observed server-start synchronization and role-specific failure evidence.
+**Dependency:** satisfied. A3 is closed by `177f373`; current exact HEAD `340f74e` has green CI.
+
+**Goal**
+
+Spend exactly one final paid-window retry on the repeated warm-failover lane using observed server-start synchronization and role-specific startup diagnostics. This is the last automatic retry for the current instrumentation line.
 
 **Profile**
 
-- self-owned client + VPS only;
-- exact executed commit + staged executable SHA-256/size;
-- one outer aggregator invocation, 6 sequential fresh cycles, concurrency 1;
+- self-owned client + self-owned VPS only;
+- exact executed current commit + staged executable SHA-256/size;
+- one outer aggregator invocation;
+- exactly 6 sequential fresh cycles, concurrency 1;
 - controlled application-level UDP reply cessation only;
-- preferred 3 logical records x 16 B if runtime contract unchanged;
-- fresh unprivileged ports in existing range;
+- preferred 3 logical records x 16 B if runtime contract remains unchanged;
+- fresh unprivileged ports inside the existing bounded range;
 - no cycle retry inside the batch;
-- total setup + cycles + cleanup <10 minutes (prefer <=540 s);
-- no production network changes;
-- private plan/log diagnostics remain untracked.
+- total setup + cycles + cleanup comfortably <10 minutes, prefer <=540 s;
+- no production firewall/route/qdisc/DNS/proxy/tunnel/service changes;
+- private plans/logs/endpoint details remain untracked.
 
-**Success evidence:** same accepted negotiation/authentication/readiness/UNCERTAIN->replay->DeliveryAck/accounting/timing/exit/provenance/cleanup contract as the previous queue.
+**Required evidence**
+
+For every valid row, machine-check the already accepted contract: canonical negotiation, Noise authentication, one UDP delivery confirmation before controlled failure, warm TCP negotiation/authentication/resume, three authenticated readiness proofs before promotion, no observed TCP application data before promotion, UNCERTAIN -> replay -> DeliveryAck accounting, timing/accounting/exits, exact provenance and cleanup. Remote resources remain `not_collected_remote` unless genuinely sampled on the remote process.
 
 **Failure boundary**
 
-- retain valid prefix + first typed failure + non-sensitive diagnostic hash/classification;
-- if the result is again 0-row orchestration/evidence failure after A3, **stop this lane** as `BLOCKED_ORCHESTRATION` and move to C/F/H; do not perform another generic runner repair automatically;
-- only a newly discriminating concrete root cause plus a very small repair may justify future reconsideration by a later reviewer;
-- runtime correctness failure gets a deterministic reproducer and correctness repair before any future live rerun.
+- retain valid prefix + first typed failure + bounded non-sensitive diagnostic metadata/hash;
+- if this still yields a 0-row orchestration/evidence failure after A3, mark the lane `BLOCKED_ORCHESTRATION_CURRENT_LINE` and stop spending automatic VPS retries on repeated failover;
+- do not add another broad runner rewrite;
+- a true runtime correctness failure gets a deterministic reproducer and correctness repair before any future live attempt.
 
-**Commit/push condition:** archive minimal non-sensitive evidence + hashes; validate + `git diff --check`; push.
+**Validation/commit:** archive only minimal non-sensitive evidence; targeted validator/schema checks; `scripts/check.sh`; `git diff --check`; push.
 
 **Continue immediately to B:** yes.
 
 ---
 
-### B — Classify/close the final repeated-failover attempt
+### B — Classify and close the final repeated-failover attempt
 
 **Dependency:** A4 complete or typed negative.
 
-- 6/6: validate rows/provenance/cleanup and compute only bounded descriptive timing/failure summaries; no reliability-rate claim.
-- partial/runtime failure: classify only from evidence and preserve a reproducer if correctness-related.
-- 0-row orchestration failure: mark repeated-failover live matrix row blocked for this instrumentation line and stop spending VPS windows on it.
-- preserve all historical negatives and their exact hashes.
+- `6/6`: validate all rows/provenance/cleanup and compute only bounded descriptive summaries; no reliability-rate or natural-WAN claim.
+- partial/runtime failure: classify strictly from evidence and preserve a deterministic reproducer if correctness-related.
+- 0-row orchestration failure: mark this repeated-failover instrumentation line blocked and stop automatic retries.
+- preserve all historical negatives and exact hashes.
 
-**Validation:** targeted evidence/schema checks + `scripts/check.sh` + `git diff --check`.
+**Validation:** evidence/schema checks + `scripts/check.sh` + `git diff --check`.
 
-**Continue immediately to C0:** yes unless a cross-cutting correctness blocker appears.
+**Continue immediately to C0.5:** yes unless A4 reveals a cross-cutting runtime correctness blocker.
 
 ---
 
-### C0 — Build the minimum shell-free periodic cross-host wrapper
+### C0.5 — Close periodic startup, semantic-output and privacy evidence gaps
 
-**Status:** `READY_LOCAL`, independent during A3/A4 CI waits.
+**Status:** `READY_LOCAL`; R-007 repair. `340f74e` already closes cross-host execution/provenance/cleanup structure, so do not replace it with another framework.
 
-The accepted ~5-minute periodic direct row is real; later orchestration invoked zero periodic clients. Build only the minimum wrapper around existing real `periodic-server` / `periodic-client` behavior.
+**Goal**
 
-Required:
+Make one real cross-host periodic run able to prove its Session semantics without racing remote startup or leaking private plan material.
 
-- shell-free argv;
-- local/untracked endpoint plan;
-- exact executable SHA-256/size + checkout commit attribution;
-- deterministic dry-run proving the real periodic client dispatch path is entered, explicitly `live_evidence=false`;
-- malformed plan/argv fail closed;
-- structured local/SSH endpoint semantics reused from A0 where applicable, without another generic orchestration framework;
-- remote server resource metrics either genuinely remote or explicit `not_collected_remote`; never measure SSH as Nekomusume;
-- verified remote/local cleanup.
+**Likely files**
 
-**Validation:** targeted tests + full local gate + `git diff --check`; push. Require exact-head green CI before C1.
+- `scripts/bench/run-periodic-command.py` and deterministic tests;
+- a small periodic-result validator/schema only if needed to make tracked evidence machine-checkable;
+- reuse `remote-endpoint-exec.py`; do not fork another remote executor.
 
-**Continue immediately to C1 when CI green:** yes. F/H remain pre-authorized during CI.
+**Required behavior**
+
+1. Capture server/client output into bounded private files/pipes rather than `DEVNULL`; cap retained bytes and fail closed on overflow/malformed required summary evidence.
+2. Before launching the client, observe the real remote/local `periodic_server_ready transport=tcp port=... reconnect=unsupported` marker with bounded timeout and process-exit detection. This marker is emitted only after the TCP listener is bound/nonblocking in the real runtime.
+3. Parse and validate the final client `periodic_summary`: attempted, confirmed, missing, duplicates, P50/P95 confirmation latency, reconnects, elapsed_ms, application_bytes, cleanup, signal. Cross-check them against the private plan's bounded count/bytes/duration/interval contract.
+4. Parse/validate server authentication + `periodic_server_summary` enough to prove authenticated=true and received/confirmed/duplicates are consistent with the client result. Do not require fake equality for fields whose semantics genuinely differ; document exact cross-check rules.
+5. A successful tracked result must contain only bounded non-sensitive semantics/provenance: commit, executable SHA-256/size, endpoint execution class/ownership class, actual bounded workload parameters, parsed Session summary, resource scope and cleanup. Do **not** copy raw argv, endpoint address, SSH user/host, identity path, key arguments or private log text into tracked evidence.
+6. Private logs/plans may contain endpoint material but remain restrictive/untracked. Tracked failure evidence contains only fixed classification + bounded hash/length/stage metadata.
+7. Preserve exact remote binary verification, shell-free dispatch, `not_collected_remote` resource truthfulness and local/remote cleanup checks from `340f74e`.
+8. Add deterministic tests for delayed server-ready, server exit before ready, ready timeout, malformed/missing summary, inconsistent attempted/confirmed/application bytes, duplicate summary, private argv/address/key non-leakage, remote cleanup failure, and unchanged local/SSH happy paths.
+
+**Validation/commit:** targeted tests + full local gate + `git diff --check`; push; require exact-head CI green before C1.
+
+**Continue immediately to C1 when exact-head CI green:** yes.
 
 ---
 
 ### C1 — Run one scientifically distinct longer periodic Session
 
-**Dependency:** C0 exact-head CI green.
+**Dependency:** C0.5 pushed + exact-head CI green.
 
-Recommended bounded profile:
+**Recommended bounded profile**
 
 ```text
-application phase: ~480 s
+application phase: about 480 s
 interval: 5 s
-~96 records
+count: about 96
 payload: 32 B/record
 concurrency: 1
 ```
 
-Shorten application phase if needed so setup + application + cleanup stay <10 minutes.
+Shorten the application phase if necessary so setup + run + cleanup remain <10 minutes. Do not exceed the standing bound by splitting a single intended soak into nominally separate runs.
 
-Record exact identity, actual duration, records/bytes, confirmed/missing/duplicate/conflict, truthful latency raw/median/P95 if available, local/remote resource scope, exits and cleanup. One success is one bounded sample only; one failure is retained with no unchanged retry.
+**Required tracked evidence**
 
-**Commit/push condition:** minimal evidence artifact/summary + hashes.
+- exact commit + executable SHA-256/size;
+- actual bounded duration/count/interval/payload and application bytes;
+- attempted/confirmed/missing/duplicates/reconnects;
+- truthful P50/P95 confirmation latency from the real periodic client summary;
+- server authenticated/received/confirmed/duplicate consistency checks;
+- local client CPU/RSS/FD/process scope if the existing sampler can truthfully provide it; remote server resource scope is `not_collected_remote` unless genuinely collected remotely;
+- exits and verified cleanup;
+- no raw endpoint/private plan/log material.
+
+One success is one bounded sample, not a reliability rate or production-long-lived proof. One failure is retained; no unchanged retry.
+
+**Commit/push:** minimal evidence artifact/summary + hashes; validate; push.
 
 **Continue immediately to D:** yes.
 
@@ -220,28 +183,32 @@ Update only from real evidence:
 
 Rules:
 
-- controlled repeated failover becomes positive only if A4 actually produces the required valid rows;
+- repeated controlled failover becomes positive only if A4 produces the required valid rows;
 - natural UDP degradation/PTO blackhole remains unchecked;
 - longer periodic evidence remains bounded to exact duration/sample;
-- historical `9fd2411`, `a117086`, `c6ab8fd` negatives remain visible;
+- all historical negatives remain visible;
 - release-evidence item 3 stays unchecked while declared matrix gaps remain;
 - no RC/global freeze/production/release flag changes.
 
-**Validation:** status/plan boundary checks + `scripts/check.sh` + `git diff --check`.
+**Validation:** status/plan sync checks + `scripts/check.sh` + `git diff --check`.
 
 **Continue immediately to E:** yes.
 
 ---
 
-### E — Audit implementation-blocked VPS rows and unlock only what is architecturally ready
+### E — Re-audit implementation-blocked VPS rows and execute only an actually ready one
 
-Priority: genuine NAT/source-endpoint change -> migration-back -> live key update -> live PMTUD, unless repository facts show another row is closer.
+Classify current facts for: genuine NAT/source-endpoint change, migration-back, live key update, live PMTUD and IPv6.
 
-Classify each as `READY_LIVE`, `SMALL_LOCAL_UNLOCK`, `BLOCKED_IMPLEMENTATION_ARCHITECTURE`, `BLOCKED_ENVIRONMENT`, or `ALREADY_SUFFICIENT_FOR_CURRENT_BOUNDARY`.
+Use one of:
 
-- `READY_LIVE`: execute one bounded owned-endpoint experiment immediately.
-- `SMALL_LOCAL_UNLOCK`: implement only the smallest seam using accepted Session/Carrier identity/anti-replay semantics, test/gate/push/CI, then run once.
-- new migration/rebinding/crypto architecture or production network manipulation: mark blocked and continue; do not invent architecture to fill a matrix.
+- `READY_LIVE` — existing real CLI/runtime seam already proves the intended property; execute one bounded owned-endpoint run.
+- `SMALL_LOCAL_UNLOCK` — only a small non-architectural observation/adapter seam is missing; implement/test/push/CI, then run once.
+- `BLOCKED_IMPLEMENTATION_ARCHITECTURE` — would require new rebinding/migration/crypto/PMTUD runtime architecture; record blocked and do not invent it for the matrix.
+- `BLOCKED_ENVIRONMENT` — environment lacks the path, e.g. owned end-to-end IPv6.
+- `ALREADY_SUFFICIENT_FOR_CURRENT_BOUNDARY` — existing evidence answers the bounded question; do not repeat.
+
+Do not modify production routing/firewall or invent NAT by relabeling a same-path run.
 
 **Continue immediately to F:** yes.
 
@@ -249,17 +216,16 @@ Classify each as `READY_LIVE`, `SMALL_LOCAL_UNLOCK`, `BLOCKED_IMPLEMENTATION_ARC
 
 ### F — Upgrade HY2 failure diagnostics locally; no unchanged retry
 
-**Status:** `READY_LOCAL`, safe fallback during CI or blocked failover lane.
+**Status:** `READY_LOCAL` after higher-value A/C lanes, or usable if E has no READY VPS row.
 
-Use the retained HY2 `client_exit` negatives to build one bounded discriminating diagnostic contract:
+Use retained HY2 `client_exit` negatives to add one bounded discriminating private diagnostic contract:
 
-- prove real HY2 stderr/log path feeds a private/sanitized diagnostic bundle;
-- track only fixed classifications + non-sensitive hash/length/timestamps in Git;
-- retain last successful lifecycle stage (server bind, client start, QUIC/UDP observed, TLS/auth stage where exposed) without credentials/topology;
-- preserve fair bind/connect, TLS pin, fresh-client lifecycle and symmetric measurement contract already repaired;
-- no broad HY2 harness rewrite and no security weakening.
+- real HY2 stderr/log path feeds a bounded private/sanitized diagnostic bundle;
+- tracked artifact keeps only fixed lifecycle stage/classification + non-sensitive hash/length/timestamps;
+- preserve repaired bind/connect separation, pinned disposable TLS certificate, fresh-client lifecycle and fair measurement contract;
+- no broad harness rewrite; no security weakening; no production service/config changes.
 
-**Validation:** deterministic failure-path tests + full local gate + `git diff --check`; push and require exact-head CI green before G.
+**Validation:** deterministic failure-path tests + full local gate + `git diff --check`; push + exact-head green CI before G.
 
 **Continue immediately to G:** yes.
 
@@ -267,113 +233,63 @@ Use the retained HY2 `client_exit` negatives to build one bounded discriminating
 
 ### G — One materially changed fair HY2/Nekomusume paired attempt
 
-**Dependency:** F exact-head CI green and diagnostics materially differ from the retained HY2 client-exit attempts.
+**Dependency:** F exact-head CI green and the new diagnostic contract materially changes what a failure can teach us.
 
-- same owned client/VPS + pinned HY2 v2.9.3;
-- same payload/security/load/lifecycle contract;
-- up to 5 pairs only if both sides satisfy fair lifecycle requirements;
-- concurrency 1, fresh unprivileged ports, total <10 min;
-- bounded capture/diagnostics on experiment ports only;
-- no production network changes.
+- same self-owned client/VPS, pinned HY2 v2.9.3;
+- same exact deterministic payload/security/load/lifecycle contract;
+- up to 5 pairs only if both implementations satisfy the fair fresh-client/session measurement contract;
+- complete successful pair set -> raw rows + bounded median/P95/failures, no superiority claim;
+- any required pair failure -> typed diagnostic artifact, no comparative summary;
+- retain bounded capture metadata only if needed and privacy-safe;
+- cleanup experiment-owned processes/listeners/temp paths.
 
-Success: retain complete raw pair rows, median/P95/failures, exact application bytes/hash and symmetric resource scope; no superiority claim.
-
-Failure: retain typed discriminating diagnostic, no comparative summary and no unchanged retry.
+No unchanged HY2 retry after failure.
 
 **Continue immediately to H:** yes.
 
 ---
 
-### H — Prepare the independent release/security review evidence map
+### H — Prepare the independent release/security review evidence packet without claiming review
 
-**Status:** `READY_LOCAL`, fully independent fallback.
+**Status:** `READY_LOCAL`; do after time-sensitive VPS work or during a true environment block.
 
-Create a compact reviewer map linking rather than duplicating:
+Create/update one reviewer-oriented evidence index that points to existing repository facts for:
 
-- resource/abuse limits + pre-auth admission;
-- Noise/replay/nonce boundaries;
-- compatibility policy + canonical corpus freeze scope;
-- Session delivery vs packet ACK separation;
-- package install/upgrade/rollback + binary provenance;
-- lifecycle/readiness/shutdown/cleanup;
-- exact positive/negative/blocked release-matrix rows;
-- HY2 methodology/status;
-- remaining environment/implementation blockers.
+- canonical corpus/freeze scope;
+- version/negotiation compatibility policy;
+- parser/resource/pre-auth/abuse bounds;
+- package install/upgrade/rollback;
+- lifecycle/readiness/cleanup;
+- current release-evidence matrix with positive and negative rows;
+- HY2 comparison methodology/status;
+- unresolved security/reachability/environment/implementation blockers.
 
-State explicitly: **review preparation, not an independent security audit**.
+The artifact is an **evidence packet/index only**, not an independent security review, not approval, and not RC authorization. Do not duplicate normative specs or erase negative evidence.
 
-**Continue immediately to I:** yes.
+**Validation:** links/commit/evidence identity checks + `scripts/check.sh` + `git diff --check`.
 
----
+**Continue immediately:** only to other already-listed READY work; do not self-complete item 4 or set RC flags.
 
-### I — Native VPS/package/resource opportunity only when it answers a live release question
+## Completion gates for this queue refresh
 
-Do only if it will not contaminate WAN/performance samples and current package/resource lineage materially changed:
-
-- exact-head native release build/package reproducibility;
-- bounded install/smoke/upgrade/rollback/readiness/cleanup in dedicated experiment path;
-- low-concurrency leak/pathological-growth observation tied to a current real-session question.
-
-If no new question exists, mark not applicable. Do not run generic microbench/fuzz merely to occupy the VPS.
-
-**Continue immediately to J:** yes.
-
----
-
-### J — Release-matrix closure audit and next-phase gate
-
-Audit bounded release-evidence item 3 from repository facts:
-
-- IPv4;
-- IPv6 environment status;
-- controlled vs natural UDP degradation/fallback;
-- periodic/longer bounded Session;
-- NAT/source-endpoint change;
-- repeated cross-process failover/recovery;
-- HY2 comparison;
-- package/operator/resource evidence;
-- exact-head CI/evidence provenance.
-
-Close item 3 only if its declared acceptance boundary is genuinely satisfied. Otherwise keep it unchecked and name only real remaining blockers. Do not weaken criteria to reach RC.
-
-Governance remains `RELEASE_CANDIDATE=false`, `FREEZE=false`, `PRODUCTION_READY=false`, `RELEASED=false`. Independent release/security review and a separate RC decision remain later gates.
-
-**Stop after J only if** remaining work genuinely requires maintainer value judgment, new credentials/server/third-party access, action outside standing authorization, a major architecture choice, or independent external review unavailable to the coding agent. Otherwise continue newly discovered dependency-safe work.
-
-## Queue-wide continuation rules
-
-- Complete coherent slice -> validate -> commit/push -> immediately consume next pre-authorized dependency-safe slice.
-- Do not stop after an arbitrary hour, one commit, CI submission or reviewer interval.
-- CI pending blocks only slices explicitly requiring exact-head green CI; use waits for C0/F/H work.
-- Runtime/tool-budget forced stop is legitimate; record exact checkpoint and resume next wake.
-- Any VPS failure remains evidence; preserve it and continue independent READY lanes.
-- No unchanged WAN/HY2 reruns.
-- **Repeated-failover tooling is now capped:** after A3, allow only A4 automatically. If A4 is again zero-row orchestration failure, move on rather than opening another generic runner project.
-- `docs/CHATGPT_HANDOFF.md` remains reviewer-owned; coding agent reads only.
-
-## Completion gates for this rolling queue
-
-- A3 turns `missing start` into a role-specific, observed-readiness startup contract without exposing private details.
-- A4 produces either valid repeated controlled-failover evidence or a final discriminating blocker for this instrumentation line.
-- C0/C1 add one distinct longer periodic bounded sample or retain an honest typed blocker/negative.
-- D reconciles status without erasing historical negatives or promoting controlled faults to natural WAN behavior.
-- E classifies implementation-blocked rows from executable reality and runs only genuinely ready ones.
-- F/G either produce the first fair complete HY2 pair set or a materially more discriminating negative without security weakening.
-- H leaves an auditable independent-review preparation map without pretending the review already happened.
-- Item 3 remains open unless its declared matrix boundary is truly satisfied.
-- Governance flags remain unchanged absent later reviewed decisions.
+- A3 remains closed; no fixed-sleep startup contract returns.
+- A4 is executed once now or honestly classified; no repeated-failover retry loop continues automatically after another 0-row orchestration failure.
+- Periodic C1 is not run until R-007 is closed and exact-head CI is green.
+- Any periodic tracked artifact proves real periodic Session summary semantics and does not copy raw private argv/address/path/key material.
+- VPS evidence remains exact-identity, bounded, cleanup-verified and scoped to self-owned endpoints.
+- Historical negatives remain immutable evidence, not failures to hide.
+- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged until their separate gates.
 
 ## Do not expand into
 
-- protocol byte changes merely to make experiments pass;
-- new Session/Carrier/ACK/crypto architecture without ADR-level evidence/decision;
-- raw stderr, endpoint address/user/private topology or credentials in Git;
+- another generic failover/periodic orchestration framework;
+- automatic retries after the capped A4/C1/G live attempts;
+- natural-WAN/PTO claims from the controlled application-level UDP reply-cessation seam;
 - production route/firewall/qdisc/DNS/proxy/tunnel changes;
-- third-party targets/scanning;
-- >10 minute single runs, >256 MiB application traffic, >32 concurrent sessions, or long-lived experimental daemons without new authorization;
-- enabled FEC, 0-RTT, striping/aggregation or exotic carriers without an observed-problem gate;
-- rewriting historical negative evidence into success;
-- RC/security/production claims from bounded self-owned lab evidence.
+- third-party targets or scanning;
+- new NAT/rebinding/migration/key-update/PMTUD architecture merely to fill release rows;
+- 0-RTT, enabled FEC, striping/aggregation or exotic carriers without an observed-problem gate;
+- RC/security/production approval from bounded research evidence.
 
 ## Questions requiring maintainer decision
 
