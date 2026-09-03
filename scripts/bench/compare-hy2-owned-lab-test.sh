@@ -86,6 +86,22 @@ PYTLS
 # A fresh transport client runs inside every HY2 timed sampler process group.
 grep -Fq "hysteria' client -c" "$source_script"
 grep -Fq 'run_client hy2 "$i"' "$source_script"
+# Execute the production run_client body under set -u without a VPS.  This reaches
+# the real local initializer; the former same-statement $impl expansion aborts here.
+awk '/^run_client\(\)\{/{copy=1} copy{print} copy && /^}$/{exit}' "$source_script" >"$tmp/run-client-production.sh"
+(
+  set -eu
+  source "$tmp/run-client-production.sh"
+  run="$tmp/run-client-runtime"; mkdir "$run"
+  validator=unused; BYTES=1; TIMEOUT=1; payload_hash=$(printf x | sha256sum | awk '{print $1}')
+  declare -A client_identity=([nekomusume]=fixture)
+  failure_stage=fixture
+  run_bounded(){ return 0; }
+  python3(){ printf '%s\n' '{"failures":0}'; }
+  atomic_append(){ cat "$1" >"$tmp/run-client-appended.json"; }
+  run_client nekomusume 1 40080 true
+  grep -Fq '"failures":0' "$tmp/run-client-appended.json"
+)
 grep -Fq 'sampler-created process group' "$root/scripts/bench/validate-hy2-owned-lab.py"
 ! grep -Fq 'hy2_client_pid' "$source_script"
 grep -Fq 'client_lifecycle:"fresh transport per timed sample"' "$source_script"

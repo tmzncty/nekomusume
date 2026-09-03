@@ -99,7 +99,7 @@ Linux server <-> VPS：
 - [ ] UDP 退化 / TCP fallback（exact `25e0daa` 仅接受受控应用层 UDP reply cessation 的 warm fallback：3/3、48 bytes、2 条 uncertain/replayed、duplicate/lost 0、约 434 ms；不是自然退化或 PTO blackhole）
 - [ ] 长连接稳定性（exact `25e0daa` 仅有一个约 5 分钟 direct-path bounded sample：60 x 32 B，60/60，无 missing/duplicate/conflict）
 - [ ] NAT / endpoint change（条件允许时）
-- [ ] 与 HY2 在同服务器、同线路、同 MTU、同安全等级、同应用流量下比较（exact `f1cb9af` 为 `BLOCKED_HARNESS` preflight SSH-auth；零 payload/sample/comparison；one-invocation limit 被违反，harness 被调用两次，均因 SSH preflight user contract 未显式声明且 alias 解析为 `tmzn`（不作 root 假设）以 RC2 结束；禁止无变化重试，但允许一次实质改变假设的重试）
+- [ ] 与 HY2 在同服务器、同线路、同 MTU、同安全等级、同应用流量下比较（保留 exact `f1cb9af` preflight 历史；exact `bc38d06` 恰好一次 changed-hypothesis invocation：显式 SSH preflight 成功、1200-byte payload 已准备，随后因 line 186 在 `set -u` 下赋值前展开 `impl` 而于 setup `BLOCKED_HARNESS`；零 samples/paired statistics/comparison；validator-valid result SHA-256 `596ad4b73058143db1918613dd970e44e8e6bf3a1b89602ac0012f911b6d2653`；artifact 记录 cleanup failed：remote listener=1、process groups reaped=false、temp path unknown；独立 manual post-run cleanup 随后确认无 experiment ports/processes/temp paths，但不改写 artifact cleanup fields）
 - [x] 报告 median / P95 / failures（bounded authenticated baseline；非性能结论）
 
 ## Experimental Track A — Reachability Matrix

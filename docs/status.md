@@ -29,7 +29,7 @@
 | production | production deployment/readiness | blocked | `docs/spec/m5-release-readiness-gate.md` | Research-only repository; WAN/reachability, independent review and release evidence absent; no production or security approval |
 
 
-> **HY2 harness state:** deterministic local regression coverage retains typed failure evidence and verifies ordered cleanup. At exact `f1cb9af`, the paid HY2 step ended `BLOCKED_HARNESS` during preflight SSH authentication: no payload, samples, or comparison exist. The one-invocation limit was violated when the harness was invoked twice; both attempts ended identically with preflight RC2 because the SSH preflight user contract was not explicit and the configured alias resolved to `tmzn`; no root assumption is valid. An unchanged retry is prohibited, but one retry with a substantive changed hypothesis is allowed. No performance conclusion changed.
+> **HY2 harness state:** deterministic local regression coverage retains typed failure evidence and verifies ordered cleanup. The earlier exact-`f1cb9af` preflight history remains retained. At exact `bc38d06`, exactly one changed-hypothesis invocation passed explicit SSH preflight and prepared its payload, then ended `BLOCKED_HARNESS` during setup because `run_client` expanded `impl` before assignment under `set -u` at line 186. It produced zero samples and no comparison. The validator-valid result artifact has SHA-256 `596ad4b73058143db1918613dd970e44e8e6bf3a1b89602ac0012f911b6d2653`. Its recorded cleanup failed (`remote_listeners_remaining=1`, `remote_process_groups_reaped=false`, remote temp-path removal unknown); independent manual post-run cleanup subsequently verified no experiment ports, processes, or temporary paths remained. No performance conclusion changed.
 
 ## Status vocabulary
 
@@ -135,6 +135,17 @@ All three attempts record successful cleanup. These historical negative results 
   to `tmzn`; no root assumption is valid. An unchanged retry is prohibited, but
   one retry with a substantive changed hypothesis is allowed. No HY2 comparison
   may be claimed.
+- At exact `bc38d06`, exactly one substantive changed-hypothesis harness
+  invocation passed explicit SSH preflight and prepared the 1200-byte payload,
+  then ended `BLOCKED_HARNESS` during setup because `run_client` expanded
+  `impl` before assignment under `set -u` at line 186. It produced zero samples,
+  paired statistics, or comparison. The validator-valid result artifact SHA-256
+  is `596ad4b73058143db1918613dd970e44e8e6bf3a1b89602ac0012f911b6d2653`.
+  Artifact-recorded cleanup failed with one remote listener remaining, remote
+  process groups not reaped, and remote temp-path removal unknown. Independent
+  manual post-run cleanup subsequently verified no experiment ports, processes,
+  or temporary paths remained; that later observation does not rewrite the
+  artifact cleanup fields.
 
 IPv6 remains environment-blocked.
 The bounded release-evidence matrix stays open; `RELEASE_CANDIDATE=false`,
