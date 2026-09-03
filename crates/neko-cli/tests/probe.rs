@@ -101,6 +101,55 @@ fn finish_server(mut server: ReadyServer) -> (std::process::ExitStatus, String) 
     (status, server.startup_log)
 }
 
+fn ready_failover_server(mut child: Child) -> ReadyServer {
+    // `read_line` is blocking, so perform it off-thread and bound the wait on
+    // the receiver. On timeout terminate the child; EOF then releases the
+    // reader and preserves every line read before the diagnostic start event.
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let stdout = child.stdout.take().unwrap();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut startup_log = String::new();
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    let _ = tx.send(Err(startup_log));
+                    return;
+                }
+                Ok(_) => {
+                    startup_log.push_str(&line);
+                    if line.contains("\"role\":\"server\",\"event\":\"start\"") {
+                        let _ = tx.send(Ok((reader, startup_log)));
+                        return;
+                    }
+                }
+                Err(error) => {
+                    startup_log.push_str(&format!("stdout read error: {error}"));
+                    let _ = tx.send(Err(startup_log));
+                    return;
+                }
+            }
+        }
+    });
+    match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(Ok((stdout, startup_log))) => ReadyServer {
+            child,
+            stdout,
+            startup_log,
+        },
+        Ok(Err(startup_log)) => {
+            let _ = child.wait();
+            panic!("failover exited before start: {startup_log}");
+        }
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("failover start timeout: {error}");
+        }
+    }
+}
+
 fn signal_term(child: &Child) {
     let status = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
@@ -130,6 +179,7 @@ fn rejects_unbounded_arguments() {
 }
 #[test]
 fn authenticated_tcp_and_udp_loopback_probe_starts_after_ready() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     for (transport, port) in [("tcp", 40093u16), ("udp", 40094u16)] {
         let sp = tmp(&format!("{transport}-ready-server"));
@@ -179,6 +229,7 @@ fn authenticated_tcp_and_udp_loopback_probe_starts_after_ready() {
 
 #[test]
 fn authenticated_tcp_benchmark_echoes_exact_payload_and_hash() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("benchmark-server");
     let cp = tmp("benchmark-client");
@@ -270,6 +321,7 @@ fn benchmark_payload_mode_fails_closed_outside_exact_contract() {
 
 #[test]
 fn invalid_bind_never_emits_ready() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("invalid-bind-server");
     let cp = tmp("invalid-bind-client");
@@ -303,6 +355,7 @@ fn invalid_bind_never_emits_ready() {
 
 #[test]
 fn sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     for (transport, port) in [("tcp", 40084u16), ("udp", 40085u16)] {
         let sp = tmp(&format!("{transport}-sigterm-server"));
@@ -332,6 +385,7 @@ fn sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings() {
 
 #[test]
 fn executable_loopback_controlled_udp_stop_tcp_resume() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("failover-server");
     let cp = tmp("failover-client");
@@ -368,7 +422,7 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    thread::sleep(Duration::from_millis(150));
+    let server = ready_failover_server(server);
     let out = Command::new(bin)
         .args([
             "failover-client",
@@ -394,7 +448,7 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
         ])
         .output()
         .unwrap();
-    let server_out = server.wait_with_output().unwrap();
+    let (_server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     assert!(
@@ -406,7 +460,6 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
     );
     assert!(String::from_utf8_lossy(&out.stdout).contains("controlled_udp_stop=true"));
     let client_log = String::from_utf8_lossy(&out.stdout);
-    let server_log = String::from_utf8_lossy(&server_out.stdout);
     for event in [
         "udp_authenticated",
         "controlled_udp_stop",
@@ -449,7 +502,7 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
 
 #[test]
 fn executable_loopback_health_threshold_drives_udp_to_tcp() {
-    let _lock = FAILOVER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("health-failover-server");
     let cp = tmp("health-failover-client");
@@ -489,7 +542,7 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    thread::sleep(Duration::from_millis(150));
+    let server = ready_failover_server(server);
     let out = Command::new(bin)
         .args([
             "failover-client",
@@ -517,20 +570,19 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
         ])
         .output()
         .unwrap();
-    let server_out = server.wait_with_output().unwrap();
+    let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
-    let server_log = String::from_utf8_lossy(&server_out.stdout);
     assert!(
         out.status.success(),
         "stdout={client_log} stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        server_out.status.success(),
+        server_status.success(),
         "stdout={server_log} stderr={}",
-        String::from_utf8_lossy(&server_out.stderr)
+        String::from_utf8_lossy(&out.stderr)
     );
     assert!(
         !client_log.contains("carrier_event name=controlled_udp_stop"),
@@ -601,7 +653,7 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
 }
 #[test]
 fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
-    let _lock = FAILOVER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("warm-failover-server");
     let cp = tmp("warm-failover-client");
@@ -643,7 +695,7 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    thread::sleep(Duration::from_millis(150));
+    let server = ready_failover_server(server);
     let out = Command::new(bin)
         .args([
             "failover-client",
@@ -670,20 +722,19 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
         ])
         .output()
         .unwrap();
-    let server_out = server.wait_with_output().unwrap();
+    let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
-    let server_log = String::from_utf8_lossy(&server_out.stdout);
     assert!(
         out.status.success(),
         "stdout={client_log} stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        server_out.status.success(),
+        server_status.success(),
         "stdout={server_log} stderr={}",
-        String::from_utf8_lossy(&server_out.stderr)
+        String::from_utf8_lossy(&out.stderr)
     );
     assert!(
         !client_log.contains("carrier_event name=controlled_udp_stop"),
@@ -808,6 +859,7 @@ fn udp_reply_cessation_seam_is_bounded_and_off_by_default() {
 
 #[test]
 fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("retry-server");
     let cp = tmp("retry-client");
@@ -845,7 +897,7 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    thread::sleep(Duration::from_millis(150));
+    let server = ready_failover_server(server);
     let client = Command::new(bin)
         .args([
             "failover-client",
@@ -882,7 +934,7 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
         .send_to(b"unrelated", ("127.0.0.1", udp))
         .unwrap();
     let client = client.wait_with_output().unwrap();
-    let server = server.wait_with_output().unwrap();
+    let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     assert!(
@@ -891,13 +943,8 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
         String::from_utf8_lossy(&client.stdout),
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(
-        server.status.success(),
-        "server stdout={} stderr={}",
-        String::from_utf8_lossy(&server.stdout),
-        String::from_utf8_lossy(&server.stderr)
-    );
-    let log = String::from_utf8_lossy(&server.stdout);
+    assert!(server_status.success(), "server log={server_log}");
+    let log = server_log;
     assert!(log.contains("udp_selection_dropped"), "{log}");
     assert!(log.contains("udp_selection_retried"), "{log}");
     // The duplicate pending hello and a late post-auth hello cannot restart
@@ -920,6 +967,7 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
 
 #[test]
 fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("noise-retry-server");
     let cp = tmp("noise-retry-client");
@@ -958,7 +1006,7 @@ fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    thread::sleep(Duration::from_millis(150));
+    let server = ready_failover_server(server);
     let client = Command::new(bin)
         .args([
             "failover-client",
@@ -984,7 +1032,7 @@ fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
         ])
         .output()
         .unwrap();
-    let server = server.wait_with_output().unwrap();
+    let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     assert!(
@@ -993,14 +1041,8 @@ fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
         String::from_utf8_lossy(&client.stdout),
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(
-        server.status.success(),
-        "server stdout={} stderr={}",
-        String::from_utf8_lossy(&server.stdout),
-        String::from_utf8_lossy(&server.stderr)
-    );
+    assert!(server_status.success(), "server log={server_log}");
     let client_log = String::from_utf8_lossy(&client.stdout);
-    let server_log = String::from_utf8_lossy(&server.stdout);
     assert!(
         server_log.contains("udp_noise_response_dropped"),
         "{server_log}"
@@ -1049,6 +1091,7 @@ fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
 
 #[test]
 fn failover_udp_handshake_timeout_reports_last_success_stage() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let dir = tmp("failover-timeout");
     let out = Command::new(bin)
@@ -1083,6 +1126,7 @@ fn failover_udp_handshake_timeout_reports_last_success_stage() {
 
 #[test]
 fn udp_handshake_diagnostic_stages_are_deterministic() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let dir = tmp("diagnostic-timeout");
     let out = Command::new(bin)
@@ -1179,6 +1223,7 @@ fn authenticated_udp_client_with_data_delay(
 
 #[test]
 fn udp_application_wait_uses_overall_duration_not_poll_interval() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("udp-delayed-data-server");
     let cp = tmp("udp-delayed-data-client");
@@ -1202,6 +1247,7 @@ fn udp_application_wait_uses_overall_duration_not_poll_interval() {
 
 #[test]
 fn udp_application_wait_fails_at_bounded_overall_deadline() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("udp-data-deadline-server");
     let cp = tmp("udp-data-deadline-client");
@@ -1272,6 +1318,7 @@ fn run_client(
 
 #[test]
 fn tcp_and_udp_reject_malformed_unsupported_and_duplicate_negotiation_before_echo() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     for (case, message) in [
         ("malformed", vec![b'N', b'1', 1, 1, 0]),
@@ -1379,6 +1426,7 @@ fn frame_read_test(stream: &mut std::net::TcpStream) -> Vec<u8> {
 
 #[test]
 fn tcp_and_udp_transcript_mismatch_rejects_before_application_echo() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     for (transport, port) in [("tcp", 40095u16), ("udp", 40096u16)] {
         let sp = tmp(&format!("{transport}-mismatch-server"));
@@ -1464,6 +1512,7 @@ fn decode_key(value: &str) -> Vec<u8> {
 
 #[test]
 fn tcp_and_udp_reject_unsupported_selected_version_before_noise() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     for (transport, port) in [("tcp", 40097u16), ("udp", 40098u16)] {
         let sp = tmp(&format!("{transport}-selected-server"));
@@ -1509,8 +1558,7 @@ fn tcp_and_udp_reject_unsupported_selected_version_before_noise() {
     }
 }
 
-static FAILOVER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-static PERIODIC_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static TEST_PORT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn periodic_test_port() -> u16 {
     40088
@@ -1569,7 +1617,7 @@ fn start_periodic_server(
 
 #[test]
 fn periodic_session_delayed_confirmations_are_counted_on_one_session() {
-    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("periodic-delay-server");
     let cp = tmp("periodic-delay-client");
@@ -1621,7 +1669,7 @@ fn periodic_session_delayed_confirmations_are_counted_on_one_session() {
 
 #[test]
 fn periodic_session_accounts_missing_ack_and_fails_closed() {
-    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("periodic-missing-server");
     let cp = tmp("periodic-missing-client");
@@ -1664,7 +1712,7 @@ fn periodic_session_accounts_missing_ack_and_fails_closed() {
 
 #[test]
 fn periodic_session_duplicate_ack_is_authenticated_and_idempotent() {
-    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("periodic-duplicate-server");
     let cp = tmp("periodic-duplicate-client");
@@ -1714,7 +1762,7 @@ fn periodic_session_duplicate_ack_is_authenticated_and_idempotent() {
 
 #[test]
 fn periodic_setup_timeout_is_separate_from_ack_timeout() {
-    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("periodic-setup-separated-server");
     let cp = tmp("periodic-setup-separated-client");
@@ -1762,7 +1810,7 @@ fn periodic_setup_timeout_is_separate_from_ack_timeout() {
 
 #[test]
 fn periodic_setup_timeout_fails_before_application_records() {
-    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("periodic-setup-timeout-server");
     let cp = tmp("periodic-setup-timeout-client");
@@ -1819,7 +1867,7 @@ fn periodic_setup_timeout_fails_before_application_records() {
 
 #[test]
 fn periodic_malformed_setup_fails_unauthenticated() {
-    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("periodic-malformed-server");
     let cp = tmp("periodic-malformed-client");
@@ -1845,7 +1893,7 @@ fn periodic_malformed_setup_fails_unauthenticated() {
 
 #[test]
 fn periodic_server_signal_cleanup_is_bounded() {
-    let _serial = PERIODIC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("periodic-signal-server");
     let cp = tmp("periodic-signal-client");
@@ -1862,7 +1910,7 @@ fn periodic_server_signal_cleanup_is_bounded() {
 
 #[test]
 fn warm_readiness_failures_close_before_admission_or_application_data() {
-    let _lock = FAILOVER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     for (name, seam, server_seam) in [
         (

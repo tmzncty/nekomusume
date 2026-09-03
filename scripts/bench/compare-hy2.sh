@@ -16,14 +16,23 @@ mkdir -p "$(dirname "$out")"; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 payload="$tmp/payload.bin"; dd if=/dev/zero of="$payload" bs=1 count="$PAYLOAD_BYTES" status=none
 hash=$(sha256sum "$payload" | awk '{print $1}'); records="$tmp/records"; : >"$records"
 run_one(){
-  local impl=$1 cmd=$2 run=$3 raw=$tmp/raw stats=$tmp/stats rc elapsed user sys rss exitcode app wire fd failure
+  local impl=$1 cmd=$2 run=$3 raw=$tmp/raw stats=$tmp/stats validated=$tmp/validated rc elapsed user sys rss exitcode valid
   : >"$raw"; : >"$stats"; set +e
   BENCH_PAYLOAD_FILE="$payload" BENCH_PAYLOAD_SHA256="$hash" BENCH_PAYLOAD_BYTES="$PAYLOAD_BYTES" BENCH_TARGET_HOST="$BENCH_TARGET_HOST" BENCH_TARGET_PORT="${BENCH_TARGET_PORT:-}" timeout --signal=TERM "$TIMEOUT" /usr/bin/time -f '%e %U %S %M %x' -o "$stats" bash -lc "$cmd" >"$raw" 2>/dev/null
   rc=$?; set -e
   elapsed=$(awk '{print $1}' "$stats" 2>/dev/null || true); user=$(awk '{print $2}' "$stats" 2>/dev/null || true); sys=$(awk '{print $3}' "$stats" 2>/dev/null || true); rss=$(awk '{print $4}' "$stats" 2>/dev/null || true); exitcode=$(awk '{print $5}' "$stats" 2>/dev/null || true)
-  reported_hash=$(jq -r '.payload_sha256 // empty' "$raw" 2>/dev/null || true); app=$(jq -r '.application_bytes // empty' "$raw" 2>/dev/null || true); wire=$(jq -c '.wire_bytes // null' "$raw" 2>/dev/null || echo null); fd=$(jq -r '.fd_count // empty' "$raw" 2>/dev/null || true)
-  failure=0; [ "$rc" -eq 0 ] && [ "$exitcode" = 0 ] && [[ "$app" =~ ^[0-9]+$ ]] && [ "$app" -eq "$PAYLOAD_BYTES" ] && [ "$reported_hash" = "$hash" ] && [[ "$fd" =~ ^[0-9]+$ ]] || failure=1
-  jq -nc --arg implementation "$impl" --argjson run "$run" --argjson failures "$failure" --arg elapsed "$elapsed" --arg user "$user" --arg sys "$sys" --arg rss "$rss" --arg app "$app" --arg reported_hash "$reported_hash" --argjson wire "$wire" --arg fd "$fd" --argjson rc "$rc" '{name:($implementation+"-"+($run|tostring)),implementation:$implementation,run:$run,failures:$failures,elapsed_seconds:(if $elapsed=="" then null else ($elapsed|tonumber) end),cpu_user_seconds:(if $user=="" then null else ($user|tonumber) end),cpu_system_seconds:(if $sys=="" then null else ($sys|tonumber) end),rss_kib:(if $rss=="" then null else ($rss|tonumber) end),fd_count:(if $fd=="" then null else ($fd|tonumber) end),application_bytes:(if $app=="" then null else ($app|tonumber) end),payload_sha256:(if $reported_hash=="" then null else $reported_hash end),wire_bytes:$wire,exit_code:$rc}' >>"$records"
+  valid=1
+  jq -cse 'if length == 1 and (.[0] | type == "object") and
+      (.[0].application_bytes | type == "number" and isfinite and floor == . and . >= 0) and
+      (.[0].payload_sha256 | type == "string") and
+      (.[0].fd_count | type == "number" and isfinite and floor == . and . >= 0) and
+      (.[0].wire_bytes == null or (.[0].wire_bytes | type == "number" and isfinite and floor == . and . >= 0))
+    then .[0] else error("adapter stdout must be exactly one typed JSON object") end' "$raw" >"$validated" 2>/dev/null || valid=0
+  [ "$valid" -eq 1 ] || printf '{}\n' >"$validated"
+  jq -nc --slurpfile adapter "$validated" --arg implementation "$impl" --argjson run "$run" --argjson valid "$valid" --arg elapsed "$elapsed" --arg user "$user" --arg sys "$sys" --arg rss "$rss" --arg exitcode "$exitcode" --arg expected_hash "$hash" --argjson expected_bytes "$PAYLOAD_BYTES" --argjson rc "$rc" '
+    ($adapter[0]) as $a |
+    (($valid == 1) and ($rc == 0) and ($exitcode == "0") and ($a.application_bytes == $expected_bytes) and ($a.payload_sha256 == $expected_hash)) as $ok |
+    {name:($implementation+"-"+($run|tostring)),implementation:$implementation,run:$run,failures:(if $ok then 0 else 1 end),elapsed_seconds:(if $elapsed=="" then null else ($elapsed|tonumber) end),cpu_user_seconds:(if $user=="" then null else ($user|tonumber) end),cpu_system_seconds:(if $sys=="" then null else ($sys|tonumber) end),rss_kib:(if $rss=="" then null else ($rss|tonumber) end),fd_count:(if $valid == 1 then $a.fd_count else null end),application_bytes:(if $valid == 1 then $a.application_bytes else null end),payload_sha256:(if $valid == 1 then $a.payload_sha256 else null end),wire_bytes:(if $valid == 1 then $a.wire_bytes else null end),exit_code:$rc}' >>"$records"
 }
 for impl in nekomusume hy2; do cmd=$NEKO_BENCH_CMD; [ "$impl" = hy2 ] && cmd=$HY2_BENCH_CMD; for run in $(seq 1 "$RUNS"); do run_one "$impl" "$cmd" "$run"; done; done
 jq -s --arg commit "$(git rev-parse HEAD 2>/dev/null || echo unknown)" --arg hash "$hash" --arg server "$BENCH_SERVER_ID" --arg route "$BENCH_ROUTE_ID" --arg mtu "$BENCH_MTU" --arg security "$BENCH_SECURITY_PROFILE" --arg load "$BENCH_LOAD_PROFILE" --argjson bytes "$PAYLOAD_BYTES" --argjson runs "$RUNS" 'def pct($xs;$p): if ($xs|length)==0 then null else ($xs|sort|.[((($xs|length)-1)*$p|ceil)]) end; {schema:"nekomusume.benchmark-result.v1",experiment_id:"local-hy2-comparison",git_commit:$commit,mode:"controlled-local",transport:"deterministic",scope:"loopback-only",contract:{payload_sha256:$hash,payload_bytes:$bytes,runs:$runs,server_id:$server,route_id:$route,mtu:$mtu,security_profile:$security,load_profile:$load,wire_bytes_nullable:true},samples:.,summary:(group_by(.implementation)|map({implementation:.[0].implementation,failures:(map(.failures)|add),successful_latency_seconds:pct([.[]|select(.failures==0 and .elapsed_seconds!=null)|.elapsed_seconds];0.5),p95_latency_seconds:pct([.[]|select(.failures==0 and .elapsed_seconds!=null)|.elapsed_seconds];0.95)})),cleanup_status:"verified"}' "$records" >"$out"
