@@ -42,7 +42,11 @@ WHOLE_LAB_SEC=$((WORK_SEC + CLEANUP_SEC)); olcp_init_deadlines "$WORK_SEC" "$WHO
 # preflight failure is therefore emitted as a schema-valid BLOCKED_HARNESS artifact.
 out=${1:-artifacts/hy2-owned-lab/result.json}; [ "$out" = --validate ] && out=artifacts/hy2-owned-lab/result.json; case "$out" in /*|*..*) fail 'output must be relative and non-traversing';; esac
 root=$(git rev-parse --show-toplevel); cd "$root"; mkdir -p "$(dirname "$out")"
-run=$(mktemp -d /tmp/neko-hy2-owned.XXXXXXXX); remote="/tmp/$(basename "$run")"; records="$out.samples.jsonl"; touch "$records"
+runtime_template=${OWNED_LAB_RUNTIME_TEMPLATE:-/tmp/neko-hy2-owned.XXXXXXXX}
+run=$(mktemp -d "$runtime_template"); remote="/tmp/$(basename "$run")"; records="$out.samples.jsonl"; touch "$records"
+early_cleanup(){ local rc=${1:-$?}; trap - EXIT INT TERM; rm -rf "$run"; return "$rc"; }
+on_early_exit(){ local rc=$?; early_cleanup "$rc"; exit "$rc"; }
+trap on_early_exit EXIT; trap 'exit 130' INT TERM
 validator=$root/scripts/bench/validate-hy2-owned-lab.py
 cleanup_done=0; cleanup_ok=0; failure_stage=preflight; local_pids=(); active_spid=; remote_started=0; remote_resources=$run/remote-resources.json
 local_processes_reaped=false; local_listeners_remaining=unknown; remote_process_groups_reaped=unknown; remote_listeners_remaining=unknown; remote_temp_path_removed=unknown; payload_prepared=false
@@ -61,8 +65,8 @@ expected_user=$(printf '%s\n' "$ssh_config" | awk '$1=="user"{print $2;exit}')
 [ "$expected_user" = "$LAB_SSH_EXPECTED_USER" ] || preflight_blocked ssh-user-mismatch
 [ "$(printf %s "$resolved" | sha256sum | awk '{print $1}')" = "$LAB_ENDPOINT_SHA256" ] || preflight_blocked ssh-endpoint-mismatch
 [ "$resolved" = "$LAB_REMOTE_ADDRESS" ] || preflight_blocked ssh-endpoint-mismatch
-remote_interfaces=$(ssh_bounded "$LAB_SSH_TARGET" "ip -j address show") || { rc=$?; [ "$rc" -eq 124 ] && preflight_blocked ssh-timeout || preflight_blocked ssh-auth; }
-printf '%s' "$remote_interfaces" | python3 -c 'import json,sys; expected=sys.argv[1]; data=json.load(sys.stdin); raise SystemExit(0 if any(a.get("local")==expected for i in data for a in i.get("addr_info",[])) else 1)' "$LAB_REMOTE_BIND_ADDRESS" || fail 'remote bind address is not assigned to a local VPS interface'
+remote_interfaces=$(ssh_bounded "$LAB_SSH_TARGET" "ip -j address show") || { rc=$?; [ "$rc" -eq 124 ] && preflight_blocked ssh-timeout; [ "$rc" -eq 255 ] && preflight_blocked ssh-auth; preflight_blocked ssh-command; }
+printf '%s' "$remote_interfaces" | python3 -c 'import json,sys; expected=sys.argv[1]; data=json.load(sys.stdin); raise SystemExit(0 if any(a.get("local")==expected for i in data for a in i.get("addr_info",[])) else 1)' "$LAB_REMOTE_BIND_ADDRESS" || preflight_blocked ssh-bind-address
 [ "${1:-}" != --validate ] || { echo validated; exit 0; }
 ports=("${NEKO_PORT:-40097}" "${HY2_UDP_PORT:-40098}" "${HY2_LOCAL_PORT:-40099}" "${ECHO_PORT:-40100}")
 for p in "${ports[@]}"; do [[ "$p" =~ ^[0-9]+$ && "$p" -ge 40080 && "$p" -le 40100 ]] || fail 'ports must be 40080..40100'; done

@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
 set -eu
-root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd); source_script=$root/scripts/bench/compare-hy2-owned-lab.sh; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd); source_script=$root/scripts/bench/compare-hy2-owned-lab.sh; tmp=$(mktemp -d); default_out=$root/artifacts/hy2-owned-lab/result.json; trap 'rm -f "$default_out" "$default_out.samples.jsonl"; rm -rf "$tmp"' EXIT
 cp "$source_script" "$tmp/adapter.sh"; cp "$root/scripts/bench/owned-lab-control-plane.sh" "$tmp/"; s=$tmp/adapter.sh
 cat >"$tmp/ssh" <<'SH'
 #!/bin/sh
-[ "$1" = -G ] && { printf '%s\n' 'hostname 192.0.2.8' "user ${LAB_SSH_MOCK_USER:-labuser}"; exit; }
-printf '%s\n' "${MOCK_REMOTE_INTERFACES:-[]}"
+if [ "$1" = -G ]; then
+  [ "${MOCK_SSH_CONFIG_FAIL:-0}" -eq 0 ] || exit 3
+  printf '%s\n' 'hostname 192.0.2.8' "user ${LAB_SSH_MOCK_USER:-labuser}"
+  exit
+fi
+case "${MOCK_SSH_REMOTE_RESULT:-success}" in
+  success) printf '%s\n' "${MOCK_REMOTE_INTERFACES:-[]}";;
+  auth) exit 255;;
+  timeout) exit 124;;
+  command) exit "${MOCK_SSH_COMMAND_RC:-7}";;
+  *) exit 70;;
+esac
 SH
 chmod +x "$tmp/ssh"; cp /bin/true "$tmp/neko"; cp /bin/true "$tmp/hy2"
 hy2_hash=$(sha256sum "$tmp/hy2"|awk '{print $1}')
@@ -25,23 +35,32 @@ for address in '' 0.0.0.0 :: 127.0.0.1 ::1 224.0.0.1 ff02::1; do
   if env $base LAB_REMOTE_BIND_ADDRESS="$address" MOCK_REMOTE_INTERFACES="$interfaces" "$s" --validate >/dev/null 2>&1; then echo "unsafe bind accepted: $address" >&2; exit 1; fi
 done
 if env $base LAB_REMOTE_BIND_ADDRESS=192.0.2.10 MOCK_REMOTE_INTERFACES="$interfaces" "$s" --validate >/dev/null 2>&1; then echo 'nonlocal bind accepted' >&2; exit 1; fi
-# Preflight evidence is typed and fail-closed before the first remote operation.
-for mode in match wrong-user config auth timeout; do
-  export LAB_SSH_EXPECTED_USER=labuser LAB_SSH_MOCK_USER=labuser
-  case "$mode" in
-    wrong-user) export LAB_SSH_EXPECTED_USER=other;;
-    config) export MOCK_SSH_CONFIG_FAIL=1;;
-    auth) export MOCK_SSH_AUTH_FAIL=1;;
-    timeout) export MOCK_SSH_TIMEOUT=1;;
-  esac
-  if [ "$mode" = match ]; then
-    env $base LAB_SSH_EXPECTED_USER=labuser LAB_REMOTE_BIND_ADDRESS=192.0.2.9 MOCK_REMOTE_INTERFACES="$interfaces" "$s" >/dev/null 2>&1 || rc=$?
-    [ "${rc:-0}" -ne 0 ] || { echo 'mock preflight unexpectedly continued' >&2; exit 1; }
-  else
-    :
-  fi
-  unset MOCK_SSH_CONFIG_FAIL MOCK_SSH_AUTH_FAIL MOCK_SSH_TIMEOUT rc
+# Every advertised preflight case executes the adapter, retains a typed artifact,
+# and removes its isolated disposable runtime directory without contacting a VPS.
+runtime_root=$tmp/preflight-runtime; mkdir "$runtime_root"
+artifact_root=artifacts/hy2-owned-lab/preflight-test-$$; mkdir -p "$artifact_root"
+trap 'rm -rf "$artifact_root"; rm -f "$default_out" "$default_out.samples.jsonl"; rm -rf "$tmp"' EXIT
+for spec in 'identity-match:ssh-bind-address:success:0:0:labuser' 'wrong-user:ssh-user-mismatch:success:0:0:other' 'config:ssh-config:success:0:1:labuser' 'auth:ssh-auth:auth:0:0:labuser' 'timeout:ssh-timeout:timeout:0:0:labuser' 'remote-command:ssh-command:command:7:0:labuser'; do
+  IFS=: read -r mode expected_stage remote_result command_rc config_fail expected_user <<EOF
+$spec
+EOF
+  out=$artifact_root/$mode.json
+  interfaces_for_case=$interfaces; [ "$mode" != identity-match ] || interfaces_for_case=[]
+  set +e
+  env $base LAB_SSH_EXPECTED_USER="$expected_user" LAB_REMOTE_BIND_ADDRESS=192.0.2.9 \
+    MOCK_REMOTE_INTERFACES="${interfaces_for_case:-$interfaces}" MOCK_SSH_REMOTE_RESULT="$remote_result" \
+    MOCK_SSH_COMMAND_RC="$command_rc" MOCK_SSH_CONFIG_FAIL="$config_fail" \
+    OWNED_LAB_RUNTIME_TEMPLATE="$runtime_root/$mode.XXXXXXXX" "$s" "$out" >/dev/null 2>&1
+  rc=$?
+  set -e
+  [ "$rc" -eq 2 ] || { echo "$mode returned $rc, want 2" >&2; exit 1; }
+  python3 "$root/scripts/bench/validate-hy2-owned-lab.py" validate-result "$out" | grep -qx validated
+  jq -e --arg stage "$expected_stage" '.status=="BLOCKED_HARNESS" and .failure_stage==$stage and (.samples|length)==0 and .contract.payload_prepared==false and .contract.payload_sha256==null' "$out" >/dev/null
+  jq -e '.cleanup_status=="failed" and .cleanup_evidence=={"local_processes_reaped":null,"local_listeners_remaining":null,"remote_process_groups_reaped":null,"remote_listeners_remaining":null,"remote_temp_path_removed":null}' "$out" >/dev/null
+  unset interfaces_for_case
+  [ -z "$(find "$runtime_root" -mindepth 1 -print -quit)" ] || { echo "$mode leaked test runtime residue" >&2; exit 1; }
 done
+rm -rf "$artifact_root"
 # Wrong HY2 identity must fail before execution in the authoritative script.
 # Static safety contracts: exact dedicated-address YAML; no wildcard HY2 or production config/service operations.
 grep -Fq 'listen: ${bind_authority}:${ports[1]}' "$source_script"

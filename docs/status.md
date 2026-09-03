@@ -131,7 +131,7 @@ All three attempts record successful cleanup. These historical negative results 
   authentication. It produced no payload, samples, paired statistics, or
   comparison. The one-invocation control was violated: the harness was invoked
   twice, and both attempts ended identically with preflight RC2 because the SSH
-  the SSH preflight user contract was not explicit and the configured alias resolved
+  preflight user contract was not explicit and the configured alias resolved
   to `tmzn`; no root assumption is valid. An unchanged retry is prohibited, but
   one retry with a substantive changed hypothesis is allowed. No HY2 comparison
   may be claimed.
