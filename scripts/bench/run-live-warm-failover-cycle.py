@@ -7,12 +7,16 @@ success are reported only in ``result``.  A nonzero adapter exit means no valid
 row was collected, and stdout is empty.
 
 Secret/config input is supplied only through the environment:
-NEKO_FAILOVER_{SERVER,CLIENT,CLEANUP}_COMMAND_JSON are JSON argv arrays.  The
-server/client arrays must invoke the existing failover-server/failover-client
-CLI modes; the server must select --cease-udp-replies-after 1 and the client
-must select --automatic-health-failover.  CLEANUP must print exactly
-{"listeners_remaining":N}.  NEKO_FAILOVER_BINARY identifies the local binary
-executed directly by both commands and whose SHA-256/size are recorded.
+NEKO_FAILOVER_CLEANUP_COMMAND_JSON is a JSON argv array.  Server/client may use
+the legacy local command variables, or NEKO_FAILOVER_ENDPOINTS_JSON: exactly
+one structured descriptor per role with execution local/ssh, underlying binary
+path/hash/size/commit, argv, and (for ssh) a bounded transport argv.  Local
+execution retains same-file verification.  SSH receives one JSON request on
+stdin and must run remote-endpoint-exec.py, which verifies the remote underlying
+file immediately before direct shell-free spawn.  The server must select
+--cease-udp-replies-after 1 and the client --automatic-health-failover. CLEANUP
+must print exactly {"listeners_remaining":N}. NEKO_FAILOVER_BINARY identifies
+the locally staged bytes whose SHA-256/size every endpoint must declare.
 NEKO_FAILOVER_GIT_COMMIT must be the exact HEAD of the checkout containing
 this adapter.  Logs and sampler output live in a mode-0700 temporary directory
 and are deleted before the sole stdout row is emitted.
@@ -34,6 +38,7 @@ from typing import Any
 
 HERE = pathlib.Path(__file__).resolve().parent
 SAMPLER = HERE / "process-resource-sampler.py"
+REMOTE_EXEC_PROTOCOL = "nekomusume.remote-exec.v1"
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 MAX_ARGV = 64
 PARAMETERS = {
@@ -76,6 +81,56 @@ def require_same_executable(argv: list[str], binary: pathlib.Path) -> None:
         raise CollectionError("cannot compare command executable") from exc
     if not same:
         raise CollectionError("command executable differs from declared binary")
+
+def valid_argv(value: Any, name: str) -> list[str]:
+    if (not isinstance(value, list) or not 1 <= len(value) <= MAX_ARGV or
+            any(not isinstance(arg, str) or not arg or "\0" in arg or len(arg) > 4096 for arg in value)):
+        raise CollectionError(f"invalid {name}")
+    return value
+
+def endpoints(binary: pathlib.Path, binary_sha: str, binary_bytes: int, commit: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    raw = os.environ.get("NEKO_FAILOVER_ENDPOINTS_JSON")
+    if raw is None:
+        server, client = (command(name) for name in ("NEKO_FAILOVER_SERVER_COMMAND_JSON", "NEKO_FAILOVER_CLIENT_COMMAND_JSON"))
+        require_same_executable(server, binary); require_same_executable(client, binary)
+        def legacy(role: str, argv: list[str]) -> dict[str, Any]:
+            return {"role": role, "execution": "local", "binary": {"path": str(binary.resolve()), "sha256": binary_sha, "bytes": binary_bytes, "git_commit": commit}, "argv": argv}
+        return legacy("server", server), legacy("client", client)
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CollectionError("invalid NEKO_FAILOVER_ENDPOINTS_JSON") from exc
+    if not isinstance(value, list) or len(value) != 2:
+        raise CollectionError("invalid endpoint descriptors")
+    result: dict[str, dict[str, Any]] = {}
+    for item in value:
+        if not isinstance(item, dict) or set(item) not in ({"role", "execution", "binary", "argv"}, {"role", "execution", "binary", "argv", "transport_argv"}):
+            raise CollectionError("invalid endpoint descriptor")
+        role=item.get("role"); execution=item.get("execution"); declared=item.get("binary")
+        if role not in ("server", "client") or role in result or execution not in ("local", "ssh"):
+            raise CollectionError("invalid endpoint role or execution")
+        if (not isinstance(declared, dict) or set(declared) != {"path", "sha256", "bytes", "git_commit"} or
+                not isinstance(declared["path"], str) or not declared["path"] or "\0" in declared["path"] or
+                declared["sha256"] != binary_sha or declared["bytes"] != binary_bytes or declared["git_commit"] != commit):
+            raise CollectionError("endpoint binary differs from staged binary identity")
+        argv=valid_argv(item.get("argv"), "endpoint argv")
+        if argv[0] != declared["path"]:
+            raise CollectionError("endpoint argv executable differs from underlying binary")
+        normalized={"role":role,"execution":execution,"binary":declared,"argv":argv}
+        if execution == "local":
+            if "transport_argv" in item: raise CollectionError("local endpoint has transport")
+            require_same_executable(argv,binary)
+        else:
+            transport=valid_argv(item.get("transport_argv"),"SSH transport argv")
+            normalized["transport_argv"]=transport
+        result[role]=normalized
+    if set(result) != {"server","client"}: raise CollectionError("missing endpoint role")
+    return result["server"], result["client"]
+
+def execution_argv(endpoint: dict[str, Any]) -> tuple[list[str], bytes | None]:
+    if endpoint["execution"] == "local": return endpoint["argv"], None
+    request={"protocol":REMOTE_EXEC_PROTOCOL,"role":endpoint["role"],"binary":endpoint["binary"],"argv":endpoint["argv"]}
+    return endpoint["transport_argv"], json.dumps(request,separators=(",",":"),sort_keys=True).encode()
 
 def checkout_head() -> str:
     try:
@@ -232,10 +287,9 @@ def main() -> int:
         if binary_bytes <= 0:
             raise CollectionError("binary is empty")
         binary_sha = hashlib.sha256(binary.read_bytes()).hexdigest()
-        server_argv, client_argv, cleanup_argv = (command(name) for name in (
-            "NEKO_FAILOVER_SERVER_COMMAND_JSON", "NEKO_FAILOVER_CLIENT_COMMAND_JSON", "NEKO_FAILOVER_CLEANUP_COMMAND_JSON"))
-        require_same_executable(server_argv, binary)
-        require_same_executable(client_argv, binary)
+        server_endpoint, client_endpoint = endpoints(binary, binary_sha, binary_bytes, commit)
+        server_argv, client_argv = server_endpoint["argv"], client_endpoint["argv"]
+        cleanup_argv = command("NEKO_FAILOVER_CLEANUP_COMMAND_JSON")
         requires(server_argv, "failover-server")
         requires(server_argv, "--diagnostic")
         requires(server_argv, "--cease-udp-replies-after", "1")
@@ -250,14 +304,20 @@ def main() -> int:
         tmp_path = pathlib.Path(tempfile.mkdtemp(prefix=f"neko-warm-cycle-{index}-"))
         os.chmod(tmp_path, 0o700)
         identity = f"git:{commit}"
-        server_cmd, server_resource_path = sampled_command(tmp_path, "server", identity, [udp_port, tcp_port], server_argv)
-        client_cmd, client_resource_path = sampled_command(tmp_path, "client", identity, [], client_argv)
+        server_exec, server_input = execution_argv(server_endpoint)
+        client_exec, client_input = execution_argv(client_endpoint)
+        server_cmd, server_resource_path = sampled_command(tmp_path, "server", identity, [udp_port, tcp_port], server_exec)
+        client_cmd, client_resource_path = sampled_command(tmp_path, "client", identity, [], client_exec)
         server_log = open(tmp_path / "server.log", "xb")
         client_log = open(tmp_path / "client.log", "xb")
         try:
-            server = subprocess.Popen(server_cmd, stdout=server_log, stderr=subprocess.STDOUT, start_new_session=True)
+            server = subprocess.Popen(server_cmd, stdin=subprocess.PIPE if server_input is not None else subprocess.DEVNULL, stdout=server_log, stderr=subprocess.STDOUT, start_new_session=True, shell=False)
+            if server_input is not None:
+                assert server.stdin is not None; server.stdin.write(server_input); server.stdin.close()
             time.sleep(float(os.environ.get("NEKO_FAILOVER_SERVER_STARTUP_SECONDS", "0.2")))
-            client = subprocess.Popen(client_cmd, stdout=client_log, stderr=subprocess.STDOUT, start_new_session=True)
+            client = subprocess.Popen(client_cmd, stdin=subprocess.PIPE if client_input is not None else subprocess.DEVNULL, stdout=client_log, stderr=subprocess.STDOUT, start_new_session=True, shell=False)
+            if client_input is not None:
+                assert client.stdin is not None; client.stdin.write(client_input); client.stdin.close()
             try: client.wait(timeout=22)
             except subprocess.TimeoutExpired: terminate(client)
             try: server.wait(timeout=3)
@@ -408,6 +468,7 @@ def main() -> int:
             failure_stage, failure_reason = "evidence", "required_runtime_evidence_missing"
         row = {
             "cycle_index": index, "git_commit": commit, "binary_sha256": binary_sha, "binary_bytes": binary_bytes,
+            "endpoint_provenance": [{"role": endpoint["role"], "execution": endpoint["execution"], "underlying_binary_path": endpoint["binary"]["path"], "binary_sha256": endpoint["binary"]["sha256"], "binary_bytes": endpoint["binary"]["bytes"], "git_commit": endpoint["binary"]["git_commit"]} for endpoint in (server_endpoint, client_endpoint)],
             "parameters": parameters, "semantic": semantic, "accounting": accounting, "timing": timing,
             "classification": {"failure_seam": "controlled_application_reply_cessation", "natural_blackhole": False, "pto_blackhole": False},
             "result": {"status": "passed" if evidence_pass else "failed", "client_exit_code": client_exit, "server_exit_code": server_exit,

@@ -67,7 +67,7 @@ HEAD = subprocess.run(
  check=True, capture_output=True, text=True,
 ).stdout.strip()
 
-def invoke(scenario="success", marker="", server_executable=None, client_executable=None, binary=None, commit=None):
+def invoke(scenario="success", marker="", server_executable=None, client_executable=None, binary=None, commit=None, endpoints=None):
 
  with tempfile.TemporaryDirectory() as td:
   fake=pathlib.Path(td)/"fake.py"; fake.write_text(FAKE); fake.chmod(0o700)
@@ -76,6 +76,7 @@ def invoke(scenario="success", marker="", server_executable=None, client_executa
   env["NEKO_FAILOVER_SERVER_COMMAND_JSON"]=json.dumps([server_executable or sys.executable,str(fake),"failover-server","--diagnostic","--experiment-id","warm-cycle-1-server","--cease-udp-replies-after","1"]+suffix)
   env["NEKO_FAILOVER_CLIENT_COMMAND_JSON"]=json.dumps([client_executable or sys.executable,str(fake),"failover-client","--diagnostic","--experiment-id","warm-cycle-1-client","--automatic-health-failover"]+suffix)
   env["NEKO_FAILOVER_CLEANUP_COMMAND_JSON"]=json.dumps([sys.executable,str(fake),"cleanup"])
+  if endpoints is not None: env["NEKO_FAILOVER_ENDPOINTS_JSON"]=json.dumps(endpoints(fake))
   p=subprocess.run([sys.executable,str(ADAPTER)],env=env,text=True,capture_output=True,timeout=30)
   return p, json.loads(p.stdout) if p.stdout.strip() else None
 
@@ -106,4 +107,23 @@ for scenario in ("negative_timing", "reversed_timing", "inconsistent_timing", "b
 p,row=invoke("boundary_timing"); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]["status"]=="passed" and row["timing"]["recovery_latency_us"]==0
 p,row=invoke("success", "super-secret-key")
 assert p.returncode==0 and "super-secret-key" not in p.stdout and "super-secret-key" not in json.dumps(row)
+
+# A no-network transport relays the structured request to the checked-in remote verifier.
+def fake_cross_host(fake):
+ binary=pathlib.Path(sys.executable); data=binary.read_bytes()
+ identity={"path":str(binary),"sha256":__import__("hashlib").sha256(data).hexdigest(),"bytes":len(data),"git_commit":HEAD}
+ helper=str(HERE/"remote-endpoint-exec.py")
+ def endpoint(role, execution):
+  argv=[str(binary),str(fake),"failover-"+role,"--diagnostic","--experiment-id","warm-cycle-1-"+role]
+  argv += ["--cease-udp-replies-after","1"] if role=="server" else ["--automatic-health-failover"]
+  value={"role":role,"execution":execution,"binary":identity,"argv":argv}
+  if execution=="ssh": value["transport_argv"]=[sys.executable,helper]
+  return value
+ return [endpoint("server","ssh"),endpoint("client","local")]
+p,row=invoke(endpoints=fake_cross_host); runner.validate_cycle(row,1)
+assert p.returncode==0 and row["result"]["status"]=="passed"
+assert [(e["role"],e["execution"]) for e in row["endpoint_provenance"]]==[("server","ssh"),("client","local")]
+def confused(fake):
+ values=fake_cross_host(fake); values[0]["argv"][0]=sys.executable+"-wrapper"; return values
+p,row=invoke(endpoints=confused); assert p.returncode==2 and p.stdout=="" and row is None
 print("live warm failover adapter tests: ok")

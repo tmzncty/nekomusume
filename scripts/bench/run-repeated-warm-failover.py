@@ -59,7 +59,7 @@ def validate_cycle(raw: Any, expected_index: int) -> dict[str, Any]:
         "cycle_index", "git_commit", "binary_sha256", "binary_bytes", "parameters",
         "semantic", "accounting", "timing", "classification", "result", "cleanup",
     }
-    exact_keys(row, required, {"resources"}, "cycle")
+    exact_keys(row, required, {"resources", "endpoint_provenance"}, "cycle")
     if row["cycle_index"] != expected_index:
         raise EvidenceError("cycle_index does not match sequential invocation")
     if not isinstance(row["git_commit"], str) or not HEX40.fullmatch(row["git_commit"]):
@@ -68,6 +68,19 @@ def validate_cycle(raw: Any, expected_index: int) -> dict[str, Any]:
         raise EvidenceError("binary_sha256 must be lowercase SHA-256")
     if nonnegative_int(row["binary_bytes"], "binary_bytes") == 0:
         raise EvidenceError("binary_bytes must be positive")
+    if "endpoint_provenance" in row:
+        provenance = row["endpoint_provenance"]
+        if not isinstance(provenance, list) or len(provenance) != 2:
+            raise EvidenceError("endpoint_provenance must contain server and client")
+        for expected_role, endpoint in zip(("server", "client"), provenance):
+            endpoint = obj(endpoint, "endpoint provenance")
+            exact_keys(endpoint, {"role", "execution", "underlying_binary_path", "binary_sha256", "binary_bytes", "git_commit"}, set(), "endpoint provenance")
+            if endpoint["role"] != expected_role or endpoint["execution"] not in ("local", "ssh"):
+                raise EvidenceError("endpoint provenance role/execution is invalid")
+            if not isinstance(endpoint["underlying_binary_path"], str) or not endpoint["underlying_binary_path"]:
+                raise EvidenceError("endpoint underlying binary path is invalid")
+            if any(endpoint[key] != row[key] for key in ("binary_sha256", "binary_bytes", "git_commit")):
+                raise EvidenceError("endpoint provenance differs from cycle binary identity")
 
     parameters = obj(row["parameters"], "parameters")
     exact_keys(parameters, {"record_count", "record_payload_bytes", "client_max_seconds", "server_max_seconds", "concurrency"}, {"udp_port", "tcp_port"}, "parameters")
