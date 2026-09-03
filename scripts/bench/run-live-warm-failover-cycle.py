@@ -68,7 +68,10 @@ def event_objects(text: str) -> list[dict[str, Any]]:
     values = []
     for line_number, line in enumerate(text.splitlines(), 1):
         candidate = line.lstrip()
-        if not candidate.startswith("{"):
+        json_looking = (candidate.startswith(("{", "[", '"', "-")) or
+                        (candidate[:1].isdigit()) or
+                        candidate.startswith(("true", "false", "null")))
+        if not json_looking:
             continue
         try:
             value = json.loads(candidate)
@@ -100,6 +103,9 @@ def one_event(events: list[dict[str, Any]], name: str, required: bool = False) -
     if required and not matches:
         raise CollectionError(f"missing JSON event: {name}")
     return matches[0] if matches else None
+
+def exact_nonnegative_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 def validate_event_stream(events: list[dict[str, Any]], role: str, identity: str) -> None:
     for item in events:
@@ -247,8 +253,10 @@ def main() -> int:
                            "application_bytes_total": PARAMETERS["record_count"] * PARAMETERS["record_payload_bytes"],
                            "udp_port": udp_port, "tcp_port": tcp_port, "max_seconds": PARAMETERS["client_max_seconds"]}
         expected_server = dict(expected_client, max_seconds=PARAMETERS["server_max_seconds"])
-        if any(client_start.get(key) != value for key, value in expected_client.items()) or any(
-                server_start.get(key) != value for key, value in expected_server.items()):
+        if any(not exact_nonnegative_int(client_start.get(key)) or client_start.get(key) != value
+               for key, value in expected_client.items()) or any(
+                not exact_nonnegative_int(server_start.get(key)) or server_start.get(key) != value
+                for key, value in expected_server.items()):
             raise CollectionError("start parameters mismatch")
         if any(client_start.get(key) != server_start.get(key) for key in
                ("count", "record_payload_bytes", "application_bytes_total", "udp_port", "tcp_port")):
@@ -309,19 +317,42 @@ def main() -> int:
             "replayed_records", "replayed_bytes", "confirmed_records", "confirmed_bytes",
             "duplicate_records", "duplicate_bytes", "lost_records", "lost_bytes",
             "conflicting_records", "conflicting_bytes")}
-        failure_us = timing_event.get("failure_decided_at_us") if timing_event else None
-        data_us = timing_event.get("first_resumed_data_accepted_us") if timing_event else None
-        latency_us = timing_event.get("recovery_latency_us") if timing_event else None
-        timing = {"failure_decided_at_us": failure_us, "first_resumed_data_at_us": data_us,
-                  "first_resumed_ack_at_us": timing_event.get("first_resumed_ack_at_us") if timing_event else None, "recovery_latency_us": latency_us}
+        timing_fields = ("failure_decided_at_us", "first_resumed_data_accepted_us",
+                         "first_resumed_ack_at_us", "recovery_latency_us")
+        raw_timing = {key: timing_event.get(key) if timing_event else None for key in timing_fields}
+        timing_valid = (timing_event is not None and all(exact_nonnegative_int(value) for value in raw_timing.values()) and
+                        raw_timing["failure_decided_at_us"] <= raw_timing["first_resumed_data_accepted_us"] <= raw_timing["first_resumed_ack_at_us"] and
+                        raw_timing["recovery_latency_us"] == raw_timing["first_resumed_data_accepted_us"] - raw_timing["failure_decided_at_us"])
+        if timing_event is not None and not timing_valid:
+            raise CollectionError("invalid failover timing")
+        timing = {"failure_decided_at_us": raw_timing["failure_decided_at_us"],
+                  "first_resumed_data_at_us": raw_timing["first_resumed_data_accepted_us"],
+                  "first_resumed_ack_at_us": raw_timing["first_resumed_ack_at_us"],
+                  "recovery_latency_us": raw_timing["recovery_latency_us"]}
+        payload = parameters["record_payload_bytes"]
+        count = parameters["record_count"]
+        accounting_valid = (accounting_event is not None and
+                            all(exact_nonnegative_int(value) for value in accounting.values()) and
+                            accounting["udp_confirmed_records"] == 1 and accounting["udp_confirmed_bytes"] == payload and
+                            accounting["uncertain_records"] == accounting["replayed_records"] == count - 1 and
+                            accounting["uncertain_bytes"] == accounting["replayed_bytes"] == (count - 1) * payload and
+                            accounting["confirmed_records"] == accounting["udp_confirmed_records"] + accounting["replayed_records"] == count and
+                            accounting["confirmed_bytes"] == accounting["udp_confirmed_bytes"] + accounting["replayed_bytes"] == count * payload and
+                            all(accounting[bytes_key] == accounting[records_key] * payload for records_key, bytes_key in (
+                                ("udp_confirmed_records", "udp_confirmed_bytes"), ("uncertain_records", "uncertain_bytes"),
+                                ("replayed_records", "replayed_bytes"), ("confirmed_records", "confirmed_bytes"),
+                                ("duplicate_records", "duplicate_bytes"), ("lost_records", "lost_bytes"),
+                                ("conflicting_records", "conflicting_bytes"))) and
+                            accounting["confirmed_records"] + accounting["lost_records"] == count and
+                            all(accounting[key] == 0 for key in ("duplicate_records", "duplicate_bytes", "lost_records", "lost_bytes", "conflicting_records", "conflicting_bytes")))
+        if accounting_event is not None and not accounting_valid:
+            raise CollectionError("invalid failover accounting")
         client_reaped = bool(cr and cr.get("cleanup", {}).get("complete"))
         server_reaped = bool(sr and sr.get("cleanup", {}).get("complete"))
         cleanup_verified = cleanup.returncode == 0 and listeners == 0 and client_reaped and server_reaped
         evidence_pass = (complete and all(semantic[key] for key in ("udp_negotiated", "udp_authenticated", "tcp_negotiated", "tcp_authenticated", "resume_validated", "readiness_completed", "udp_confirmed_before_failure")) and
-                         semantic["readiness_proofs"] == 3 and accounting["confirmed_records"] == parameters["record_count"] and accounting["confirmed_bytes"] == parameters["record_count"] * parameters["record_payload_bytes"] and
-                         accounting["uncertain_records"] == accounting["replayed_records"] and accounting["uncertain_bytes"] == accounting["replayed_bytes"] and
-                         all(accounting[key] == 0 for key in ("duplicate_records", "duplicate_bytes", "lost_records", "lost_bytes", "conflicting_records", "conflicting_bytes")) and
-                         all(value is not None for value in timing.values()) and client_exit == server_exit == 0 and cleanup_verified)
+                         semantic["readiness_proofs"] == 3 and accounting_valid and timing_valid and
+                         client_exit == server_exit == 0 and cleanup_verified)
         if evidence_pass:
             failure_stage = failure_reason = None
         elif client_exit != 0:
