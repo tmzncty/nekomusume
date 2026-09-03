@@ -50,7 +50,7 @@ def execute(rows: list[dict]) -> tuple[dict, int, list[int]]:
         index = int(kwargs["env"]["NEKO_FAILOVER_CYCLE_INDEX"])
         called.append(index)
         value = rows[index - 1]
-        return subprocess.CompletedProcess(command, value["result"]["client_exit_code"], json.dumps(value), "")
+        return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
     with tempfile.TemporaryDirectory() as directory:
         output = pathlib.Path(directory) / "result.json"
         batch, code = module.run(["--output", str(output), "--", "fixture-cycle"], invoke=invoke, clock=Clock())
@@ -133,6 +133,33 @@ def main() -> None:
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
     for test in tests:
         test()
+
+    # Collector contract: a valid failed experiment row is retained only on wrapper exit 0.
+    with tempfile.TemporaryDirectory() as td:
+        failed = row(1, False)
+        def valid_failed(*_args, **_kwargs):
+            return subprocess.CompletedProcess([], 0, json.dumps(failed), "")
+        batch, code = module.run(["--output", str(pathlib.Path(td) / "result.json"), "--", "fake"], invoke=valid_failed)
+        assert code == 1 and batch["completed_cycles"] == 1
+        assert batch["cycles"][0]["result"]["client_exit_code"] == 2
+        assert batch["first_failure"]["kind"] == "cycle_failed"
+
+    # Nonzero collector + row is contradictory and the row is not retained.
+    with tempfile.TemporaryDirectory() as td:
+        def nonzero_with_row(*_args, **_kwargs):
+            return subprocess.CompletedProcess([], 1, json.dumps(row(1, False)), "")
+        batch, code = module.run(["--output", str(pathlib.Path(td) / "result.json"), "--", "fake"], invoke=nonzero_with_row)
+        assert code == 1 and batch["completed_cycles"] == 0
+        assert batch["first_failure"]["kind"] == "invalid_cycle_evidence"
+        assert "nonzero with a row" in batch["first_failure"]["detail"]
+
+    # Exit 0 + malformed output is also a collector contradiction.
+    with tempfile.TemporaryDirectory() as td:
+        def zero_malformed(*_args, **_kwargs):
+            return subprocess.CompletedProcess([], 0, "not-json", "")
+        batch, code = module.run(["--output", str(pathlib.Path(td) / "result.json"), "--", "fake"], invoke=zero_malformed)
+        assert code == 1 and batch["completed_cycles"] == 0
+        assert batch["first_failure"]["kind"] == "invalid_cycle_evidence"
     print(f"repeated warm failover tests passed: {len(tests)}")
 
 if __name__ == "__main__":

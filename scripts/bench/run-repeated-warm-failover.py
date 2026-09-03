@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Run exactly six fresh, sequential warm-failover cycle commands.
 
-The cycle command receives NEKO_FAILOVER_CYCLE_INDEX=1..6 and must print one
-JSON object matching the per-cycle evidence contract. No address or secret is
+The cycle command receives NEKO_FAILOVER_CYCLE_INDEX=1..6 and follows a
+collector contract: exit 0 means exactly one valid evidence row was emitted,
+including a valid failed experiment row; any nonzero exit means no row was
+collected. Client/server exits live only inside the row. No address or secret is
 part of the result contract. Execution stops at the first failed or malformed
 cycle and retains the preceding valid prefix.
 """
@@ -169,10 +171,12 @@ def run(argv: list[str], invoke: Callable[..., subprocess.CompletedProcess[str]]
         env["NEKO_FAILOVER_CYCLE_INDEX"] = str(index)
         try:
             completed = invoke(args.command, text=True, capture_output=True, timeout=remaining, env=env, check=False)
+            if completed.returncode != 0:
+                if completed.stdout.strip():
+                    raise EvidenceError("collector returned nonzero with a row")
+                raise EvidenceError("collector returned nonzero without a valid row")
             raw = json.loads(completed.stdout)
             row = validate_cycle(raw, index)
-            if completed.returncode != row["result"]["client_exit_code"] and completed.returncode != 0:
-                raise EvidenceError("cycle command exit contradicts evidence")
             if rows and any(row[key] != rows[0][key] for key in ("git_commit", "binary_sha256", "binary_bytes", "parameters")):
                 raise EvidenceError("cycle identity or parameters differ from cycle 1")
             rows.append(row)

@@ -2014,6 +2014,9 @@ fn failover_client(args: &[String]) {
         count.saturating_sub(1)
     };
     let mut first_resumed_data_at = None;
+    let mut first_resumed_ack_at = None;
+    let mut replayed_records = 0usize;
+    let uncertain_records = records.len().saturating_sub(1);
     for record in records.into_iter().skip(1).take(resend_records) {
         let logical = ProcessMessage::Data {
             session: SessionId(7001),
@@ -2022,6 +2025,7 @@ fn failover_client(args: &[String]) {
         .encode()
         .unwrap();
         let encrypted = ts.seal(&logical).unwrap();
+        first_resumed_data_at.get_or_insert_with(Instant::now);
         write_frame(&mut tcp, &encrypted).unwrap();
         let ack = read_frame(&mut tcp, PROCESS_FRAME_MAX)
             .unwrap_or_else(|_| fail("TCP delivery acknowledgement timeout"));
@@ -2031,7 +2035,8 @@ fn failover_client(args: &[String]) {
         if !delivery_ack_matches(&plain, &record) {
             fail("invalid TCP delivery acknowledgement")
         }
-        first_resumed_data_at.get_or_insert_with(Instant::now);
+        first_resumed_ack_at.get_or_insert_with(Instant::now);
+        replayed_records = replayed_records.saturating_add(1);
         delivery
             .delivery_ack(
                 record.stream,
@@ -2052,7 +2057,8 @@ fn failover_client(args: &[String]) {
         );
     }
     if automatic_health_failover
-        && let (Some(decision), Some(first_data)) = (decision_at, first_resumed_data_at)
+        && let (Some(decision), Some(first_data), Some(first_ack)) =
+            (decision_at, first_resumed_data_at, first_resumed_ack_at)
     {
         let latency = first_data.duration_since(decision).as_micros() as u64;
         failover.record_recovery_latency(latency);
@@ -2073,7 +2079,7 @@ fn failover_client(args: &[String]) {
             "failover_timing",
             count,
             &format!(
-                ",\"fallback_class\":\"{}\",\"promotion_gate\":\"{}\",\"failure_decided_at_us\":{},\"tcp_connect_started_us\":{},\"tcp_connected_us\":{},\"tcp_negotiated_us\":{},\"tcp_authenticated_us\":{},\"resume_validated_us\":{},\"{}\":{},\"new_active_at_us\":{},\"first_resumed_data_accepted_us\":{},\"recovery_latency_us\":{}",
+                ",\"fallback_class\":\"{}\",\"promotion_gate\":\"{}\",\"failure_decided_at_us\":{},\"tcp_connect_started_us\":{},\"tcp_connected_us\":{},\"tcp_negotiated_us\":{},\"tcp_authenticated_us\":{},\"resume_validated_us\":{},\"{}\":{},\"new_active_at_us\":{},\"first_resumed_data_accepted_us\":{},\"first_resumed_ack_at_us\":{},\"recovery_latency_us\":{}",
                 fallback_class,
                 promotion_gate,
                 decision.duration_since(experiment_origin).as_micros(),
@@ -2094,10 +2100,27 @@ fn failover_client(args: &[String]) {
                     .as_micros(),
                 new_active_at.duration_since(experiment_origin).as_micros(),
                 first_data.duration_since(experiment_origin).as_micros(),
+                first_ack.duration_since(experiment_origin).as_micros(),
                 latency
             ),
         );
     }
+    emit_diagnostic(
+        args,
+        "client",
+        "failover_accounting",
+        count,
+        &format!(
+            ",\"udp_confirmed_records\":1,\"udp_confirmed_bytes\":{},\"uncertain_records\":{},\"uncertain_bytes\":{},\"replayed_records\":{},\"replayed_bytes\":{},\"confirmed_records\":{},\"confirmed_bytes\":{},\"duplicate_records\":0,\"duplicate_bytes\":0,\"lost_records\":0,\"lost_bytes\":0,\"conflicting_records\":0,\"conflicting_bytes\":0",
+            bytes,
+            uncertain_records,
+            uncertain_records * bytes,
+            replayed_records,
+            replayed_records * bytes,
+            1 + replayed_records,
+            (1 + replayed_records) * bytes
+        ),
+    );
     println!(
         "carrier_event name=ordered_records_complete session=7001 count={count} bytes={bytes}"
     );
