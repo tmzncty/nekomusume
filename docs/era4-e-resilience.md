@@ -37,3 +37,7 @@ Migration-back, live key update, and live PMTUD remain
 `BLOCKED_IMPLEMENTATION`; NAT/source-endpoint change is also
 `BLOCKED_IMPLEMENTATION`; IPv6 is `BLOCKED_ENVIRONMENT`; HY2 is
 `BLOCKED_DIAGNOSTICS`. No row is presently `READY_LIVE`.
+
+## Exact `a117086` corrected structured six-cycle outcome (2026-09-04)
+
+The sole authorized live outer invocation at exact `a117086fa69553a36021137900b6052050624a8b` produced a retained schema-valid typed negative: 0/6 cycles, cycle 1 `invalid_cycle_evidence` (`collector returned nonzero without a valid row`), launcher exit 1 after 2,303 ms; no retry. Synthetic preflight is separate and not live evidence. This is an immediate orchestration/evidence-collection boundary only: no full cycle, valid prefix, runtime failover, WAN, or deeper root-cause claim is supported. Per-cycle endpoint provenance, resources (`not_collected_remote`), accounting, timing, and exits are absent because no row exists. Explicit cleanup process/listener/temporary-path postchecks were zero. The prior `c156868` historical negative remains unchanged.

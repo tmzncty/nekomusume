@@ -221,3 +221,7 @@ array/argument boundary so one outer invocation demonstrably enters the Python
 batch runner. The bounded release matrix therefore remains open, with
 `RELEASE_CANDIDATE=false`, `FREEZE=false`, `PRODUCTION_READY=false`, and
 `RELEASED=false`.
+
+### 2026-09-04 exact-a117086 corrected structured six-cycle outcome
+
+The sole authorized live outer invocation at exact `a117086fa69553a36021137900b6052050624a8b` is retained at `artifacts/repeated-warm-failover/a117086-typed-negative/`. It exited 1 after 2,303 ms with 0/6 completed cycles and a typed batch-level `invalid_cycle_evidence` at cycle 1 (`collector returned nonzero without a valid row`), result SHA-256 `71ab1cab9828f72f1b1e044bbbef5d39178ac0af9ea1a022916e872e3b5c63b6`. Invocation count is exactly 1; no retry. Synthetic preflight is separate and not live evidence. No full cycle, valid prefix, runtime failover conclusion, WAN/reachability claim, or unsupported deeper root cause is asserted. Per-cycle endpoint provenance, resources, accounting, timing, and exits are not collected because no row exists; remote resources remain `not_collected_remote`. Separate post-run cleanup process/listener/temporary-path postchecks were zero; these are not artifact-carried row fields. Historical `c156868` negative remains preserved.

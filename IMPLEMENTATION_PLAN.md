@@ -121,3 +121,7 @@ cleanup comes from separate direct post-exit observations.
 The next executable seam is local: fix and dry-run the repeated-failover command
 array through Python-runner entry before considering one changed-hypothesis VPS
 invocation. Item 3 remains unchecked.
+
+### Exact `a117086` corrected structured batch checkpoint (2026-09-04)
+
+The sole authorized live outer invocation is archived as `artifacts/repeated-warm-failover/a117086-typed-negative/`: exact-head, 0/6 cycles, cycle-1 `invalid_cycle_evidence`, launcher exit 1 after 2,303 ms, no retry. Synthetic preflight is not live evidence. This immediate collection boundary supports no full/prefix/runtime conclusion and no deeper root-cause claim. Per-cycle provenance, accounting, timing, exits, and remote resources (`not_collected_remote`) are not collected without a row; explicit cleanup postchecks were zero. Historical `c156868` remains preserved.

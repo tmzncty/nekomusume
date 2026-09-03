@@ -201,3 +201,7 @@ update, and live PMTUD are `BLOCKED_IMPLEMENTATION`; IPv6 is
 `BLOCKED_DIAGNOSTICS`; no row is `READY_LIVE`. The smallest next seam is to fix
 and locally dry-run the repeated-failover command boundary through Python-runner
 entry. This checkpoint does not close the release-evidence milestone.
+
+### 2026-09-04 exact-a117086 evidence checkpoint
+
+The corrected structured six-cycle attempt is a typed orchestration/evidence-collection negative: one live outer invocation only, 0/6 cycles, no valid prefix, cycle 1 `invalid_cycle_evidence`, no retry. Preflight is separate and non-live. The sanitized artifact is retained under `artifacts/repeated-warm-failover/a117086-typed-negative/`; no WAN/runtime/release claim is added, and prior `c156868` remains preserved.
