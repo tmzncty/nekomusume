@@ -96,10 +96,10 @@ M0 不要求 TCP/UDP 已经真正搬运应用数据，但抽象不能把 Session
 Linux server <-> VPS：
 
 - [x] UDP 正常路径（single authenticated echo）
-- [ ] UDP 退化 / TCP fallback
-- [ ] 长连接稳定性
+- [ ] UDP 退化 / TCP fallback（exact `25e0daa` 仅接受受控应用层 UDP reply cessation 的 warm fallback：3/3、48 bytes、2 条 uncertain/replayed、duplicate/lost 0、约 434 ms；不是自然退化或 PTO blackhole）
+- [ ] 长连接稳定性（exact `25e0daa` 仅有一个约 5 分钟 direct-path bounded sample：60 x 32 B，60/60，无 missing/duplicate/conflict）
 - [ ] NAT / endpoint change（条件允许时）
-- [ ] 与 HY2 在同服务器、同线路、同 MTU、同安全等级、同应用流量下比较
+- [ ] 与 HY2 在同服务器、同线路、同 MTU、同安全等级、同应用流量下比较（exact `f1cb9af` 为 `BLOCKED_HARNESS` preflight SSH-auth；零 payload/sample/comparison；one-invocation limit 被违反，harness 被调用两次，均因 alias wrapper 保留 `tmzn` 而非 `root` 以 RC2 结束，禁止继续重试）
 - [x] 报告 median / P95 / failures（bounded authenticated baseline；非性能结论）
 
 ## Experimental Track A — Reachability Matrix
