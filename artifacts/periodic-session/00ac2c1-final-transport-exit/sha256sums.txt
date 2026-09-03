@@ -1,0 +1,2 @@
+5767af02270919d57d6f220a3b026898887ae27da9a13bcd24834a56ff923f7c  artifacts/periodic-session/00ac2c1-final-transport-exit/result.json
+af4e8a33260c4a874189805adcfb4132003eb63794c69a1f7181b5e5e600c753  artifacts/periodic-session/00ac2c1-final-transport-exit/metadata.json
