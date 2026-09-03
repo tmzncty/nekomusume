@@ -103,16 +103,35 @@ def public_endpoint(endpoint: dict[str,Any]) -> dict[str,Any]:
     return {'execution':endpoint['execution'],'binary':{'sha256':binary['sha256'],'bytes':binary['bytes'],'git_commit':binary['git_commit']}}
 
 def option(argv: list[str], name: str) -> str|None:
-    try: return argv[argv.index(name)+1]
-    except (ValueError,IndexError): return None
+    positions=[i for i,value in enumerate(argv) if value==name]
+    if len(positions)>1:raise PlanError(f'duplicate {name}')
+    if not positions:return None
+    index=positions[0]
+    if index+1>=len(argv):raise PlanError(f'missing value for {name}')
+    return argv[index+1]
 
-def expected_endpoint(argv: list[str]) -> tuple[str,int]:
-    transport=option(argv,'--transport'); raw_port=option(argv,'--port')
-    if transport not in ('tcp','udp') or raw_port is None: raise PlanError('periodic server argv lacks expected transport/port')
-    try: port=int(raw_port)
-    except ValueError as exc: raise PlanError('invalid periodic server port') from exc
-    if not 1<=port<=65535: raise PlanError('invalid periodic server port')
-    return transport,port
+def positive_option(argv: list[str], name: str, maximum: int) -> int:
+    raw=option(argv,name)
+    if raw is None:raise PlanError(f'periodic argv lacks {name}')
+    try:value=int(raw)
+    except ValueError as exc:raise PlanError(f'invalid {name}') from exc
+    if not 1<=value<=maximum:raise PlanError(f'invalid {name}')
+    return value
+
+def periodic_contract(server: list[str], client: list[str]) -> dict[str,Any]:
+    contracts=[]
+    for argv in (server,client):
+        transport=option(argv,'--transport')
+        if transport!='tcp':raise PlanError('invalid periodic transport')
+        contracts.append({'transport':transport,'port':positive_option(argv,'--port',65535),'bytes':positive_option(argv,'--bytes',1200),'count':positive_option(argv,'--count',600),'duration_seconds':positive_option(argv,'--duration',600),'interval_ms':positive_option(argv,'--interval-ms',5000),'setup_timeout_ms':positive_option(argv,'--setup-timeout-ms',10000),'ack_timeout_ms':positive_option(argv,'--ack-timeout-ms',10000)})
+    if contracts[0]!=contracts[1]:raise PlanError('server/client periodic contract mismatch')
+    for argv,name in ((server,'--bind'),(client,'--addr')):
+        endpoint=option(argv,name)
+        if endpoint is None:raise PlanError(f'periodic argv lacks {name}')
+        try:endpoint_port=int(endpoint.rsplit(':',1)[1])
+        except (ValueError,IndexError) as exc:raise PlanError(f'invalid {name}') from exc
+        if endpoint_port!=contracts[0]['port']:raise PlanError(f'{name} port mismatch')
+    return contracts[0]
 
 def sample_local_process(pid: int, current: dict[str,Any]) -> None:
     if os.name=='nt': return
@@ -187,44 +206,45 @@ def wait_ready(process: subprocess.Popen[bytes], capture: BoundedCapture, transp
         time.sleep(.02)
     return 'start_timeout',None
 
-def parse_result(client_text: str, server_text: str, elapsed_ms: int, transport: str, bytes_per_record: int) -> dict[str,Any]:
+def nearest_rank(samples: list[int], numerator: int, denominator: int=100) -> int:
+    if not samples:raise ValueError('confirmed latency samples missing')
+    ordered=sorted(samples);index=max(0,(len(ordered)*numerator+denominator-1)//denominator-1)
+    return ordered[index]
+
+def parse_result(client_text: str, server_text: str, elapsed_ms: int, declared: dict[str,Any]) -> dict[str,Any]:
     auth=one_event(client_text,'periodic_client_authenticated')
-    if set(auth)!={'session','stream','reconnect'} or auth['reconnect']!='unsupported': raise ValueError('malformed client authentication')
-    summary=one_event(client_text,'periodic_summary'); server=one_event(server_text,'periodic_server_summary')
-    required={'transport','session','stream','attempted','confirmed','missing','duplicates','reconnects','elapsed_ms','application_bytes','cleanup','signal'}
-    percentiles={'p50_confirmation_latency_ms','p95_confirmation_latency_ms'}
-    if set(summary) not in (required,required|percentiles) or summary['transport']!=transport or summary['cleanup']!='verified' or summary['signal'] not in ('true','false') or summary['session']!=auth['session'] or summary['stream']!=auth['stream']: raise ValueError('malformed client summary')
+    if set(auth)!={'session','stream','reconnect'} or auth['reconnect']!='unsupported':raise ValueError('malformed client authentication')
+    summary=one_event(client_text,'periodic_summary');server=one_event(server_text,'periodic_server_summary')
+    required={'transport','session','stream','attempted','confirmed','missing','duplicates','p50_confirmation_latency_ms','p95_confirmation_latency_ms','reconnects','elapsed_ms','application_bytes','cleanup','signal'}
+    if set(summary)!=required or summary['transport']!=declared['transport'] or summary['cleanup']!='verified' or summary['session']!=auth['session'] or summary['stream']!=auth['stream']:raise ValueError('malformed client summary')
     server_required={'authenticated','received','confirmed','duplicates','elapsed_ms','cleanup','signal'}
-    if set(server)!=server_required or server['cleanup']!='verified' or server['signal'] not in ('true','false') or not boolean(server,'authenticated'): raise ValueError('malformed server summary')
+    if set(server)!=server_required or server['cleanup']!='verified' or not boolean(server,'authenticated'):raise ValueError('malformed server summary')
+    if boolean(summary,'signal') or boolean(server,'signal'):raise ValueError('signal interruption')
     intervals=[]
     for line in client_text.splitlines():
         if not line.startswith('periodic_interval'):continue
         name,value=fields(line)
-        if name!='periodic_interval' or set(value)!={'seq','sent','confirmed','missing','duplicate','latency_ms'}: raise ValueError('malformed interval')
-        confirmed_value=boolean(value,'confirmed'); missing_value=boolean(value,'missing'); latency=value['latency_ms']
+        if name!='periodic_interval' or set(value)!={'seq','sent','confirmed','missing','duplicate','latency_ms'}:raise ValueError('malformed interval')
+        confirmed_value=boolean(value,'confirmed');missing_value=boolean(value,'missing');latency=value['latency_ms']
         if latency=='null':latency_value=None
         elif latency.isdigit():latency_value=int(latency)
         else:raise ValueError('invalid latency_ms')
         if confirmed_value==(latency_value is None) or confirmed_value==missing_value:raise ValueError('interval latency/accounting contradiction')
         intervals.append({'seq':nat(value,'seq'),'sent':boolean(value,'sent'),'confirmed':confirmed_value,'missing':missing_value,'duplicate':boolean(value,'duplicate'),'latency_ms':latency_value})
-    attempted=nat(summary,'attempted'); confirmed=nat(summary,'confirmed'); missing=nat(summary,'missing'); duplicates=nat(summary,'duplicates')
-    if len(intervals)!=attempted or [x['seq'] for x in intervals]!=list(range(1,attempted+1)): raise ValueError('interval sequence/accounting contradiction')
-    if sum(x['sent'] for x in intervals)!=attempted or sum(x['confirmed'] for x in intervals)!=confirmed or sum(x['missing'] for x in intervals)!=missing or sum(x['duplicate'] for x in intervals)!=duplicates: raise ValueError('interval accounting contradiction')
-    if confirmed+missing!=attempted or nat(server,'received')!=attempted or nat(server,'confirmed')!=confirmed or nat(server,'duplicates')!=duplicates: raise ValueError('server/client accounting contradiction')
-    application_bytes=nat(summary,'application_bytes')
-    if application_bytes!=attempted*bytes_per_record:raise ValueError('application byte accounting contradiction')
-    latencies=[x['latency_ms'] for x in intervals]
-    result={'actual_duration_ms':nat(summary,'elapsed_ms'),'wrapper_elapsed_ms':elapsed_ms,'attempted':attempted,'confirmed':confirmed,'missing':missing,'duplicates':duplicates,'conflicts':0,'application_bytes':application_bytes,'confirmation_latencies_ms':latencies,'client_elapsed_ms':nat(summary,'elapsed_ms'),'server_elapsed_ms':nat(server,'elapsed_ms')}
-    if percentiles <= set(summary):
-        result['median_confirmation_latency_ms']=nat(summary,'p50_confirmation_latency_ms');result['p95_confirmation_latency_ms']=nat(summary,'p95_confirmation_latency_ms')
-    return result
+    attempted=nat(summary,'attempted');confirmed=nat(summary,'confirmed');missing=nat(summary,'missing');client_duplicates=nat(summary,'duplicates');reconnects=nat(summary,'reconnects')
+    if len(intervals)!=attempted or [x['seq'] for x in intervals]!=list(range(1,attempted+1)):raise ValueError('interval sequence/accounting contradiction')
+    if sum(x['sent'] for x in intervals)!=attempted or sum(x['confirmed'] for x in intervals)!=confirmed or sum(x['missing'] for x in intervals)!=missing or sum(x['duplicate'] for x in intervals)!=client_duplicates:raise ValueError('interval accounting contradiction')
+    server_received=nat(server,'received');server_confirmed=nat(server,'confirmed');server_duplicates=nat(server,'duplicates');application_bytes=nat(summary,'application_bytes')
+    if attempted!=declared['count'] or confirmed!=attempted or missing!=0 or reconnects!=0:raise ValueError('declared completion contradiction')
+    if server_received!=attempted or server_confirmed!=confirmed:raise ValueError('server/client accounting contradiction')
+    if application_bytes!=attempted*declared['bytes']:raise ValueError('application byte accounting contradiction')
+    latencies=[x['latency_ms'] for x in intervals if x['confirmed']]
+    p50=nat(summary,'p50_confirmation_latency_ms');p95=nat(summary,'p95_confirmation_latency_ms')
+    if p50!=nearest_rank(latencies,50) or p95!=nearest_rank(latencies,95):raise ValueError('latency percentile contradiction')
+    return {'declared':declared,'actual_duration_ms':nat(summary,'elapsed_ms'),'wrapper_elapsed_ms':elapsed_ms,'attempted':attempted,'confirmed':confirmed,'missing':missing,'client_duplicates':client_duplicates,'server_duplicates':server_duplicates,'reconnects':reconnects,'application_bytes':application_bytes,'confirmation_latencies_ms':latencies,'median_confirmation_latency_ms':p50,'p95_confirmation_latency_ms':p95,'client_elapsed_ms':nat(summary,'elapsed_ms'),'server_elapsed_ms':nat(server,'elapsed_ms')}
 
 def run(plan_path: str, output: str|None, validate_only: bool, dry_run: bool) -> int:
-    plan=load_plan(plan_path); remote=plan['server']['execution']=='ssh'; transport,port=expected_endpoint(plan['server']['argv']); raw_bytes=option(plan['client']['argv'],'--bytes')
-    if raw_bytes is None:raise PlanError('periodic client argv lacks --bytes')
-    try:bytes_per_record=int(raw_bytes)
-    except ValueError as exc:raise PlanError('invalid periodic client bytes') from exc
-    if bytes_per_record<=0:raise PlanError('invalid periodic client bytes')
+    plan=load_plan(plan_path);remote=plan['server']['execution']=='ssh';declared=periodic_contract(plan['server']['argv'],plan['client']['argv']);transport=declared['transport'];port=declared['port']
     report={'schema':'nekomusume.periodic-command.v3','dry_run':dry_run,'live_evidence':not dry_run and not validate_only,'validate_only':validate_only,'git_commit':plan['git_commit'],'endpoints':{'server':public_endpoint(plan['server']),'client':public_endpoint(plan['client'])},'endpoint_provenance':{'transport':transport,'port':port,'address':'redacted','source':'declared_periodic_server_argv'},'dispatch':{'periodic_client_entered':False},'resources':{'server':{'status':'not_collected_remote'} if remote else {'status':'not_collected_local_server'},'client':{'status':'not_started'}},'cleanup':{'required':['local']+(['remote'] if remote else [])}}
     if validate_only or dry_run:
         report['dispatch']['entered']=False
@@ -262,7 +282,7 @@ def run(plan_path: str, output: str|None, validate_only: bool, dry_run: bool) ->
     truncated=bool((server_capture and server_capture.truncated) or (client_capture and client_capture.truncated))
     report['private_logs']={'retained_for_parsing':True,'tracked':False,'storage':'bounded_memory','bounded_bytes_per_stream':MAX_LOG_BYTES,'streams':['server_stdout','server_stderr','client_stdout','client_stderr'],'truncated':truncated}
     if readiness=='ready' and not timed_out and not startup_error and not truncated:
-        try:parsed=parse_result(client_text,server_text,int((time.monotonic()-started)*1000),transport,bytes_per_record)
+        try:parsed=parse_result(client_text,server_text,int((time.monotonic()-started)*1000),declared)
         except ValueError as exc:parse_error=str(exc)
     checks=[cleanup_check(plan['cleanup']['local_argv'],'local processes/listeners')]
     if remote:checks.append(cleanup_check(plan['cleanup']['remote_transport_argv'],'remote processes/listeners'))
