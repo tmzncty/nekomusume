@@ -74,6 +74,14 @@ def test_six_success() -> None:
     assert batch["first_failure"] is None
     assert called == [1, 2, 3, 4, 5, 6]
 
+def test_six_cycles_may_use_distinct_ports() -> None:
+    rows = [row(i) for i in range(1, 7)]
+    for index, value in enumerate(rows):
+        value["parameters"].update(udp_port=40081 + index * 2, tcp_port=40080 + index * 2)
+    batch, code, called = execute(rows)
+    assert code == 0 and called == [1, 2, 3, 4, 5, 6]
+    assert [item["parameters"]["tcp_port"] for item in batch["cycles"]] == [40080, 40082, 40084, 40086, 40088, 40090]
+
 def test_middle_failure_preserves_prefix() -> None:
     rows = [row(1), row(2), failed_row(3), row(4), row(5), row(6)]
     batch, code, called = execute(rows)

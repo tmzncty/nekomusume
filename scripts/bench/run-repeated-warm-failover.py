@@ -23,6 +23,7 @@ CYCLES = 6
 MAX_BATCH_SECONDS = 570
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+STABLE_PARAMETER_FIELDS = ("record_count", "record_payload_bytes", "client_max_seconds", "server_max_seconds", "concurrency")
 COUNT_FIELDS = (
     "udp_confirmed_records", "udp_confirmed_bytes", "uncertain_records",
     "uncertain_bytes", "replayed_records", "replayed_bytes",
@@ -177,7 +178,9 @@ def run(argv: list[str], invoke: Callable[..., subprocess.CompletedProcess[str]]
                 raise EvidenceError("collector returned nonzero without a valid row")
             raw = json.loads(completed.stdout)
             row = validate_cycle(raw, index)
-            if rows and any(row[key] != rows[0][key] for key in ("git_commit", "binary_sha256", "binary_bytes", "parameters")):
+            if rows and any(row[key] != rows[0][key] for key in ("git_commit", "binary_sha256", "binary_bytes")):
+                raise EvidenceError("cycle identity or parameters differ from cycle 1")
+            if rows and any(row["parameters"][key] != rows[0]["parameters"][key] for key in STABLE_PARAMETER_FIELDS):
                 raise EvidenceError("cycle identity or parameters differ from cycle 1")
             rows.append(row)
             if row["result"]["status"] != "passed":

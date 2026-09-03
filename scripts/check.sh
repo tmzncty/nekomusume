@@ -52,3 +52,4 @@ bash scripts/bench/owned-lab-control-plane-test.sh
 python3 scripts/bench/validate-hy2-owned-lab-test.py
 python3 scripts/bench/run-live-warm-failover-cycle-test.py
 python3 scripts/bench/run-repeated-warm-failover-test.py
+python3 scripts/bench/run-repeated-warm-failover-command-test.py
