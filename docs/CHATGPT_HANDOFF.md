@@ -1,206 +1,214 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-03 05:02 Asia/Shanghai
-Repository HEAD: `a7a003646def6095c6ad755bb4ae1159c060a1c0`
-Previous reviewed implementation HEAD: `fde80eba5aafa0394e994f40e345bc2f0b381e0f`
-Previous reviewer handoff commit: `fc3c0b3c76fd36771ac9155fb77bc7553a4f85d9`
+Checked at: 2026-09-03 09:00 Asia/Shanghai
+Repository HEAD: `5665b91f1ac01da1af478f87f24605c57f057336`
+Previous reviewed implementation HEAD: `a7a003646def6095c6ad755bb4ae1159c060a1c0`
+Previous reviewer handoff: `f17e7f7...`
 
 ## What changed
 
 One new coding-agent commit is visible after the previous reviewer handoff:
 
-- `a7a0036` — **benchmark harness / result-validator repair only; no Nekomusume production wire, Session, failover or crypto semantic change; no new VPS comparison run.** It moves Nekomusume readiness observation onto the remote VPS, adds an explicit remote HY2 UDP-listener readiness stage, introduces work and cleanup deadlines with bounded SSH operations, passes expected client binary identities into sample construction, validates result bounds, and tightens client resource identity / exit agreement.
+- `5665b91` — **benchmark admission / result-validator repair only; no Nekomusume production wire, Session, failover or crypto semantic change; no new VPS comparison run.** It introduces a structured listener parser, explicit whole-lab/work/cleanup deadline metadata, fail-fast live shell behavior after a failed required sample, exact client/server binary hashes in result contracts, and stronger complete-result resource/identity validation.
 
-The exact `a7a0036` GitHub Actions run is green. `stable checks` completed successfully and the nightly 30-second `decode` fuzz smoke completed successfully.
+The exact `5665b91` GitHub Actions run is independently green: `stable checks` passed and the nightly 30-second decode fuzz smoke passed.
 
-Several previous findings are materially improved, but the paid-VPS pair is still not admissible. Review of the executable shell/validator contract finds four remaining evidence-integrity defects: the listener-readiness matcher is not a truthful exact-bind parser, a failed paired sample can still flow into a complete result with a comparative summary, the published duration bound under-reports the allowed cleanup window, and binary-identity validation remains incomplete for retained server resources / contract hashes. In addition, the new readiness/deadline behavior is not covered by executable regressions; current CI green therefore proves syntax and the existing tests, not these new runtime-control properties.
+This repair closes useful parts of the previous handoff, especially the shell-level stop-on-first-failed-sample path, full HY2 server sampler identity, explicit whole-lab bound fields, and complete-result binary/resource checks. However, review of the exact executable parser and validator/tests finds that the paid VPS pair is still not admission-safe. The remaining defects are in benchmark/evidence infrastructure, not Nekomusume transport semantics.
 
 ## Review verdict
 
-**needs one final benchmark-admission repair before the VPS pair — CI green, but do not spend the paid VPS window on `a7a0036`**
+**needs repair — benchmark admission is closer, but exact remote-listener proof and fail-closed validator behavior are still incomplete; do not spend the paid VPS pair yet**
 
-This is a benchmark/evidence-harness correctness gate, not a Nekomusume transport defect. Keep wire, Session, failover and crypto semantics unchanged. Close the four concrete defects below, add executable regressions for the new control-plane behavior, obtain exact-repair-HEAD CI green, then immediately run the self-owned HY2/Nekomusume paired experiment under standing authorization.
+Do not change Nekomusume wire, Session, failover or crypto semantics for this repair. Close the concrete admission/test defects below, obtain exact-repair-HEAD CI green, then immediately use the standing-authorized self-owned VPS/HY2 window.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains the bounded research baseline status.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain correct.
-- `a7a0036` adds no new WAN/HY2 comparative sample and no performance conclusion.
-- Exact-head CI at `a7a0036` is independently green for `stable checks` and the nightly decode fuzz smoke. This does not prove remote listener parsing, whole-lab deadline behavior or fail-closed comparative-result classification because those new behaviors are not yet exercised by deterministic tests.
-- The accepted D064 controlled application-fault warm VPS result and approximately five-minute periodic direct-path VPS result remain valid only at their recorded exact identities. Do not rerun them merely to consume rental time.
+- `5665b91` adds no HY2 paired sample and no performance conclusion.
+- Exact-head CI at `5665b91` is green, but it only proves the tests that currently exist. It does not prove missing readiness/control-plane behavior regressions.
+- The accepted D064 controlled application-fault warm VPS row and accepted approximately five-minute periodic direct-path row remain valid only at their recorded exact implementation/binary identities. Do not rerun them merely to consume rental time.
 - IPv6 remains environment-blocked unless a genuinely owned end-to-end IPv6 path becomes available.
-- Standing authorization permits the intended self-owned paired benchmark, bounded capture, cleanup and ordinary high-port TCP/UDP listeners. No new per-run permission is required once this harness gate is closed.
-- `docs/status.md`, `IMPLEMENTATION_PLAN.md`, and `ROADMAP.md` still contain stale narrative relative to the accepted D064/periodic evidence. Repair that drift after the HY2 step succeeds or closes honestly with a retained blocker artifact; do not erase historical negative attempts.
+- Standing authorization already permits the intended bounded self-owned HY2/Nekomusume comparison, bounded capture and cleanup. No new per-run maintainer permission is needed once this gate is green.
+- `docs/status.md`, `IMPLEMENTATION_PLAN.md` and `ROADMAP.md` remain stale relative to the accepted D064/periodic evidence and should be reconciled after the HY2 step closes honestly.
 
-### Reviewer finding R-HY2-08 — remote readiness matching is not an exact listener proof
+### R-HY2-13 — `parse-listener.py` does not match the production `ss` command shape
 
-The new readiness checks execute remotely, which fixes the host-locality error, but the actual matcher is not correct enough to authorize a paid run.
+The new parser is structurally better than grep, but its input contract is currently incompatible with the harness call sites.
 
-Current HY2/TCP readiness uses a pattern equivalent to:
-
-```text
-:(<bind-address>|0.0.0.0):<port><space>
-```
-
-against normal `ss -H -lun` / `ss -H -lnt` output. Typical local-address fields are shaped like:
+`parse-listener.py` expects:
 
 ```text
-192.0.2.9:40098
+fields[0] == tcp|udp
+local endpoint == fields[4]
 ```
 
-not `:192.0.2.9:40098`, so the added leading colon can make a correctly bound listener fail readiness for the wrong reason. The alternative `0.0.0.0` is also contrary to the owned-lab contract: readiness must prove the exact dedicated bind address, not accept a wildcard listener.
-
-Replace grep-shape inference with an exact, testable listener parser/command. It must:
-
-- execute on the VPS;
-- select the exact intended TCP/UDP port;
-- normalize IPv4/IPv6 local-address representation;
-- require the exact `LAB_REMOTE_BIND_ADDRESS`;
-- reject wildcard, loopback, another local address and the correct port on the wrong protocol;
-- fail closed when `ss` output is malformed or ambiguous.
-
-A local listener with the same numeric port must remain irrelevant.
-
-### Reviewer finding R-HY2-09 — a failed sample can still produce a comparative summary
-
-`run_client()` records a typed failed row but does not stop the paired benchmark. The loop can continue, and final assembly builds `nekomusume.benchmark-result.v1`; `validate_result()` accepts a complete sample set containing failures and `expected_summary()` computes medians from the successful subset.
-
-That violates the current owned-lab comparison contract and the previous handoff: **if any required Nekomusume/HY2 pair fails, the run is diagnostic/availability evidence, not comparative performance evidence.** A failed required sample must produce `BLOCKED_HARNESS` with retained sample evidence and no comparative `summary`.
-
-Required behavior:
-
-- after appending the first failed required sample, stop admitting new comparative samples (or finish only a specifically required diagnostic stage that cannot be mistaken for a benchmark sample);
-- run bounded cleanup;
-- emit one typed blocker artifact with the retained prefix/failed row and no summary;
-- `benchmark-result.v1` is legal only when all `2 * RUNS` required samples exist and every one is successful;
-- validator mutation tests must reject a complete benchmark-result containing even one failed sample.
-
-Do not discard the failure row; preserving it is part of the evidence contract.
-
-### Reviewer finding R-HY2-10 — advertised duration bound under-reports the full allowed lab window
-
-`a7a0036` creates a work deadline and a later cleanup deadline. With the default profile, work may continue until the work deadline and cleanup may then continue within the reserved cleanup window. However the complete result currently emits:
+while the harness calls protocol-filtered forms equivalent to:
 
 ```text
-bounds.maximum_duration_ms = GLOBAL_DEADLINE_MS
+ss -H -ltn
+ss -H -lun
 ```
 
-where `GLOBAL_DEADLINE_MS` is the **work** deadline, not the later whole-lab deadline including cleanup. The artifact can therefore advertise a smaller maximum wall duration than the harness actually permits.
+On normal filtered Linux `ss` output the netid/protocol column is omitted; TCP rows start with `LISTEN`, UDP rows typically start with `UNCONN`, and the local endpoint is not at the parser's assumed field. A correctly bound remote listener can therefore fail readiness for a parser-format reason rather than a transport reason.
 
-Standing authorization bounds the complete public experiment wall-clock, including cleanup. Make the result contract truthful by explicitly separating at least:
-
-```text
-work_deadline_ms
-cleanup_reserve_ms
-whole_lab_deadline_ms
-```
-
-or equivalent fields, with `bounds.maximum_duration_ms` representing the actual whole-lab maximum. Require `whole_lab_deadline_ms <= 600000` and mechanically bind the validator to the emitted/enforced values. A mutation that changes any deadline/bound relationship must fail.
-
-The current remaining-budget SSH wrapper is directionally useful; do not replace it with an unbounded control-plane call.
-
-### Reviewer finding R-HY2-11 — retained binary identity is still not fully exact/fail-closed
-
-The client path now passes expected full hashes, but the persistent HY2 server resource row is still launched with a truncated identity (`sha256:66dbdb0608f25f30`), while the pinned HY2 artifact is a full 64-hex SHA-256. That makes a retained resource artifact's identity non-exact even though server metrics are separately labelled and excluded from client latency.
-
-Also, complete-result validation builds pinned client identities from contract strings without first requiring both contract binary hashes to be valid 64-hex SHA-256 values.
+The harness also contains a `remote_listener_ready()` helper whose option construction is inconsistent with the actual call sites and which is not the single production readiness path. Dead/duplicate readiness logic is itself a drift risk.
 
 Required repair:
 
-- use the exact full pinned HY2 SHA-256 for the HY2 server sampler identity;
-- use the exact copied Nekomusume binary SHA-256 for Nekomusume server resource rows as already intended;
-- require `contract.nekomusume_binary_sha256` and `contract.hy2_binary_sha256` to match the SHA-256 grammar before using them;
-- require all retained transport resource rows that claim a binary identity to be internally consistent with their implementation's exact pinned binary identity, or explicitly exclude a non-comparative row from the typed resource set rather than retaining a misleading identity;
-- add mutation tests for truncated/invalid/stale binary identity.
+- choose one exact `ss` invocation + parser contract and use it everywhere;
+- do not require a protocol token if the shell invocation already fixes the protocol;
+- parse the exact local endpoint address + port, including IPv4 and bracketed IPv6 forms;
+- require exactly one matching exact dedicated bind address/port;
+- reject wildcard, loopback, another interface address, wrong protocol, malformed input and ambiguous multiple matches;
+- a same-numbered listener on the local client host must remain irrelevant;
+- remove/fix duplicate readiness helpers so HY2 and Nekomusume readiness exercise the same tested primitive.
 
-### Reviewer finding R-HY2-12 — the new readiness/deadline code lacks executable regressions
+Add executable fixtures resembling the actual filtered output, e.g. TCP `LISTEN ... 192.0.2.9:40097 ...`, UDP `UNCONN ... 192.0.2.9:40098 ...`, plus IPv6-shaped rows.
 
-The exact-head CI is green, but `scripts/bench/compare-hy2-owned-lab-test.sh` still mostly checks topology/TLS/lifecycle source strings and earlier cleanup/failure-row behavior. It does not execute the new remote readiness parser, prove a local listener cannot satisfy it, exercise HY2 readiness absence, or demonstrate deadline expiry against a hanging control-plane command.
+### R-HY2-14 — complete-result validation can still accept a failed required sample
 
-Before a paid run, add a deterministic test seam around the new shell control-plane logic. The test does not need a real VPS; fake SSH/`ss`/timeout commands are acceptable if they exercise the same helper functions/command path used by production harness code.
+The live shell now stops comparative admission after the first failed sample, which is good. But the validator remains weaker than the artifact contract.
+
+`validate_samples(..., require_complete=True)` currently accepts rows with `failures == 1` as long as the full required identity/order set exists. `expected_summary()` then computes latency medians from the successful subset. Therefore a hand-built, future-regressed or externally supplied `benchmark-result.v1` can still contain a failed required sample and pass complete-result validation if its summary matches that successful subset.
+
+The contract is stricter:
+
+```text
+any required pair fails
+=> diagnostic/blocked evidence
+=> BLOCKED_HARNESS
+=> no comparative summary
+```
+
+Required repair:
+
+- `benchmark-result.v1` validation must require every required sample to be successful;
+- a complete set containing any `failures != 0`, nonzero exit or failure stage must be rejected;
+- add a mutation/regression test that changes one row in an otherwise complete result into a failed row and proves rejection;
+- blocked artifacts must continue to retain the valid prefix and failed row without a summary.
+
+### R-HY2-15 — the new deadline/provenance contract lacks mutation coverage
+
+`5665b91` now validates explicit binary hashes and work/cleanup/whole-lab relationships, but the executable validator tests do not yet prove those gates fail closed under mutation.
+
+Add mutations for at least:
+
+- truncated/invalid `nekomusume_binary_sha256`;
+- truncated/invalid `hy2_binary_sha256`;
+- stale/mismatched client transport identity;
+- stale/mismatched retained server transport identity;
+- changed `work_deadline_ms`;
+- changed `cleanup_reserve_ms`;
+- changed `whole_lab_deadline_ms`;
+- `whole_lab_deadline_ms > 600000`;
+- arithmetic mismatch `work + cleanup != whole`;
+- `bounds.maximum_duration_ms != whole_lab_deadline_ms`;
+- inconsistent application-byte bound.
+
+Green CI should prove these admission facts rather than only their happy path.
+
+### R-HY2-16 — remote readiness/deadline behavior is still not exercised end-to-end
+
+`compare-hy2-owned-lab-test.sh` remains dominated by topology/TLS/lifecycle static assertions and older failure/cleanup tests. The newly introduced remote listener parser and control-plane deadline behavior still need an executable fake-remote seam using the same helpers/path as production.
 
 At minimum prove:
 
-- exact remote bind+port+protocol succeeds;
-- same port on the local test host is irrelevant;
-- remote wildcard and wrong-address listeners fail;
-- absent HY2 UDP listener fails at `hy2-server-readiness` before client timing;
-- absent Nekomusume TCP listener fails at `nekomusume-readiness` before client timing;
+- exact remote bind + port + protocol succeeds;
+- remote wildcard, wrong address, wrong protocol and malformed/ambiguous output fail;
+- a local same-port listener cannot satisfy remote readiness;
+- absent HY2 UDP listener fails at `hy2-server-readiness` before any timed client sample;
+- absent Nekomusume TCP listener fails at `nekomusume-readiness` before that sample;
 - an early remote process exit fails promptly;
-- a hanging remote/control-plane operation cannot exceed its remaining stage/global budget;
-- cleanup reserve remains available after work-deadline expiry;
+- a hanging SSH/control-plane operation cannot exceed its remaining work/stage budget;
+- work-deadline expiry still leaves the declared cleanup reserve available;
 - an over-budget parameter profile is rejected before remote execution.
 
-Static `grep` assertions are useful guardrails but are not substitutes for these behavior tests.
+Static grep assertions may remain as guardrails, but they are not substitutes for these behavior tests.
 
-## Work Package — Final Benchmark Admission Repair -> Exact-Head CI -> VPS Pair -> Release-Matrix Reconciliation
+## Work Package — Executable Benchmark Admission Closure -> Exact-Head CI -> Paid VPS Pair -> Matrix Reconciliation
 
-### Primary A — Build one exact remote-listener readiness primitive and use it everywhere
+### Primary A — Make one truthful, executable remote-listener readiness primitive
 
 **Goal**
 
-Close R-HY2-08 and make the remote readiness evidence reusable/testable instead of embedding fragile regexes at two call sites.
+Close R-HY2-13 and make listener admission a stable reusable contract rather than a parser/call-site mismatch.
 
-**Scope**
+**Likely files**
 
 - `scripts/bench/compare-hy2-owned-lab.sh`;
-- `scripts/bench/compare-hy2-owned-lab-test.sh`;
-- a small helper under `scripts/bench/` only if it materially improves structured parsing/testing.
+- `scripts/bench/parse-listener.py`;
+- `scripts/bench/compare-hy2-owned-lab-test.sh`.
 
 **Required behavior**
 
-1. Implement one bounded remote-listener check that receives protocol, exact remote bind address and port.
-2. Parse actual/fixture `ss` output structurally enough to compare the local endpoint exactly; do not accept `0.0.0.0`, `*`, `::`, another interface address or another protocol as equivalent.
-3. Use the same primitive for persistent HY2 UDP readiness and per-sample Nekomusume TCP readiness.
-4. Preserve early-process-exit detection for Nekomusume.
-5. Keep every remote observation under the existing remaining-budget/cleanup-budget wrapper.
-6. Add executable IPv4 and IPv6-shaped fixture tests even if real owned IPv6 execution remains environment-blocked.
+1. Select one real production input shape: either parse unfiltered `ss` output including netid, or parse protocol-filtered output and pass protocol separately. Do not mix the two contracts.
+2. Match exact remote dedicated bind address + exact port + intended protocol.
+3. Reject unspecified/wildcard, loopback, another address, wrong protocol and ambiguous duplicates.
+4. Support IPv4 and bracketed IPv6 output shapes deterministically even though live IPv6 is environment-blocked.
+5. Use this one primitive for both persistent HY2 UDP readiness and per-sample Nekomusume TCP readiness.
+6. Preserve Nekomusume early-process-exit detection and bounded remote work calls.
+7. Remove or unify dead/duplicate readiness helper code.
+8. Add fixture tests matching real filtered/unfiltered `ss` grammar, not an invented shape.
 
-**Completion:** both readiness paths are exact-bind, remote-only, bounded, and behavior-tested.
+**Completion:** the same executable helper path used in production passes exact-match fixtures and rejects all false-positive/format-error cases.
 
-### Follow-up B — Make comparative result classification fail closed and make wall bounds truthful
+### Follow-up B — Make `benchmark-result.v1` intrinsically fail closed
 
-**Dependency:** A green.
+**Dependency:** A green; may be developed in parallel if files do not conflict.
 
-Close R-HY2-09 and R-HY2-10 together because both define whether the artifact is admissible evidence.
+Close R-HY2-14 at the validator level, not only in shell control flow.
 
-1. First failed required sample -> retain row -> stop comparative admission -> bounded cleanup -> `BLOCKED_HARNESS` -> no summary.
-2. `benchmark-result.v1` -> all required pairs present **and all successful**.
-3. Split work/cleanup/whole-lab deadline metadata explicitly.
-4. `bounds.maximum_duration_ms` must equal the full enforced whole-lab wall bound, not only the work deadline.
-5. Validator must reject:
-   - a complete result containing any failed sample;
-   - missing/altered work/cleanup/whole-lab deadline metadata;
-   - `whole_lab > 600000`;
-   - arithmetic relationships that do not match the enforced harness budget;
-   - an application-byte bound inconsistent with payload × runs × implementations.
-6. Preserve retained prefix evidence on deadline expiry; budget expiry is `BLOCKED_HARNESS`, not a benchmark failure sample used in medians.
+- require a complete benchmark result to contain all `2 * runs` rows and zero failed rows;
+- require zero failure stages and successful exit/application/hash/resource evidence for all required rows;
+- reject complete results containing any failed sample even if the summary is recomputed from successful rows;
+- preserve `BLOCKED_HARNESS` prefix/failure evidence and no-summary semantics;
+- add direct validator regression/mutation coverage.
 
-### Follow-up C — Finish exact binary provenance and executable control-plane regressions
+Do not discard negative samples and do not turn them into zero-latency rows.
 
-**Dependency:** B green; may be developed in parallel with B if files do not conflict.
+### Follow-up C — Close deadline, binary-identity and resource-identity mutations
 
-Close R-HY2-11 and R-HY2-12.
+**Dependency:** B green; may overlap with B where reviewable.
 
-- replace truncated HY2 server resource identity with the full pinned v2.9.3 SHA-256;
-- validate both contract binary hashes as exact SHA-256;
-- bind retained transport resource identities to the correct implementation hash;
-- add stale/truncated identity mutations;
-- add fake-remote readiness/deadline regressions listed in R-HY2-12;
-- retain existing topology split, certificate pin, fresh-client lifecycle, cleanup, partial-record and resource-sampler regressions.
+Close R-HY2-15.
 
-Do not alter Nekomusume transport semantics to make the harness convenient.
+Add validator mutations for all deadline/bound/hash/resource identity relationships listed above. Ensure retained server resources, if typed as transport resources, carry the full exact pinned implementation hash. A misleading partial identity must never be retained as exact evidence.
 
-### Follow-up D — Full local gate and exact-repair-HEAD CI
+Keep server resource rows non-comparative if that is the existing lifecycle choice; do not manufacture symmetric server-startup performance numbers merely to satisfy a schema.
 
-**Dependency:** A-C complete.
+### Follow-up D — Exercise the real control-plane path with fake SSH/`ss`/timeout
+
+**Dependency:** A-C green.
+
+Close R-HY2-16 with behavior tests that invoke the same production helpers rather than only searching source strings.
+
+Required scenarios:
+
+1. exact TCP listener success;
+2. exact UDP listener success;
+3. wildcard/wrong-address/wrong-protocol/malformed/ambiguous failure;
+4. local same-port listener irrelevant;
+5. HY2 readiness absent -> typed blocker before client timing;
+6. Nekomusume readiness absent -> typed blocker before client timing;
+7. early remote process exit;
+8. hanging remote call bounded by remaining work budget;
+9. cleanup reserve still executable after work expiry;
+10. over-budget profile rejected before remote execution.
+
+Retain the existing certificate pin, bind/connect split, fresh-client lifecycle, process-group cleanup, partial-record and payload/resource truthfulness regressions.
+
+### Follow-up E — Full local gate and exact-repair-HEAD CI
+
+**Dependency:** A-D complete.
 
 Run at minimum:
 
-- owned-lab harness behavior regressions;
+- exact listener-parser fixtures;
+- owned-lab control-plane behavior regressions;
 - result-validator mutation regressions;
-- resource-sampler regressions;
+- process-resource sampler regressions;
 - `cargo fmt --all -- --check`;
 - `cargo check --workspace --locked`;
 - `cargo test --workspace --all-targets --locked --no-fail-fast`;
@@ -208,90 +216,112 @@ Run at minimum:
 - `bash scripts/check.sh`;
 - `git diff --check`.
 
-Push the coherent repair. Require the **exact repair HEAD** GitHub `stable checks` and nightly decode fuzz smoke to be green. The green `a7a0036` jobs attest only to `a7a0036`.
+Push one or more coherent repair commits. Require the **exact repair HEAD** GitHub `stable checks` and nightly decode fuzz smoke to be green before using the paid VPS benchmark window.
 
-### Follow-up E — Immediately run one changed-hypothesis self-owned HY2/Nekomusume pair
+Do not treat the green `5665b91` CI as attestation for later repairs.
 
-**Dependency:** D exact-head CI green.
+### Follow-up F — Immediately run the self-owned HY2/Nekomusume paired experiment
 
-Do not insert unrelated local polish between D and the VPS run. The rental window is time-limited and the harness repair is specifically intended to unlock this evidence.
+**Dependency:** E exact-head CI green.
 
-Recommended bounded profile, subject to the repaired admission calculation:
+Do not insert unrelated local polish between E and this run. This is the highest-value READY VPS opportunity once admission is trustworthy.
+
+Use the existing standing authorization and the repaired owned-lab harness. Recommended bounded profile:
 
 ```text
 self-owned client <-> owned VPS only
 pinned HY2 v2.9.3 full SHA-256
 5 paired runs if admitted
-1200-byte deterministic payload
+1200-byte deterministic payload per sample
 concurrency 1
 fresh unprivileged experiment ports
 fresh client/session per timed sample
 whole-lab maximum < 10 minutes including cleanup reserve
 ```
 
-Use the existing standing authorization. Do not modify production firewall, route, qdisc, DNS, proxy/tunnel or the existing production HY2 service/config.
+Keep the existing production HY2 service/config untouched. No production firewall/route/qdisc/DNS/proxy/tunnel change.
 
-Because the previous changed-hypothesis HY2 attempt failed during QUIC establishment, collect bounded path diagnostics around only the disposable HY2 UDP port:
+Because previous HY2 attempts failed during QUIC establishment, retain bounded diagnostics around only the disposable experiment UDP port:
 
-- prove exact remote listener readiness first;
-- prove clients target the verified connect address rather than the bind address;
-- if HY2 still fails, record whether packets leave the client, reach the VPS, elicit replies and whether replies return;
-- retain packet counts/timestamps/capture hash or compact redacted metadata plus redacted HY2 logs sufficient to distinguish path/NAT/provider failure from TLS/auth/config failure;
-- raw pcap need not be committed;
-- do not change provider/firewall policy merely to force a success.
+- exact remote listener readiness;
+- client connect authority vs server bind authority;
+- whether UDP packets leave client, arrive VPS, elicit replies and return;
+- redacted HY2 logs sufficient to distinguish path/NAT/provider vs TLS/auth/config failure;
+- capture metadata/hash/counts/timestamps where captured; raw pcap need not be committed.
 
-If **all** required pairs succeed, retain raw rows and calculate one bounded median/P95/failure-free comparative batch with exact application bytes/hash and process-group client CPU/RSS/FD evidence. Make no superiority/general-WAN claim.
+If **all** required pairs succeed:
 
-If **any** required pair fails, retain the typed blocker artifact with no comparative summary and do not repeat unchanged.
+- retain all raw sample rows;
+- produce one bounded median/P95 comparison only for the complete success set;
+- retain exact payload/hash and process-group client CPU/RSS/FD evidence;
+- make no superiority, production or general-WAN claim.
 
-Always verify cleanup of experiment-owned processes/listeners/temp paths.
+If **any** required pair fails:
 
-### Follow-up F — Reconcile the release matrix, then select at most one next READY VPS-only row
+- retain the typed `BLOCKED_HARNESS`/diagnostic artifact;
+- no comparative summary;
+- do not repeat unchanged;
+- cleanup still must be verified.
 
-**Dependency:** E succeeds or closes honestly with a retained blocker artifact.
+### Follow-up G — Reconcile release matrix and immediately select one next truthful VPS opportunity
 
-First repair status/evidence drift without deleting historical negatives:
+**Dependency:** F succeeds or closes honestly with retained blocker evidence.
 
-- `docs/status.md`: add the accepted D064 controlled-fault warm positive row, accepted approximately five-minute periodic direct-path row, the exact final HY2 harness state and the exact paired-run outcome;
-- `IMPLEMENTATION_PLAN.md`: remove stale claims that current-lineage D064/periodic evidence is absent; keep bounded release matrix item 3 unchecked while declared rows remain unresolved;
-- `ROADMAP.md`: preserve controlled application fault != natural UDP degradation and five-minute sample != general long-lived stability; update HY2 only to the exact outcome.
+First repair stale status/evidence narrative without deleting historical negatives:
 
-Then audit current runtime surfaces and choose **at most one** additional high-value VPS-only row that is already executable and truthfully instrumented: genuine owned endpoint/source change, real-session migration-back, real-session key update, or live PMTUD. A fixture/model is not a live runtime seam. If none is READY, record the exact local implementation dependency and make that unlock slice the next package.
+- `docs/status.md`: add the accepted positive D064 controlled-fault warm row, accepted approximately five-minute periodic row, exact final harness state, and exact HY2 outcome;
+- `IMPLEMENTATION_PLAN.md`: remove stale statements that current-lineage D064/periodic are absent; keep bounded release matrix item 3 unchecked while declared rows remain unresolved;
+- `ROADMAP.md`: preserve `controlled application fault != natural UDP degradation` and `five-minute sample != general long-lived stability`; update HY2 only to what F actually proved.
+
+Then audit current live runtime surfaces and choose **at most one** additional VPS-only row that is already executable and truthfully instrumented:
+
+1. genuine owned source-endpoint/path change;
+2. real-session migration-back;
+3. real-session key update;
+4. live PMTUD observation.
+
+A fixture/model is not a live runtime seam. If none is READY, record the exact implementation/instrumentation dependency and make that local unlock slice the next package instead of inventing a VPS experiment.
+
+## Fallback
+
+If A-D uncover a benchmark-harness defect beyond the listed evidence layer:
+
+- keep all transport/governance flags unchanged;
+- preserve a minimal deterministic reproducer;
+- repair only the smallest harness/validator control path required for truthful evidence;
+- rerun the full local/CI admission gate;
+- do not spend the paid VPS comparison on a known-invalid harness.
+
+If the final paid HY2 run is blocked by a changed path/provider condition after the repaired diagnostics classify it, preserve the negative evidence and move to another genuinely READY VPS-only release-evidence row; do not mechanically retry the same failed hypothesis.
 
 ## Completion gates
 
 This package is complete only when all are true:
 
-- remote readiness proves the exact dedicated bind address + intended port + protocol and rejects wildcard/other-address/local-host false positives;
-- readiness/deadline behavior has executable deterministic regression coverage, not only static source checks;
-- first failed required benchmark sample produces `BLOCKED_HARNESS` with no comparative summary;
-- a complete benchmark result requires all required paired samples and zero failures;
-- result duration metadata distinguishes work and cleanup and truthfully reports the full enforced whole-lab maximum <= 600000 ms;
-- control-plane operations remain bounded by remaining work/cleanup budget;
-- HY2 and Nekomusume retained transport resources use exact binary identities; contract binary hashes are validated as real SHA-256 values;
-- exact repair-HEAD stable CI + nightly fuzz are green before VPS execution;
-- the next VPS run either yields one complete fair paired batch or one changed-hypothesis typed blocker with bounded diagnostics and verified cleanup;
-- historical D064/periodic/negative evidence remains immutable and is reconciled into status without claim inflation;
-- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain unchanged.
-
-## Fallback
-
-If the repaired harness still cannot produce truthful exact readiness/budget/provenance evidence locally, keep the VPS pair blocked and preserve the smallest failing deterministic fixture. Do not bypass the harness gate to save rental time.
-
-If exact-repair CI is red, fix that exact regression before touching the VPS. A green older HEAD is not sufficient.
-
-If the VPS HY2 attempt remains path-blocked after E with the new exact readiness and bounded packet-direction evidence, retain the negative artifact and move to the next genuinely READY VPS-only row rather than rerunning unchanged.
+- exact remote listener parsing matches the actual production `ss` input contract;
+- wildcard/wrong-address/wrong-protocol/local-host/ambiguous false positives are rejected;
+- complete benchmark results cannot contain any failed required sample;
+- blocked artifacts retain failure evidence and no summary;
+- deadline/bound arithmetic is mutation-tested and whole-lab <= 600000 ms;
+- binary/resource identities are exact 64-hex SHA-256 and mutation-tested;
+- readiness/process/deadline behavior is exercised through the same production helper path;
+- full local repository gate passes;
+- exact repair HEAD CI is green;
+- the self-owned paired run either yields a complete valid success batch or one retained typed blocker with no comparison summary;
+- cleanup is verified;
+- status/plan/roadmap are reconciled to accepted D064/periodic and exact HY2 evidence;
+- no release/production/global-freeze flag is promoted automatically.
 
 ## Do not expand into
 
-- Nekomusume wire/Session/Noise/failover semantic changes for benchmark convenience;
-- provider/firewall/route/qdisc/DNS/proxy/tunnel modifications;
-- third-party targets or scanning;
-- a >10-minute experiment or mechanical splitting to evade the standing bound;
-- performance-superiority language from one batch;
-- rerunning accepted D064/periodic rows without a new hypothesis;
-- IPv6 claims without a real owned end-to-end IPv6 path;
-- 0-RTT, enabled FEC, concurrent striping, heterogeneous aggregation or exotic carriers without an observed-problem gate.
+- Nekomusume wire/Session/crypto changes merely to accommodate the benchmark harness;
+- rerunning accepted D064/periodic rows without a new question;
+- publishing HY2 superiority from one batch;
+- treating controlled application reply cessation as natural Internet/PTO degradation;
+- pretending five minutes proves general long-lived reliability;
+- third-party targets, scanning or production network changes;
+- experimental FEC/0-RTT/striping/exotic carrier work without an observed-problem gate;
+- IPv6 claims without a genuinely owned end-to-end IPv6 environment.
 
 ## Questions requiring maintainer decision
 
