@@ -266,6 +266,10 @@ def validate_result(path):
     if not isinstance(resources, list) or not resources or not all(validate_resource(item) for item in resources):
         raise ValueError("resource evidence is missing or incomplete")
     contract = doc["contract"]
+    for key in ("nekomusume_binary_sha256", "hy2_binary_sha256"):
+        value = contract.get(key)
+        if not isinstance(value, str) or not SHA256.fullmatch(value):
+            raise ValueError("contract binary identity is not an exact SHA-256")
     bounds = doc.get("bounds")
     if not isinstance(bounds, dict) or set(bounds) != {"maximum_duration_ms", "application_bytes_max"}:
         raise ValueError("result bounds are missing")
@@ -275,6 +279,9 @@ def validate_result(path):
         raise ValueError("invalid result duration bound")
     if expected_maximum != maximum:
         raise ValueError("result bound does not match enforced global deadline")
+    work = contract.get("work_deadline_ms"); reserve = contract.get("cleanup_reserve_ms"); whole = contract.get("whole_lab_deadline_ms")
+    if not all(finite_nonnegative(v, True) for v in (work, reserve, whole)) or work + reserve != whole or whole != maximum or whole > 600_000:
+        raise ValueError("deadline bounds are inconsistent")
     if not finite_nonnegative(bounds["application_bytes_max"], True) or bounds["application_bytes_max"] != contract["payload_bytes"] * contract["runs_per_implementation"] * 2:
         raise ValueError("invalid application bounds")
     if contract.get("client_lifecycle") != "fresh transport per timed sample" or contract.get("client_resource_scope") != "sampler-created process group":
@@ -290,6 +297,9 @@ def validate_result(path):
     pinned = {"nekomusume": "sha256:" + contract.get("nekomusume_binary_sha256", ""), "hy2": "sha256:" + contract.get("hy2_binary_sha256", "")}
     if any(item.get("implementation") in pinned and item.get("identity") != pinned[item["implementation"]] for item in resources if item.get("role") == "client"):
         raise ValueError("client resource identity is not pinned to contract")
+    server_pinned = {"nekomusume": pinned["nekomusume"], "hy2-v2.9.3": pinned["hy2"]}
+    if any(item.get("implementation") in server_pinned and item.get("identity") != server_pinned[item["implementation"]] for item in resources if item.get("role") == "server"):
+        raise ValueError("server resource identity is not pinned to contract")
     if doc["cleanup_status"] != "verified" or doc["cleanup_evidence"] != {"local_processes_reaped": True, "local_listeners_remaining": 0, "remote_process_groups_reaped": True, "remote_listeners_remaining": 0, "remote_temp_path_removed": True}:
         raise ValueError("cleanup evidence is missing")
 
