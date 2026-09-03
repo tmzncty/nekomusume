@@ -41,3 +41,9 @@ Migration-back, live key update, and live PMTUD remain
 ## Exact `a117086` corrected structured six-cycle outcome (2026-09-04)
 
 The sole authorized live outer invocation at exact `a117086fa69553a36021137900b6052050624a8b` produced a retained schema-valid typed negative: 0/6 cycles, cycle 1 `invalid_cycle_evidence` (`collector returned nonzero without a valid row`), launcher exit 1 after 2,303 ms; no retry. Synthetic preflight is separate and not live evidence. This is an immediate orchestration/evidence-collection boundary only: no full cycle, valid prefix, runtime failover, WAN, or deeper root-cause claim is supported. Per-cycle endpoint provenance, resources (`not_collected_remote`), accounting, timing, and exits are absent because no row exists. Explicit cleanup process/listener/temporary-path postchecks were zero. The prior `c156868` historical negative remains unchanged.
+
+## Final A4 and C1 orchestration outcomes (2026-09-04)
+
+Exact `4a2129e` made the final permitted repeated warm-failover attempt for this instrumentation line: one outer invocation, no retry, 0/6 retained rows, cycle 1 `invalid_cycle_evidence`, and 1,165 ms elapsed. The role-specific bounded diagnostic identifies server exit before the structured start event. This closes only that evidence lane as `BLOCKED_ORCHESTRATION_CURRENT_LINE`; it is not a runtime failover failure. The privacy-safe result SHA-256 is `8af7aab8bb5f8a70c024fd6ef28ac8bc59a53147d86a2bd82a2cf23987fe8d3d`.
+
+Exact `60cd40d` made one no-retry periodic invocation. It stopped pre-application at `start_timeout` with SSH server exit 255, no client dispatch, and no application metrics. Its artifact cleanup remains failed as collected; later cleanup-only checks separately found zero residue. Result SHA-256 is `c5a6576f3131f8e3a6bd120b8192fdaed40e50846ace6e124b2d07741ca5f9b2`. Neither outcome changes the accepted exact-`25e0daa` single positives or any historical negative.
