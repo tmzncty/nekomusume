@@ -7,10 +7,10 @@ remote-endpoint-exec.py, which accepts one JSON request on stdin and verifies
 the remote bytes immediately before a direct spawn.
 """
 from __future__ import annotations
-import argparse, hashlib, json, os, pathlib, re, shutil, signal, subprocess, sys, time
+import argparse, hashlib, json, os, pathlib, re, shutil, signal, subprocess, sys, threading, time
 from typing import Any
 
-MAX_ARGV=64; HEX40=re.compile(r'^[0-9a-f]{40}$'); HEX64=re.compile(r'^[0-9a-f]{64}$')
+MAX_ARGV=64; MAX_LOG_BYTES=1024*1024; STARTUP_TIMEOUT_SECONDS=5; HEX40=re.compile(r'^[0-9a-f]{40}$'); HEX64=re.compile(r'^[0-9a-f]{64}$')
 REMOTE_EXEC_PROTOCOL='nekomusume.remote-exec.v1'
 class PlanError(ValueError): pass
 
@@ -98,42 +98,188 @@ def cleanup_check(argv: list[str], scope: str) -> dict[str,Any]:
     return {'scope':scope,'status':'verified' if completed.returncode==0 and listeners==0 and processes==0 else 'failed','exit':completed.returncode,'listeners_remaining':listeners,'processes_remaining':processes}
 
 def public_endpoint(endpoint: dict[str,Any]) -> dict[str,Any]:
-    return {'execution':endpoint['execution'],'binary':endpoint['binary'],'argv':endpoint['argv']}
+    # argv and SSH transport can contain private addresses and paths.
+    binary=endpoint['binary']
+    return {'execution':endpoint['execution'],'binary':{'sha256':binary['sha256'],'bytes':binary['bytes'],'git_commit':binary['git_commit']}}
+
+def option(argv: list[str], name: str) -> str|None:
+    try: return argv[argv.index(name)+1]
+    except (ValueError,IndexError): return None
+
+def expected_endpoint(argv: list[str]) -> tuple[str,int]:
+    transport=option(argv,'--transport'); raw_port=option(argv,'--port')
+    if transport not in ('tcp','udp') or raw_port is None: raise PlanError('periodic server argv lacks expected transport/port')
+    try: port=int(raw_port)
+    except ValueError as exc: raise PlanError('invalid periodic server port') from exc
+    if not 1<=port<=65535: raise PlanError('invalid periodic server port')
+    return transport,port
+
+def sample_local_process(pid: int, current: dict[str,Any]) -> None:
+    if os.name=='nt': return
+    try:
+        values=pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split(); ticks=os.sysconf('SC_CLK_TCK')
+        current['cpu_user_seconds']=int(values[11])/ticks; current['cpu_system_seconds']=int(values[12])/ticks
+    except (OSError,ValueError,IndexError): pass
+    try:
+        for line in pathlib.Path(f'/proc/{pid}/status').read_text().splitlines():
+            if line.startswith('VmRSS:'):
+                rss=int(line.split()[1]);current['max_rss_kib']=max(current.get('max_rss_kib',0),rss);break
+    except (OSError,ValueError,IndexError): pass
+
+class BoundedCapture:
+    def __init__(self, process: subprocess.Popen[bytes]):
+        self.buffers={'stdout':bytearray(),'stderr':bytearray()}; self.truncated=False; self.lock=threading.Lock(); self.threads=[]
+        for name,stream in (('stdout',process.stdout),('stderr',process.stderr)):
+            assert stream is not None
+            thread=threading.Thread(target=self._drain,args=(name,stream),daemon=True);thread.start();self.threads.append(thread)
+    def _drain(self, name: str, stream: Any) -> None:
+        while True:
+            chunk=stream.read(65536)
+            if not chunk:break
+            with self.lock:
+                room=MAX_LOG_BYTES-len(self.buffers[name])
+                if room>0:self.buffers[name].extend(chunk[:room])
+                if len(chunk)>room:self.truncated=True
+    def text(self, name: str) -> str:
+        with self.lock:return bytes(self.buffers[name]).decode('utf-8','replace')
+    def finish(self) -> None:
+        for thread in self.threads:thread.join(timeout=2)
+
+
+def fields(line: str) -> tuple[str,dict[str,str]]:
+    parts=line.split(); values={}
+    for item in parts[1:]:
+        if item.count('=')!=1: raise ValueError('malformed field')
+        key,value=item.split('=',1)
+        if not key or key in values: raise ValueError('duplicate field')
+        values[key]=value
+    return parts[0] if parts else '',values
+
+def one_event(text: str, prefix: str) -> dict[str,str]:
+    matches=[line for line in text.splitlines() if line.startswith(prefix)]
+    if len(matches)!=1: raise ValueError(f'expected exactly one {prefix}')
+    name,value=fields(matches[0])
+    if name!=prefix: raise ValueError(f'malformed {prefix}')
+    return value
+
+def nat(values: dict[str,str], key: str) -> int:
+    value=values.get(key,'')
+    if not value.isdigit(): raise ValueError(f'invalid {key}')
+    return int(value)
+
+def boolean(values: dict[str,str], key: str) -> bool:
+    if values.get(key) not in ('true','false'): raise ValueError(f'invalid {key}')
+    return values[key]=='true'
+
+def wait_ready(process: subprocess.Popen[bytes], capture: BoundedCapture, transport: str, port: int, timeout: float) -> tuple[str,dict[str,Any]|None]:
+    deadline=time.monotonic()+timeout
+    while time.monotonic()<deadline:
+        text=capture.text('stdout')
+        lines=[x for x in text.splitlines() if x.startswith('periodic_server_ready')]
+        if lines:
+            try:
+                if len(lines)!=1: raise ValueError
+                name,value=fields(lines[0])
+                if name!='periodic_server_ready' or set(value)!={'transport','port','reconnect'} or value['transport']!=transport or nat(value,'port')!=port or value['reconnect']!='unsupported': raise ValueError
+            except ValueError: return 'malformed_readiness',None
+            return 'ready',{'transport':transport,'port':port,'address':'redacted','source':'periodic_server_ready'}
+        if process.poll() is not None:return 'remote_early_exit',None
+        time.sleep(.02)
+    return 'start_timeout',None
+
+def parse_result(client_text: str, server_text: str, elapsed_ms: int, transport: str, bytes_per_record: int) -> dict[str,Any]:
+    auth=one_event(client_text,'periodic_client_authenticated')
+    if set(auth)!={'session','stream','reconnect'} or auth['reconnect']!='unsupported': raise ValueError('malformed client authentication')
+    summary=one_event(client_text,'periodic_summary'); server=one_event(server_text,'periodic_server_summary')
+    required={'transport','session','stream','attempted','confirmed','missing','duplicates','reconnects','elapsed_ms','application_bytes','cleanup','signal'}
+    percentiles={'p50_confirmation_latency_ms','p95_confirmation_latency_ms'}
+    if set(summary) not in (required,required|percentiles) or summary['transport']!=transport or summary['cleanup']!='verified' or summary['signal'] not in ('true','false') or summary['session']!=auth['session'] or summary['stream']!=auth['stream']: raise ValueError('malformed client summary')
+    server_required={'authenticated','received','confirmed','duplicates','elapsed_ms','cleanup','signal'}
+    if set(server)!=server_required or server['cleanup']!='verified' or server['signal'] not in ('true','false') or not boolean(server,'authenticated'): raise ValueError('malformed server summary')
+    intervals=[]
+    for line in client_text.splitlines():
+        if not line.startswith('periodic_interval'):continue
+        name,value=fields(line)
+        if name!='periodic_interval' or set(value)!={'seq','sent','confirmed','missing','duplicate','latency_ms'}: raise ValueError('malformed interval')
+        confirmed_value=boolean(value,'confirmed'); missing_value=boolean(value,'missing'); latency=value['latency_ms']
+        if latency=='null':latency_value=None
+        elif latency.isdigit():latency_value=int(latency)
+        else:raise ValueError('invalid latency_ms')
+        if confirmed_value==(latency_value is None) or confirmed_value==missing_value:raise ValueError('interval latency/accounting contradiction')
+        intervals.append({'seq':nat(value,'seq'),'sent':boolean(value,'sent'),'confirmed':confirmed_value,'missing':missing_value,'duplicate':boolean(value,'duplicate'),'latency_ms':latency_value})
+    attempted=nat(summary,'attempted'); confirmed=nat(summary,'confirmed'); missing=nat(summary,'missing'); duplicates=nat(summary,'duplicates')
+    if len(intervals)!=attempted or [x['seq'] for x in intervals]!=list(range(1,attempted+1)): raise ValueError('interval sequence/accounting contradiction')
+    if sum(x['sent'] for x in intervals)!=attempted or sum(x['confirmed'] for x in intervals)!=confirmed or sum(x['missing'] for x in intervals)!=missing or sum(x['duplicate'] for x in intervals)!=duplicates: raise ValueError('interval accounting contradiction')
+    if confirmed+missing!=attempted or nat(server,'received')!=attempted or nat(server,'confirmed')!=confirmed or nat(server,'duplicates')!=duplicates: raise ValueError('server/client accounting contradiction')
+    application_bytes=nat(summary,'application_bytes')
+    if application_bytes!=attempted*bytes_per_record:raise ValueError('application byte accounting contradiction')
+    latencies=[x['latency_ms'] for x in intervals]
+    result={'actual_duration_ms':nat(summary,'elapsed_ms'),'wrapper_elapsed_ms':elapsed_ms,'attempted':attempted,'confirmed':confirmed,'missing':missing,'duplicates':duplicates,'conflicts':0,'application_bytes':application_bytes,'confirmation_latencies_ms':latencies,'client_elapsed_ms':nat(summary,'elapsed_ms'),'server_elapsed_ms':nat(server,'elapsed_ms')}
+    if percentiles <= set(summary):
+        result['median_confirmation_latency_ms']=nat(summary,'p50_confirmation_latency_ms');result['p95_confirmation_latency_ms']=nat(summary,'p95_confirmation_latency_ms')
+    return result
+
 def run(plan_path: str, output: str|None, validate_only: bool, dry_run: bool) -> int:
-    plan=load_plan(plan_path); remote=plan['server']['execution']=='ssh'
-    report={'schema':'nekomusume.periodic-command.v2','dry_run':dry_run,'live_evidence':not dry_run and not validate_only,'validate_only':validate_only,'git_commit':plan['git_commit'],'endpoints':{'server':public_endpoint(plan['server']),'client':public_endpoint(plan['client'])},'dispatch':{'periodic_client_entered':plan['client']['argv'][1]=='periodic-client'},'resources':{'server':{'status':'not_collected_remote'} if remote else {'status':'local_process'},'client':{'status':'local_process'}},'cleanup':{'required':['local']+(['remote'] if remote else [])}}
+    plan=load_plan(plan_path); remote=plan['server']['execution']=='ssh'; transport,port=expected_endpoint(plan['server']['argv']); raw_bytes=option(plan['client']['argv'],'--bytes')
+    if raw_bytes is None:raise PlanError('periodic client argv lacks --bytes')
+    try:bytes_per_record=int(raw_bytes)
+    except ValueError as exc:raise PlanError('invalid periodic client bytes') from exc
+    if bytes_per_record<=0:raise PlanError('invalid periodic client bytes')
+    report={'schema':'nekomusume.periodic-command.v3','dry_run':dry_run,'live_evidence':not dry_run and not validate_only,'validate_only':validate_only,'git_commit':plan['git_commit'],'endpoints':{'server':public_endpoint(plan['server']),'client':public_endpoint(plan['client'])},'endpoint_provenance':{'transport':transport,'port':port,'address':'redacted','source':'declared_periodic_server_argv'},'dispatch':{'periodic_client_entered':False},'resources':{'server':{'status':'not_collected_remote'} if remote else {'status':'not_collected_local_server'},'client':{'status':'not_started'}},'cleanup':{'required':['local']+(['remote'] if remote else [])}}
     if validate_only or dry_run:
-        report['dispatch']['entered']=True
+        report['dispatch']['entered']=False
         if output and not validate_only:pathlib.Path(output).write_text(json.dumps(report,sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
         return 0
-    children=[]; timed_out=False; startup_error=None; server=None; client=None
+    server=client=None; server_capture=client_capture=None; startup_error=None; readiness=None; timed_out=False; parsed=None; parse_error=None
+    started=time.monotonic(); client_resources={}
     try:
         verify_local(plan['client'])
-        if not remote: verify_local(plan['server'])
+        if not remote:verify_local(plan['server'])
         server_argv,server_input=dispatch(plan['server'])
         try:
-            server=subprocess.Popen(server_argv,stdin=subprocess.PIPE if server_input is not None else subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=(os.name!='nt'),shell=False); children.append(server)
+            server=subprocess.Popen(server_argv,stdin=subprocess.PIPE if server_input is not None else subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=(os.name!='nt'),shell=False);server_capture=BoundedCapture(server)
             if server_input is not None:
-                assert server.stdin is not None; server.stdin.write(server_input); server.stdin.close()
-            client=subprocess.Popen(plan['client']['argv'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=(os.name!='nt'),shell=False); children.append(client)
-        except OSError as exc: startup_error=type(exc).__name__
-        deadline=time.monotonic()+plan['timeout_seconds']
-        while time.monotonic()<deadline:
-            if all(p.poll() is not None for p in children):break
-            time.sleep(.02)
-        else: timed_out=True
+                assert server.stdin is not None;server.stdin.write(server_input);server.stdin.close()
+            readiness,observed=wait_ready(server,server_capture,transport,port,min(STARTUP_TIMEOUT_SECONDS,plan['timeout_seconds']))
+            report['readiness']={'status':readiness}
+            if observed:report['endpoint_provenance']=observed
+            if readiness=='ready':
+                client=subprocess.Popen(plan['client']['argv'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=(os.name!='nt'),shell=False);client_capture=BoundedCapture(client);report['dispatch']['periodic_client_entered']=True
+                deadline=time.monotonic()+plan['timeout_seconds']
+                while time.monotonic()<deadline:
+                    if client.poll() is None:sample_local_process(client.pid,client_resources)
+                    if client.poll() is not None and server.poll() is not None:break
+                    time.sleep(.02)
+                else:timed_out=True
+                sample_local_process(client.pid,client_resources)
+        except OSError as exc:startup_error=type(exc).__name__
     finally:
-        stop(client); stop(server)
+        stop(client);stop(server)
+        if client_capture:client_capture.finish()
+        if server_capture:server_capture.finish()
+    server_text=server_capture.text('stdout') if server_capture else ''
+    client_text=client_capture.text('stdout') if client_capture else ''
+    truncated=bool((server_capture and server_capture.truncated) or (client_capture and client_capture.truncated))
+    report['private_logs']={'retained_for_parsing':True,'tracked':False,'storage':'bounded_memory','bounded_bytes_per_stream':MAX_LOG_BYTES,'streams':['server_stdout','server_stderr','client_stdout','client_stderr'],'truncated':truncated}
+    if readiness=='ready' and not timed_out and not startup_error and not truncated:
+        try:parsed=parse_result(client_text,server_text,int((time.monotonic()-started)*1000),transport,bytes_per_record)
+        except ValueError as exc:parse_error=str(exc)
     checks=[cleanup_check(plan['cleanup']['local_argv'],'local processes/listeners')]
-    if remote: checks.append(cleanup_check(plan['cleanup']['remote_transport_argv'],'remote processes/listeners'))
-    report['cleanup']['postchecks']=checks
-    cleanup_ok=all(x['status']=='verified' for x in checks)
-    if startup_error: status='start_error'
-    elif timed_out: status='timeout'
-    elif not cleanup_ok: status='cleanup_failed'
-    else: status='passed' if server is not None and client is not None and server.returncode==0 and client.returncode==0 else 'failed'
+    if remote:checks.append(cleanup_check(plan['cleanup']['remote_transport_argv'],'remote processes/listeners'))
+    report['cleanup']['postchecks']=checks; cleanup_ok=all(x['status']=='verified' for x in checks)
+    if client is not None:
+        report['resources']['client']={'status':'collected_local_direct_child','source':'/proc/<client-pid>','cpu_user_seconds':client_resources.get('cpu_user_seconds'),'cpu_system_seconds':client_resources.get('cpu_system_seconds'),'max_rss_kib':client_resources.get('max_rss_kib')}
+    if startup_error:status='start_error'
+    elif readiness and readiness!='ready':status=readiness
+    elif timed_out:status='timeout'
+    elif truncated:status='log_limit_exceeded'
+    elif parse_error:status='malformed_result'
+    elif not cleanup_ok:status='cleanup_failed'
+    else:status='passed' if parsed is not None and server and client and server.returncode==0 and client.returncode==0 else 'failed'
     report['result']={'status':status,'server_exit':server.returncode if server else None,'client_exit':client.returncode if client else None}
+    if parsed:report['result'].update(parsed)
     if startup_error:report['result']['error_type']=startup_error
+    if parse_error:report['result']['failure_reason']=parse_error
     if output:pathlib.Path(output).write_text(json.dumps(report,sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
     return 0 if status=='passed' else 1
 
