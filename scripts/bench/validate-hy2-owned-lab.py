@@ -200,6 +200,8 @@ def validate_samples(samples, contract, require_complete):
         raise ValueError("sample order is malformed")
     if require_complete and seen != expected:
         raise ValueError("sample set is incomplete")
+    if require_complete and any(row["failures"] != 0 for row in samples):
+        raise ValueError("complete result contains a failed sample")
 
 
 def percentile(values, fraction):
@@ -289,11 +291,14 @@ def validate_result(path):
     expected_clients = {(implementation, f"{implementation}-owned-lab-{run}")
                         for implementation in ("nekomusume", "hy2")
                         for run in range(1, contract["runs_per_implementation"] + 1)}
+    client_resources = [item for item in resources if item.get("role") == "client"
+                        and item.get("sampling", {}).get("scope") == "sampler-created process group"]
     observed_clients = {(item.get("implementation"), item.get("experiment_id"))
-                        for item in resources if item.get("role") == "client"
-                        and item.get("sampling", {}).get("scope") == "sampler-created process group"}
-    if observed_clients != expected_clients:
+                        for item in client_resources}
+    if observed_clients != expected_clients or len(client_resources) != len(expected_clients):
         raise ValueError("per-sample client transport resource evidence is incomplete")
+    if any(item.get("exit") != {"code": 0, "timed_out": False} for item in client_resources):
+        raise ValueError("complete result contains unsuccessful client resource evidence")
     pinned = {"nekomusume": "sha256:" + contract.get("nekomusume_binary_sha256", ""), "hy2": "sha256:" + contract.get("hy2_binary_sha256", "")}
     if any(item.get("implementation") in pinned and item.get("identity") != pinned[item["implementation"]] for item in resources if item.get("role") == "client"):
         raise ValueError("client resource identity is not pinned to contract")
