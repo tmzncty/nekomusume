@@ -1,135 +1,195 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-03 13:00 Asia/Shanghai
-Repository HEAD: `aabdf84585b59326f085faf8beda5cedd1d03ba9`
-Previous reviewed implementation HEAD: `6641594795e9f570563bd138b14485d3fa95a845`
-Previous reviewer handoff commit: `a0b99b055e7c9c02babe64d04bdcb3908e02345c`
+Checked at: 2026-09-03 14:00 Asia/Shanghai
+Repository HEAD reviewed: `bc38d06bfc0c19d0ec26fe2d0f5484202565ec18`
+Previous reviewed implementation HEAD: `aabdf84585b59326f085faf8beda5cedd1d03ba9`
+Previous reviewer handoff commit: `87d4fec2f523563080b802406bb97b25d56dfef4`
 
 ## What changed
 
 One coding-agent commit is visible after the previous reviewer handoff:
 
-- `aabdf84` — benchmark preflight/evidence/test/documentation repair only. It makes the expected remote user explicit, records preflight-blocked results earlier, removes the unsupported assumption that the benchmark must use root, and corrects the retry wording so unchanged retries remain prohibited while one substantively changed retry is allowed.
+- `bc38d06` — **benchmark preflight regression/evidence-cleanup repair only; no Nekomusume wire/Session/Noise/failover semantic change and no new VPS experiment.** The no-VPS owned-lab test now actually executes the advertised preflight matrix instead of leaving nominal branches as no-ops. It covers a matching configured SSH identity that progresses to the next bind-address gate, mismatched configured identity, SSH configuration inspection failure, SSH/auth-control-plane failure, timeout, and a successfully reached remote command returning nonzero. The adapter now retains `ssh-command` separately from RC124 timeout and RC255 SSH failure, classifies an assigned-bind-address failure as a typed blocked stage, and installs an early EXIT/INT/TERM cleanup path that removes the disposable local runtime directory. The same commit also fixes the duplicated wording in `docs/status.md`.
 
-Exact `aabdf84` GitHub Actions run `33716217267` is green for both `stable checks` and `nightly decode fuzz smoke`.
+Exact `bc38d06` GitHub Actions run `33720478587` is green. Both required jobs completed successfully:
 
-The direction is accepted, but review finds that the intended preflight regression gate is not actually closed:
+- `stable checks` — `bash scripts/check.sh` green;
+- `nightly decode fuzz smoke` — pinned `cargo-fuzz` decode build plus 30-second/8192-byte smoke green.
 
-1. `scripts/bench/compare-hy2-owned-lab-test.sh` advertises `wrong-user`, `config`, `auth`, and `timeout` cases, but those branches currently do not execute the adapter or assert a result. The mock command also does not implement the corresponding injected failure behavior. Green CI therefore does not prove those contracts.
-2. The first remote-read failure path currently distinguishes timeout from all other nonzero exits, but collapses every non-timeout failure into authentication failure. A successfully authenticated remote command that exits nonzero must be a separate evidence class.
-3. A preflight failure happens after a local temporary run directory has been created, but the early blocked path exits before the normal cleanup trap is installed. The local temporary runtime path can therefore be left behind.
-4. `docs/status.md` contains a small duplicated-word typo in the same repaired paragraph; fix it in the same bounded reconciliation.
+The previous handoff's required preflight regression/cleanup gate is therefore closed. The changed-hypothesis paid HY2/Nekomusume attempt is now READY under standing authorization.
+
+One non-blocking evidence-hygiene finding remains: `scripts/bench/compare-hy2-owned-lab-test.sh` currently names the repository default `artifacts/hy2-owned-lab/result.json` in its EXIT cleanup because successful `--validate` uses that fixed default. There is no tracked artifact at that path now, so this did not corrupt current repository evidence, but a future real result left at that default path could be deleted by a later local gate. The paid attempt below must therefore use a unique non-default result path, and the test should be made preservation-safe before later routine gates are allowed to touch a retained default-path artifact.
 
 ## Review verdict
 
-**needs repair before another paid HY2 attempt**
+**pass preflight gate — execute exactly one changed-hypothesis HY2/Nekomusume owned-lab attempt now; preserve result at a unique path**
 
-This is a benchmark evidence/control-plane blocker, not a Nekomusume transport/runtime blocker. Do not change wire, Session, Noise, Carrier Manager, D064 semantics, or accepted VPS evidence to solve it.
+Do not spend another reviewer cycle polishing the preflight harness before using the rental window. `bc38d06` closes the blocker that prevented the changed retry, and its exact coding HEAD has independent green stable + nightly CI.
 
-Once the executable preflight matrix, failure classification, and early local cleanup are repaired and the exact repair HEAD has green stable + nightly CI, the coding agent may proceed directly to one changed-hypothesis HY2/Nekomusume owned-lab attempt under the existing standing authorization without waiting for another reviewer turn.
+This reviewer-only handoff commit does **not** invalidate the green gate on `bc38d06`. For the paid run, prefer an exact-`bc38d06` detached/worktree build and record its binary SHA-256. Do not wait for or manufacture a new CI run merely because this coordination file advanced `main` after the reviewed coding HEAD.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains the bounded research implementation baseline.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain correct.
-- Exact `aabdf84` CI is genuinely green, but it only proves the tests that actually execute.
-- Exact `25e0daa` controlled application-level UDP reply-cessation warm fallback remains accepted bounded evidence; it is not natural Internet degradation/PTO-blackhole proof.
-- Exact `25e0daa` approximately five-minute periodic direct-path sample remains accepted bounded evidence; it is one bounded sample, not a reliability rate or production soak.
-- Do not rerun those accepted rows merely to consume VPS time.
-- No complete HY2/Nekomusume paired sample set, comparative median/P95, or superiority evidence exists.
-- Historical failed HY2 attempts remain negative/procedural evidence only; unsupported detailed root-cause attribution must not be promoted beyond tracked structured evidence.
-- Standing authorization permits a new attempt only after a substantive changed configuration/instrumentation/hypothesis; this repair qualifies once complete.
+- `bc38d06` is test/harness/evidence-control work only. It adds no WAN behavior and no performance result.
+- Exact `bc38d06` CI is green for both repository stable checks and nightly decode fuzz smoke.
+- Exact `25e0daa` controlled application-level UDP reply-cessation warm fallback remains accepted bounded evidence: 3/3 records, 48 application bytes, two uncertain/replayed, duplicate 0, lost 0, approximately 434 ms failure-decision-to-first-resumed-data. It is not natural Internet degradation/PTO-blackhole proof.
+- Exact `25e0daa` approximately five-minute periodic direct-path sample remains accepted bounded evidence: 60 x 32-byte records, 60/60 confirmed, no missing/duplicate/conflict. It is one bounded sample, not a production soak or reliability rate.
+- Do not rerun those accepted rows just to consume VPS time.
+- No complete HY2/Nekomusume paired sample set, comparative median/P95, or superiority evidence exists yet.
+- Historical failed HY2 attempts remain negative/procedural evidence. The last retained preflight failure does not prove a root-only requirement; the configured SSH identity must be whatever the owned endpoint actually resolves and the harness now checks it explicitly.
+- Standing authorization already permits this bounded self-owned HY2 comparison and bounded port-scoped capture. No new per-run WAN permission is needed.
 - IPv6 remains environment-blocked unless a genuinely owned end-to-end IPv6 path becomes available.
 - The bounded release-evidence matrix remains open.
 
-## Work Package — Real Preflight Regression Coverage -> Green Gate -> One Changed HY2 Attempt -> Matrix Reconciliation
+## Work Package — One Paid HY2 Pair -> Preserve/Validate Evidence -> Reconcile Matrix -> Next VPS Opportunity
 
-### Primary A — Make the preflight evidence contract executable
+### Primary A — Execute exactly one changed-hypothesis fair HY2/Nekomusume owned-lab invocation
 
 **Goal**
 
-Turn every advertised preflight failure class into a deterministic no-VPS regression that really executes the harness and validates the retained blocked artifact.
+Use the now-green repaired harness to obtain either the first complete semantically fair paired sample set or one high-information typed blocker. Do not perform an unchanged second invocation in this batch.
 
-**Required behavior**
+**Exact coding baseline**
 
-- Replace the nominal/no-op failure loop with real local test invocations.
-- Cover at minimum: matching configured identity, mismatched configured identity, configuration inspection failure, remote authentication/transport failure, timeout, and remote-command nonzero.
-- Assert the exact retained failure stage, zero samples, and pre-payload provenance for every blocked case.
-- Keep remote-command nonzero distinct from authentication failure.
-- Ensure each failure artifact passes the repository validator.
-- No test may contact a real VPS or require a real credential.
+- Prefer exact `bc38d06bfc0c19d0ec26fe2d0f5484202565ec18` in a detached/isolated worktree.
+- Record exact Nekomusume binary SHA-256 and the already pinned HY2 v2.9.3 SHA-256.
+- The reviewer handoff commit may exist on `main`; it is coordination-only and need not trigger a new code gate before execution.
 
-### Follow-up B — Close early-preflight cleanup and documentation drift
+**Required profile**
 
-**Dependency:** A complete.
+- self-owned client + owned VPS only;
+- existing verified SSH endpoint and explicit expected SSH user from the owned configuration;
+- dedicated assigned remote bind address; client connect address remains separately verified;
+- HY2 v2.9.3 pinned artifact already recorded by the repository;
+- fresh disposable experiment certificate/key plus exact `pinSHA256` and fresh password authentication;
+- 5 paired runs;
+- 1,200-byte deterministic payload per sample;
+- concurrency 1;
+- fresh unprivileged experiment ports in the repository's allowed range;
+- one harness invocation only;
+- complete invocation, including cleanup reserve, remains below the standing ten-minute single-run limit;
+- no production firewall/route/qdisc/DNS/proxy/tunnel/service change.
 
-- Ensure an early blocked preflight removes the local experiment runtime temp directory it created.
-- Add a deterministic regression proving no new test-owned temp runtime path remains after each blocked preflight case.
-- Keep retained Git-visible evidence artifacts intact; remove only disposable runtime state.
-- Preserve unknown cleanup observations when they truly cannot be verified; do not weaken the validator to manufacture `verified`.
-- Fix the duplicated wording in `docs/status.md` and keep the historical HY2 attribution bounded to structured evidence.
+**Evidence-path rule**
 
-### Follow-up C — Full local gate and exact repair-head CI
+Do **not** use the repository default `artifacts/hy2-owned-lab/result.json` for this paid result. Use a unique repository-relative experiment path, for example:
 
-**Dependency:** A/B complete.
+```text
+artifacts/hy2-owned-lab/<experiment-id>/result.json
+```
 
-Run the benchmark/control-plane/validator tests and the full repository gate, then push the coherent repair. Require the exact repair HEAD GitHub Actions to be green for both:
+with its sample/evidence companions. Preserve the exact path in the research note/commit. This avoids the current no-VPS test cleanup hazard until Follow-up C repairs it.
 
-- `stable checks`;
-- `nightly decode fuzz smoke`.
+**Bounded diagnostics**
 
-Do not spend another VPS comparison window before the exact repair HEAD is green.
+Wrap the single invocation with a bounded capture/observation scoped only to the temporary HY2 UDP port when practical under the existing standing authorization. Retain only the minimum needed metadata/hash/packet-direction counts; raw pcap need not be committed if it exposes unnecessary address detail.
 
-### Follow-up D — One changed-hypothesis HY2/Nekomusume owned-lab attempt
+If the run fails after preflight, distinguish at least:
 
-**Dependency:** C exact repair HEAD CI fully green.
+- client packets emitted toward the reachable connect authority;
+- arrival at the VPS temporary UDP port when observable;
+- server response emission when observable;
+- response return to client when observable;
+- HY2 TLS/auth/config vs network/path failure using retained logs and structured stages.
 
-Run one bounded harness invocation using the already reviewed fair comparison profile and existing standing authorization. Do not alter production network state or weaken authentication/integrity.
+Do not alter provider firewall/routing or production network state to force success.
 
-If preflight is blocked, retain exactly one structured artifact for the observed stage and stop that path for this batch; do not repeat the same configuration.
+**Outcome rules**
 
-If admission succeeds, continue through the complete paired contract. A comparative summary exists only if every required pair succeeds under the fair lifecycle/resource contract. Any failed pair retains the valid prefix plus typed failure and produces no comparative summary.
+- If preflight blocks, retain exactly one typed `BLOCKED_HARNESS` artifact, validate it, verify cleanup, and stop the HY2 execution path for this batch.
+- If admission succeeds but any paired sample fails, retain the valid sample prefix plus typed failure. No comparative summary is legal.
+- Only if every required pair succeeds may the validator produce the complete comparison summary.
+- Even a complete 5-pair result is one self-owned route/time-window observation, not a superiority or production claim.
 
-Always verify experiment-owned process/listener/temp-path cleanup.
+### Follow-up B — Validate and freeze this attempt's evidence before any routine gate can touch it
 
-### Follow-up E — Reconcile the actual result and use remaining VPS time efficiently
+**Dependency:** A complete, whether positive or blocked.
 
-**Dependency:** D complete or honestly blocked.
+1. Validate the result with `scripts/bench/validate-hy2-owned-lab.py`.
+2. Verify exact payload bytes/hash, Nekomusume and HY2 binary identities, run count, per-sample lifecycle/resource evidence, and cleanup fields.
+3. Verify no experiment-owned process/listener/temp path remains on client or VPS.
+4. Retain a compact research/evidence note with exact experiment id, coding commit, binary hashes, actual parameters, start/end times, result path, capture metadata when used, and claim boundary.
+5. Preserve negative evidence exactly; do not rerun merely to seek a PASS.
 
-Update `docs/status.md`, `IMPLEMENTATION_PLAN.md`, and `ROADMAP.md` from the retained artifact only. Preserve exact D064/periodic boundaries and historical negative HY2 evidence.
+If the artifact is incomplete or invalid because of a harness/evidence bug discovered during A, do not reinterpret it as performance evidence. Retain it as diagnostic evidence and make the defect the next local repair.
 
-If HY2 becomes blocked on a condition that genuinely requires a new credential/environment, do not idle and do not retry unchanged. Audit the remaining owned-VPS backlog and choose one dependency-ready high-value row or the smallest local seam that directly unlocks one, prioritizing genuine endpoint/path change, real-session migration-back, real-session key update, or live-path PMTUD evidence. Fixture-only capability is not WAN evidence.
+### Follow-up C — Make the no-VPS test preservation-safe
+
+**Dependency:** B evidence safely retained at its unique path. This is a small local evidence-hygiene repair and must not delay A.
+
+Repair `scripts/bench/compare-hy2-owned-lab-test.sh` so routine tests cannot delete or overwrite a pre-existing real result at the harness's default output path.
+
+Acceptable approaches include preserving/restoring a pre-existing default artifact or changing the validation/test plumbing so the successful `--validate` path uses disposable repository-relative test output without touching a real default result. Add an executable regression with a sentinel pre-existing default result/sample file and prove the test leaves them byte-identical afterward.
+
+Do not weaken blocked-artifact validation and do not change transport semantics.
+
+After this small repair, run the targeted benchmark tests and full local gate; push it as a separate coherent commit. CI may run normally, but this repair is not a reason to repeat A.
+
+### Follow-up D — Reconcile the bounded release-evidence matrix from the retained A result
+
+**Dependency:** B complete. C may land before or after the documentation reconciliation if conflict-free.
+
+Update `docs/status.md`, `IMPLEMENTATION_PLAN.md`, and `ROADMAP.md` using only the retained structured A artifact and its exact boundary.
+
+- If A produced a complete valid paired set, record the exact 5-pair batch, raw sample provenance, median/P95/failures, application bytes and symmetric transport-client CPU/RSS/FD evidence. Keep wording bounded to this self-owned endpoint/route/time window and do not claim superiority.
+- If A blocked or had any failed pair, record the exact failure stage and valid prefix, and state explicitly that no comparative summary exists.
+- Preserve historical HY2 negatives; do not rewrite them as if the new run occurred at their commits.
+- Preserve the accepted exact-`25e0daa` D064 and periodic boundaries unchanged.
+- Keep natural UDP degradation/PTO-blackhole, IPv6, NAT/endpoint-change and any other genuinely unproven matrix rows open.
+- Governance flags remain unchanged.
+
+### Follow-up E — Use remaining VPS opportunity only for a genuinely READY missing row, or build the smallest direct unlock seam
+
+**Dependency:** D complete or A honestly blocked and B retained.
+
+Audit current executable runtime surfaces, not capability labels. Do not treat fixtures as live evidence.
+
+Priority candidates remain:
+
+1. genuine NAT/source-endpoint change on owned endpoints, only if the current live runtime can create/observe it without production route/firewall modification;
+2. real-session migration-back, only if a current CLI/runtime path already exposes it truthfully;
+3. real-session key update, only if it is no longer fixture-only;
+4. live-path PMTUD evidence, only if packetization/probe instrumentation is exposed in the real runtime;
+5. otherwise the **smallest local implementation/instrumentation seam that directly unlocks one of the above**, with tests and no architecture expansion.
+
+At the current reviewed status, `key-update` is still advertised as a fixture and PLPMTUD as bounded state rather than live path evidence. Do not schedule a fake VPS row from those labels. If all four remain implementation-blocked, record the precise `BLOCKED_IMPLEMENTATION` reason and select the smallest direct unlock seam rather than burning VPS time on another generic TCP/UDP baseline.
 
 ## Fallback
 
-If the current blocked-result schema cannot represent the corrected preflight failure classes truthfully, make only the smallest validator/schema extension needed, add mutation coverage, rerun A-C, and keep paid execution stopped until the exact repair HEAD is green.
+If A reveals that the current harness still cannot preserve a truthful typed result, retain all diagnostics, stop paid execution after that one invocation, and make the exact evidence-integrity defect Primary. Do not retry the same endpoint/configuration until code, instrumentation or hypothesis changes materially.
+
+If A demonstrates a genuinely new credential/server/environment requirement not satisfiable by the already configured owned endpoint, record that exact blocker and continue with Follow-up C/D plus the highest-value dependency-ready local/VPS work. Only then does the maintainer-notification gate apply.
 
 ## Completion gates
 
-- every named preflight failure class is actually executed in deterministic no-VPS tests;
-- each blocked case produces a valid structured artifact with truthful stage and pre-payload evidence;
-- remote-command nonzero is not mislabeled as authentication failure;
-- early preflight leaves no disposable local runtime temp path behind;
-- targeted tests and full repository gate pass;
-- exact repair HEAD stable + nightly CI are green;
-- at most one changed-hypothesis paid HY2 attempt is made after the green gate;
-- the actual outcome is reconciled to tracked evidence;
-- no accepted D064/periodic claim is inflated or needlessly rerun;
+- exact `bc38d06` preflight gate remains independently green;
+- at most one changed-hypothesis paid HY2 invocation is executed in this batch;
+- the paid result uses a unique non-default evidence path;
+- the result is validator-clean or explicitly retained as invalid/diagnostic with no comparison claim;
+- cleanup of experiment-owned process/listener/temp state is checked;
+- no failed/incomplete pair contributes to comparative median/P95;
+- no superiority/production/public-reachability claim is made from one batch;
+- the no-VPS test is made preservation-safe before future routine gates can delete a default-path artifact;
+- status/plan/roadmap reflect the exact new outcome without erasing old negatives;
+- accepted D064/periodic rows are not needlessly rerun;
 - release/production/global-freeze flags remain unchanged.
 
 ## Do not expand into
 
 - changing Nekomusume protocol/runtime semantics for benchmark convenience;
-- weakening authentication or integrity;
+- weakening authentication/integrity or removing HY2 certificate pinning;
 - production network changes;
 - third-party targets or scanning;
-- another unchanged HY2 retry;
-- publishing superiority claims from incomplete or blocked evidence;
-- speculative experimental-track work without an observed-problem gate.
+- a second unchanged HY2 invocation in the same batch;
+- publishing superiority claims from a 5-pair one-window result;
+- pretending fixture-only key-update/PLPMTUD/manager behavior is real-session WAN evidence;
+- speculative FEC/0-RTT/striping/exotic-carrier work without an observed-problem gate.
 
 ## Questions requiring maintainer decision
 
 none at this review point.
 
-A maintainer decision is required only if a repaired, structured changed-hypothesis attempt demonstrates that a genuinely new credential/server/environment is required and cannot be satisfied by the already authorized owned endpoint configuration.
+A maintainer decision is required only if the single changed-hypothesis run or the subsequent READY-row audit demonstrates a genuinely new credential/server/environment requirement, an action outside standing authorization, or a major architecture choice that cannot be resolved from repository facts.
