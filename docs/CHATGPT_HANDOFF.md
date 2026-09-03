@@ -1,334 +1,295 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-03 10:00 Asia/Shanghai
-Repository HEAD: `2a13992189999e83f145fbd6c4c3af691d122195`
-Previous reviewed implementation HEAD: `5665b91f1ac01da1af478f87f24605c57f057336`
-Previous reviewer handoff: `393c25d8f025b492c5084a0fc65aac16e8b7c778`
+Checked at: 2026-09-03 11:02 Asia/Shanghai
+Repository HEAD: `026586859214fa712a8259bd374ed0d9631645be`
+Previous reviewed implementation HEAD: `2a13992189999e83f145fbd6c4c3af691d122195`
+Previous reviewer handoff commit: `b3a1e58f87f6bc758077f351c6f4b5ddf91b211f`
 
 ## What changed
 
-Three new coding-agent commits are visible after the previous reviewer handoff. They are all benchmark/evidence-infrastructure work; none changes Nekomusume wire, Session, failover, crypto semantics or release governance, and none is a new VPS comparison run.
+One new coding-agent commit is visible after the previous reviewer handoff:
 
-- `363bb58` — **listener parser/fixture repair.** `parse-listener.py` now accepts the two `ss -H` shapes relevant to this repository (state-first filtered output and a netid-retaining variant), matches an exact non-wildcard/non-loopback address+port+protocol, rejects ambiguous duplicates, and adds IPv4/IPv6-shaped fixtures plus a direct parser test.
-- `ce126a5` — **complete-result fail-closed repair.** `benchmark-result.v1` now rejects a required sample with `failures != 0`, rejects unsuccessful/missing per-sample client transport resource evidence, and adds a direct failed-sample/resource regression. A failed required pair can no longer be converted into a valid complete comparison merely by recomputing the summary from the remaining successes.
-- `2a13992` — **identity/deadline/bound mutation tests.** The validator test now mutates pinned Nekomusume/HY2 hashes, client/server identities, work/cleanup/whole-lab deadline relations, the 600-second ceiling and application-byte bound and proves the current validator rejects those altered artifacts.
+- `0265868` — **benchmark/control-plane test infrastructure; no Nekomusume wire, Session, Noise, failover or release-governance semantic change.** It extracts the owned-lab deadline/SSH/listener-readiness logic into `scripts/bench/owned-lab-control-plane.sh`, adds deterministic fake-remote behavior coverage in `owned-lab-control-plane-test.sh`, stages `parse-listener.py` into the paid-run artifact set, routes HY2 UDP and Nekomusume TCP readiness through the same helper, uses bounded stage/client deadlines through the shared control-plane helper, and wires the new parser/control-plane tests into `scripts/check.sh`.
 
-The exact `2a13992` GitHub Actions run is independently green: `stable checks` completed successfully and the nightly 30-second decode fuzz smoke completed successfully.
+This materially addresses the previous R-HY2-13/R-HY2-16/R-HY2-17 admission work. The new helper uses exact remote `ss -H -ltn` / `ss -H -lun` shapes and parses those through the strict repository parser; the fake control-plane test covers exact TCP/UDP readiness, wildcard/wrong-address/wrong-protocol/malformed/ambiguous rejection, local-same-port irrelevance, typed readiness failures, early remote process exit, bounded hanging control operations, cleanup reserve after work expiry and pre-remote over-budget rejection.
 
-These commits materially close R-HY2-14 and most of R-HY2-15. They also make the parser itself compatible with the production `ss -H -ltn/-lun` state-first shape. However, the previous Primary is not yet complete because the production control-plane path is still not exercised end-to-end, and review of the exact current shell uncovers one concrete live-run staging defect that would make spending the paid VPS window premature.
+However, the **exact current HEAD is not green**. GitHub Actions run `33708014112` at `0265868` completed with:
+
+- `nightly decode fuzz smoke`: **PASS**;
+- `stable checks`: **FAIL** inside `bash scripts/check.sh`.
+
+The stable log reaches the generic local benchmark fixture after Rust tests/clippy and the earlier policy/resource checks, then fails with:
+
+```text
+jq: invalid JSON text passed to --argjson
+```
+
+The failure occurs before `scripts/check.sh` reaches the newly added owned-lab parser/control-plane tests at the end of the script. Therefore the current CI result does **not** independently attest the new control-plane behavior, even though the new code/test structure is materially closer to the required paid-run admission contract.
+
+The generic `scripts/bench/compare-hy2.sh` and `scripts/bench/compare-hy2-test.sh` were not changed in the `2a13992..0265868` implementation delta, and the prior exact `2a13992` Rust CI was green. Reviewer-side reconstruction of the currently fetched generic scripts under a clean shell with `jq 1.7` also passes the good/bad fixture sequence. That does not clear the repository gate; it indicates the failure should be treated as a determinism/input-shape problem to isolate, not papered over by blindly rerunning CI.
 
 ## Review verdict
 
-**needs repair — validator/parser logic is much closer, but the executable paid-VPS admission path is still not proven and currently contains a concrete parser-staging defect; do not run the HY2 pair yet**
+**needs repair — control-plane admission is substantially implemented, but exact-head stable CI is red in the generic benchmark JSON path; do not spend the paid VPS comparison window until the JSON contract is deterministic and exact repair HEAD CI is green**
 
-The next slice remains benchmark/evidence infrastructure only. Do not modify Nekomusume wire, Session, Noise, failover or crypto semantics to make the benchmark convenient.
+The paid HY2/Nekomusume pair remains the highest-value VPS opportunity immediately after this repair. Do not insert unrelated local polish between a green admission gate and the VPS run.
 
-Once the control-plane behavior is exercised through the real production helper path, the parser fixture is part of the full repository gate, the exact repair HEAD CI is green, and the staging defect below is closed, the coding agent is pre-authorized to proceed directly to the standing-authorized self-owned VPS paired run without waiting for another reviewer handoff.
+This is a benchmark/evidence-harness blocker, not evidence of a transport/runtime regression. Do not change Nekomusume wire, Session, Noise, carrier or failover semantics to make this test green.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains the bounded research implementation baseline.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain correct.
-- `363bb58`, `ce126a5`, and `2a13992` are benchmark/evidence-infrastructure commits, not transport capability evidence.
-- Exact-head GitHub CI at `2a13992` is green. However, `scripts/check.sh` currently does **not** invoke the newly added `scripts/bench/parse-listener-test.py`, so the green stable job does not independently attest the new parser fixture test even though the repository-wide shell/validator checks are green.
-- No new HY2 paired samples, comparative medians/P95 or superiority evidence exist at this HEAD.
-- The accepted D064 controlled application-fault warm VPS row and accepted approximately five-minute periodic direct-path row remain valid only at their recorded exact implementation/binary identities. Do not rerun them merely to consume rental time.
+- `0265868` is benchmark/control-plane test infrastructure, not new transport capability evidence.
+- Exact-head nightly decode fuzz smoke is independently green, but exact-head stable checks are red. The current tree therefore fails the required release/benchmark admission gate.
+- The accepted exact `25e0daa` D064 controlled application-level UDP reply-cessation warm-fallback row remains bounded positive evidence: 3/3 records, 48 application bytes, two uncertain/replayed records, duplicate 0, lost 0, and approximately 434 ms failure-decision-to-first-resumed-data acceptance. It is not natural Internet degradation/PTO-blackhole proof.
+- The accepted exact `25e0daa` approximately five-minute periodic direct-path row remains bounded positive evidence: 60 × 32-byte records, 60/60 confirmed, no missing/duplicate/conflict, with recorded process/resource and cleanup observations. It is one bounded sample, not a production reliability rate.
+- Do not rerun either accepted row merely to consume VPS time.
+- No complete HY2/Nekomusume paired sample set, comparative median/P95 or superiority evidence exists yet.
+- Standing authorization already covers the intended self-owned bounded HY2/Nekomusume run, bounded capture/diagnostics and cleanup once the admission gate is green. No new per-run maintainer authorization is needed.
 - IPv6 remains environment-blocked unless a genuinely owned end-to-end IPv6 path becomes available.
-- Standing authorization already permits the intended bounded self-owned HY2/Nekomusume paired experiment, bounded capture/diagnostics and cleanup once the harness admission gate is green. No new per-run maintainer permission is required.
-- `docs/status.md`, `IMPLEMENTATION_PLAN.md` and `ROADMAP.md` remain stale relative to the accepted D064/periodic positive evidence and the evolving HY2 harness state. Reconcile them after the HY2 step closes honestly; do not erase historical negative rows.
+- `docs/status.md`, `IMPLEMENTATION_PLAN.md` and `ROADMAP.md` remain stale relative to the accepted D064/periodic positive evidence and evolving HY2 harness state. Reconcile them after the HY2 step closes honestly; preserve historical negative rows.
 
-### R-HY2-13 status — parser semantics substantially repaired, integration still incomplete
+### R-HY2-13 / R-HY2-17 — implementation shape now acceptable, CI attestation pending
 
-`363bb58` fixes the parser's earlier field-shape mismatch: state-first `ss -H -ltn/-lun` rows and netid-retaining rows are both handled, protocol state is checked, exact address+port is required, and ambiguous duplicates fail.
+At current HEAD:
 
-Two integration gaps remain:
+- one shared readiness primitive exists for both remote HY2 UDP and Nekomusume TCP listener admission;
+- exact `ss -H -lun` / `ss -H -ltn` shapes are used;
+- `parse-listener.py` is staged into the remote run set;
+- direct parser fixtures are now listed in `scripts/check.sh`;
+- the old duplicate inline readiness loops are removed from the production adapter.
 
-1. `scripts/check.sh` does not run `scripts/bench/parse-listener-test.py`. Therefore the direct parser fixtures are not part of the current CI/stable admission gate.
-2. `compare-hy2-owned-lab.sh` still contains an unused/duplicate `remote_listener_ready()` helper whose command construction uses `ss -H -l${protocol}` while the real call sites use explicit `ss -H -lun` / `ss -H -ltn`. This dead duplicate is a drift trap and violates the previous requirement to have one tested readiness primitive.
+Keep this structure unless the red gate exposes a concrete contradiction. Do not reintroduce multiple readiness implementations.
 
-The production HY2/Nekomusume loops should use one helper whose exact command/parser path is the path exercised by tests.
+### R-HY2-16 — fake control-plane coverage is materially present, but exact-head stable CI did not reach it
 
-### R-HY2-14 status — closed at validator level
+`owned-lab-control-plane-test.sh` now exercises the important helper behavior with fake `date`, `ssh`, `timeout` and `sleep`, including positive remote TCP/UDP readiness and the required fail-closed cases. This is the right testing direction.
 
-`ce126a5` closes the previously identified complete-result hole:
+But because `scripts/check.sh` failed earlier in `compare-hy2-test.sh`, the current GitHub stable job never independently executed the new end-of-gate control-plane test. The next repair must restore the entire gate and then preserve this test green.
 
-- a complete required sample set with any `failures != 0` is rejected;
-- complete per-sample client resource evidence must be exactly present once for every Nekomusume/HY2 run;
-- accepted client resource rows must have `exit={code:0,timed_out:false}`;
-- negative/blocked artifacts remain the place for retained failure rows without a comparative summary.
+### R-HY2-18 — new blocker: generic benchmark stdout/JSON extraction can produce an invalid `--argjson` value under CI
 
-Do not reopen this unless the new control-plane tests expose a contradiction.
-
-### R-HY2-15 status — accepted as useful mutation coverage, with no release claim
-
-`2a13992` adds the requested identity/deadline/application-bound mutation matrix. The validator code itself separately enforces exact 64-hex binary hashes, work+cleanup=whole, whole=maximum bound, whole <= 600000 ms, application-byte arithmetic, client lifecycle/resource scope and pinned client/server transport identities.
-
-This is evidence-schema hardening only. It does not prove the shell actually respects those deadlines under a hanging/failed remote control-plane operation; that remains R-HY2-16.
-
-### R-HY2-16 — still open: no executable fake-remote proof of the production control path
-
-The current `compare-hy2-owned-lab-test.sh` still primarily exercises:
-
-- preflight/address guards through `--validate`;
-- static source assertions for bind/connect/TLS/fresh lifecycle;
-- standalone result-validator behavior;
-- local process-group cleanup/race behavior.
-
-It does not yet drive the same live shell path used by the paid run through a deterministic fake SSH/`ss`/remote-process seam.
-
-The following behaviors therefore remain unproven by the current CI gate:
-
-- exact remote HY2 UDP listener readiness succeeds through the production helper;
-- exact remote Nekomusume TCP listener readiness succeeds through the production helper;
-- wildcard/wrong address/wrong protocol/malformed/ambiguous remote rows fail through that same helper;
-- a local same-numbered listener cannot satisfy remote readiness;
-- missing HY2 UDP readiness produces `hy2-server-readiness` before any timed client sample;
-- missing Nekomusume TCP readiness produces `nekomusume-readiness` before the corresponding timed sample;
-- early remote process exit fails promptly;
-- hanging SSH/control-plane work is bounded by the remaining work deadline;
-- work deadline exhaustion still leaves the declared cleanup reserve usable;
-- an over-budget profile is rejected before remote experiment work begins.
-
-Static grep assertions are useful guardrails but are not a substitute for these behavior tests.
-
-### R-HY2-17 — new concrete blocker: `parse-listener.py` is referenced by the remote tar set but never staged into `$run`
-
-At the exact current HEAD, `compare-hy2-owned-lab.sh` stages:
+The exact stable log fails with `jq: invalid JSON text passed to --argjson` during the generic `compare-hy2-test.sh` stage. `compare-hy2.sh` currently derives several values independently from adapter stdout and then feeds `wire` through `--argjson`:
 
 ```text
-neko-cli
-hysteria
-process-resource-sampler.py
-echo-payload.py
+reported_hash=$(jq ... "$raw" || true)
+app=$(jq ... "$raw" || true)
+wire=$(jq -c '.wire_bytes // null' "$raw" || echo null)
+fd=$(jq ... "$raw" || true)
+...
+jq -nc ... --argjson wire "$wire" ...
 ```
 
-into the local temporary run directory, then later creates the echo server/config/cert material. The remote tar command includes:
+A particularly dangerous shape is a command that emits a valid JSON object plus unexpected stdout contamination or multiple JSON values: `jq` may produce output before returning non-zero, and the shell fallback can append another `null`, yielding a multi-value string that is invalid as one `--argjson` argument. Even if that is not the exact runner mechanism, the current gate proves that the adapter-output contract is not deterministic enough across environments.
 
-```text
-parse-listener.py
-```
+The correct repair is to validate **one exact adapter result object** once, derive all typed fields from that validated object, and fail the sample truthfully if stdout is empty, malformed, contaminated or contains multiple JSON values. Do not turn malformed adapter output into a successful sample and do not suppress diagnostics by converting arbitrary text to `null`.
 
-and the remote readiness commands execute:
+## Work Package — Deterministic JSON Gate Repair -> Full Admission CI -> Paid HY2 Pair -> Matrix Reconciliation
 
-```text
-python3 '$remote/parse-listener.py'
-```
-
-but the script never copies `scripts/bench/parse-listener.py` into `$run` before that tar command.
-
-A real run can therefore fail during staging before reaching the intended readiness proof. This must be fixed and covered by the same executable control-plane regression before the paid VPS pair.
-
-This is a benchmark-harness defect, not a transport defect.
-
-## Work Package — Control-Plane Admission Closure -> Exact-Head CI -> Paid HY2 Pair -> Matrix Reconciliation
-
-### Primary A — Make one production readiness primitive and prove its remote artifact is actually staged
+### Primary A — Make generic benchmark adapter output single-object, typed and fail-closed
 
 **Goal**
 
-Close R-HY2-13 integration drift and R-HY2-17 before any VPS execution.
+Close R-HY2-18 and make `scripts/bench/compare-hy2-test.sh` deterministic on the exact GitHub runner path without weakening the benchmark contract.
 
 **Likely files**
 
-- `scripts/bench/compare-hy2-owned-lab.sh`;
-- `scripts/bench/parse-listener.py` only if the exact production contract needs a small correction;
-- `scripts/bench/parse-listener-test.py`;
-- `scripts/bench/compare-hy2-owned-lab-test.sh`;
-- `scripts/check.sh`.
+- `scripts/bench/compare-hy2.sh`;
+- `scripts/bench/compare-hy2-test.sh`;
+- optionally one small helper if a single JSON-object parser materially reduces shell ambiguity; do not create a parallel benchmark implementation.
 
 **Required behavior**
 
-1. Use exactly one readiness helper for both HY2 UDP and Nekomusume TCP remote listener admission.
-2. The helper must invoke the exact intended `ss` shape (`-lun` for UDP, `-ltn` for TCP, or one explicitly documented equivalent) and feed that shape to the exact parser covered by fixtures.
-3. Remove or replace the dead `remote_listener_ready()` path that constructs `ss -H -l${protocol}` if it is not the production contract.
-4. Ensure `parse-listener.py` is actually available wherever production executes it. Either:
-   - stage/copy it into `$run` before the remote tar and verify the tar set contains it; or
-   - parse remote `ss` output locally through the repository parser so no remote parser copy is required.
-   Choose one clear contract; do not keep both partially alive.
-5. Keep exact non-wildcard dedicated bind address + exact port + protocol semantics and deterministic IPv4/bracketed-IPv6 parsing.
-6. Wire `python3 scripts/bench/parse-listener-test.py` into `scripts/check.sh` (or into an already-called test that truly executes it) so exact parser fixtures are independently exercised by stable CI.
-7. Add a regression that would fail if a required remote helper/artifact named by the production command is absent from the staged run/tar set.
+1. Reproduce the exact failure locally where possible with `bash -x scripts/bench/compare-hy2-test.sh` and inspect the value passed to every `--argjson`. Record which value becomes invalid; do not guess in the final commit message.
+2. Treat the benchmark command contract as: **stdout must contain exactly one JSON object and no unrelated stdout text**. Parse/validate that object once per sample before extracting application bytes, payload hash, FD count and nullable wire bytes.
+3. Reject or mark the sample failed when stdout is:
+   - empty;
+   - malformed JSON;
+   - one valid object plus trailing non-JSON diagnostics;
+   - multiple JSON values/objects;
+   - a JSON array/scalar instead of the required object;
+   - missing or wrongly typed required fields.
+4. Keep diagnostics on stderr separate from the one-object stdout contract. Do not silently discard contamination and then treat the sample as successful.
+5. Normalize nullable `wire_bytes` as a single validated JSON value before passing it to any `--argjson`, or avoid shell `--argjson` transport for that field by constructing the sample from the already validated JSON object inside one `jq` program.
+6. Preserve the exact payload-byte/hash contract and existing failure counting. A bad HY2 hash still yields a retained failed sample, not a shell/JSON-construction crash.
+7. Preserve loopback-only safety in the generic harness; this repair does not authorize the generic helper to become a WAN runner.
+8. Do not modify Nekomusume protocol/runtime semantics.
 
-**Completion definition**
+**Regression matrix**
 
-There is one readiness primitive, its parser/artifact path is real and staged, the exact production input shape is fixture-tested, and the parser test is part of the full repository/CI gate.
+Extend `compare-hy2-test.sh` so it proves at minimum:
 
-### Follow-up B — Exercise the production control-plane path with deterministic fake SSH/`ss`/remote processes
+- valid object with `wire_bytes:null` succeeds;
+- valid object with an allowed non-null wire value, if that shape is supported by the current schema, is preserved exactly;
+- wrong payload hash becomes a typed sample failure without crashing JSON construction;
+- empty stdout is a typed failure;
+- malformed JSON is a typed failure;
+- valid JSON followed by stdout garbage is a typed failure;
+- two JSON objects are a typed failure;
+- array/scalar stdout is a typed failure;
+- missing FD/application/hash field is a typed failure;
+- repeated execution of the fixture produces a valid result deterministically.
+
+Do not use `|| echo null` in a way that can concatenate a fallback value to partial `jq` output.
+
+### Follow-up B — Re-run and harden the complete local benchmark/control-plane gate
 
 **Dependency:** A green.
 
-Close R-HY2-16. Prefer extending the existing owned-lab test harness rather than inventing a second orchestration implementation.
+Run the benchmark/evidence tests in a diagnostic order that makes the failing layer obvious:
 
-The test seam must exercise the same production functions/branches used by a real run. It may fake SSH, `ss`, remote process status, time/deadline progression and experiment binaries, but it must not merely grep the shell source.
+1. `bash scripts/bench/compare-hy2-test.sh`;
+2. `python3 scripts/bench/parse-listener-test.py`;
+3. `bash scripts/bench/owned-lab-control-plane-test.sh`;
+4. `bash scripts/bench/compare-hy2-owned-lab-test.sh`;
+5. `python3 scripts/bench/validate-hy2-owned-lab-test.py`;
+6. process-resource sampler and echo-payload regressions;
+7. `bash scripts/check.sh`;
+8. `git diff --check`.
 
-Required scenarios:
+Keep the new shared readiness helper and fake-remote scenarios green. If one fails after the generic JSON repair, fix the specific helper/test contract before proceeding; do not remove the fail-closed scenario merely to make CI pass.
 
-1. exact remote UDP listener success;
-2. exact remote TCP listener success;
-3. wildcard remote listener rejection;
-4. wrong-address remote listener rejection;
-5. wrong-protocol remote listener rejection;
-6. malformed/ambiguous remote output rejection;
-7. local same-port listener irrelevant to remote readiness;
-8. HY2 listener absent -> typed `hy2-server-readiness` blocker before any timed sample;
-9. Nekomusume listener absent -> typed `nekomusume-readiness` blocker before that timed sample;
-10. early remote process exit fails promptly;
-11. hanging remote/control operation cannot exceed remaining work/stage budget;
-12. work deadline expiry still permits the declared cleanup reserve path;
-13. whole-lab/work/cleanup over-budget configuration is rejected before remote experiment execution;
-14. missing staged parser/helper artifact fails in deterministic local test rather than on the paid VPS.
+If shell test ordering hides the true failing test, add concise test-name markers or a small runner improvement so future CI logs identify which benchmark subtest failed. Avoid verbose production output.
 
-Preserve all prior bind/connect, certificate-pin, fresh-client lifecycle, typed partial failure, process-group cleanup and result-validator regressions.
-
-**Completion definition**
-
-A deterministic test can demonstrate both positive readiness and all material fail-closed branches through the same helper/control path that the paid run will use.
-
-### Follow-up C — Full local gate and exact-repair-HEAD GitHub CI
+### Follow-up C — Push repair and require exact-repair-HEAD CI green
 
 **Dependency:** A-B complete.
 
-Run at minimum:
+Push coherent repair commits, then require the exact repair HEAD to have:
 
-- direct parser fixtures;
-- owned-lab fake-remote/control-plane behavior regressions;
-- result-validator complete/blocked regressions;
-- identity/deadline/bound mutation matrix;
-- process-resource sampler regressions;
-- `cargo fmt --all -- --check`;
-- `cargo check --workspace --locked`;
-- `cargo test --workspace --all-targets --locked --no-fail-fast`;
-- `cargo clippy --workspace --all-targets --locked -- -D warnings`;
-- `bash scripts/check.sh`;
-- `git diff --check`.
+- `stable checks`: green;
+- `nightly decode fuzz smoke`: green.
 
-Push coherent repair commits and wait for the **exact repair HEAD** GitHub `stable checks` and nightly decode fuzz smoke to be green.
+The current `0265868` nightly fuzz success may be retained as evidence for that exact commit, but it does not substitute for the future exact repair HEAD gate after benchmark scripts change.
 
-The coding agent is explicitly pre-authorized to continue directly to D as soon as exact-head CI is green. Do not wait for another reviewer turn if all A-C gates are satisfied.
+Do not spend the paid VPS comparison window while stable CI is red or while the exact repair HEAD CI is pending after substantive benchmark-harness changes.
 
-### Follow-up D — Immediately spend the standing-authorized VPS window on one fair HY2/Nekomusume paired attempt
+The coding agent is pre-authorized to proceed directly from a fully green exact repair HEAD to Follow-up D without waiting for another reviewer handoff.
 
-**Dependency:** C exact-head CI green.
+### Follow-up D — Immediately run one fair, bounded HY2/Nekomusume paid-VPS pair
 
-This is the highest-value READY rental-window task after admission closure. Do not insert unrelated local polish between C and this run.
+**Dependency:** C exact repair HEAD CI fully green.
 
-Use the already established bounded profile unless the harness itself computes a smaller safe profile:
+This remains the highest-value READY rental-window task. Do not insert unrelated local work between the green gate and this attempt.
+
+Use the established owned-lab contract:
 
 ```text
 self-owned client <-> owned VPS only
 pinned HY2 v2.9.3 exact SHA-256
-5 paired runs if admitted
+5 paired runs if admission succeeds
 1200-byte deterministic payload per sample
 concurrency 1
-fresh unprivileged experiment ports
+fresh unprivileged ports
 fresh transport client/session per timed sample
-whole-lab bound < 10 minutes including cleanup reserve
+separate remote bind authority and client connect authority
+pinned disposable experiment certificate
+whole lab including cleanup reserve < 10 minutes
 ```
 
-Keep the existing production HY2 service/config untouched. Do not alter production firewall, route, qdisc, DNS, proxy or tunnel state.
+Preserve the production HY2 service/config and all production firewall/route/qdisc/DNS/proxy/tunnel state unchanged.
 
-Because historical HY2 attempts failed during QUIC establishment, keep changed-hypothesis bounded diagnostics around only the disposable experiment UDP port:
+Because historical HY2 attempts failed during QUIC establishment, retain bounded changed-hypothesis diagnostics on the disposable experiment UDP port only:
 
-- prove the temporary HY2 server is bound on the exact dedicated local bind address/port;
-- prove the client targets the verified connect authority rather than the local bind address;
-- observe whether experiment UDP leaves the client, reaches the VPS, elicits a reply and returns;
-- retain redacted HY2/Nekomusume logs sufficient to distinguish network/path vs TLS/auth/config failure;
-- retain capture metadata/hash/counts/timestamps where captured; raw pcap does not need to enter Git;
-- always verify experiment-owned process/listener/temp-path cleanup.
+- exact temporary server listener identity/bind proof;
+- exact connect authority used by the client;
+- client->VPS and VPS->client packet-direction evidence where bounded capture is used;
+- redacted HY2/Nekomusume logs sufficient to distinguish network/path, TLS/auth and local harness failure;
+- capture metadata/hash/packet counts/timestamps if captured;
+- experiment-owned process/listener/temp-path cleanup verification.
 
-If all required pairs succeed:
+If all required paired samples succeed:
 
-- retain every raw sample;
+- retain all raw samples;
 - validate one complete `benchmark-result.v1`;
 - calculate median/P95/failures only from the complete successful set;
-- retain exact payload hash/application bytes and process-group client CPU/RSS/FD evidence;
-- make only a route/time-window/batch-specific comparison; no superiority or production claim.
+- retain exact payload hash/application bytes and symmetric process-group client CPU/RSS/FD evidence;
+- state conclusions only for this route/time window/batch; no superiority or production claim.
 
 If any required pair fails:
 
-- retain one typed `BLOCKED_HARNESS`/diagnostic artifact with the valid prefix + failed row and no comparative summary;
-- preserve changed-hypothesis diagnostics;
-- do not repeat unchanged;
-- move to the next truthful VPS opportunity after status reconciliation.
+- retain the valid prefix plus failed row in one typed blocked/diagnostic artifact;
+- produce no comparative summary;
+- preserve the changed-hypothesis diagnostics;
+- do not repeat unchanged.
 
-### Follow-up E — Reconcile accepted VPS evidence and the exact HY2 outcome into the release matrix
+### Follow-up E — Reconcile the release matrix, then spend at most one further VPS opportunity on a genuinely READY missing row
 
-**Dependency:** D closes either positively or honestly blocked.
+**Dependency:** D closes positively or honestly blocked.
 
-Repair current status/evidence drift without deleting historical negatives:
+First repair evidence/status drift in:
 
-1. `docs/status.md`
-   - replace stale `current-exact-head VPS warm evidence remains absent` wording with the accepted exact `25e0daa` positive D064 controlled application-fault result and its strict boundary;
-   - add the accepted approximately five-minute periodic direct-path result and retain the fact that it is one bounded sample, not a production reliability rate;
-   - replace the older local-only HY2 harness note with the exact final admission state and D outcome.
-2. `IMPLEMENTATION_PLAN.md`
-   - remove stale statements that current-lineage D064/periodic rows are absent;
-   - keep bounded release matrix item 3 unchecked while declared IPv6/environment, natural degradation, NAT/endpoint-change, HY2 or other required rows remain unresolved;
-   - record a HY2 comparison as positive only if D produces a complete valid paired set.
-3. `ROADMAP.md`
-   - preserve `controlled application-level UDP reply cessation != natural network UDP degradation/PTO blackhole`;
-   - preserve `approximately five minutes != general long-lived stability`;
-   - update HY2 only to the exact D evidence.
+- `docs/status.md`;
+- `IMPLEMENTATION_PLAN.md`;
+- `ROADMAP.md`.
 
-Governance flags stay unchanged.
+Required reconciliation:
 
-### Follow-up F — Use the remaining rental window for one next genuinely READY VPS-only row
+- record the accepted exact `25e0daa` D064 controlled application-fault warm-fallback result without relabeling it as natural network degradation;
+- record the accepted approximately five-minute periodic direct-path result as one bounded sample, not general long-connection proof;
+- record the exact HY2 D outcome only at its real commit/binary/path identity;
+- preserve historical failed rows and negative evidence;
+- keep bounded release evidence matrix item 3 unchecked while declared natural degradation, IPv6/environment, NAT/endpoint-change, HY2 or other required rows remain unresolved;
+- keep `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`.
 
-**Dependency:** E complete.
+Then audit the remaining VPS backlog and choose **at most one** additional row that is both dependency-ready and truthfully observable at the current runtime:
 
-Do not rerun the accepted D064/periodic rows or an unchanged failed HY2 hypothesis.
+1. genuine owned source-endpoint/path change if it can be produced without production network modification;
+2. real-session migration-back if a live runtime/CLI seam already exists;
+3. real-session key update if a live runtime/CLI seam already exists;
+4. live-path PMTUD observation if the current instrumentation exposes truthful packetization evidence.
 
-Audit live runtime/instrumentation and choose at most one row that is already executable and truthful:
-
-1. genuine owned source-endpoint/path change;
-2. real-session migration-back;
-3. real-session key update;
-4. live PMTUD observation.
-
-A fixture/state model is not a live runtime seam. If none is READY, record the exact implementation/instrumentation dependency and make that local unlock slice the next work package. Do not spend VPS time manufacturing evidence for a capability that is not actually wired to the live runtime.
+If no such live seam exists, record `BLOCKED_IMPLEMENTATION` for the candidate row and spend the next development slice on the smallest instrumentation/runtime seam that directly unlocks a high-value VPS row. Do not use fixture-only capability as WAN evidence.
 
 ## Fallback
 
-If A-B exposes a benchmark-harness defect deeper than the listed control/evidence layer:
+If the generic `compare-hy2-test.sh` failure cannot be reproduced outside GitHub:
 
-- keep all transport/release governance flags unchanged;
-- preserve a minimal deterministic reproducer;
-- fix only the smallest harness/validator path required for truthful evidence;
-- rerun the full local + exact-head CI admission gate;
-- do not spend the paid VPS window on a known-invalid harness.
+- do not blindly rerun CI as the only action;
+- harden the one-object stdout parser and add the contamination/multiple-object regressions anyway, because the exact runner has already falsified the current assumption;
+- push the deterministic repair and use the new exact-head CI as the adjudication point.
 
-If D is blocked by a changed path/provider condition after the repaired diagnostics classify it, preserve the negative evidence and move to another genuinely READY VPS-only row after E; do not mechanically retry the same failed hypothesis.
+If the generic JSON gate becomes green but the new fake control-plane test fails:
+
+- keep VPS execution blocked;
+- repair the exact failed control-plane branch;
+- retain all positive helper tests;
+- rerun full exact-head CI.
+
+If the paid HY2 run remains blocked by the real network/path after a green harness and changed-hypothesis diagnostics:
+
+- preserve the negative result;
+- do not modify provider/production network policy to force success;
+- move to the next truthful READY VPS-only evidence row.
 
 ## Completion gates
 
-This package is complete only when all are true:
+This work package is complete only when:
 
-- one production readiness helper is used for both remote protocols;
-- required parser/helper artifacts are actually staged or parsing is intentionally local;
-- the exact parser fixture test is part of `scripts/check.sh`/stable CI;
-- exact remote listener parsing rejects wildcard/wrong-address/wrong-protocol/malformed/ambiguous/local-host false positives;
-- complete benchmark results cannot contain failed required samples;
-- blocked artifacts retain failure evidence and no summary;
-- identity/deadline/application-bound mutation gates remain green;
-- production readiness/process/deadline behavior is exercised by deterministic fake-remote tests, not source grep alone;
-- full local repository gate passes;
-- exact repair HEAD stable CI and nightly fuzz smoke are green;
-- the self-owned paid pair yields either one complete valid success batch or one retained typed blocker with no comparison summary;
-- cleanup is verified;
-- status/plan/roadmap are reconciled to accepted D064/periodic and exact HY2 evidence;
-- no release/production/global-freeze flag is promoted automatically.
+- generic benchmark adapter stdout is deterministically one validated JSON object per sample;
+- malformed/contaminated/multi-object output cannot crash `--argjson` construction or become a successful sample;
+- generic compare fixture is green and deterministic;
+- direct parser fixtures are green;
+- fake owned-lab control-plane behavior tests are green;
+- owned-lab safety/result/cleanup validators remain green;
+- full `scripts/check.sh` is green locally;
+- exact repair HEAD `stable checks` and nightly fuzz are green;
+- only then is one standing-authorized paid HY2/Nekomusume paired attempt executed;
+- the HY2 result is retained as complete comparative evidence or honest typed blocked evidence, never a partial superiority claim;
+- status/plan/roadmap reflect accepted D064/periodic/HY2 evidence at exact identities;
+- no production/network authorization boundary is widened.
 
 ## Do not expand into
 
-- Nekomusume wire/Session/Noise/crypto changes to satisfy benchmark infrastructure;
-- rerunning accepted D064/periodic rows without a new research question;
-- publishing HY2 superiority from one batch;
-- long-lived daemon/service deployment;
-- third-party targets or scans;
-- production firewall/route/qdisc/DNS/proxy/tunnel modification;
-- experiments outside `docs/standing-vps-lab-authorization.md`;
-- speculative 0-RTT/FEC/multipath/exotic-carrier work without an observed-problem gate.
+- changing wire, Session, Noise, failover or carrier semantics to satisfy benchmark tooling;
+- rerunning accepted D064/periodic rows merely to use VPS time;
+- publishing HY2 superiority from a partial/failed/semantically unequal sample set;
+- previous/current interoperability before a real prior frozen release exists;
+- 0-RTT, enabled FEC, striping/aggregation or exotic carriers without an observed-problem gate;
+- third-party targets, scanning, production firewall/route/DNS/proxy/tunnel/qdisc changes;
+- experiments beyond standing authorization.
 
 ## Questions requiring maintainer decision
 
