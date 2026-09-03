@@ -136,9 +136,9 @@ hash0=$(printf test-payload | sha256sum | awk '{print $1}')
 printf '%s\n' 'client diagnostic: connection refused' 'second diagnostic line' >"$tmp/neko-first.out"
 printf '%s\n' 'Command exited with non-zero status 9' '{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":0.25,"cpu_user_seconds":0.01,"cpu_system_seconds":0.02,"rss_kib":9,"exit_code":9}' >"$tmp/neko-first.time"
 printf '%s\n' '{"experiment_id":"nekomusume-owned-lab-1","implementation":"nekomusume","role":"client","fd":{"peak_count":4},"sampling":{"scope":"sampler-created process group"},"cleanup":{"process_reaped":true,"process_group_empty":true,"owned_sockets_after_exit":0,"complete":true}}' >"$tmp/neko-first.resource"
-python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation nekomusume --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output "$tmp/neko-first.out" --client-diagnostics "$tmp/neko-first.out" --bytes 1200 --payload-hash "$hash0" >"$tmp/first.jsonl" 2>"$tmp/make.err"
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation nekomusume --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output "$tmp/neko-first.out" --client-diagnostics "$tmp/neko-first.out" --diagnostic-bundle "$tmp/first-private.json" --diagnostic-started-at 2026-09-03T00:00:00Z --diagnostic-ended-at 2026-09-03T00:00:01Z --diagnostic-stage client_started --bytes 1200 --payload-hash "$hash0" >"$tmp/first.jsonl" 2>"$tmp/make.err"
 [ ! -s "$tmp/make.err" ]; [ "$(wc -l <"$tmp/first.jsonl")" -eq 1 ]
-jq -e '.name=="nekomusume-1" and .failures==1 and .exit_code==9 and .failure_stage=="client_exit" and .application_bytes==0 and .payload_sha256==null and .client_diagnostic.category=="path"' "$tmp/first.jsonl" >/dev/null
+jq -e '.name=="nekomusume-1" and .failures==1 and .exit_code==9 and .failure_stage=="client_exit" and .application_bytes==0 and .payload_sha256==null and .client_diagnostic.category=="path" and .client_diagnostic.last_success_stage=="client_started"' "$tmp/first.jsonl" >/dev/null
 ! grep -q -- '--argjson' "$source_script"
 python3 "$root/scripts/bench/validate-hy2-owned-lab.py" blocked --records "$tmp/first.jsonl" --output "$tmp/blocked.json" --stage nekomusume-1-client --commit "$(printf %040d 0)" --runs 5 --bytes 1200 --payload-prepared true --payload-hash "$hash0" --local-reaped true --local-listeners 0 --remote-reaped true --remote-listeners 0 --remote-path-removed true
 python3 "$root/scripts/bench/validate-hy2-owned-lab.py" validate-result "$tmp/blocked.json" | grep -qx validated
@@ -152,15 +152,33 @@ python3 "$root/scripts/bench/validate-hy2-owned-lab.py" blocked --records /dev/n
 python3 "$root/scripts/bench/validate-hy2-owned-lab.py" blocked --records /dev/null --output "$tmp/cleanup-false.json" --stage cleanup --commit "$(printf %040d 0)" --runs 5 --bytes 1200 --payload-prepared false --local-reaped false --local-listeners 0 --remote-reaped false --remote-listeners 0 --remote-path-removed false
 jq -e '.cleanup_evidence.local_processes_reaped==true and .cleanup_evidence.remote_process_groups_reaped==true and .cleanup_evidence.remote_temp_path_removed==true' "$tmp/cleanup-true.json" >/dev/null
 jq -e '.cleanup_evidence.local_processes_reaped==false and .cleanup_evidence.remote_process_groups_reaped==false and .cleanup_evidence.remote_temp_path_removed==false' "$tmp/cleanup-false.json" >/dev/null
-# Future nonzero client diagnostics retain only bounded safe classifications.
+# Future nonzero client diagnostics retain bounded private evidence and only fixed public metadata.
 for spec in 'tls:TLS certificate pin failed' 'auth:authentication failed password=hunter2' 'config:invalid config yaml' 'path:connection refused 10.23.45.67:443 /home/private/key' 'readiness:listener not ready'; do
   category=${spec%%:*}; message=${spec#*:}; printf '%s\n' "$message" >"$tmp/diagnostic.err"
-  python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation hy2 --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output /dev/null --client-diagnostics "$tmp/diagnostic.err" --bytes 1200 --payload-hash "$hash0" >"$tmp/diagnostic.json"
-  jq -e --arg category "$category" '.failure_stage=="client_exit" and .client_diagnostic.category==$category and (.client_diagnostic.summary|length)<=256' "$tmp/diagnostic.json" >/dev/null
-  ! grep -Eq 'hunter2|10\.23\.45\.67|/home/private' "$tmp/diagnostic.json"
+  bundle="$tmp/$category-private.json"
+  python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation hy2 --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output /dev/null --client-diagnostics "$tmp/diagnostic.err" --diagnostic-bundle "$bundle" --diagnostic-started-at 2026-09-03T00:00:00Z --diagnostic-ended-at 2026-09-03T00:00:01Z --diagnostic-stage client_started --bytes 1200 --payload-hash "$hash0" >"$tmp/diagnostic.json"
+  jq -e --arg category "$category" '.failure_stage=="client_exit" and .client_diagnostic.category==$category and .client_diagnostic.last_success_stage=="client_started" and (.client_diagnostic.bundle_sha256|length)==64 and .client_diagnostic.bundle_bytes>0 and .client_diagnostic.started_at=="2026-09-03T00:00:00Z" and .client_diagnostic.ended_at=="2026-09-03T00:00:01Z"' "$tmp/diagnostic.json" >/dev/null
+  [ "$(sha256sum "$bundle"|awk '{print $1}')" = "$(jq -r .client_diagnostic.bundle_sha256 "$tmp/diagnostic.json")" ]
+  [ "$(wc -c <"$bundle")" -eq "$(jq -r .client_diagnostic.bundle_bytes "$tmp/diagnostic.json")" ]
+  ! grep -Eq 'hunter2|10\.23\.45\.67|/home/private' "$tmp/diagnostic.json" "$bundle"
 done
-python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation hy2 --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output /dev/null --client-diagnostics /dev/null --bytes 1200 --payload-hash "$hash0" >"$tmp/no-diagnostic.json"
+printf '%s\n' 'QUIC UDP connection established to 10.23.45.67:443' >"$tmp/diagnostic.err"
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation hy2 --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output /dev/null --client-diagnostics "$tmp/diagnostic.err" --diagnostic-bundle "$tmp/quic-private.json" --diagnostic-started-at 2026-09-03T00:00:00Z --diagnostic-ended-at 2026-09-03T00:00:01Z --diagnostic-stage server_bound --bytes 1200 --payload-hash "$hash0" >"$tmp/quic.json"
+jq -e '.client_diagnostic.last_success_stage=="quic_udp"' "$tmp/quic.json" >/dev/null
+printf '%s\n' 'authentication succeeded credential=private-value' >"$tmp/diagnostic.err"
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation hy2 --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output /dev/null --client-diagnostics "$tmp/diagnostic.err" --diagnostic-bundle "$tmp/authenticated-private.json" --diagnostic-started-at 2026-09-03T00:00:00Z --diagnostic-ended-at 2026-09-03T00:00:01Z --diagnostic-stage client_started --bytes 1200 --payload-hash "$hash0" >"$tmp/authenticated.json"
+jq -e '.client_diagnostic.last_success_stage=="tls_authenticated"' "$tmp/authenticated.json" >/dev/null
+! grep -q private-value "$tmp/authenticated.json" "$tmp/authenticated-private.json"
+# Input and private bundle remain bounded; private file permissions are owner-only.
+{ printf 'connection refused password=top-secret pinSHA256=AA:BB private_key=/private/key host.internal.example 10.23.45.67:443 '; head -c 8192 /dev/zero | tr '\000' x; } >"$tmp/diagnostic.err"
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation hy2 --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output /dev/null --client-diagnostics "$tmp/diagnostic.err" --diagnostic-bundle "$tmp/bounded-private.json" --diagnostic-started-at 2026-09-03T00:00:00Z --diagnostic-ended-at 2026-09-03T00:00:01Z --diagnostic-stage client_started --bytes 1200 --payload-hash "$hash0" >"$tmp/bounded.json"
+[ "$(wc -c <"$tmp/bounded-private.json")" -le 2560 ]
+[ "$(stat -c %a "$tmp/bounded-private.json")" = 600 ]
+jq -e '.truncated==true and (.sanitized_text|utf8bytelength)<=2048' "$tmp/bounded-private.json" >/dev/null
+! grep -Eq 'top-secret|10\.23\.45\.67' "$tmp/bounded-private.json" "$tmp/bounded.json"
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation hy2 --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output /dev/null --client-diagnostics /dev/null --diagnostic-bundle "$tmp/absent.json" --diagnostic-started-at 2026-09-03T00:00:00Z --diagnostic-ended-at 2026-09-03T00:00:01Z --diagnostic-stage client_started --bytes 1200 --payload-hash "$hash0" >"$tmp/no-diagnostic.json"
 jq -e '.failure_stage=="client_exit" and .client_diagnostic==null' "$tmp/no-diagnostic.json" >/dev/null
+[ ! -e "$tmp/absent.json" ]
 # A routine validation in a disposable repository cannot create or alter default evidence.
 sentinel=$tmp/sentinel-repo; mkdir -p "$sentinel/scripts/bench" "$sentinel/artifacts/hy2-owned-lab"
 cp "$source_script" "$root/scripts/bench/owned-lab-control-plane.sh" \

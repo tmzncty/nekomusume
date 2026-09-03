@@ -1,30 +1,104 @@
 #!/usr/bin/env python3
-import argparse, json, math, os, pathlib, re, tempfile
+import argparse, datetime, hashlib, json, math, os, pathlib, re, tempfile
 
 SENTINEL = "nekomusume.gnu-time.v1"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-DIAGNOSTIC_LIMIT = 256
-DIAGNOSTIC_PATTERNS = (
-    ("tls", re.compile(r"\b(tls|certificate|x509|pin(?:sha256)?|handshake)\b", re.I)),
-    ("auth", re.compile(r"\b(auth(?:entication|orization)?|unauthorized|forbidden|password|credential)\b", re.I)),
-    ("config", re.compile(r"\b(config(?:uration)?|yaml|unknown (?:field|option)|invalid (?:field|option|value))\b", re.I)),
-    ("path", re.compile(r"\b(connection refused|no route|network is unreachable|timeout|timed out|no such file|path)\b", re.I)),
-    ("readiness", re.compile(r"\b(not ready|readiness|listener|failed to listen|address already in use)\b", re.I)),
+DIAGNOSTIC_INPUT_LIMIT = 4096
+DIAGNOSTIC_BUNDLE_LIMIT = 2048
+DIAGNOSTIC_CATEGORIES = {
+    "tls": re.compile(r"\b(tls|certificate|x509|pin(?:sha256)?|handshake)\b", re.I),
+    "auth": re.compile(r"\b(auth(?:entication|orization)?|unauthorized|forbidden|password|credential)\b", re.I),
+    "config": re.compile(r"\b(config(?:uration)?|yaml|unknown (?:field|option)|invalid (?:field|option|value))\b", re.I),
+    "path": re.compile(r"\b(connection refused|no route|network is unreachable|timeout|timed out|no such file|path)\b", re.I),
+    "readiness": re.compile(r"\b(not ready|readiness|listener|failed to listen|address already in use)\b", re.I),
+}
+LIFECYCLE_STAGES = ("server_bound", "client_started", "quic_udp", "tls_authenticated")
+LIFECYCLE_PATTERNS = (
+    ("tls_authenticated", re.compile(r"\b(authenticated|authentication succeeded|connected to server|login succeeded)\b", re.I)),
+    ("quic_udp", re.compile(r"\b(quic|udp|initial packet|connection established|handshake response)\b", re.I)),
+)
+SECRET_PATTERNS = (
+    re.compile(r"(?i)\b(password|credential|token|secret|authorization|pinsha256|private[_ -]?key)\s*[:=]\s*\S+"),
+    re.compile(r"(?i)\b(?:https?|quic|udp|tcp)://\S+"),
+    re.compile(r"(?i)\b(?:[a-z0-9-]+\.)+[a-z]{2,63}\b"),
+    re.compile(r"(?<![0-9A-Fa-f])(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?"),
+    re.compile(r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{0,4}:){2,}[0-9A-Fa-f]{0,4}(?::\d+)?"),
+    re.compile(r"(?<!\w)/(?:[^\s/:]+/)+[^\s:]*"),
 )
 
 
-def client_diagnostic(path):
+def _iso8601(value):
     try:
-        text = pathlib.Path(path).read_bytes()[:4096].decode("utf-8", "replace")
+        parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        raise ValueError("diagnostic timestamp must be ISO-8601")
+    if parsed.tzinfo is None:
+        raise ValueError("diagnostic timestamp must include timezone")
+    return parsed.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _sanitize_diagnostic(text):
+    text = "".join(char if char in "\n\t" or ord(char) >= 32 else "�" for char in text)
+    for pattern in SECRET_PATTERNS:
+        text = pattern.sub("[REDACTED]", text)
+    return text
+
+
+def client_diagnostic(path, bundle_path, started_at, ended_at, baseline_stage):
+    if baseline_stage not in LIFECYCLE_STAGES:
+        raise ValueError("invalid diagnostic lifecycle stage")
+    try:
+        source = pathlib.Path(path).read_bytes()[:DIAGNOSTIC_INPUT_LIMIT + 1]
+        input_truncated = len(source) > DIAGNOSTIC_INPUT_LIMIT
+        raw = source[:DIAGNOSTIC_INPUT_LIMIT]
     except OSError:
         return None
-    # Persist only a fixed classification. Raw diagnostics can contain endpoints,
-    # credentials, filesystem paths, or private topology.
-    for category, pattern in DIAGNOSTIC_PATTERNS:
-        if pattern.search(text):
-            summary = f"client reported {category} failure"
-            return {"category": category, "summary": summary[:DIAGNOSTIC_LIMIT]}
-    return None
+    if not raw:
+        return None
+    text = raw.decode("utf-8", "replace")
+    category = next((name for name, pattern in DIAGNOSTIC_CATEGORIES.items() if pattern.search(text)), "unknown")
+    baseline = LIFECYCLE_STAGES.index(baseline_stage)
+    observed = [LIFECYCLE_STAGES.index(stage) for stage, pattern in LIFECYCLE_PATTERNS if pattern.search(text)]
+    last_stage = LIFECYCLE_STAGES[max([baseline] + observed)]
+    sanitized_full = _sanitize_diagnostic(text).encode("utf-8")
+    sanitized = sanitized_full[:DIAGNOSTIC_BUNDLE_LIMIT]
+    started = _iso8601(started_at)
+    ended = _iso8601(ended_at)
+    if datetime.datetime.fromisoformat(ended.replace("Z", "+00:00")) < datetime.datetime.fromisoformat(started.replace("Z", "+00:00")):
+        raise ValueError("diagnostic timestamps are reversed")
+    bundle = {
+        "schema": "nekomusume.hy2-private-diagnostic.v1",
+        "started_at": started,
+        "ended_at": ended,
+        "category": category,
+        "last_success_stage": last_stage,
+        "truncated": input_truncated or len(sanitized) < len(sanitized_full),
+        "sanitized_text": sanitized.decode("utf-8", "ignore"),
+    }
+    encoded = (json.dumps(bundle, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    if len(encoded) > DIAGNOSTIC_BUNDLE_LIMIT + 512:
+        raise ValueError("diagnostic bundle exceeds bound")
+    target = pathlib.Path(bundle_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=target.name + ".", dir=target.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return {
+        "category": category,
+        "last_success_stage": last_stage,
+        "bundle_sha256": hashlib.sha256(encoded).hexdigest(),
+        "bundle_bytes": len(encoded),
+        "started_at": started,
+        "ended_at": ended,
+    }
 
 
 def finite_nonnegative(value, integer=False):
@@ -112,7 +186,8 @@ def read_client_output(path):
 
 
 def make_sample(implementation, run, return_code, time_path, resource_path, output_path,
-                payload_bytes, payload_hash, expected_identity=None, diagnostic_path=None):
+                payload_bytes, payload_hash, expected_identity=None, diagnostic_path=None,
+                diagnostic_bundle=None, diagnostic_started_at=None, diagnostic_ended_at=None, diagnostic_stage=None):
     if implementation not in ("nekomusume", "hy2") or not isinstance(run, int) or run < 1:
         raise ValueError("invalid sample identity")
     exit_code = return_code if isinstance(return_code, int) and 0 <= return_code <= 255 else None
@@ -161,7 +236,9 @@ def make_sample(implementation, run, return_code, time_path, resource_path, outp
     elif fd_count is None or not resource_ok:
         stage = "resource_evidence"
     failure = int(stage is not None)
-    diagnostic = client_diagnostic(diagnostic_path) if exit_code != 0 and diagnostic_path else None
+    diagnostic = None
+    if exit_code != 0 and diagnostic_path and diagnostic_bundle and diagnostic_started_at and diagnostic_ended_at and diagnostic_stage:
+        diagnostic = client_diagnostic(diagnostic_path, diagnostic_bundle, diagnostic_started_at, diagnostic_ended_at, diagnostic_stage)
     return {
         "name": f"{implementation}-{run}", "implementation": implementation,
         "run": run, "failures": failure,
@@ -217,11 +294,18 @@ def validate_samples(samples, contract, require_complete):
             raise ValueError("failed sample lacks failure stage")
         diagnostic = row.get("client_diagnostic")
         if diagnostic is not None:
-            if (not isinstance(diagnostic, dict) or set(diagnostic) != {"category", "summary"}
-                    or diagnostic.get("category") not in {item[0] for item in DIAGNOSTIC_PATTERNS}
-                    or diagnostic.get("summary") != f"client reported {diagnostic.get('category')} failure"
-                    or len(diagnostic["summary"]) > DIAGNOSTIC_LIMIT):
+            if (not isinstance(diagnostic, dict)
+                    or set(diagnostic) != {"category", "last_success_stage", "bundle_sha256", "bundle_bytes", "started_at", "ended_at"}
+                    or diagnostic.get("category") not in set(DIAGNOSTIC_CATEGORIES) | {"unknown"}
+                    or diagnostic.get("last_success_stage") not in LIFECYCLE_STAGES
+                    or not isinstance(diagnostic.get("bundle_sha256"), str) or not SHA256.fullmatch(diagnostic["bundle_sha256"])
+                    or not isinstance(diagnostic.get("bundle_bytes"), int) or not 0 < diagnostic["bundle_bytes"] <= DIAGNOSTIC_BUNDLE_LIMIT + 512):
                 raise ValueError("sample has unsafe client diagnostic")
+            started = _iso8601(diagnostic.get("started_at"))
+            ended = _iso8601(diagnostic.get("ended_at"))
+            reversed_time = datetime.datetime.fromisoformat(ended.replace("Z", "+00:00")) < datetime.datetime.fromisoformat(started.replace("Z", "+00:00"))
+            if started != diagnostic["started_at"] or ended != diagnostic["ended_at"] or reversed_time:
+                raise ValueError("sample has unsafe client diagnostic timestamps")
             if success:
                 raise ValueError("successful sample has client diagnostic")
         if row["wire_bytes"] is not None and not finite_nonnegative(row["wire_bytes"], True):
@@ -351,6 +435,7 @@ def main():
     sample.add_argument("--return-code", required=True, type=int); sample.add_argument("--time", required=True); sample.add_argument("--resource", required=True)
     sample.add_argument("--client-output", required=True); sample.add_argument("--bytes", required=True, type=int)
     sample.add_argument("--payload-hash", required=True); sample.add_argument("--expected-identity"); sample.add_argument("--client-diagnostics")
+    sample.add_argument("--diagnostic-bundle"); sample.add_argument("--diagnostic-started-at"); sample.add_argument("--diagnostic-ended-at"); sample.add_argument("--diagnostic-stage", choices=LIFECYCLE_STAGES)
     blocked = sub.add_parser("blocked")
     blocked.add_argument("--records", required=True); blocked.add_argument("--output", required=True)
     blocked.add_argument("--stage", required=True); blocked.add_argument("--commit", required=True)
@@ -364,7 +449,8 @@ def main():
         print(json.dumps(parse_time(args.path), sort_keys=True, separators=(",", ":")))
     elif args.command == "make-sample":
         value = make_sample(args.implementation, args.run, args.return_code, args.time, args.resource,
-                            args.client_output, args.bytes, args.payload_hash, args.expected_identity, args.client_diagnostics)
+                            args.client_output, args.bytes, args.payload_hash, args.expected_identity, args.client_diagnostics,
+                            args.diagnostic_bundle, args.diagnostic_started_at, args.diagnostic_ended_at, args.diagnostic_stage)
         print(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False))
     elif args.command == "blocked":
         truth=lambda x: None if x=="unknown" else x=="true"

@@ -182,16 +182,20 @@ ssh_bounded "$LAB_SSH_TARGET" "umask 077; mkdir '$remote'"; remote_started=1; ta
 ssh_bounded "$LAB_SSH_TARGET" "nohup setsid python3 '$remote/echo-server.py' '${ports[3]}' '$RUNS' '$BYTES' >'$remote/echo.log' 2>&1 </dev/null & echo \$! >>'$remote/pids'; nohup setsid python3 '$remote/process-resource-sampler.py' --experiment-id hy2-owned-lab --implementation hy2-v2.9.3 --role server --identity sha256:66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1 --application-bytes '$((RUNS*BYTES))' --owned-port '${ports[1]}' --interval-ms 10 --max-seconds '$((RUNS*TIMEOUT+10))' --output '$remote/hy2-server-resource.json' -- '$remote/hysteria' server -c '$remote/hy2-server.yaml' >'$remote/hy2-server.log' 2>&1 </dev/null & echo \$! >>'$remote/pids'"
 require_remote_listener udp "$LAB_REMOTE_BIND_ADDRESS" "${ports[1]}" 200 "" hy2-server-readiness
 run_client(){
- local impl=$1 run_no=$2 owned_port=$3 cmd=$4 raw stats row resource diagnostics rc
+ local impl=$1 run_no=$2 owned_port=$3 cmd=$4 raw stats row resource diagnostics bundle started_at ended_at rc
  raw=$run/raw.json; stats=$run/stats.jsonl; row=$run/record.json; resource=$run/$impl-client-$run_no-resource.json
  : >"$raw"; : >"$stats"; failure_stage="$impl-$run_no-client"
+ started_at=$(date -u +%FT%TZ)
  set +e
  run_bounded "$TIMEOUT" /usr/bin/time -a \
    -f '{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":%e,"cpu_user_seconds":%U,"cpu_system_seconds":%S,"rss_kib":%M,"exit_code":%x}' -o "$stats" \
    python3 "$run/process-resource-sampler.py" --experiment-id "$impl-owned-lab-$run_no" --implementation "$impl" --role client --identity "sha256:${client_identity[$impl]}" --application-bytes "$BYTES" --owned-port "$owned_port" --interval-ms 10 --max-seconds "$TIMEOUT" --output "$resource" -- bash -c "$cmd" >"$raw" 2>"$run/client.err"
  rc=$?; set -e
+ ended_at=$(date -u +%FT%TZ)
  diagnostics=$run/client.err; [ "$impl" != hy2 ] || diagnostics=$run/hy2-client-$run_no.log
- python3 "$validator" make-sample --implementation "$impl" --run "$run_no" --return-code "$rc" --time "$stats" --resource "$resource" --client-output "$raw" --client-diagnostics "$diagnostics" --bytes "$BYTES" --payload-hash "$payload_hash" --expected-identity "sha256:${client_identity[$impl]}" >"$row"
+ bundle_id=$(printf %s "$out" | sha256sum | awk '{print $1}')
+ bundle=$root/logs/hy2-owned-lab/$bundle_id-$impl-$run_no-private-diagnostic.json
+ python3 "$validator" make-sample --implementation "$impl" --run "$run_no" --return-code "$rc" --time "$stats" --resource "$resource" --client-output "$raw" --client-diagnostics "$diagnostics" --diagnostic-bundle "$bundle" --diagnostic-started-at "$started_at" --diagnostic-ended-at "$ended_at" --diagnostic-stage client_started --bytes "$BYTES" --payload-hash "$payload_hash" --expected-identity "sha256:${client_identity[$impl]}" >"$row"
  atomic_append "$row"
  [ "$(jq -r .failures "$row")" -eq 0 ] || { failure_stage="$impl-$run_no-failed"; blocked "$failure_stage"; }
 }
