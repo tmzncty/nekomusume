@@ -250,3 +250,16 @@ remain preserved and `docs/CHATGPT_HANDOFF.md` was not modified.
 ### HY2 current-line closure (2026-09-04)
 
 The exact `61a6490` post-B C follow-up consumed exactly one new outer wrapper invocation and stopped at local port-range preflight (exit 2). It produced zero VPS deployments, samples, result artifact, comparative statistics, or runtime evidence. The historical bed2940 invocation remains separate (outer=1, local `NEKO_BIN` non-executable); both VPS counts are zero, cleanup residue is zero, and the existing Hysteria service was not touched. The current HY2 line is `BLOCKED_ORCHESTRATION_CURRENT_LINE_HY2`; no historical artifact is rewritten and governance/release flags remain unchanged.
+
+
+### Release-evidence closure index (2026-09-04)
+
+At exact `88f4a6d`, every Era-4 ledger row has one closed classification in `docs/era4-ledger-2026-08-30.json`: `OPEN_READY`, `BLOCKED_IMPLEMENTATION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_ORCHESTRATION_CURRENT_LINE`, or `GOVERNANCE_GATE`.
+
+- `OPEN_READY`: A, B, C, D, E, F, G, H, I, J, L, M, N, O, T (local bounded evidence remains possible; no release claim).
+- `BLOCKED_IMPLEMENTATION`: K (migration-back), R (PLPMTUD integration). NAT/source-endpoint change, live key update and live PMTUD remain implementation-blocked.
+- `BLOCKED_ENVIRONMENT`: IPv6 (no real owned IPv6 path).
+- `BLOCKED_ORCHESTRATION_CURRENT_LINE`: periodic, repeated warm failover, and HY2; the exact `61a6490` HY2 follow-up consumed one outer invocation and stopped at local port-range preflight (exit 2), with no VPS deployment, samples, result, metrics, or runtime evidence.
+- `GOVERNANCE_GATE`: P, S, U, V, W. Release item 3 remains unchecked; natural loss remains unchecked; governance flags remain false/closed as previously recorded.
+
+The historical bed2940 outer invocation (local `NEKO_BIN` preflight) and the exact `61a6490` C outer invocation (local port-range preflight) remain separate, with zero VPS deployments and zero cleanup residue. No historical artifact is rewritten, and no private endpoint, credential, or topology is recorded here.

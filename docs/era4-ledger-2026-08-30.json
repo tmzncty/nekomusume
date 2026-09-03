@@ -1,11 +1,25 @@
 {
   "schema": "nekomusume.era-ledger/v1",
   "ledger": "Era-4",
-  "anchor": {"commit": "7d259af1829a45ace7bffe551834e49ced37193a", "short": "7d259af", "ref_at_creation": "candidate/g0-governance-status-repair6", "observed": "2026-08-30"},
+  "anchor": {
+    "commit": "7d259af1829a45ace7bffe551834e49ced37193a",
+    "short": "7d259af",
+    "ref_at_creation": "candidate/g0-governance-status-repair6",
+    "observed": "2026-08-30"
+  },
   "boundary": {
     "era3": "complete at anchor: M3 TCP/UDP carrier failover and M4 bounded multi-stream, flow-control, scheduler, health/scoring, hysteresis and guarded migration-back candidate work are recorded as evidence-at-commit; this ledger does not reopen their validation.",
     "era4": "planning and evidence coordination after Era-3; release/security/public-network gates remain blocked.",
-    "non_goals": ["security approval", "protocol freeze", "production deployment", "public listener", "0-RTT", "multipath enablement", "FEC enablement", "unbounded soak"]
+    "non_goals": [
+      "security approval",
+      "protocol freeze",
+      "production deployment",
+      "public listener",
+      "0-RTT",
+      "multipath enablement",
+      "FEC enablement",
+      "unbounded soak"
+    ]
   },
   "evidence_classes": {
     "E0": "design/decision record; no executable claim",
@@ -14,30 +28,503 @@
     "E3": "bounded authorized VPS observation; not release evidence",
     "E4": "independent review and release gate evidence (absent at anchor)"
   },
-  "execution_order": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W"],
+  "execution_order": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G",
+    "H",
+    "I",
+    "J",
+    "K",
+    "L",
+    "M",
+    "N",
+    "O",
+    "P",
+    "Q",
+    "R",
+    "S",
+    "T",
+    "U",
+    "V",
+    "W"
+  ],
   "tracks": [
-    {"id":"A","name":"baseline and governance","status":"ready","depends_on":[],"evidence":["E0","E4"],"artifacts":["docs/status.md","docs/decisions.md"]},
-    {"id":"B","name":"wire and frame contract","status":"candidate","depends_on":["A"],"evidence":["E0","E1"],"artifacts":["docs/spec/m0-wire-format.md","docs/spec/m0-wire-corpus.md"]},
-    {"id":"C","name":"session delivery ledger","status":"candidate","depends_on":["B"],"evidence":["E0","E1"],"artifacts":["crates/neko-session/src/lib.rs"]},
-    {"id":"D","name":"crypto and authenticated record","status":"candidate","depends_on":["B","C"],"evidence":["E0","E1"],"artifacts":["crates/neko-crypto/src/lib.rs","docs/research/crypto-dependency-review-2026-08-29.md"]},
-    {"id":"E","name":"UDP carrier","status":"candidate","depends_on":["D"],"evidence":["E1","E2","E3"],"artifacts":["crates/neko-carrier/src/lib.rs","crates/neko-carrier/tests/encrypted_udp_echo.rs"]},
-    {"id":"F","name":"TCP carrier and framing","status":"candidate","depends_on":["D"],"evidence":["E1","E2","E3"],"artifacts":["crates/neko-carrier/src/lib.rs","docs/spec/m3-tcp-failover.md"]},
-    {"id":"G","name":"cross-carrier failover","status":"era3-complete","depends_on":["C","E","F"],"evidence":["E1","E2"],"artifacts":["docs/m3-runtime-contract-2026-08-29.md","docs/vps-failover-success-2026-08-30.md"]},
-    {"id":"H","name":"multi-stream and flow control","status":"era3-complete","depends_on":["C","G"],"evidence":["E1","E2"],"artifacts":["crates/neko-session/src/lib.rs"]},
-    {"id":"I","name":"scheduler fairness","status":"era3-complete","depends_on":["H"],"evidence":["E1","E2"],"artifacts":["crates/neko-carrier/src/lib.rs"]},
-    {"id":"J","name":"health, scoring and hysteresis","status":"era3-complete","depends_on":["G","I"],"evidence":["E1","E2"],"artifacts":["docs/adr/m4-migration-back-state-machine.md"]},
-    {"id":"K","name":"migration-back gate","status":"era3-boundary","depends_on":["J"],"evidence":["E0","E1"],"artifacts":["docs/adr/m4-migration-back-state-machine.md"]},
-    {"id":"L","name":"observability and bounded timelines","status":"in-progress","depends_on":["G","J"],"evidence":["E1","E2","E3"],"artifacts":["docs/status.md","docs/vps-soak-plan-2026-08-30.md","artifacts/repeated-warm-failover/4a2129e-final-typed-negative/result.json","artifacts/periodic-session/60cd40d-start-timeout/result.json","artifacts/periodic-session/00ac2c1-final-transport-exit/result.json","artifacts/periodic-session/00ac2c1-final-transport-exit/ERRATUM-R009.md"]},
-    {"id":"M","name":"deterministic fault and regression harness","status":"ready","depends_on":["G","H"],"evidence":["E1","E2"],"artifacts":["scripts/check.sh","scripts/fuzz-smoke.sh"]},
-    {"id":"N","name":"controlled netns benchmark matrix","status":"candidate","depends_on":["M","K"],"evidence":["E1","E2"],"artifacts":["scripts/bench/run-netns.sh","docs/bench/latest-netns.json"]},
-    {"id":"O","name":"VPS bounded observation","status":"candidate","depends_on":["L","N"],"evidence":["E3"],"artifacts":["docs/vps-experiment-2026-08-29.md","docs/vps-failover-success-2026-08-30.md"]},
-    {"id":"P","name":"reachability matrix","status":"blocked","depends_on":["O"],"evidence":["E3"],"artifacts":["docs/reachability-matrix.md"],"gate":"new authorization required"},
-    {"id":"Q","name":"HY2 comparison","status":"blocked","depends_on":["N","O"],"evidence":["E3","E4"],"artifacts":["docs/bench/hy2-comparison-workload.md"],"gate":"same-line controlled comparison and review required","current_line":"BLOCKED_ORCHESTRATION_CURRENT_LINE_HY2","current_evidence":"61a6490 outer wrapper exit 2 at local port-range preflight; zero VPS deployments/samples/result/comparative statistics/runtime evidence; historical bed2940 outer=1 local NEKO_BIN preflight separate"},
-    {"id":"R","name":"PLPMTUD candidate","status":"candidate","depends_on":["B","E"],"evidence":["E1"],"artifacts":["docs/spec/m2-plpmtud.md"]},
-    {"id":"S","name":"FEC decision gate","status":"blocked","depends_on":["N","R"],"evidence":["E0","E1","E2"],"artifacts":["docs/spec/m2-fec.md"],"gate":"no activation without benefit evidence"},
-    {"id":"T","name":"unreliable datagram boundary","status":"candidate","depends_on":["B","D"],"evidence":["E1"],"artifacts":["docs/spec/m2-unreliable-datagram.md"]},
-    {"id":"U","name":"key update and 0-RTT gates","status":"blocked","depends_on":["D","G"],"evidence":["E0","E1"],"artifacts":["docs/spec/m4-0rtt-gate.md"],"gate":"replay/persistence/security review absent"},
-    {"id":"V","name":"concurrent multipath gate","status":"blocked","depends_on":["G","I","N"],"evidence":["E0","E2","E4"],"artifacts":["docs/spec/m4-concurrent-multipath-gate.md"],"gate":"DSN/reordering/congestion coupling and controlled benefit evidence absent"},
-    {"id":"W","name":"release readiness and independent review","status":"blocked","depends_on":["P","Q","S","U","V"],"evidence":["E4"],"artifacts":["docs/spec/m5-release-readiness-gate.md"],"gate":"research-only boundary at anchor"}
-  ]
+    {
+      "id": "A",
+      "name": "baseline and governance",
+      "status": "ready",
+      "depends_on": [],
+      "evidence": [
+        "E0",
+        "E4"
+      ],
+      "artifacts": [
+        "docs/status.md",
+        "docs/decisions.md"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "B",
+      "name": "wire and frame contract",
+      "status": "candidate",
+      "depends_on": [
+        "A"
+      ],
+      "evidence": [
+        "E0",
+        "E1"
+      ],
+      "artifacts": [
+        "docs/spec/m0-wire-format.md",
+        "docs/spec/m0-wire-corpus.md"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "C",
+      "name": "session delivery ledger",
+      "status": "candidate",
+      "depends_on": [
+        "B"
+      ],
+      "evidence": [
+        "E0",
+        "E1"
+      ],
+      "artifacts": [
+        "crates/neko-session/src/lib.rs"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "D",
+      "name": "crypto and authenticated record",
+      "status": "candidate",
+      "depends_on": [
+        "B",
+        "C"
+      ],
+      "evidence": [
+        "E0",
+        "E1"
+      ],
+      "artifacts": [
+        "crates/neko-crypto/src/lib.rs",
+        "docs/research/crypto-dependency-review-2026-08-29.md"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "E",
+      "name": "UDP carrier",
+      "status": "candidate",
+      "depends_on": [
+        "D"
+      ],
+      "evidence": [
+        "E1",
+        "E2",
+        "E3"
+      ],
+      "artifacts": [
+        "crates/neko-carrier/src/lib.rs",
+        "crates/neko-carrier/tests/encrypted_udp_echo.rs"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "F",
+      "name": "TCP carrier and framing",
+      "status": "candidate",
+      "depends_on": [
+        "D"
+      ],
+      "evidence": [
+        "E1",
+        "E2",
+        "E3"
+      ],
+      "artifacts": [
+        "crates/neko-carrier/src/lib.rs",
+        "docs/spec/m3-tcp-failover.md"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "G",
+      "name": "cross-carrier failover",
+      "status": "era3-complete",
+      "depends_on": [
+        "C",
+        "E",
+        "F"
+      ],
+      "evidence": [
+        "E1",
+        "E2"
+      ],
+      "artifacts": [
+        "docs/m3-runtime-contract-2026-08-29.md",
+        "docs/vps-failover-success-2026-08-30.md"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "H",
+      "name": "multi-stream and flow control",
+      "status": "era3-complete",
+      "depends_on": [
+        "C",
+        "G"
+      ],
+      "evidence": [
+        "E1",
+        "E2"
+      ],
+      "artifacts": [
+        "crates/neko-session/src/lib.rs"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "I",
+      "name": "scheduler fairness",
+      "status": "era3-complete",
+      "depends_on": [
+        "H"
+      ],
+      "evidence": [
+        "E1",
+        "E2"
+      ],
+      "artifacts": [
+        "crates/neko-carrier/src/lib.rs"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "J",
+      "name": "health, scoring and hysteresis",
+      "status": "era3-complete",
+      "depends_on": [
+        "G",
+        "I"
+      ],
+      "evidence": [
+        "E1",
+        "E2"
+      ],
+      "artifacts": [
+        "docs/adr/m4-migration-back-state-machine.md"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "K",
+      "name": "migration-back gate",
+      "status": "era3-boundary",
+      "depends_on": [
+        "J"
+      ],
+      "evidence": [
+        "E0",
+        "E1"
+      ],
+      "artifacts": [
+        "docs/adr/m4-migration-back-state-machine.md"
+      ],
+      "classification": "BLOCKED_IMPLEMENTATION",
+      "classification_basis": "new implementation/architecture and corresponding deterministic/live evidence"
+    },
+    {
+      "id": "L",
+      "name": "observability and bounded timelines",
+      "status": "in-progress",
+      "depends_on": [
+        "G",
+        "J"
+      ],
+      "evidence": [
+        "E1",
+        "E2",
+        "E3"
+      ],
+      "artifacts": [
+        "docs/status.md",
+        "docs/vps-soak-plan-2026-08-30.md",
+        "artifacts/repeated-warm-failover/4a2129e-final-typed-negative/result.json",
+        "artifacts/periodic-session/60cd40d-start-timeout/result.json",
+        "artifacts/periodic-session/00ac2c1-final-transport-exit/result.json",
+        "artifacts/periodic-session/00ac2c1-final-transport-exit/ERRATUM-R009.md"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "M",
+      "name": "deterministic fault and regression harness",
+      "status": "ready",
+      "depends_on": [
+        "G",
+        "H"
+      ],
+      "evidence": [
+        "E1",
+        "E2"
+      ],
+      "artifacts": [
+        "scripts/check.sh",
+        "scripts/fuzz-smoke.sh"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "N",
+      "name": "controlled netns benchmark matrix",
+      "status": "candidate",
+      "depends_on": [
+        "M",
+        "K"
+      ],
+      "evidence": [
+        "E1",
+        "E2"
+      ],
+      "artifacts": [
+        "scripts/bench/run-netns.sh",
+        "docs/bench/latest-netns.json"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "O",
+      "name": "VPS bounded observation",
+      "status": "candidate",
+      "depends_on": [
+        "L",
+        "N"
+      ],
+      "evidence": [
+        "E3"
+      ],
+      "artifacts": [
+        "docs/vps-experiment-2026-08-29.md",
+        "docs/vps-failover-success-2026-08-30.md"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "P",
+      "name": "reachability matrix",
+      "status": "blocked",
+      "depends_on": [
+        "O"
+      ],
+      "evidence": [
+        "E3"
+      ],
+      "artifacts": [
+        "docs/reachability-matrix.md"
+      ],
+      "gate": "new authorization required",
+      "classification": "GOVERNANCE_GATE",
+      "classification_basis": "independent review, authorization, or maintainer value judgment before promotion"
+    },
+    {
+      "id": "Q",
+      "name": "HY2 comparison",
+      "status": "blocked",
+      "depends_on": [
+        "N",
+        "O"
+      ],
+      "evidence": [
+        "E3",
+        "E4"
+      ],
+      "artifacts": [
+        "docs/bench/hy2-comparison-workload.md"
+      ],
+      "gate": "same-line controlled comparison and review required",
+      "current_line": "BLOCKED_ORCHESTRATION_CURRENT_LINE_HY2",
+      "current_evidence": "61a6490 outer wrapper exit 2 at local port-range preflight; zero VPS deployments/samples/result/comparative statistics/runtime evidence; historical bed2940 outer=1 local NEKO_BIN preflight separate",
+      "classification": "BLOCKED_ORCHESTRATION_CURRENT_LINE",
+      "classification_basis": "a new reviewed orchestration boundary; do not retry this closed line",
+      "evidence_needed": "No unchanged retry; only a new reviewed same-line controlled comparison can change this classification.",
+      "requires": "new orchestration boundary and exact-head review"
+    },
+    {
+      "id": "R",
+      "name": "PLPMTUD candidate",
+      "status": "candidate",
+      "depends_on": [
+        "B",
+        "E"
+      ],
+      "evidence": [
+        "E1"
+      ],
+      "artifacts": [
+        "docs/spec/m2-plpmtud.md"
+      ],
+      "classification": "BLOCKED_IMPLEMENTATION",
+      "classification_basis": "new implementation/architecture and corresponding deterministic/live evidence"
+    },
+    {
+      "id": "S",
+      "name": "FEC decision gate",
+      "status": "blocked",
+      "depends_on": [
+        "N",
+        "R"
+      ],
+      "evidence": [
+        "E0",
+        "E1",
+        "E2"
+      ],
+      "artifacts": [
+        "docs/spec/m2-fec.md"
+      ],
+      "gate": "no activation without benefit evidence",
+      "classification": "GOVERNANCE_GATE",
+      "classification_basis": "independent review, authorization, or maintainer value judgment before promotion"
+    },
+    {
+      "id": "T",
+      "name": "unreliable datagram boundary",
+      "status": "candidate",
+      "depends_on": [
+        "B",
+        "D"
+      ],
+      "evidence": [
+        "E1"
+      ],
+      "artifacts": [
+        "docs/spec/m2-unreliable-datagram.md"
+      ],
+      "classification": "OPEN_READY",
+      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+    },
+    {
+      "id": "U",
+      "name": "key update and 0-RTT gates",
+      "status": "blocked",
+      "depends_on": [
+        "D",
+        "G"
+      ],
+      "evidence": [
+        "E0",
+        "E1"
+      ],
+      "artifacts": [
+        "docs/spec/m4-0rtt-gate.md"
+      ],
+      "gate": "replay/persistence/security review absent",
+      "classification": "GOVERNANCE_GATE",
+      "classification_basis": "independent review, authorization, or maintainer value judgment before promotion"
+    },
+    {
+      "id": "V",
+      "name": "concurrent multipath gate",
+      "status": "blocked",
+      "depends_on": [
+        "G",
+        "I",
+        "N"
+      ],
+      "evidence": [
+        "E0",
+        "E2",
+        "E4"
+      ],
+      "artifacts": [
+        "docs/spec/m4-concurrent-multipath-gate.md"
+      ],
+      "gate": "DSN/reordering/congestion coupling and controlled benefit evidence absent",
+      "classification": "GOVERNANCE_GATE",
+      "classification_basis": "independent review, authorization, or maintainer value judgment before promotion"
+    },
+    {
+      "id": "W",
+      "name": "release readiness and independent review",
+      "status": "blocked",
+      "depends_on": [
+        "P",
+        "Q",
+        "S",
+        "U",
+        "V"
+      ],
+      "evidence": [
+        "E4"
+      ],
+      "artifacts": [
+        "docs/spec/m5-release-readiness-gate.md"
+      ],
+      "gate": "research-only boundary at anchor",
+      "classification": "GOVERNANCE_GATE",
+      "classification_basis": "independent review, authorization, or maintainer value judgment before promotion"
+    }
+  ],
+  "closure": {
+    "schema": "nekomusume.era4-release-evidence-closure.v1",
+    "classified_at_commit": "88f4a6d414ff94df260d5c4ed6f4be8348090c98",
+    "handoff_sha256": "6de20f52b7d7faa7c43961ba64b2e00ac8076385a83219cd5462966daff066a4",
+    "allowed_classifications": [
+      "BLOCKED_ENVIRONMENT",
+      "BLOCKED_IMPLEMENTATION",
+      "BLOCKED_ORCHESTRATION_CURRENT_LINE",
+      "GOVERNANCE_GATE",
+      "OPEN_READY"
+    ],
+    "open_ready_rows": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "H",
+      "I",
+      "J",
+      "L",
+      "M",
+      "N",
+      "O",
+      "T"
+    ],
+    "notes": {
+      "item_3": "unchecked; no release/performance/superiority claim",
+      "natural_loss": "unchecked",
+      "periodic": "BLOCKED_ORCHESTRATION_CURRENT_LINE",
+      "repeated_warm_failover": "BLOCKED_ORCHESTRATION_CURRENT_LINE",
+      "hy2": "BLOCKED_ORCHESTRATION_CURRENT_LINE",
+      "nat_migration_key_update_pmtud": "BLOCKED_IMPLEMENTATION",
+      "ipv6": "BLOCKED_ENVIRONMENT",
+      "governance": "GOVERNANCE_GATE; release_candidate=false; production_ready=false; freeze=false; released=false"
+    }
+  }
 }
