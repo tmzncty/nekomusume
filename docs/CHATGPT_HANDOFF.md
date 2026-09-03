@@ -1,205 +1,282 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-03 17:00 Asia/Shanghai
-Repository HEAD reviewed: `12941fabb4726c99d98cd7f225e5b236564c7bb6`
+Checked at: 2026-09-03 17:05 Asia/Shanghai
+Repository HEAD reviewed: `61820255505b03c79a58b45bdce256aedca1b8e8`
+Latest coding/evidence HEAD: `12941fabb4726c99d98cd7f225e5b236564c7bb6`
 Previous reviewed implementation HEAD: `3d545859e06690c528a717015c9b7023d05ea420`
-Previous reviewer handoff commit: `4607c752c9ba8051fa7eb54c88b4d31c749ebe89`
+Previous reviewer handoff commit: `61820255505b03c79a58b45bdce256aedca1b8e8`
 
 ## What changed
 
-The latest coding-agent result is the exact-`3d54585` HY2/Nekomusume paid attempt retained by `12941fa`.
+`12941fa` retained the exact-`3d54585` HY2/Nekomusume owned-lab attempt and reconciled status/evidence. It is evidence/docs only; it does not change Nekomusume wire, Session, Noise or failover semantics.
 
-The attempt made real progress but did not produce a comparison:
+The retained attempt is a valid negative:
 
-- `nekomusume-1` completed successfully with the 1,200-byte deterministic payload;
-- `hy2-1` exited with `client_exit` and zero application bytes;
-- the overall result is `BLOCKED_HARNESS` at `hy2-1-failed`;
-- there are no complete pairs and therefore no comparative median/P95 or superiority evidence;
-- automatic cleanup was conservatively recorded failed only because `remote_process_groups_reaped=false`, while listeners were zero, remote temp removal/local cleanup succeeded, and later serialized postchecks found no experiment residue without rewriting the original artifact.
+- deterministic payload prepared: 1,200 bytes;
+- `nekomusume-1` succeeded;
+- `hy2-1` failed with generic `client_exit` and zero application bytes;
+- overall status: `BLOCKED_HARNESS` at `hy2-1-failed`;
+- no complete pair, no comparative median/P95, no superiority result;
+- automatic cleanup stayed fail-closed because `remote_process_groups_reaped=false`; listeners were zero, remote temp/local cleanup succeeded, and later serialized postchecks observed no residue without rewriting the original artifact.
 
-The retained HY2 artifact does **not** include enough durable failure-cause detail to distinguish the HY2 client exit into a concrete QUIC/TLS/auth/config/path class. It records `client_exit`, exit code, timing/resource fields and the valid sample prefix, but not a sufficiently specific transport/client error reason.
+`6182025` correctly changed scheduling policy: HY2 is no longer the sole release-evidence critical path. This review tightens that direction using current code/evidence facts so the coding agent does not spend another cycle merely auditing labels.
 
-This reveals the current process problem: the repository has spent many review/repair cycles on one HY2 benchmark gate (admission, SSH preflight, evidence deadline, listener readiness, result validation, cleanup, then client exit), while the release-evidence matrix contains other independent READY or directly-unlockable rows. `IMPLEMENTATION_PLAN.md` explicitly says a blocked network row must not block independent work.
+Concrete executable-surface findings at current HEAD:
+
+1. **Repeated cross-process warm failover/recovery is READY_LIVE.** The CLI contains a real `failover` runtime. Exact `25e0daa` already proves one self-owned cross-host controlled application-level UDP reply-cessation warm fallback with 3/3 logical records, two uncertain/replayed ranges, duplicate/lost 0 and about 434 ms failure-decision-to-first-resumed-data. `docs/era4-e-resilience.md` explicitly lists repeated cross-process failover/recovery as remaining backlog.
+2. **A longer bounded periodic Session is READY_LIVE.** `periodic-*` supports one authenticated TCP Session up to 600 s, but the accepted real VPS evidence is only one approximately five-minute sample. A longer application window with cleanup reserve can answer a distinct bounded resilience question.
+3. **Generic repeated TCP/UDP open/exchange/close is already substantially covered.** The repository has an accepted 14/14 alternating replacement-lifecycle sample; do not rerun generic lifecycle merely to create activity.
+4. **Live key update is not READY.** CLI capabilities still classify `key-update` as `fixture`, not a live Session runtime command.
+5. **Live PMTUD is not READY.** `plpmtud` remains bounded state/test evidence with no live/public probe path recorded in status.
+6. **Live migration-back is not yet demonstrated.** Carrier Manager migration-back gates/tests exist, but current evidence does not establish an executable live migration-back VPS row.
+7. **IPv6 remains BLOCKED_ENVIRONMENT.** No owned end-to-end IPv6 path is currently demonstrated.
+8. **HY2 diagnosis is incomplete.** The benchmark script writes HY2 transport output to temporary logs and wrapper stderr to temporary files, while the retained artifact only carries the generic `client_exit` class. A future paid retry needs materially better sanitized failure attribution first.
 
 ## Review verdict
 
-**SAFE_TO_CONTINUE — stop treating HY2 as the release-matrix primary; pivot mainline to other VPS evidence while making HY2 diagnosis self-contained**
+**SAFE_TO_CONTINUE — stop HY2 single-gate thrash; immediately spend the VPS window on repeated failover and longer periodic resilience, then repair HY2 observability as a side track**
 
-The project is not globally blocked. HY2 comparison remains an open matrix row, but it is now a **side diagnostic track**, not the main scheduler gate.
+The project is not globally blocked. The recent slowdown came from repeatedly serializing the entire work queue behind one HY2 benchmark row.
 
-Do not perform another paid HY2 retry until the harness can preserve a useful sanitized client/server failure reason or path classification from one invocation. Do not spend another full review cycle only on cleanup bookkeeping unless a new cleanup defect can actually leave owned resources behind.
-
-The VPS rental window is time-limited. Mainline work must now advance a different release-evidence row or the smallest implementation seam that unlocks one.
+The coding agent may execute A -> B -> C -> D in one overall work package without waiting for another reviewer handoff, provided each dependency/gate is green and no new correctness/security blocker appears.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains the bounded research baseline.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
-- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain correct.
-- Exact `25e0daa` controlled application-level UDP reply-cessation warm fallback remains one bounded positive cross-host failover result; it is not natural packet-loss/PTO blackhole evidence.
-- Exact `25e0daa` periodic direct-path run remains one approximately five-minute positive sample; it is not a general long-lived reliability result.
-- Exact `3d54585` HY2 attempt proves only a valid two-sample prefix: Nekomusume success then HY2 `client_exit`. It is not comparative performance evidence.
-- The later post-run cleanup observations do not retroactively change the artifact's conservative cleanup failure.
-- IPv6 remains environment-blocked unless a genuinely owned end-to-end IPv6 path exists.
-- Natural UDP degradation/PTO-blackhole, NAT/source-endpoint change, live migration-back, real-session key update and live PMTUD remain open unless current runtime/CLI surfaces can demonstrate them truthfully.
-- HY2 comparison remains open, but one row may be blocked without blocking the rest of the release-evidence matrix.
+- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain correct.
+- Exact `12941fa` is evidence/status work; the paid run itself belongs to exact baseline `3d54585`.
+- The incomplete HY2 pair is not comparative evidence.
+- Exact `25e0daa` controlled warm fallback is one positive bounded cross-host result, not natural Internet packet-loss/PTO-blackhole evidence.
+- Exact `25e0daa` five-minute periodic result is one positive bounded sample, not a production long-lived reliability conclusion.
+- Existing 14/14 alternating replacement lifecycle evidence should not be duplicated without a new question.
+- Fixture/model capabilities must not be promoted to live WAN evidence.
+- Standing authorization already covers the self-owned bounded TCP/UDP work below; no per-run approval is required.
 
-## Work Package — Release Matrix Diversification + HY2 Observability Side Track
+## Work Package — VPS Resilience Harvest + HY2 Diagnostic Side Track
 
-### Primary A — Audit and execute the next non-HY2 VPS-only release-evidence row
+### Primary A — Repeated cross-process warm failover/recovery VPS batch
 
 **Goal**
 
-Use the rented VPS for a different high-value release-evidence question instead of continuing HY2 harness thrash.
+Produce bounded repeatability evidence for the existing real failover runtime, using the same truthful semantic class as the accepted D064 warm result, without changing protocol semantics and without relabelling a controlled application fault as a natural WAN blackhole.
 
-**Required first step: executable-surface audit**
+**Use the existing accepted runtime path**
 
-Inspect the current CLI/runtime/tests/events and classify each candidate below as:
+Each cycle should exercise:
 
 ```text
-READY_LIVE
-BLOCKED_IMPLEMENTATION
-BLOCKED_ENVIRONMENT
-ALREADY_SUFFICIENT_FOR_CURRENT_BOUNDARY
+UDP canonical negotiation + Noise authentication
+-> at least one logical record confirmed on UDP
+-> controlled application-level UDP reply cessation / health-failure seam
+-> pre-established warm TCP canonical negotiation + Noise + resume binding
+-> three authenticated readiness proofs with live admission
+-> atomic promotion
+-> replay UNCERTAIN logical ranges on TCP
+-> authenticated DeliveryAck confirmation
+-> complete Session application accounting
 ```
 
-Candidates, in priority order:
+Do not use production firewall/route/qdisc changes. Do not substitute netem and then call it real-WAN evidence.
 
-1. genuine NAT/source-endpoint change;
-2. real-session migration-back after carrier recovery;
-3. real-session key update on a live authenticated Session;
-4. live-path PMTUD observation;
-5. repeated real-socket lifecycle/open-exchange-close with a scientifically distinct question from the accepted five-minute periodic row;
-6. natural/transport-level UDP degradation -> TCP fallback if a real loss/PTO/blackhole seam exists that is not the already-accepted application-level reply-cessation seam.
+**Batch profile**
 
-Do not choose by label alone. A fixture/state-model/API without a live executable path is `BLOCKED_IMPLEMENTATION`, not VPS evidence.
+- self-owned client + owned VPS only;
+- exact current executable HEAD/binary identity recorded;
+- one orchestrated lab invocation;
+- **6 sequential fresh server/client process cycles**;
+- concurrency 1;
+- small count/payload comparable to the accepted D064 row;
+- fresh or safely reused sequential unprivileged experiment ports within standing authorization;
+- total lab wall clock including cleanup comfortably below 10 minutes;
+- no retry of a failing cycle inside the same batch.
 
-**If any candidate is READY_LIVE:**
+If no repeated runner exists, add only the smallest orchestrator/result adapter necessary. Do not redesign Session/failover behavior.
 
-Execute exactly one bounded self-owned VPS experiment under standing authorization, with:
+**Per-cycle evidence**
 
-- exact git/binary identity;
-- actual parameters;
-- experiment ID;
-- structured events/logs;
-- CPU/RSS/FD/socket metrics where meaningful;
-- cleanup verification;
-- explicit statement of what the run does and does not prove.
+Require at least:
 
-Stay within the standing 10-minute / 256 MiB / 32-session boundary. Preserve negative results.
+- cycle index, parameters, exact commit/binary identity;
+- selected version/authenticated resume/readiness completion;
+- UDP-confirmed records/bytes before failure;
+- UNCERTAIN records/bytes at promotion;
+- replayed records/bytes on TCP;
+- confirmed/duplicate/lost/conflicting application delivery counts;
+- failure-decision and first-resumed-data/ack timestamps when available;
+- cycle exit/result;
+- CPU/RSS/FD/socket/process metrics when current sampler attribution is truthful;
+- cleanup state.
 
-**If none is READY_LIVE:**
+The batch artifact must preserve a valid successful prefix if a later cycle fails. A failed cycle is evidence, not a reason to erase cycles 1..N.
 
-Implement the **smallest local runtime/instrumentation seam** that directly unlocks the highest-priority candidate. This is allowed to be code work, but it must be narrowly tied to one named release-evidence row. Add deterministic tests, run the normal gates, push, and if the row becomes READY_LIVE in the same package, execute one bounded VPS run immediately.
+**Regression/gate**
 
-Do not invent a new protocol feature merely to create work.
+If a new orchestrator/schema is introduced, add deterministic tests for:
 
-### Follow-up B — HY2 failure-cause observability repair, no paid retry yet
+- all-six success aggregation;
+- middle-cycle failure preserving the preceding rows;
+- missing/duplicate/lost/uncertain/replayed fields fail closed;
+- cleanup failure remains failure;
+- classification cannot claim natural blackhole/PTO;
+- result structure contains no required secret/address material.
 
-**Dependency:** Primary A has either produced one new VPS row or a concrete smallest unlock seam.
+Run `scripts/check.sh` and `git diff --check`; fuzz only if production network-input/parser/wire behavior changes. If executable harness code changes materially, use exact-head green CI before the real VPS batch.
 
-Repair the HY2 benchmark evidence contract so the next `client_exit` is diagnosable without another reviewer round.
+**Completion definition**
 
-The next blocked artifact must be able to preserve a **sanitized bounded diagnostic** such as:
+Retain either:
 
-- HY2 client exit code;
-- normalized failure class (`dns`, `connect`, `quic_handshake`, `tls_pin`, `auth`, `local_forward`, `application_echo`, `timeout`, `unknown_client_exit`);
-- a short redacted stderr/log digest or hash plus a safe bounded excerpt that contains no endpoint address, password, certificate private material or private topology;
-- whether client UDP packets were observed leaving;
-- whether they reached the VPS experiment port;
-- whether server responses were observed;
-- whether responses returned;
-- HY2 server/client log stage where available.
+- six successful sequential warm failover/recovery cycles with bounded descriptive aggregate data; or
+- a typed partial/negative batch retaining all preceding rows and the first failure.
 
-The contract must fail closed: if detailed logs cannot be retained safely, classify `unknown_client_exit` rather than dropping the error entirely.
+Do not turn six successes into a general reliability rate or production claim.
 
-Add deterministic regressions for at least:
+### Follow-up B — Longer bounded periodic direct-path Session
 
-- HY2 client exits before payload;
-- TLS/auth-style stderr classification;
-- timeout/path-style classification;
-- secret/address redaction;
-- blocked artifact still contains no comparative summary.
+**Dependency:** A complete or honestly retained as a typed partial/negative. Independent of HY2.
 
-Do not change Nekomusume wire/Session/Noise semantics for this task.
+Use the already-implemented `periodic-*` live runtime for a second, longer bounded real-session sample.
 
-### Follow-up C — Reconcile release-matrix status after Primary A
+Recommended profile:
 
-**Dependency:** A complete, positive or negative.
+```text
+one authenticated TCP Session
+application phase: about 480 s
+interval: 5 s
+about 96 records
+payload: 32 B/record
+concurrency: 1
+```
 
-Update `docs/status.md`, `IMPLEMENTATION_PLAN.md`, `ROADMAP.md` and the appropriate compact evidence note/index so the matrix reflects:
+Choose exact setup/application values so the **complete** experiment, including readiness/setup and cleanup, remains below the standing 10-minute limit. Do not use a full 600-second application phase if that consumes the cleanup reserve.
 
-- the exact new non-HY2 row result or exact `BLOCKED_IMPLEMENTATION` seam;
-- the existing D064/periodic evidence without overclaim;
-- the latest HY2 `client_exit` as a retained negative;
-- HY2 still open but no longer treated as the sole next executable release task.
+Record exact commit/binary identity, actual timestamps/parameters, records/bytes, confirmed/missing/duplicate/conflict counts, confirmation latency data already supported by the evidence contract, CPU/RSS/FD/socket/process metrics, exits and cleanup.
 
-Do not erase historical negatives. Do not change governance flags.
+This answers only whether the current authenticated direct-path Session survives a longer bounded window than the accepted five-minute sample. It is not production long-term stability or a rate estimate.
 
-### Follow-up D — Only if HY2 observability is now materially better, permit one later changed-hypothesis retry
+Do not rerun the old five-minute condition unchanged.
 
-**Dependency:** B complete, full local gate green, and exact-head CI green.
+### Follow-up C — HY2 side track: preserve a useful sanitized failure reason before another paid retry
 
-A new paid HY2 attempt is allowed only if at least one diagnostic variable materially changed and the next failure would produce more information than `client_exit` alone.
+**Dependency:** A complete; B may run before or after C. C must not block A/B.
 
-If retried:
+The current script already creates temporary HY2 client logs and wrapper stderr, but the committed blocked artifact collapses the result to `client_exit`. Repair the evidence contract so a future failure is materially more informative without committing private endpoint/config/auth material.
 
-- exactly one substantive invocation;
-- same fair-lifecycle/security contract;
-- unique artifact path;
-- bounded packet-direction observation if needed;
-- complete pairs only may enter comparison statistics;
-- on failure, retain the richer diagnostic and then stop HY2 again rather than opening another immediate repair/retry loop.
+Add a bounded allowlisted diagnostic classification grounded in observable control-flow/log states. Example classes (adjust to actual implementation evidence):
 
-HY2 must not preempt another READY VPS-only release row merely because it is unfinished.
+```text
+forward_listener_not_ready
+quic_or_path_timeout
+tls_or_pin_failure
+auth_failure
+config_failure
+transport_exited_after_ready
+application_echo_failure
+transport_exit_unclassified
+```
 
-### Follow-up E — Begin independent release/security review prep in parallel with blocked environment rows
+At minimum preserve safely:
 
-**Dependency:** A/C complete; lower priority than VPS-only evidence but no longer wait for every network row if some are environment-blocked.
+- transport exit code;
+- last successful harness stage;
+- sanitized failure class;
+- whether forwarding listener became ready;
+- whether application echo began;
+- optional SHA-256 of the raw ephemeral diagnostic log for provenance;
+- packet-direction/capture metadata only when a future run actually gathers it.
 
-Prepare a bounded internal pre-review package for the later independent review:
+Do not commit free-form raw logs containing endpoint addresses, generated auth, cert/key paths or private topology. Prefer an allowlisted parser/classifier plus hash. Unknown failures must remain `transport_exit_unclassified`, not fabricated certainty.
 
-- resource/abuse limits map;
-- compatibility/version policy evidence;
-- package rollback/readiness evidence;
-- canonical vector/freeze references;
+Add deterministic regressions for transport exit before listener readiness, listener-ready then application failure, recognizable TLS/auth/config/timeout text, unknown exit, and secret/address-shaped redaction. Blocked artifacts must still contain no comparative summary.
+
+Run full local gate and exact-head CI after this change.
+
+**Retry rule:** C completion alone does not force an immediate HY2 paid retry. A later retry is permitted only if the new instrumentation gives a genuinely new diagnostic variable/hypothesis. HY2 is no longer the project-wide critical path.
+
+### Follow-up D — Reconcile resilience status and name the next smallest release unlock
+
+**Dependency:** A/B complete; C may be complete or in progress.
+
+Update only from actual evidence:
+
+- `docs/era4-e-resilience.md`: repeated cross-process failover/recovery becomes positive only if A really supports it;
+- `docs/status.md`: add A/B exact evidence and boundaries;
+- `IMPLEMENTATION_PLAN.md` / `ROADMAP.md`: keep the full release-evidence matrix unchecked unless its declared rows are actually satisfied; controlled application reply cessation remains distinct from natural UDP degradation.
+
+Then record a code-backed blocker matrix for:
+
+```text
+NAT/source-endpoint change
+live migration-back
+live key update
+live PMTUD
+IPv6
+HY2 comparison
+```
+
+Use exact statuses such as `READY_LIVE`, `BLOCKED_IMPLEMENTATION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_DIAGNOSTICS`.
+
+Current evidence already indicates key-update is fixture-only, PLPMTUD has no live probe, migration-back is not yet demonstrated live, and IPv6 is environment-blocked. Confirm current code before finalizing those labels.
+
+If one remaining row is unexpectedly `READY_LIVE`, execute one bounded VPS row immediately in the same package. If none is live, choose the **smallest direct implementation/instrumentation seam** that unlocks the highest-value row as the next coding slice. Do not open unrelated experimental features.
+
+### Optional stretch E — Independent release/security review preparation
+
+**Dependency:** A/D complete; lower priority than VPS-only evidence.
+
+Prepare a compact internal pre-review map covering:
+
+- resource/abuse limits and evidence locations;
+- version/compatibility policy;
+- package install/upgrade/rollback/readiness evidence;
+- canonical corpus/freeze references;
 - operator lifecycle/cleanup evidence;
-- list of unresolved release-matrix rows with precise status (`positive`, `negative`, `blocked implementation`, `blocked environment`, `open comparison`).
+- every remaining matrix row labelled positive / negative / blocked implementation / blocked environment / blocked diagnostics.
 
-This is preparation, not an independent security review and not RC approval.
+This is preparation only, not an independent security review or RC approval.
 
 ## Fallback
 
-If the executable-surface audit shows every non-HY2 network row is truly blocked by missing runtime support:
+If A reveals a genuine Nekomusume runtime correctness defect rather than an orchestration/evidence defect:
 
-1. rank the missing seams by smallest implementation cost and highest VPS evidence value;
-2. implement only the first direct unlock seam;
-3. do not spend the hour polishing HY2 unless the HY2 observability repair is demonstrably smaller and will produce a materially more informative next run;
-4. continue local release/security-review preparation rather than idling.
+1. retain the first failing cycle/minimal reproducer;
+2. stop additional resilience claims;
+3. repair correctness first with deterministic tests;
+4. run parser/fuzz gates if network-input/wire behavior changes;
+5. rerun A only after material implementation change.
 
-If a candidate requires new credentials, another server, third-party access, production route/firewall/qdisc changes or anything outside standing authorization, mark only that row blocked and continue the next row.
+If A is blocked only by a harness defect, retain the partial result, repair that exact harness issue, and continue B while the repair proceeds. Do not freeze the whole project.
+
+If B fails, preserve the negative and continue C/D; do not mechanically repeat it.
+
+If future HY2 diagnostics prove a provider/path block requiring production firewall/route changes or anything outside standing authorization, leave HY2 blocked and continue other release work.
 
 ## Completion gates
 
-- HY2 is no longer the sole scheduler gate for release evidence;
-- at least one non-HY2 release-evidence row is either executed on VPS or reduced to a concrete `BLOCKED_IMPLEMENTATION` + smallest direct unlock seam;
-- no fixture/state-model result is promoted to live evidence;
-- HY2 next-failure observability can preserve a safe concrete reason beyond bare `client_exit`, or it remains explicitly blocked for diagnosis without consuming repeated paid attempts;
-- status/plan/roadmap reflect the diversified release matrix truthfully;
-- standing authorization is used directly for in-scope VPS work;
-- governance flags remain unchanged.
+- the project does not return to HY2-only scheduling;
+- one repeated cross-process warm failover/recovery VPS batch is executed or retained as a typed partial negative;
+- one longer bounded periodic Session sample is executed or retained as a typed negative;
+- no unchanged WAN failure is rerun;
+- HY2 next-failure evidence can preserve a safe useful reason beyond bare `client_exit` before another retry;
+- remaining release rows are each backed by live evidence or an exact implementation/environment/diagnostic blocker with the smallest unlock named;
+- all experiments stay within standing authorization and record cleanup;
+- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 
 ## Do not expand into
 
-- repeated unchanged HY2 paid attempts;
-- endless cleanup/preflight micro-polish that does not change experimental information value;
-- third-party targets, scanning or production network changes;
-- enabled FEC, 0-RTT, striping/aggregation or exotic carriers without an observed-problem gate;
-- declaring RC/security/production readiness from bounded self-owned evidence;
-- treating environment-blocked IPv6 as a reason to stop unrelated work.
+- another immediate opaque HY2 retry;
+- repeating already accepted generic lifecycle evidence without a new question;
+- changing Nekomusume wire/Session/Noise semantics for benchmark convenience;
+- calling controlled reply cessation natural Internet blackhole/PTO evidence;
+- claiming production stability from bounded 5-8 minute samples;
+- promoting fixture-only key-update/PLPMTUD/manager behavior to live WAN evidence;
+- third-party targets, scanning or production firewall/route/qdisc/DNS/proxy/tunnel changes;
+- >10-minute single experiments or mechanically split long soaks;
+- enabled FEC, 0-RTT, striping/aggregation or exotic carriers without an observed-problem gate.
 
 ## Questions requiring maintainer decision
 
 none.
 
-The slowdown was caused by scheduling concentration on one benchmark row, not by a global project blocker. This handoff intentionally restores the release-evidence matrix as a multi-row queue and prioritizes evidence value per remaining VPS rental day.
+Standing authorization covers A, B and any genuinely READY bounded self-owned TCP/UDP row discovered in D. HY2 remains a diagnostic side track until its next failure can be attributed materially better than `client_exit`.
