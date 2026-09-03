@@ -13,10 +13,8 @@ DIAGNOSTIC_CATEGORIES = {
     "readiness": re.compile(r"\b(not ready|readiness|listener|failed to listen|address already in use)\b", re.I),
 }
 LIFECYCLE_STAGES = ("server_bound", "client_started", "quic_udp", "tls_authenticated")
-LIFECYCLE_PATTERNS = (
-    ("tls_authenticated", re.compile(r"\b(authenticated|authentication succeeded|connected to server|login succeeded)\b", re.I)),
-    ("quic_udp", re.compile(r"\b(quic|udp|initial packet|connection established|handshake response)\b", re.I)),
-)
+STAGE_EVIDENCE_SCHEMA = "nekomusume.hy2-stage-evidence.v1"
+STAGE_EVIDENCE_SOURCES = {"harness", "capture"}
 SECRET_PATTERNS = (
     re.compile(r"(?i)\b(password|credential|token|secret|authorization|pinsha256|private[_ -]?key)\s*[:=]\s*\S+"),
     re.compile(r"(?i)\b(?:https?|quic|udp|tcp)://\S+"),
@@ -44,7 +42,31 @@ def _sanitize_diagnostic(text):
     return text
 
 
-def client_diagnostic(path, bundle_path, started_at, ended_at, baseline_stage):
+def _last_success_stage(evidence_path, baseline_stage):
+    if not evidence_path:
+        return baseline_stage, "harness"
+    try:
+        evidence = load_json(evidence_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return baseline_stage, "harness"
+    if (not isinstance(evidence, dict) or evidence.get("schema") != STAGE_EVIDENCE_SCHEMA
+            or set(evidence) != {"schema", "events"} or not isinstance(evidence["events"], list)):
+        return baseline_stage, "harness"
+    last = LIFECYCLE_STAGES.index(baseline_stage)
+    seen = set()
+    for event in evidence["events"]:
+        if (not isinstance(event, dict) or set(event) != {"stage", "source", "success"}
+                or event.get("source") not in STAGE_EVIDENCE_SOURCES or event.get("success") is not True
+                or event.get("stage") not in LIFECYCLE_STAGES):
+            return baseline_stage, "harness"
+        index = LIFECYCLE_STAGES.index(event["stage"])
+        if event["stage"] in seen or index != last + 1:
+            return baseline_stage, "harness"
+        seen.add(event["stage"]); last = index
+    return LIFECYCLE_STAGES[last], ("harness" if not evidence["events"] else evidence["events"][-1]["source"])
+
+
+def client_diagnostic(path, bundle_path, started_at, ended_at, baseline_stage, stage_evidence_path=None):
     if baseline_stage not in LIFECYCLE_STAGES:
         raise ValueError("invalid diagnostic lifecycle stage")
     try:
@@ -57,9 +79,7 @@ def client_diagnostic(path, bundle_path, started_at, ended_at, baseline_stage):
         return None
     text = raw.decode("utf-8", "replace")
     category = next((name for name, pattern in DIAGNOSTIC_CATEGORIES.items() if pattern.search(text)), "unknown")
-    baseline = LIFECYCLE_STAGES.index(baseline_stage)
-    observed = [LIFECYCLE_STAGES.index(stage) for stage, pattern in LIFECYCLE_PATTERNS if pattern.search(text)]
-    last_stage = LIFECYCLE_STAGES[max([baseline] + observed)]
+    last_stage, last_source = _last_success_stage(stage_evidence_path, baseline_stage)
     sanitized_full = _sanitize_diagnostic(text).encode("utf-8")
     sanitized = sanitized_full[:DIAGNOSTIC_BUNDLE_LIMIT]
     started = _iso8601(started_at)
@@ -72,6 +92,7 @@ def client_diagnostic(path, bundle_path, started_at, ended_at, baseline_stage):
         "ended_at": ended,
         "category": category,
         "last_success_stage": last_stage,
+        "last_success_source": last_source,
         "truncated": input_truncated or len(sanitized) < len(sanitized_full),
         "sanitized_text": sanitized.decode("utf-8", "ignore"),
     }
@@ -94,6 +115,7 @@ def client_diagnostic(path, bundle_path, started_at, ended_at, baseline_stage):
     return {
         "category": category,
         "last_success_stage": last_stage,
+        "last_success_source": last_source,
         "bundle_sha256": hashlib.sha256(encoded).hexdigest(),
         "bundle_bytes": len(encoded),
         "started_at": started,
@@ -187,7 +209,8 @@ def read_client_output(path):
 
 def make_sample(implementation, run, return_code, time_path, resource_path, output_path,
                 payload_bytes, payload_hash, expected_identity=None, diagnostic_path=None,
-                diagnostic_bundle=None, diagnostic_started_at=None, diagnostic_ended_at=None, diagnostic_stage=None):
+                diagnostic_bundle=None, diagnostic_started_at=None, diagnostic_ended_at=None, diagnostic_stage=None,
+                diagnostic_stage_evidence=None):
     if implementation not in ("nekomusume", "hy2") or not isinstance(run, int) or run < 1:
         raise ValueError("invalid sample identity")
     exit_code = return_code if isinstance(return_code, int) and 0 <= return_code <= 255 else None
@@ -238,7 +261,7 @@ def make_sample(implementation, run, return_code, time_path, resource_path, outp
     failure = int(stage is not None)
     diagnostic = None
     if exit_code != 0 and diagnostic_path and diagnostic_bundle and diagnostic_started_at and diagnostic_ended_at and diagnostic_stage:
-        diagnostic = client_diagnostic(diagnostic_path, diagnostic_bundle, diagnostic_started_at, diagnostic_ended_at, diagnostic_stage)
+        diagnostic = client_diagnostic(diagnostic_path, diagnostic_bundle, diagnostic_started_at, diagnostic_ended_at, diagnostic_stage, diagnostic_stage_evidence)
     return {
         "name": f"{implementation}-{run}", "implementation": implementation,
         "run": run, "failures": failure,
@@ -295,9 +318,10 @@ def validate_samples(samples, contract, require_complete):
         diagnostic = row.get("client_diagnostic")
         if diagnostic is not None:
             if (not isinstance(diagnostic, dict)
-                    or set(diagnostic) != {"category", "last_success_stage", "bundle_sha256", "bundle_bytes", "started_at", "ended_at"}
+                    or set(diagnostic) != {"category", "last_success_stage", "last_success_source", "bundle_sha256", "bundle_bytes", "started_at", "ended_at"}
                     or diagnostic.get("category") not in set(DIAGNOSTIC_CATEGORIES) | {"unknown"}
                     or diagnostic.get("last_success_stage") not in LIFECYCLE_STAGES
+                    or diagnostic.get("last_success_source") not in STAGE_EVIDENCE_SOURCES
                     or not isinstance(diagnostic.get("bundle_sha256"), str) or not SHA256.fullmatch(diagnostic["bundle_sha256"])
                     or not isinstance(diagnostic.get("bundle_bytes"), int) or not 0 < diagnostic["bundle_bytes"] <= DIAGNOSTIC_BUNDLE_LIMIT + 512):
                 raise ValueError("sample has unsafe client diagnostic")
@@ -436,6 +460,7 @@ def main():
     sample.add_argument("--client-output", required=True); sample.add_argument("--bytes", required=True, type=int)
     sample.add_argument("--payload-hash", required=True); sample.add_argument("--expected-identity"); sample.add_argument("--client-diagnostics")
     sample.add_argument("--diagnostic-bundle"); sample.add_argument("--diagnostic-started-at"); sample.add_argument("--diagnostic-ended-at"); sample.add_argument("--diagnostic-stage", choices=LIFECYCLE_STAGES)
+    sample.add_argument("--diagnostic-stage-evidence")
     blocked = sub.add_parser("blocked")
     blocked.add_argument("--records", required=True); blocked.add_argument("--output", required=True)
     blocked.add_argument("--stage", required=True); blocked.add_argument("--commit", required=True)
@@ -450,7 +475,8 @@ def main():
     elif args.command == "make-sample":
         value = make_sample(args.implementation, args.run, args.return_code, args.time, args.resource,
                             args.client_output, args.bytes, args.payload_hash, args.expected_identity, args.client_diagnostics,
-                            args.diagnostic_bundle, args.diagnostic_started_at, args.diagnostic_ended_at, args.diagnostic_stage)
+                            args.diagnostic_bundle, args.diagnostic_started_at, args.diagnostic_ended_at, args.diagnostic_stage,
+                            args.diagnostic_stage_evidence)
         print(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False))
     elif args.command == "blocked":
         truth=lambda x: None if x=="unknown" else x=="true"
