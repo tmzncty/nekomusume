@@ -38,26 +38,39 @@ RUNS=${BENCH_RUNS:-5}; BYTES=${BENCH_PAYLOAD_BYTES:-1200}; TIMEOUT=${BENCH_TIMEO
 SETUP_SEC=30; READINESS_SEC=10; DIAGNOSTIC_SEC=20; CLEANUP_SEC=60
 WORK_SEC=$((SETUP_SEC + RUNS * 2 * (TIMEOUT + READINESS_SEC + 2) + DIAGNOSTIC_SEC))
 WHOLE_LAB_SEC=$((WORK_SEC + CLEANUP_SEC)); olcp_init_deadlines "$WORK_SEC" "$WHOLE_LAB_SEC" || fail "whole-lab budget exceeds 600s: ${WHOLE_LAB_SEC}s"
-resolved=$("${OWNED_LAB_SSH_BIN:-ssh}" -G "$LAB_SSH_TARGET" 2>/dev/null | awk '$1=="hostname"{print $2;exit}')
-[ -n "$resolved" ] || fail 'SSH target does not resolve'
-[ "$(printf %s "$resolved" | sha256sum | awk '{print $1}')" = "$LAB_ENDPOINT_SHA256" ] || fail 'SSH endpoint contract mismatch'
-[ "$resolved" = "$LAB_REMOTE_ADDRESS" ] || fail 'remote address differs from SSH endpoint'
-remote_interfaces=$(ssh_bounded "$LAB_SSH_TARGET" "ip -j address show") || fail 'cannot read remote interface addresses'
+# Initialize the typed evidence context before any SSH-dependent operation.  Every
+# preflight failure is therefore emitted as a schema-valid BLOCKED_HARNESS artifact.
+out=${1:-artifacts/hy2-owned-lab/result.json}; [ "$out" = --validate ] && out=artifacts/hy2-owned-lab/result.json; case "$out" in /*|*..*) fail 'output must be relative and non-traversing';; esac
+root=$(git rev-parse --show-toplevel); cd "$root"; mkdir -p "$(dirname "$out")"
+run=$(mktemp -d /tmp/neko-hy2-owned.XXXXXXXX); remote="/tmp/$(basename "$run")"; records="$out.samples.jsonl"; touch "$records"
+validator=$root/scripts/bench/validate-hy2-owned-lab.py
+cleanup_done=0; cleanup_ok=0; failure_stage=preflight; local_pids=(); active_spid=; remote_started=0; remote_resources=$run/remote-resources.json
+local_processes_reaped=false; local_listeners_remaining=unknown; remote_process_groups_reaped=unknown; remote_listeners_remaining=unknown; remote_temp_path_removed=unknown; payload_prepared=false
+atomic_append(){ local source=$1 temporary; temporary=$(mktemp "$(dirname "$records")/.samples.XXXXXXXX"); cat "$records" "$source" >"$temporary"; mv -f "$temporary" "$records"; }
+preflight_blocked(){
+  failure_stage=$1
+  python3 "$validator" blocked --records "$records" --output "$out" --stage "$1" --commit "$(git rev-parse HEAD)" --runs "$RUNS" --bytes "$BYTES" --payload-prepared false --local-reaped unknown --local-listeners unknown --remote-reaped unknown --remote-listeners unknown --remote-path-removed unknown
+  exit 2
+}
+ssh_bin=${OWNED_LAB_SSH_BIN:-ssh}
+ssh_config=$($ssh_bin -G "$LAB_SSH_TARGET" 2>/dev/null) || preflight_blocked ssh-config
+resolved=$(printf '%s\n' "$ssh_config" | awk '$1=="hostname"{print $2;exit}')
+expected_user=$(printf '%s\n' "$ssh_config" | awk '$1=="user"{print $2;exit}')
+[ -n "$resolved" ] || preflight_blocked ssh-config
+[ -n "${LAB_SSH_EXPECTED_USER:-}" ] || preflight_blocked ssh-user-config
+[ "$expected_user" = "$LAB_SSH_EXPECTED_USER" ] || preflight_blocked ssh-user-mismatch
+[ "$(printf %s "$resolved" | sha256sum | awk '{print $1}')" = "$LAB_ENDPOINT_SHA256" ] || preflight_blocked ssh-endpoint-mismatch
+[ "$resolved" = "$LAB_REMOTE_ADDRESS" ] || preflight_blocked ssh-endpoint-mismatch
+remote_interfaces=$(ssh_bounded "$LAB_SSH_TARGET" "ip -j address show") || { rc=$?; [ "$rc" -eq 124 ] && preflight_blocked ssh-timeout || preflight_blocked ssh-auth; }
 printf '%s' "$remote_interfaces" | python3 -c 'import json,sys; expected=sys.argv[1]; data=json.load(sys.stdin); raise SystemExit(0 if any(a.get("local")==expected for i in data for a in i.get("addr_info",[])) else 1)' "$LAB_REMOTE_BIND_ADDRESS" || fail 'remote bind address is not assigned to a local VPS interface'
+[ "${1:-}" != --validate ] || { echo validated; exit 0; }
 ports=("${NEKO_PORT:-40097}" "${HY2_UDP_PORT:-40098}" "${HY2_LOCAL_PORT:-40099}" "${ECHO_PORT:-40100}")
 for p in "${ports[@]}"; do [[ "$p" =~ ^[0-9]+$ && "$p" -ge 40080 && "$p" -le 40100 ]] || fail 'ports must be 40080..40100'; done
 [ "$(printf '%s\n' "${ports[@]}" | sort -u | wc -l)" -eq 4 ] || fail 'ports must be distinct'
 [ -x "$NEKO_BIN" ] || fail 'NEKO_BIN is not executable'; [ -x "$HY2_BIN" ] || fail 'HY2_BIN is not executable'
 [ "$(sha256sum "$HY2_BIN" | awk '{print $1}')" = 66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1 ] || fail 'HY2 artifact is not pinned v2.9.3'
 command -v jq >/dev/null || fail 'jq required'; command -v openssl >/dev/null || fail 'openssl required'; [ -x /usr/bin/time ] || fail 'GNU time required'
-out=${1:-artifacts/hy2-owned-lab/result.json}; case "$out" in /*|*..*) fail 'output must be relative and non-traversing';; esac
-[ "${1:-}" != --validate ] || { echo validated; exit 0; }
-root=$(git rev-parse --show-toplevel); cd "$root"; mkdir -p "$(dirname "$out")"
-run=$(mktemp -d /tmp/neko-hy2-owned.XXXXXXXX); remote="/tmp/$(basename "$run")"; records="$out.samples.jsonl"; touch "$records"
-validator=$root/scripts/bench/validate-hy2-owned-lab.py
-cleanup_done=0; cleanup_ok=0; failure_stage=setup; local_pids=(); active_spid=; remote_started=0; remote_resources=$run/remote-resources.json
-local_processes_reaped=false; local_listeners_remaining=unknown; remote_process_groups_reaped=unknown; remote_listeners_remaining=unknown; remote_temp_path_removed=unknown; payload_prepared=false
-atomic_append(){ local source=$1 temporary; temporary=$(mktemp "$(dirname "$records")/.samples.XXXXXXXX"); cat "$records" "$source" >"$temporary"; mv -f "$temporary" "$records"; }
+failure_stage=setup
 terminate_group(){
   local pid=$1 i
   [ -n "$pid" ] || return 0

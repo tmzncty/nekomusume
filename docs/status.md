@@ -29,7 +29,7 @@
 | production | production deployment/readiness | blocked | `docs/spec/m5-release-readiness-gate.md` | Research-only repository; WAN/reachability, independent review and release evidence absent; no production or security approval |
 
 
-> **HY2 harness state:** deterministic local regression coverage retains typed failure evidence and verifies ordered cleanup. At exact `f1cb9af`, the paid HY2 step ended `BLOCKED_HARNESS` during preflight SSH authentication: no payload, samples, or comparison exist. The one-invocation limit was violated when the harness was invoked twice; both attempts ended identically with preflight RC2 because the alias wrapper retained user `tmzn` instead of `root`. Further retry was prohibited. No performance conclusion changed.
+> **HY2 harness state:** deterministic local regression coverage retains typed failure evidence and verifies ordered cleanup. At exact `f1cb9af`, the paid HY2 step ended `BLOCKED_HARNESS` during preflight SSH authentication: no payload, samples, or comparison exist. The one-invocation limit was violated when the harness was invoked twice; both attempts ended identically with preflight RC2 because the SSH preflight user contract was not explicit and the configured alias resolved to `tmzn`; no root assumption is valid. An unchanged retry is prohibited, but one retry with a substantive changed hypothesis is allowed. No performance conclusion changed.
 
 ## Status vocabulary
 
@@ -130,9 +130,11 @@ All three attempts record successful cleanup. These historical negative results 
 - At exact `f1cb9af`, the HY2 run is `BLOCKED_HARNESS` at preflight SSH
   authentication. It produced no payload, samples, paired statistics, or
   comparison. The one-invocation control was violated: the harness was invoked
-  twice, and both attempts ended identically with preflight RC2 because the
-  alias wrapper retained user `tmzn` instead of `root`; further retry was
-  prohibited. No HY2 comparison may be claimed.
+  twice, and both attempts ended identically with preflight RC2 because the SSH
+  the SSH preflight user contract was not explicit and the configured alias resolved
+  to `tmzn`; no root assumption is valid. An unchanged retry is prohibited, but
+  one retry with a substantive changed hypothesis is allowed. No HY2 comparison
+  may be claimed.
 
 IPv6 remains environment-blocked.
 The bounded release-evidence matrix stays open; `RELEASE_CANDIDATE=false`,
