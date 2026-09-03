@@ -179,3 +179,25 @@ fail: 喵呜呜呜呜…
 ## M0 research record
 
 The executable pre-implementation plan is [`docs/m0-spec-plan.md`](docs/m0-spec-plan.md). The research files under [`docs/research/`](docs/research/) do not mark implementation work complete; all existing unchecked M0 items remain unchecked until code and tests exist.
+
+### 2026-09-03 Follow-up D matrix checkpoint
+
+Accepted exact-`25e0daa` D064 controlled fallback and periodic evidence are
+`ALREADY_SUFFICIENT` as bounded single samples; retained historical negatives
+are unchanged. The new exact-`1bf848d`, exact-`07545f0`, and exact-`c4786dc`
+observations are collector/orchestration or pre-application negatives, not
+runtime failure evidence. Their exact retained boundaries are respectively:
+zero-cycle batch SHA-256
+`5ca57b92571690f11157d636d03df554935ced3eda23e312c534020c1ddcf13e`;
+no exact-`07545f0` artifact, empty stdout and sanitized stderr SHA-256
+`a81c2170e75f57c36490be59a43f0ac5cb342f8b70341d5efb9a6814564bdeaa`;
+and zero-client/zero-application result SHA-256
+`bcd8f5582a221b4192fd561301f1e5799996d1a51de673dc05f184d4ba044d71`.
+Cleanup conclusions are based on separate direct post-exit observations.
+
+Current classification: NAT/source-endpoint change, migration-back, live key
+update, and live PMTUD are `BLOCKED_IMPLEMENTATION`; IPv6 is
+`BLOCKED_ENVIRONMENT`; HY2 and repeated warm failover are
+`BLOCKED_DIAGNOSTICS`; no row is `READY_LIVE`. The smallest next seam is to fix
+and locally dry-run the repeated-failover command boundary through Python-runner
+entry. This checkpoint does not close the release-evidence milestone.

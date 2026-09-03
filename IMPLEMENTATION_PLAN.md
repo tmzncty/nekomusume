@@ -90,3 +90,34 @@ candidate decisions, not release claims.
 - [x] 0-RTT gate closed (disabled; no early data)
 - [x] concurrent UDP + TCP gate closed (disabled; no striping)
 - [x] heterogeneous multipath aggregation gate closed (disabled; no aggregation)
+
+### Release-evidence opportunity classification (Follow-up D, 2026-09-03)
+
+The accepted exact-`25e0daa` D064 controlled fallback and single periodic sample
+are `ALREADY_SUFFICIENT` only for their bounded single-sample questions.
+Historical negatives remain retained. Exact `1bf848d` produced zero valid
+repeated-failover cycles and a typed collector/orchestration negative (batch
+SHA-256 `5ca57b92571690f11157d636d03df554935ced3eda23e312c534020c1ddcf13e`).
+Exact `07545f0` made one outer invocation but exited 127 before the Python runner;
+stdout was empty, sanitized stderr SHA-256 was
+`a81c2170e75f57c36490be59a43f0ac5cb342f8b70341d5efb9a6814564bdeaa`,
+and no batch artifact/cycle row exists. Exact `c4786dc` made one periodic
+orchestrator invocation and zero client invocations; its zero-application typed
+negative result SHA-256 is
+`bcd8f5582a221b4192fd561301f1e5799996d1a51de673dc05f184d4ba044d71`.
+These are orchestration/pre-application negatives, not runtime failures;
+cleanup comes from separate direct post-exit observations.
+
+- `BLOCKED_IMPLEMENTATION`: NAT/source-endpoint change (no authenticated live
+  rebinding runner); migration-back (manager gate only, no live socket path);
+  live key update (fixture/state transition only); live PMTUD (state model not
+  integrated into a live probe/ACK path).
+- `BLOCKED_ENVIRONMENT`: IPv6 (no real owned IPv6 endpoint/path available).
+- `BLOCKED_DIAGNOSTICS`: HY2 (latest `hy2-1` client exit lacks discriminating
+  diagnostics); repeated warm failover (exact-`07545f0` command boundary did
+  not enter the batch runner).
+- `READY_LIVE`: none.
+
+The next executable seam is local: fix and dry-run the repeated-failover command
+array through Python-runner entry before considering one changed-hypothesis VPS
+invocation. Item 3 remains unchecked.

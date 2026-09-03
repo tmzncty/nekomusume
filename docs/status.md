@@ -162,3 +162,59 @@ The bounded release-evidence matrix stays open; `RELEASE_CANDIDATE=false`,
 `FREEZE=false`, `PRODUCTION_READY=false`, and `RELEASED=false`. The frozen N9
 canonical corpus is untouched, and none of these self-owned-path results is
 public/general WAN evidence.
+
+### Exact-07545f0 Follow-up D evidence boundary (2026-09-03)
+
+Commit `07545f049790a088bfa655aff4995ab9d6e8fc29` is the provenance-binding
+repair. GitHub Actions run `33755759414` completed successfully for that exact
+head; both stable and fuzz jobs were green. The run is repository CI evidence,
+not live-network, security-review, or release evidence.
+
+The retained release-evidence rows are reconciled as follows:
+
+- The accepted exact-`25e0daa` D064 controlled warm fallback and its single
+  approximately five-minute periodic sample remain the only positive rows here;
+  both are **ALREADY_SUFFICIENT** for their bounded single-sample questions, not
+  reliability rates or natural-degradation evidence. Historical negative rows
+  remain immutable.
+- Exact `1bf848d` made one repeated-warm-failover outer invocation. It retained
+  zero cycle rows and stopped at cycle 1 with typed
+  `invalid_cycle_evidence` / `collector returned nonzero without a valid row`.
+  Its batch JSON SHA-256 is
+  `5ca57b92571690f11157d636d03df554935ced3eda23e312c534020c1ddcf13e`.
+  This is a collector/orchestration negative, not a runtime failover failure.
+- Exact `07545f0` made exactly one later outer invocation, but exited 127 at the
+  shell argument boundary before the Python batch runner or any cycle collector
+  ran. Stdout was empty; sanitized stderr was
+  `env: ‘failover-server,’: No such file or directory` with SHA-256
+  `a81c2170e75f57c36490be59a43f0ac5cb342f8b70341d5efb9a6814564bdeaa`.
+  Completed cycles were zero and no batch artifact or cycle row exists. In
+  particular, no `followup-b-07545f0-20260903T125159Z` artifact or
+  `1bf896b...` artifact hash is accepted. This is orchestration-only evidence;
+  it says nothing about runtime failover. Separate post-attempt observations
+  verified zero experiment processes/listeners, absent deployment/identity temp
+  paths, and a clean worktree.
+- Exact `c4786dc8570dc176fc47251f955979dff7de4b58` made one periodic
+  orchestrator invocation and zero `periodic-client` invocations. It stopped
+  before retained server-readiness or application evidence: zero attempted and
+  confirmed records/bytes. The redacted result JSON at external evidence id
+  `c4786dc-followup-c-periodic-480s-once` has SHA-256
+  `bcd8f5582a221b4192fd561301f1e5799996d1a51de673dc05f184d4ba044d71`.
+  This is a typed pre-application orchestration negative, not a Session runtime
+  failure. Separate direct post-exit observations verified zero local/remote
+  experiment processes, listeners, and runtime temp paths.
+
+- NAT / source-endpoint change — `BLOCKED_IMPLEMENTATION`: capability remains explicitly unsupported; no authenticated live rebinding/endpoint-change runner exists.
+- migration-back — `BLOCKED_IMPLEMENTATION`: deterministic manager gating exists, but no live socket path executes validated migration back to UDP.
+- live key update — `BLOCKED_IMPLEMENTATION`: key update remains a local fixture/state transition; live authenticated Session commands do not expose a key-update cycle.
+- live PMTUD — `BLOCKED_IMPLEMENTATION`: PLPMTUD is bounded state-model evidence only and is not integrated into a live carrier probe/ACK path.
+- IPv6 — `BLOCKED_ENVIRONMENT`: no real owned IPv6 endpoint/path is currently available; historical probes do not supply the missing current environment.
+- HY2 fair pair — `BLOCKED_DIAGNOSTICS`: the latest retained prefix ends at `hy2-1` `client_exit` without enough retained diagnostics to distinguish harness, endpoint, or HY2 runtime cause; another unchanged live retry is not justified.
+- repeated warm failover — `BLOCKED_DIAGNOSTICS`: the exact-`07545f0` command boundary must first be corrected and locally dry-run through runner entry; neither retained orchestration negative is a runtime row.
+
+There is no `READY_LIVE` row. The smallest unlock seam is local and
+non-networked: correct and verify the exact-`07545f0` repeated-failover command
+array/argument boundary so one outer invocation demonstrably enters the Python
+batch runner. The bounded release matrix therefore remains open, with
+`RELEASE_CANDIDATE=false`, `FREEZE=false`, `PRODUCTION_READY=false`, and
+`RELEASED=false`.
