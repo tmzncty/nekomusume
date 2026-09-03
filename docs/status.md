@@ -29,7 +29,7 @@
 | production | production deployment/readiness | blocked | `docs/spec/m5-release-readiness-gate.md` | Research-only repository; WAN/reachability, independent review and release evidence absent; no production or security approval |
 
 
-> **HY2 harness state:** deterministic local regression coverage retains typed failure evidence and verifies ordered cleanup. The earlier exact-`f1cb9af` preflight history remains retained. At exact `bc38d06`, exactly one changed-hypothesis invocation passed explicit SSH preflight and prepared its payload, then ended `BLOCKED_HARNESS` during setup because `run_client` expanded `impl` before assignment under `set -u` at line 186. It produced zero samples and no comparison. The validator-valid result artifact has SHA-256 `596ad4b73058143db1918613dd970e44e8e6bf3a1b89602ac0012f911b6d2653`. Its recorded cleanup failed (`remote_listeners_remaining=1`, `remote_process_groups_reaped=false`, remote temp-path removal unknown); independent manual post-run cleanup subsequently verified no experiment ports, processes, or temporary paths remained. No performance conclusion changed.
+> **HY2 harness state:** deterministic local regression coverage retains typed failure evidence and verifies ordered cleanup. The earlier exact-`f1cb9af` preflight history remains retained. At exact `bc38d06`, exactly one changed-hypothesis invocation passed explicit SSH preflight and prepared its payload, then ended `BLOCKED_HARNESS` during setup because `run_client` expanded `impl` before assignment under `set -u` at line 186. It produced zero samples and no comparison. The validator-valid result artifact has SHA-256 `596ad4b73058143db1918613dd970e44e8e6bf3a1b89602ac0012f911b6d2653`. Its recorded cleanup failed (`remote_listeners_remaining=1`, `remote_process_groups_reaped=false`, remote temp-path removal unknown); independent manual post-run cleanup subsequently verified no experiment ports, processes, or temporary paths remained. No performance conclusion changed. At exact `3d54585`, exactly one later invocation after green exact-head CI prepared the payload and retained a valid two-record prefix: `nekomusume-1` succeeded and `hy2-1` ended `client_exit`; overall status is `BLOCKED_HARNESS` at `hy2-1-failed`. There are no complete pairs or comparative summary. The validator-valid result SHA-256 is `dc7d4a0887ebc5617dbc34b5146563af7178445ea2ba05d30da05276f4558602` under `artifacts/hy2-owned-lab/3d54585-hy2-client-exit/`. Automatic cleanup failed solely because `remote_process_groups_reaped=false`; listeners were zero, remote temporary-path removal and local cleanup succeeded. Separate later serialized double-end postchecks found no experiment ports, processes, or temporary paths, without rewriting the artifact.
 
 ## Status vocabulary
 
@@ -146,6 +146,16 @@ All three attempts record successful cleanup. These historical negative results 
   manual post-run cleanup subsequently verified no experiment ports, processes,
   or temporary paths remained; that later observation does not rewrite the
   artifact cleanup fields.
+- At exact `3d54585`, exactly one invocation after green exact-head CI prepared
+  the payload and retained a valid two-record prefix: `nekomusume-1` succeeded,
+  then `hy2-1` failed with `client_exit`; the overall result is `BLOCKED_HARNESS`
+  at `hy2-1-failed`. There are no complete pairs, paired statistics, or
+  comparative summary. The tracked validator-valid result SHA-256 is
+  `dc7d4a0887ebc5617dbc34b5146563af7178445ea2ba05d30da05276f4558602`.
+  Automatic cleanup failed solely because `remote_process_groups_reaped=false`;
+  listeners were zero, remote temporary-path removal and local cleanup succeeded.
+  Separate later serialized double-end postchecks found no experiment ports,
+  processes, or temporary paths; they do not rewrite the artifact cleanup fields.
 
 IPv6 remains environment-blocked.
 The bounded release-evidence matrix stays open; `RELEASE_CANDIDATE=false`,
