@@ -1,180 +1,141 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-03 11:02 Asia/Shanghai
-Repository HEAD: `026586859214fa712a8259bd374ed0d9631645be`
-Previous reviewed implementation HEAD: `2a13992189999e83f145fbd6c4c3af691d122195`
-Previous reviewer handoff commit: `b3a1e58f87f6bc758077f351c6f4b5ddf91b211f`
+Checked at: 2026-09-03 12:00 Asia/Shanghai
+Repository HEAD: `6641594795e9f570563bd138b14485d3fa95a845`
+Previous reviewed implementation HEAD: `026586859214fa712a8259bd374ed0d9631645be`
+Previous reviewer handoff commit: `23c422f02611165d1d1497368a43f349a11f19d3`
 
 ## What changed
 
-One new coding-agent commit is visible after the previous reviewer handoff:
+Two coding-agent commits are visible after the previous reviewer handoff:
 
-- `0265868` — **benchmark/control-plane test infrastructure; no Nekomusume wire, Session, Noise, failover or release-governance semantic change.** It extracts the owned-lab deadline/SSH/listener-readiness logic into `scripts/bench/owned-lab-control-plane.sh`, adds deterministic fake-remote behavior coverage in `owned-lab-control-plane-test.sh`, stages `parse-listener.py` into the paid-run artifact set, routes HY2 UDP and Nekomusume TCP readiness through the same helper, uses bounded stage/client deadlines through the shared control-plane helper, and wires the new parser/control-plane tests into `scripts/check.sh`.
+- `f1cb9af` — **benchmark/test admission repair; no Nekomusume wire/Session/Noise/failover semantic change.** The generic `compare-hy2.sh` path now validates adapter stdout as exactly one typed JSON object before extracting fields, and its regression matrix covers empty/malformed/contaminated/multiple/scalar/array/missing/wrong-typed output. The probe/failover integration tests also replace several fixed sleeps with bounded readiness observation and serialize fixed-port tests through one lock, reducing race-driven CI ambiguity.
+- `6641594` — **documentation/status reconciliation only.** It correctly records the already accepted exact-`25e0daa` controlled warm-fallback and approximately five-minute periodic rows without promoting them to natural degradation or general long-lived reliability. It also records a later HY2 attempt as preflight-blocked and keeps all release-governance flags false.
 
-This materially addresses the previous R-HY2-13/R-HY2-16/R-HY2-17 admission work. The new helper uses exact remote `ss -H -ltn` / `ss -H -lun` shapes and parses those through the strict repository parser; the fake control-plane test covers exact TCP/UDP readiness, wildcard/wrong-address/wrong-protocol/malformed/ambiguous rejection, local-same-port irrelevance, typed readiness failures, early remote process exit, bounded hanging control operations, cleanup reserve after work expiry and pre-remote over-budget rejection.
+The exact current HEAD is independently green in GitHub Actions run `33713069068`:
 
-However, the **exact current HEAD is not green**. GitHub Actions run `33708014112` at `0265868` completed with:
+- `stable checks`: **PASS** (`bash scripts/check.sh`);
+- `nightly decode fuzz smoke`: **PASS** (30-second decode fuzz smoke).
 
-- `nightly decode fuzz smoke`: **PASS**;
-- `stable checks`: **FAIL** inside `bash scripts/check.sh`.
+The previous R-HY2-18 generic JSON gate is therefore closed at the current tree.
 
-The stable log reaches the generic local benchmark fixture after Rust tests/clippy and the earlier policy/resource checks, then fails with:
+However, review finds a new **evidence/provenance defect around the paid HY2 preflight attempt**. The `f1cb9af..6641594` tracked delta contains code/tests and status prose, but no tracked blocked-result/evidence artifact for the claimed paid attempt. `docs/status.md` and `IMPLEMENTATION_PLAN.md` currently attribute the SSH preflight failure to an alias wrapper retaining user `tmzn` instead of `root`, yet the repository's own `docs/bench/hy2-vps-setup-20260830.md` records successful VPS inspection as user `tmzn` with non-interactive sudo only where needed. The current owned-lab benchmark itself uses unprivileged high ports, `/tmp`, read-only `ip`/`ss`, and does not establish that root is required for benchmark admission.
 
-```text
-jq: invalid JSON text passed to --argjson
-```
+Therefore the GitHub evidence supports only the narrower statement: **a paid HY2 attempt was reported blocked during SSH preflight, but the exact failed invocation, effective SSH identity, failure output/classification, and cleanup/result artifact are not currently auditable from tracked repository evidence.** The asserted `tmzn`-versus-`root` root cause must not be treated as established until the harness records it deterministically.
 
-The failure occurs before `scripts/check.sh` reaches the newly added owned-lab parser/control-plane tests at the end of the script. Therefore the current CI result does **not** independently attest the new control-plane behavior, even though the new code/test structure is materially closer to the required paid-run admission contract.
-
-The generic `scripts/bench/compare-hy2.sh` and `scripts/bench/compare-hy2-test.sh` were not changed in the `2a13992..0265868` implementation delta, and the prior exact `2a13992` Rust CI was green. Reviewer-side reconstruction of the currently fetched generic scripts under a clean shell with `jq 1.7` also passes the good/bad fixture sequence. That does not clear the repository gate; it indicates the failure should be treated as a determinism/input-shape problem to isolate, not papered over by blindly rerunning CI.
+A second wording drift must also be repaired: standing authorization forbids **unchanged** repeat failures, not all future retries forever. The two same-configuration failed invocations are negative evidence and must not be repeated unchanged. A new attempt is allowed only after a substantive configuration/instrumentation/hypothesis change, with one bounded invocation and retained evidence.
 
 ## Review verdict
 
-**needs repair — control-plane admission is substantially implemented, but exact-head stable CI is red in the generic benchmark JSON path; do not spend the paid VPS comparison window until the JSON contract is deterministic and exact repair HEAD CI is green**
+**needs evidence-contract repair — exact HEAD CI is green and the benchmark JSON/control-plane code is acceptable, but the paid-run SSH preflight currently fails outside the repository's structured evidence boundary; repair provenance and effective SSH identity before one changed-hypothesis retry**
 
-The paid HY2/Nekomusume pair remains the highest-value VPS opportunity immediately after this repair. Do not insert unrelated local polish between a green admission gate and the VPS run.
+This is not a transport/runtime correctness regression. Do not change Nekomusume wire, Session, Noise, Carrier Manager or failover semantics to solve it.
 
-This is a benchmark/evidence-harness blocker, not evidence of a transport/runtime regression. Do not change Nekomusume wire, Session, Noise, carrier or failover semantics to make this test green.
+The HY2 paired comparison remains the highest-value VPS opportunity after the evidence/preflight repair. Do not insert unrelated local polish between a green exact repair HEAD and the changed-hypothesis paid run.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains the bounded research implementation baseline.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain correct.
-- `0265868` is benchmark/control-plane test infrastructure, not new transport capability evidence.
-- Exact-head nightly decode fuzz smoke is independently green, but exact-head stable checks are red. The current tree therefore fails the required release/benchmark admission gate.
-- The accepted exact `25e0daa` D064 controlled application-level UDP reply-cessation warm-fallback row remains bounded positive evidence: 3/3 records, 48 application bytes, two uncertain/replayed records, duplicate 0, lost 0, and approximately 434 ms failure-decision-to-first-resumed-data acceptance. It is not natural Internet degradation/PTO-blackhole proof.
-- The accepted exact `25e0daa` approximately five-minute periodic direct-path row remains bounded positive evidence: 60 × 32-byte records, 60/60 confirmed, no missing/duplicate/conflict, with recorded process/resource and cleanup observations. It is one bounded sample, not a production reliability rate.
-- Do not rerun either accepted row merely to consume VPS time.
-- No complete HY2/Nekomusume paired sample set, comparative median/P95 or superiority evidence exists yet.
-- Standing authorization already covers the intended self-owned bounded HY2/Nekomusume run, bounded capture/diagnostics and cleanup once the admission gate is green. No new per-run maintainer authorization is needed.
+- Current exact-head stable CI and nightly decode fuzz smoke are independently green; this is repository gate evidence, not a security audit or release approval.
+- Exact `25e0daa` controlled application-level UDP reply-cessation warm fallback remains accepted bounded evidence: 3/3 records, 48 application bytes, two uncertain/replayed records, duplicate 0, lost 0, approximately 434 ms failure-decision-to-first-resumed-data. It is not natural Internet degradation/PTO-blackhole proof.
+- Exact `25e0daa` approximately five-minute periodic direct-path sample remains accepted bounded evidence: 60 × 32-byte records, 60/60 confirmed, no missing/duplicate/conflict. It is one bounded sample, not a reliability rate or production soak.
+- Do not rerun those accepted rows merely to consume VPS time.
+- No complete HY2/Nekomusume paired sample set, comparative median/P95 or superiority evidence exists.
+- The reported exact-`f1cb9af` paid attempt has no tracked blocked-result/evidence artifact in the reviewed delta. Treat the detailed causal claim (`tmzn` instead of `root`) as **unverified attribution**, not repository evidence.
+- `docs/bench/hy2-vps-setup-20260830.md` records prior successful inspection as unprivileged user `tmzn`; root is not a benchmark requirement established by current repository facts.
+- Standing authorization permits a changed-hypothesis retry after substantive configuration/instrumentation change. It does not permit another unchanged retry.
 - IPv6 remains environment-blocked unless a genuinely owned end-to-end IPv6 path becomes available.
-- `docs/status.md`, `IMPLEMENTATION_PLAN.md` and `ROADMAP.md` remain stale relative to the accepted D064/periodic positive evidence and evolving HY2 harness state. Reconcile them after the HY2 step closes honestly; preserve historical negative rows.
+- The bounded release-evidence matrix remains open.
 
-### R-HY2-13 / R-HY2-17 — implementation shape now acceptable, CI attestation pending
+## Work Package — Structured SSH Preflight Evidence -> Green Gate -> One Changed HY2 Attempt -> Matrix Reconciliation
 
-At current HEAD:
-
-- one shared readiness primitive exists for both remote HY2 UDP and Nekomusume TCP listener admission;
-- exact `ss -H -lun` / `ss -H -ltn` shapes are used;
-- `parse-listener.py` is staged into the remote run set;
-- direct parser fixtures are now listed in `scripts/check.sh`;
-- the old duplicate inline readiness loops are removed from the production adapter.
-
-Keep this structure unless the red gate exposes a concrete contradiction. Do not reintroduce multiple readiness implementations.
-
-### R-HY2-16 — fake control-plane coverage is materially present, but exact-head stable CI did not reach it
-
-`owned-lab-control-plane-test.sh` now exercises the important helper behavior with fake `date`, `ssh`, `timeout` and `sleep`, including positive remote TCP/UDP readiness and the required fail-closed cases. This is the right testing direction.
-
-But because `scripts/check.sh` failed earlier in `compare-hy2-test.sh`, the current GitHub stable job never independently executed the new end-of-gate control-plane test. The next repair must restore the entire gate and then preserve this test green.
-
-### R-HY2-18 — new blocker: generic benchmark stdout/JSON extraction can produce an invalid `--argjson` value under CI
-
-The exact stable log fails with `jq: invalid JSON text passed to --argjson` during the generic `compare-hy2-test.sh` stage. `compare-hy2.sh` currently derives several values independently from adapter stdout and then feeds `wire` through `--argjson`:
-
-```text
-reported_hash=$(jq ... "$raw" || true)
-app=$(jq ... "$raw" || true)
-wire=$(jq -c '.wire_bytes // null' "$raw" || echo null)
-fd=$(jq ... "$raw" || true)
-...
-jq -nc ... --argjson wire "$wire" ...
-```
-
-A particularly dangerous shape is a command that emits a valid JSON object plus unexpected stdout contamination or multiple JSON values: `jq` may produce output before returning non-zero, and the shell fallback can append another `null`, yielding a multi-value string that is invalid as one `--argjson` argument. Even if that is not the exact runner mechanism, the current gate proves that the adapter-output contract is not deterministic enough across environments.
-
-The correct repair is to validate **one exact adapter result object** once, derive all typed fields from that validated object, and fail the sample truthfully if stdout is empty, malformed, contaminated or contains multiple JSON values. Do not turn malformed adapter output into a successful sample and do not suppress diagnostics by converting arbitrary text to `null`.
-
-## Work Package — Deterministic JSON Gate Repair -> Full Admission CI -> Paid HY2 Pair -> Matrix Reconciliation
-
-### Primary A — Make generic benchmark adapter output single-object, typed and fail-closed
+### Primary A — Bring SSH preflight and effective identity inside the structured evidence contract
 
 **Goal**
 
-Close R-HY2-18 and make `scripts/bench/compare-hy2-test.sh` deterministic on the exact GitHub runner path without weakening the benchmark contract.
+Make every remote paid-run attempt auditable from GitHub-visible evidence, including failures that occur before payload preparation or remote process launch. Eliminate implicit/ambiguous SSH user selection without requiring root or new credentials.
 
 **Likely files**
 
-- `scripts/bench/compare-hy2.sh`;
-- `scripts/bench/compare-hy2-test.sh`;
-- optionally one small helper if a single JSON-object parser materially reduces shell ambiguity; do not create a parallel benchmark implementation.
+- `scripts/bench/compare-hy2-owned-lab.sh`;
+- `scripts/bench/owned-lab-control-plane.sh`;
+- `scripts/bench/compare-hy2-owned-lab-test.sh` and/or `owned-lab-control-plane-test.sh`;
+- `scripts/bench/validate-hy2-owned-lab.py` and its mutation tests if the result schema needs a preflight-failure contract;
+- `docs/bench/hy2-comparison-workload.md` / `hy2-vps-setup-20260830.md` only for contract clarification;
+- `docs/status.md` / `IMPLEMENTATION_PLAN.md` / `ROADMAP.md` only to correct the current unsupported root-cause/retry wording.
 
 **Required behavior**
 
-1. Reproduce the exact failure locally where possible with `bash -x scripts/bench/compare-hy2-test.sh` and inspect the value passed to every `--argjson`. Record which value becomes invalid; do not guess in the final commit message.
-2. Treat the benchmark command contract as: **stdout must contain exactly one JSON object and no unrelated stdout text**. Parse/validate that object once per sample before extracting application bytes, payload hash, FD count and nullable wire bytes.
-3. Reject or mark the sample failed when stdout is:
-   - empty;
-   - malformed JSON;
-   - one valid object plus trailing non-JSON diagnostics;
-   - multiple JSON values/objects;
-   - a JSON array/scalar instead of the required object;
-   - missing or wrongly typed required fields.
-4. Keep diagnostics on stderr separate from the one-object stdout contract. Do not silently discard contamination and then treat the sample as successful.
-5. Normalize nullable `wire_bytes` as a single validated JSON value before passing it to any `--argjson`, or avoid shell `--argjson` transport for that field by constructing the sample from the already validated JSON object inside one `jq` program.
-6. Preserve the exact payload-byte/hash contract and existing failure counting. A bad HY2 hash still yields a retained failed sample, not a shell/JSON-construction crash.
-7. Preserve loopback-only safety in the generic harness; this repair does not authorize the generic helper to become a WAN runner.
-8. Do not modify Nekomusume protocol/runtime semantics.
+1. Split preflight into two classes:
+   - pure local syntax/binary/safety validation before an experiment attempt begins;
+   - remote/SSH-dependent admission once an experiment attempt has begun.
+2. Before the first SSH-dependent operation that can fail due endpoint/authentication state, initialize an experiment/result context sufficient to retain a typed blocked artifact. A failed SSH authentication/read-only preflight must not disappear as an unstructured shell exit.
+3. Make effective SSH identity explicit and deterministic. Add a bounded contract such as `LAB_SSH_EXPECTED_USER` (name may differ) and resolve both effective `hostname` and `user` through the **same configured SSH binary/path** used by the run (`ssh -G` or an equivalent deterministic config inspection). Fail closed before remote experiment work if the effective user does not match the declared expected user.
+4. Do **not** assume or require `root`. The existing repository setup successfully used `tmzn`; the current benchmark uses high ports and `/tmp`. If a later diagnostic such as capture requires sudo/capability, keep that as a separate bounded diagnostic requirement rather than silently changing the benchmark transport identity to root.
+5. A remote preflight authentication failure must retain at minimum:
+   - exact git/binary identity;
+   - experiment id;
+   - stage such as `ssh-preflight`;
+   - bounded return/timeout classification;
+   - payload-prepared false if applicable;
+   - no client/server samples when none ran;
+   - cleanup fields truthfully zero/verified/unknown according to what was actually created;
+   - no secret, key, private config or unnecessary address material.
+6. Preserve stderr only as a redacted/hashed diagnostic or a bounded non-secret classification if needed; do not commit credential text, private keys or raw SSH config.
+7. Correct the current status prose:
+   - keep the two failed exact-configuration invocations as historical negative/procedural evidence;
+   - replace the asserted `tmzn`-instead-of-`root` cause with the narrow fact actually supported by retained evidence unless the new deterministic contract proves the user mismatch;
+   - state that **unchanged retry is prohibited**, while one changed-configuration/hypothesis retry remains allowed under standing authorization.
+8. Do not erase or rewrite the accepted D064/periodic evidence.
 
 **Regression matrix**
 
-Extend `compare-hy2-test.sh` so it proves at minimum:
+Add deterministic no-VPS tests proving at minimum:
 
-- valid object with `wire_bytes:null` succeeds;
-- valid object with an allowed non-null wire value, if that shape is supported by the current schema, is preserved exactly;
-- wrong payload hash becomes a typed sample failure without crashing JSON construction;
-- empty stdout is a typed failure;
-- malformed JSON is a typed failure;
-- valid JSON followed by stdout garbage is a typed failure;
-- two JSON objects are a typed failure;
-- array/scalar stdout is a typed failure;
-- missing FD/application/hash field is a typed failure;
-- repeated execution of the fixture produces a valid result deterministically.
+- effective SSH hostname + expected user match is accepted;
+- hostname match + wrong effective user fails before remote experiment work;
+- `ssh -G`/config-inspection failure is typed/fail-closed;
+- SSH authentication failure during the first remote read produces one valid blocked artifact with zero samples/payload as appropriate;
+- timeout remains distinct from authentication/command nonzero failure;
+- no remote process/temp path means cleanup fields are not falsely claimed from operations that never occurred;
+- the blocked artifact validates under the repository result validator;
+- no test requires real credentials or contacts a real VPS.
 
-Do not use `|| echo null` in a way that can concatenate a fallback value to partial `jq` output.
+### Follow-up B — Full local gate and exact-repair-HEAD CI
 
-### Follow-up B — Re-run and harden the complete local benchmark/control-plane gate
+**Dependency:** A complete.
 
-**Dependency:** A green.
-
-Run the benchmark/evidence tests in a diagnostic order that makes the failing layer obvious:
+Run the relevant benchmark/control-plane tests first, then the complete repository gate:
 
 1. `bash scripts/bench/compare-hy2-test.sh`;
 2. `python3 scripts/bench/parse-listener-test.py`;
 3. `bash scripts/bench/owned-lab-control-plane-test.sh`;
 4. `bash scripts/bench/compare-hy2-owned-lab-test.sh`;
 5. `python3 scripts/bench/validate-hy2-owned-lab-test.py`;
-6. process-resource sampler and echo-payload regressions;
+6. process-resource sampler / exact-payload regressions;
 7. `bash scripts/check.sh`;
 8. `git diff --check`.
 
-Keep the new shared readiness helper and fake-remote scenarios green. If one fails after the generic JSON repair, fix the specific helper/test contract before proceeding; do not remove the fail-closed scenario merely to make CI pass.
-
-If shell test ordering hides the true failing test, add concise test-name markers or a small runner improvement so future CI logs identify which benchmark subtest failed. Avoid verbose production output.
-
-### Follow-up C — Push repair and require exact-repair-HEAD CI green
-
-**Dependency:** A-B complete.
-
-Push coherent repair commits, then require the exact repair HEAD to have:
+Push the coherent repair. Require the **exact repair HEAD** to have both:
 
 - `stable checks`: green;
 - `nightly decode fuzz smoke`: green.
 
-The current `0265868` nightly fuzz success may be retained as evidence for that exact commit, but it does not substitute for the future exact repair HEAD gate after benchmark scripts change.
+If the repair changes only shell/evidence parsing, do not manufacture additional fuzz claims beyond the repository CI gate.
 
-Do not spend the paid VPS comparison window while stable CI is red or while the exact repair HEAD CI is pending after substantive benchmark-harness changes.
+The coding agent is pre-authorized to proceed directly from a fully green exact repair HEAD to Follow-up C without waiting for another reviewer handoff.
 
-The coding agent is pre-authorized to proceed directly from a fully green exact repair HEAD to Follow-up D without waiting for another reviewer handoff.
+### Follow-up C — One changed-hypothesis paid HY2/Nekomusume attempt
 
-### Follow-up D — Immediately run one fair, bounded HY2/Nekomusume paid-VPS pair
+**Dependency:** B exact repair HEAD CI fully green.
 
-**Dependency:** C exact repair HEAD CI fully green.
+This is a new allowed attempt because the experiment contract has substantively changed: effective SSH identity is explicit and preflight failures are now structured evidence. It is **not** an unchanged retry of the two historical failures.
 
-This remains the highest-value READY rental-window task. Do not insert unrelated local work between the green gate and this attempt.
+Run **one harness invocation only** for this batch.
 
-Use the established owned-lab contract:
+Use the established bounded profile:
 
 ```text
 self-owned client <-> owned VPS only
@@ -184,113 +145,82 @@ pinned HY2 v2.9.3 exact SHA-256
 concurrency 1
 fresh unprivileged ports
 fresh transport client/session per timed sample
-separate remote bind authority and client connect authority
+separate bind/connect authority
 pinned disposable experiment certificate
 whole lab including cleanup reserve < 10 minutes
 ```
 
-Preserve the production HY2 service/config and all production firewall/route/qdisc/DNS/proxy/tunnel state unchanged.
+Before invocation, verify the explicit expected SSH user matches the effective SSH configuration. Do not change production firewall/route/qdisc/DNS/proxy/tunnel/service state.
 
-Because historical HY2 attempts failed during QUIC establishment, retain bounded changed-hypothesis diagnostics on the disposable experiment UDP port only:
+If SSH/preflight fails:
 
-- exact temporary server listener identity/bind proof;
-- exact connect authority used by the client;
-- client->VPS and VPS->client packet-direction evidence where bounded capture is used;
-- redacted HY2/Nekomusume logs sufficient to distinguish network/path, TLS/auth and local harness failure;
-- capture metadata/hash/packet counts/timestamps if captured;
-- experiment-owned process/listener/temp-path cleanup verification.
+- retain exactly one structured blocked artifact from this invocation;
+- stop this HY2 path for the batch;
+- do not invoke the harness a second time with the same configuration;
+- classify whether the remaining blocker is configuration, existing-credential/environment, or harness implementation.
 
-If all required paired samples succeed:
+If admission succeeds, continue through the normal fair paired contract. If all required pairs succeed, retain raw samples and only then compute the bounded comparison summary. If any required pair fails, retain the valid prefix + typed failure and produce no comparative summary.
 
-- retain all raw samples;
-- validate one complete `benchmark-result.v1`;
-- calculate median/P95/failures only from the complete successful set;
-- retain exact payload hash/application bytes and symmetric process-group client CPU/RSS/FD evidence;
-- state conclusions only for this route/time window/batch; no superiority or production claim.
+Always verify experiment-owned process/listener/temp-path cleanup.
 
-If any required pair fails:
+### Follow-up D — Reconcile evidence/status from the actual C outcome
 
-- retain the valid prefix plus failed row in one typed blocked/diagnostic artifact;
-- produce no comparative summary;
-- preserve the changed-hypothesis diagnostics;
-- do not repeat unchanged.
+**Dependency:** C complete or honestly blocked.
 
-### Follow-up E — Reconcile the release matrix, then spend at most one further VPS opportunity on a genuinely READY missing row
+Update `docs/status.md`, `IMPLEMENTATION_PLAN.md`, and `ROADMAP.md` so they describe only tracked evidence:
 
-**Dependency:** D closes positively or honestly blocked.
+- preserve exact `25e0daa` D064 and periodic boundaries;
+- record the exact C artifact/result and commit identity;
+- if C is blocked, link the tracked blocked artifact and state the actual observed stage/classification without speculative root cause;
+- if C succeeds, record paired results only at their exact route/time/security/lifecycle scope, with no superiority claim;
+- preserve prior failed attempts as historical negative evidence;
+- keep release matrix item 3 unchecked while declared missing rows remain;
+- keep all release/production/freeze flags unchanged.
 
-First repair evidence/status drift in:
+### Follow-up E — If HY2 is environment/credential-blocked, immediately pivot to one other rental-window unlock slice
 
-- `docs/status.md`;
-- `IMPLEMENTATION_PLAN.md`;
-- `ROADMAP.md`.
+**Dependency:** C blocked for a reason that cannot be changed without new credentials/environment, or D complete after a positive C.
 
-Required reconciliation:
+Do not sit idle and do not repeat HY2 unchanged. Audit the remaining VPS backlog against current runtime surfaces and select at most one high-value row/unlock:
 
-- record the accepted exact `25e0daa` D064 controlled application-fault warm-fallback result without relabeling it as natural network degradation;
-- record the accepted approximately five-minute periodic direct-path result as one bounded sample, not general long-connection proof;
-- record the exact HY2 D outcome only at its real commit/binary/path identity;
-- preserve historical failed rows and negative evidence;
-- keep bounded release evidence matrix item 3 unchecked while declared natural degradation, IPv6/environment, NAT/endpoint-change, HY2 or other required rows remain unresolved;
-- keep `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`.
+1. genuine owned source-endpoint/path change;
+2. real-session migration-back;
+3. real-session synchronized key update;
+4. live-path PMTUD observation.
 
-Then audit the remaining VPS backlog and choose **at most one** additional row that is both dependency-ready and truthfully observable at the current runtime:
+If a live CLI/runtime seam already exists and standing authorization covers it, run one bounded row with structured evidence and cleanup. If the capability exists only as fixture/local state, record `BLOCKED_IMPLEMENTATION` and spend the remaining slice on the **smallest runtime/instrumentation seam that directly unlocks that one VPS row**, with deterministic tests. Do not treat fixture-only capability as WAN evidence.
 
-1. genuine owned source-endpoint/path change if it can be produced without production network modification;
-2. real-session migration-back if a live runtime/CLI seam already exists;
-3. real-session key update if a live runtime/CLI seam already exists;
-4. live-path PMTUD observation if the current instrumentation exposes truthful packetization evidence.
-
-If no such live seam exists, record `BLOCKED_IMPLEMENTATION` for the candidate row and spend the next development slice on the smallest instrumentation/runtime seam that directly unlocks a high-value VPS row. Do not use fixture-only capability as WAN evidence.
-
-## Fallback
-
-If the generic `compare-hy2-test.sh` failure cannot be reproduced outside GitHub:
-
-- do not blindly rerun CI as the only action;
-- harden the one-object stdout parser and add the contamination/multiple-object regressions anyway, because the exact runner has already falsified the current assumption;
-- push the deterministic repair and use the new exact-head CI as the adjudication point.
-
-If the generic JSON gate becomes green but the new fake control-plane test fails:
-
-- keep VPS execution blocked;
-- repair the exact failed control-plane branch;
-- retain all positive helper tests;
-- rerun full exact-head CI.
-
-If the paid HY2 run remains blocked by the real network/path after a green harness and changed-hypothesis diagnostics:
-
-- preserve the negative result;
-- do not modify provider/production network policy to force success;
-- move to the next truthful READY VPS-only evidence row.
+If the only missing requirement is genuinely a new SSH credential/server/environment, that is a maintainer decision; record it precisely rather than weakening authentication or substituting root.
 
 ## Completion gates
 
-This work package is complete only when:
+This package closes when:
 
-- generic benchmark adapter stdout is deterministically one validated JSON object per sample;
-- malformed/contaminated/multi-object output cannot crash `--argjson` construction or become a successful sample;
-- generic compare fixture is green and deterministic;
-- direct parser fixtures are green;
-- fake owned-lab control-plane behavior tests are green;
-- owned-lab safety/result/cleanup validators remain green;
-- full `scripts/check.sh` is green locally;
-- exact repair HEAD `stable checks` and nightly fuzz are green;
-- only then is one standing-authorized paid HY2/Nekomusume paired attempt executed;
-- the HY2 result is retained as complete comparative evidence or honest typed blocked evidence, never a partial superiority claim;
-- status/plan/roadmap reflect accepted D064/periodic/HY2 evidence at exact identities;
-- no production/network authorization boundary is widened.
+- SSH-dependent preflight failures produce tracked/validatable structured evidence rather than disappearing before result creation;
+- effective SSH user selection is explicit and tested without assuming root;
+- the unsupported `tmzn`-versus-`root` attribution is removed or replaced by deterministic proof;
+- unchanged retry prohibition is distinguished from changed-hypothesis permission;
+- all local benchmark/control-plane tests and full repository gate pass;
+- exact repair HEAD stable + nightly CI are green;
+- exactly one changed-hypothesis HY2 invocation is made after the green gate, or no invocation occurs because a pre-invocation deterministic contract fails locally;
+- the resulting HY2 outcome is reconciled to tracked evidence;
+- no D064/periodic claim is inflated;
+- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 
 ## Do not expand into
 
-- changing wire, Session, Noise, failover or carrier semantics to satisfy benchmark tooling;
-- rerunning accepted D064/periodic rows merely to use VPS time;
-- publishing HY2 superiority from a partial/failed/semantically unequal sample set;
-- previous/current interoperability before a real prior frozen release exists;
-- 0-RTT, enabled FEC, striping/aggregation or exotic carriers without an observed-problem gate;
-- third-party targets, scanning, production firewall/route/DNS/proxy/tunnel/qdisc changes;
-- experiments beyond standing authorization.
+- changing Nekomusume wire/Session/Noise/failover semantics for benchmark convenience;
+- requiring root merely to make SSH work;
+- committing credentials, SSH private config, private keys or unnecessary topology;
+- disabling TLS/authentication/integrity for HY2 or Nekomusume;
+- production service/firewall/route/qdisc/DNS/proxy/tunnel changes;
+- third-party targets or scanning;
+- an unchanged third/fourth retry of the same SSH failure;
+- publishing superiority claims from an incomplete/blocked/one-off comparison;
+- speculative FEC/0-RTT/striping/exotic-carrier work without an observed-problem gate.
 
 ## Questions requiring maintainer decision
 
-none.
+none at this review point.
+
+A maintainer decision is required only if the changed-hypothesis structured preflight demonstrates that a **new credential/server/environment** is genuinely required and cannot be satisfied by the already authorized owned endpoint configuration.
