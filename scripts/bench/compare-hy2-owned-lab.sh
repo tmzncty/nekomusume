@@ -40,7 +40,7 @@ WORK_SEC=$((SETUP_SEC + RUNS * 2 * (TIMEOUT + READINESS_SEC + 2) + DIAGNOSTIC_SE
 WHOLE_LAB_SEC=$((WORK_SEC + CLEANUP_SEC)); olcp_init_deadlines "$WORK_SEC" "$WHOLE_LAB_SEC" || fail "whole-lab budget exceeds 600s: ${WHOLE_LAB_SEC}s"
 # Initialize the typed evidence context before any SSH-dependent operation.  Every
 # preflight failure is therefore emitted as a schema-valid BLOCKED_HARNESS artifact.
-out=${1:-artifacts/hy2-owned-lab/result.json}; [ "$out" = --validate ] && out=artifacts/hy2-owned-lab/result.json; case "$out" in /*|*..*) fail 'output must be relative and non-traversing';; esac
+validate_only=0; out=${1:-artifacts/hy2-owned-lab/result.json}; [ "$out" != --validate ] || { validate_only=1; out=${2:-artifacts/hy2-owned-lab/result.json}; }; case "$out" in /*|*..*) fail 'output must be relative and non-traversing';; esac
 root=$(git rev-parse --show-toplevel); cd "$root"; mkdir -p "$(dirname "$out")"
 runtime_template=${OWNED_LAB_RUNTIME_TEMPLATE:-/tmp/neko-hy2-owned.XXXXXXXX}
 run=$(mktemp -d "$runtime_template"); remote="/tmp/$(basename "$run")"; records="$out.samples.jsonl"; touch "$records"
@@ -67,7 +67,7 @@ expected_user=$(printf '%s\n' "$ssh_config" | awk '$1=="user"{print $2;exit}')
 [ "$resolved" = "$LAB_REMOTE_ADDRESS" ] || preflight_blocked ssh-endpoint-mismatch
 remote_interfaces=$(ssh_bounded "$LAB_SSH_TARGET" "ip -j address show") || { rc=$?; [ "$rc" -eq 124 ] && preflight_blocked ssh-timeout; [ "$rc" -eq 255 ] && preflight_blocked ssh-auth; preflight_blocked ssh-command; }
 printf '%s' "$remote_interfaces" | python3 -c 'import json,sys; expected=sys.argv[1]; data=json.load(sys.stdin); raise SystemExit(0 if any(a.get("local")==expected for i in data for a in i.get("addr_info",[])) else 1)' "$LAB_REMOTE_BIND_ADDRESS" || preflight_blocked ssh-bind-address
-[ "${1:-}" != --validate ] || { echo validated; exit 0; }
+[ "$validate_only" -eq 0 ] || { echo validated; exit 0; }
 ports=("${NEKO_PORT:-40097}" "${HY2_UDP_PORT:-40098}" "${HY2_LOCAL_PORT:-40099}" "${ECHO_PORT:-40100}")
 for p in "${ports[@]}"; do [[ "$p" =~ ^[0-9]+$ && "$p" -ge 40080 && "$p" -le 40100 ]] || fail 'ports must be 40080..40100'; done
 [ "$(printf '%s\n' "${ports[@]}" | sort -u | wc -l)" -eq 4 ] || fail 'ports must be distinct'
@@ -75,55 +75,47 @@ for p in "${ports[@]}"; do [[ "$p" =~ ^[0-9]+$ && "$p" -ge 40080 && "$p" -le 401
 [ "$(sha256sum "$HY2_BIN" | awk '{print $1}')" = 66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1 ] || fail 'HY2 artifact is not pinned v2.9.3'
 command -v jq >/dev/null || fail 'jq required'; command -v openssl >/dev/null || fail 'openssl required'; [ -x /usr/bin/time ] || fail 'GNU time required'
 failure_stage=setup
-terminate_group(){
-  local pid=$1 i
-  [ -n "$pid" ] || return 0
-  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-  for i in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep .05; done
-  kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
-  ! kill -0 "$pid" 2>/dev/null
-}
 terminate_local(){
-  local pid ok=1
-  [ -z "${active_spid:-}" ] || { terminate_group "$active_spid" || ok=0; active_spid=; }
-  for pid in "${local_pids[@]:-}"; do [ -n "$pid" ] || continue; terminate_group "$pid" || ok=0; done
-  local_pids=()
-  [ "$ok" -eq 1 ]
+  local pid roots_file=$run/local-pids
+  : >"$roots_file"
+  [ -z "${active_spid:-}" ] || printf '%s\n' "$active_spid" >>"$roots_file"
+  for pid in "${local_pids[@]:-}"; do [ -z "$pid" ] || printf '%s\n' "$pid" >>"$roots_file"; done
+  olcp_cleanup_owned "$roots_file" 100 "${ports[@]}"
+  local_processes_reaped=false; [ "$OLCP_PROCESSES_REAPED" -eq 1 ] && local_processes_reaped=true
+  local_listeners_remaining=$OLCP_LISTENERS_REMAINING
+  [ -z "${active_spid:-}" ] || wait "$active_spid" 2>/dev/null || true
+  for pid in "${local_pids[@]:-}"; do [ -z "$pid" ] || wait "$pid" 2>/dev/null || true; done
+  active_spid=; local_pids=()
+  [ "$local_processes_reaped" = true ] && [ "$local_listeners_remaining" -eq 0 ]
 }
 cleanup(){
-  local rc=${1:-$?} p remote_cleanup
+  local rc=${1:-$?} remote_cleanup marker remote_rc
   [ "$cleanup_done" -eq 0 ] || return "$rc"
   cleanup_done=1; cleanup_mode=1; set +e; trap - EXIT INT TERM
-  terminate_local && local_processes_reaped=true
-  local_listeners_remaining=0
-  for p in "${ports[@]}"; do ss -H -lntup "sport = :$p" | grep -q . && local_listeners_remaining=$((local_listeners_remaining+1)); done
+  terminate_local
   if [ "$remote_started" -eq 1 ]; then
     remote_cleanup=$(cat <<REMOTE
 set +e
-ok=1
-if test -r '$remote/pids'; then
-  while read -r p; do test -n "\$p" || continue; kill -TERM -- -"\$p" 2>/dev/null || kill -TERM "\$p" 2>/dev/null || true; done <'$remote/pids'
-  i=0; while test \$i -lt 20; do alive=0; while read -r p; do test -n "\$p" && kill -0 "\$p" 2>/dev/null && alive=1; done <'$remote/pids'; test \$alive -eq 0 && break; sleep .05; i=\$((i+1)); done
-  while read -r p; do test -n "\$p" || continue; kill -KILL -- -"\$p" 2>/dev/null || kill -KILL "\$p" 2>/dev/null || true; done <'$remote/pids'
-  sleep .05
-  while read -r p; do test -z "\$p" || ! kill -0 "\$p" 2>/dev/null || ok=0; done <'$remote/pids'
-fi
+. '$remote/owned-lab-control-plane.sh'
+olcp_cleanup_owned '$remote/pids' 100 '${ports[0]}' '${ports[1]}' '${ports[2]}' '${ports[3]}'
+cleanup_rc=\$?
 jq -s . '$remote'/*-resource.json 2>/dev/null || printf '[]'
-listeners=0; for p in '${ports[0]}' '${ports[1]}' '${ports[3]}'; do ss -H -lntup "sport = :\$p" | grep -q . && listeners=\$((listeners+1)); done
-printf '\n__CLEANUP__ %s %s\n' "\$ok" "\$listeners"
-test "\$ok" -eq 1 && test "\$listeners" -eq 0
+printf '\n__CLEANUP__ %s %s\n' "\$OLCP_PROCESSES_REAPED" "\$OLCP_LISTENERS_REMAINING"
+exit "\$cleanup_rc"
 REMOTE
 )
     ssh_bounded "$LAB_SSH_TARGET" "$remote_cleanup" >"$remote_resources.tmp" 2>/dev/null
     remote_rc=$?
-    marker=$(tail -n 1 "$remote_resources.tmp")
-    sed '$d' "$remote_resources.tmp" >"$remote_resources"; rm -f "$remote_resources.tmp"
+    marker=$(tail -n 1 "$remote_resources.tmp" 2>/dev/null)
+    sed '$d' "$remote_resources.tmp" >"$remote_resources" 2>/dev/null; rm -f "$remote_resources.tmp"
     remote_process_groups_reaped=$(printf '%s' "$marker" | awk '/^__CLEANUP__ [01] [0-9]+$/{print $2}')
     remote_listeners_remaining=$(printf '%s' "$marker" | awk '/^__CLEANUP__ [01] [0-9]+$/{print $3}')
     : "${remote_process_groups_reaped:=unknown}"; : "${remote_listeners_remaining:=unknown}"
     if [ "$remote_rc" -eq 0 ] && [ "$remote_process_groups_reaped" = 1 ] && [ "$remote_listeners_remaining" -eq 0 ]; then
-      ssh_bounded "$LAB_SSH_TARGET" "rm -rf '$remote'; test ! -e '$remote'" >/dev/null 2>&1 && remote_temp_path_removed=true
+      for _ in $(seq 1 20); do
+        ssh_bounded "$LAB_SSH_TARGET" "rm -rf '$remote'; test ! -e '$remote'" >/dev/null 2>&1 && { remote_temp_path_removed=true; break; }
+        "${OWNED_LAB_SLEEP_BIN:-sleep}" .05
+      done
     fi
   else remote_process_groups_reaped=true; remote_listeners_remaining=0; remote_temp_path_removed=true; fi
   [ "$local_processes_reaped" = true ] && [ "$local_listeners_remaining" -eq 0 ] && [ "$remote_process_groups_reaped" = 1 ] && [ "$remote_listeners_remaining" -eq 0 ] && [ "$remote_temp_path_removed" = true ] && cleanup_ok=1
@@ -140,7 +132,7 @@ on_exit(){ local rc=$?; [ "$rc" -eq 0 ] || blocked "$failure_stage"; }
 trap on_exit EXIT; trap on_signal INT TERM
 for p in "${ports[@]}"; do ! ss -H -lntup "sport = :$p" | grep -q . || fail "local experimental port $p occupied"; ssh_bounded "$LAB_SSH_TARGET" "! ss -H -lntup 'sport = :$p' | grep -q ." || fail "remote experimental port $p occupied"; done
 payload=$run/payload.bin; dd if=/dev/zero of="$payload" bs=1 count="$BYTES" status=none; payload_prepared=true; payload_hash=$(sha256sum "$payload"|awk '{print $1}')
-cp "$NEKO_BIN" "$run/neko-cli"; cp "$HY2_BIN" "$run/hysteria"; cp scripts/bench/process-resource-sampler.py scripts/bench/echo-payload.py scripts/bench/parse-listener.py "$run/"
+cp "$NEKO_BIN" "$run/neko-cli"; cp "$HY2_BIN" "$run/hysteria"; cp scripts/bench/process-resource-sampler.py scripts/bench/echo-payload.py scripts/bench/parse-listener.py scripts/bench/owned-lab-control-plane.sh "$run/"
 "$run/neko-cli" keygen --identity "$run/client.identity" >"$run/client-key"; "$run/neko-cli" keygen --identity "$run/server.identity" >"$run/server-key"
 client_pub=$(sed -n 's/^client_public_key=//p' "$run/client-key"); server_pub=$(sed -n 's/^client_public_key=//p' "$run/server-key"); [ -n "$client_pub" ] && [ -n "$server_pub" ] || fail 'identity generation failed'
 mkdir -m700 "$run/tls"; openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=neko-owned-lab -addext "subjectAltName=IP:$LAB_REMOTE_BIND_ADDRESS" -keyout "$run/tls/key.pem" -out "$run/tls/cert.pem" >/dev/null 2>&1
@@ -179,7 +171,7 @@ for _ in range(n):
 s.close()
 PY
 chmod 700 "$run"/* "$run/tls"/* 2>/dev/null || true
-ssh_bounded "$LAB_SSH_TARGET" "umask 077; mkdir '$remote'"; remote_started=1; tar -C "$run" -cf - neko-cli hysteria process-resource-sampler.py echo-payload.py echo-server.py parse-listener.py payload.bin server.identity tls hy2-server.yaml | ssh_bounded "$LAB_SSH_TARGET" "tar -C '$remote' -xf -; chmod 700 '$remote/neko-cli' '$remote/hysteria'; : >'$remote/pids'"
+ssh_bounded "$LAB_SSH_TARGET" "umask 077; mkdir '$remote'"; remote_started=1; tar -C "$run" -cf - neko-cli hysteria process-resource-sampler.py echo-payload.py echo-server.py parse-listener.py owned-lab-control-plane.sh payload.bin server.identity tls hy2-server.yaml | ssh_bounded "$LAB_SSH_TARGET" "tar -C '$remote' -xf -; chmod 700 '$remote/neko-cli' '$remote/hysteria'; : >'$remote/pids'"
 ssh_bounded "$LAB_SSH_TARGET" "nohup setsid python3 '$remote/echo-server.py' '${ports[3]}' '$RUNS' '$BYTES' >'$remote/echo.log' 2>&1 </dev/null & echo \$! >>'$remote/pids'; nohup setsid python3 '$remote/process-resource-sampler.py' --experiment-id hy2-owned-lab --implementation hy2-v2.9.3 --role server --identity sha256:66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1 --application-bytes '$((RUNS*BYTES))' --owned-port '${ports[1]}' --interval-ms 10 --max-seconds '$((RUNS*TIMEOUT+10))' --output '$remote/hy2-server-resource.json' -- '$remote/hysteria' server -c '$remote/hy2-server.yaml' >'$remote/hy2-server.log' 2>&1 </dev/null & echo \$! >>'$remote/pids'"
 require_remote_listener udp "$LAB_REMOTE_BIND_ADDRESS" "${ports[1]}" 200 "" hy2-server-readiness
 run_client(){

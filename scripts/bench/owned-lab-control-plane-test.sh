@@ -71,3 +71,23 @@ grep -q '^timeout 3 ' "$TRACE"
 # Invalid/over-budget plans fail before any SSH operation.
 : >"$TRACE"; if olcp_init_deadlines 600 600; then exit 1; fi; [ ! -s "$TRACE" ]
 printf '%s\n' owned-lab-control-plane-test-ok
+# Production cleanup primitive follows an owned group after its leader exits and
+# waits for a descendant's listener to disappear. No port/process is fabricated.
+cat >"$tmp/delayed-listener.py" <<'PY'
+import signal, socket, sys, time
+s=socket.socket(); s.bind(("127.0.0.1", 0)); s.listen()
+open(sys.argv[1], "w").write(str(s.getsockname()[1]))
+def stop(*_):
+    time.sleep(.15); s.close(); raise SystemExit
+signal.signal(signal.SIGTERM, stop)
+while True: time.sleep(.05)
+PY
+setsid sh -c "python3 '$tmp/delayed-listener.py' '$tmp/port' &" & cleanup_leader=$!
+wait "$cleanup_leader"
+for _ in $(seq 1 100); do [ -s "$tmp/port" ] && break; sleep .01; done
+cleanup_port=$(cat "$tmp/port"); printf '%s\n' "$cleanup_leader" >"$tmp/owned-pids"
+OWNED_LAB_SLEEP_BIN=sleep
+olcp_cleanup_owned "$tmp/owned-pids" 20 "$cleanup_port"
+[ "$OLCP_PROCESSES_REAPED" -eq 1 ] && [ "$OLCP_LISTENERS_REMAINING" -eq 0 ]
+! ss -H -lntup "sport = :$cleanup_port" | grep -q .
+printf '%s\n' owned-lab-cleanup-descendant-test-ok

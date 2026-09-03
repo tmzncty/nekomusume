@@ -49,3 +49,44 @@ require_remote_listener(){
   [ -z "$watched_pid" ] || wait "$watched_pid" 2>/dev/null || true
   "${OWNED_LAB_BLOCKED_FN:-blocked}" "$stage"
 }
+
+# Discover live members of owned groups and descendants of recorded roots. Zombies
+# are treated as exited; listeners are verified separately before cleanup succeeds.
+olcp_owned_processes(){
+  local roots=$1
+  ps -eo pid=,ppid=,pgid=,stat= | awk -v roots="$roots" '
+    BEGIN { n=split(roots,a," "); for(i=1;i<=n;i++) if(a[i] ~ /^[0-9]+$/ && a[i]>1) owned[a[i]]=1 }
+    { pid[NR]=$1; ppid[NR]=$2; pgid[NR]=$3; stat[NR]=$4; if((owned[$1] || owned[$3]) && $4 !~ /^Z/) found[$1]=1 }
+    END {
+      changed=1
+      while(changed){ changed=0; for(i=1;i<=NR;i++) if(stat[i] !~ /^Z/ && (owned[ppid[i]] || found[ppid[i]]) && !found[pid[i]]) { found[pid[i]]=1; changed=1 } }
+      for(p in found) if(found[p]) print p
+    }' | sort -n
+}
+olcp_listener_count(){
+  local count=0 port
+  shift
+  for port in "$@"; do ss -H -lntup "sport = :$port" | grep -q . && count=$((count+1)); done
+  printf '%s\n' "$count"
+}
+# TERM, then KILL, and poll both process ownership and every supplied listener.
+# The caller supplies a bounded attempt count; no observation is inferred as clean.
+olcp_cleanup_owned(){
+  local roots_file=$1 attempts=$2; shift 2
+  local roots i alive listeners sig=TERM
+  roots=$(tr '\n' ' ' <"$roots_file" 2>/dev/null || true)
+  for i in $(seq 1 "$attempts"); do
+    alive=$(olcp_owned_processes "$roots")
+    listeners=$(olcp_listener_count local "$@")
+    if [ -z "$alive" ] && [ "$listeners" -eq 0 ]; then
+      OLCP_PROCESSES_REAPED=1; OLCP_LISTENERS_REMAINING=0; return 0
+    fi
+    [ "$i" -le $((attempts / 2)) ] || sig=KILL
+    [ -z "$alive" ] || printf '%s\n' "$alive" | xargs -r kill -"$sig" 2>/dev/null || true
+    "${OWNED_LAB_SLEEP_BIN:-sleep}" .05
+  done
+  alive=$(olcp_owned_processes "$roots"); listeners=$(olcp_listener_count local "$@")
+  OLCP_PROCESSES_REAPED=0; [ -z "$alive" ] && OLCP_PROCESSES_REAPED=1
+  OLCP_LISTENERS_REMAINING=$listeners
+  [ "$OLCP_PROCESSES_REAPED" -eq 1 ] && [ "$listeners" -eq 0 ]
+}
