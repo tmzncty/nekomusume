@@ -196,6 +196,30 @@ jq -e '.truncated==true and (.sanitized_text|utf8bytelength)<=2048' "$tmp/bounde
 python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation hy2 --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output /dev/null --client-diagnostics /dev/null --diagnostic-bundle "$tmp/absent.json" --diagnostic-started-at 2026-09-03T00:00:00Z --diagnostic-ended-at 2026-09-03T00:00:01Z --diagnostic-stage client_started --bytes 1200 --payload-hash "$hash0" >"$tmp/no-diagnostic.json"
 jq -e '.failure_stage=="client_exit" and .client_diagnostic==null' "$tmp/no-diagnostic.json" >/dev/null
 [ ! -e "$tmp/absent.json" ]
+# Local first-pair rehearsal freezes the live contract: a valid Nekomusume prefix
+# followed by each representative HY2 failure can never produce comparative statistics.
+printf '%s\n' '{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":0.125,"cpu_user_seconds":0.01,"cpu_system_seconds":0.02,"rss_kib":64,"exit_code":0}' >"$tmp/pair-neko.time"
+printf '%s\n' '{"application_bytes":1200,"payload_sha256":"'"$hash0"'"}' >"$tmp/pair-neko.out"
+printf '%s\n' '{"experiment_id":"nekomusume-owned-lab-1","implementation":"nekomusume","role":"client","identity":"sha256:neko-rehearsal","cpu":{"user_seconds":0.01,"system_seconds":0.02},"rss":{"max_kib":64},"fd":{"peak_count":4},"exit":{"code":0,"timed_out":false},"sampling":{"scope":"sampler-created process group"},"cleanup":{"process_reaped":true,"process_group_empty":true,"owned_sockets_after_exit":0,"complete":true}}' >"$tmp/pair-neko.resource"
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation nekomusume --run 1 --return-code 0 --time "$tmp/pair-neko.time" --resource "$tmp/pair-neko.resource" --client-output "$tmp/pair-neko.out" --expected-identity sha256:neko-rehearsal --bytes 1200 --payload-hash "$hash0" >"$tmp/pair-neko.json"
+jq -e '.failures==0 and .application_bytes==1200 and .payload_sha256=="'"$hash0"'" and .client_diagnostic==null' "$tmp/pair-neko.json" >/dev/null
+for spec in 'tls:TLS authentication failed' 'auth:authentication failed password=hunter2' 'config:invalid config yaml' 'path:connection refused 10.23.45.67:443 /home/private/key' 'readiness:listener not ready'; do
+  category=${spec%%:*}; message=${spec#*:}; printf '%s\n' "$message" >"$tmp/pair-hy2.err"
+  bundle="$tmp/pair-$category-private.json"; records="$tmp/pair-$category.jsonl"; blocked="$tmp/pair-$category-blocked.json"
+  cp "$tmp/pair-neko.json" "$records"
+  python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation hy2 --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output /dev/null --client-diagnostics "$tmp/pair-hy2.err" --diagnostic-bundle "$bundle" --diagnostic-started-at 2026-09-03T00:00:00Z --diagnostic-ended-at 2026-09-03T00:00:01Z --diagnostic-stage client_started --bytes 1200 --payload-hash "$hash0" >>"$records"
+  python3 "$root/scripts/bench/validate-hy2-owned-lab.py" blocked --records "$records" --output "$blocked" --stage hy2-1-failed --commit "$(printf %040d 0)" --runs 5 --bytes 1200 --payload-prepared true --payload-hash "$hash0" --local-reaped true --local-listeners 0 --remote-reaped true --remote-listeners 0 --remote-path-removed true
+  python3 "$root/scripts/bench/validate-hy2-owned-lab.py" validate-result "$blocked" | grep -qx validated
+  jq -e --arg category "$category" '.status=="BLOCKED_HARNESS" and .failure_stage=="hy2-1-failed" and (.samples|length)==2 and .samples[0].implementation=="nekomusume" and .samples[0].failures==0 and .samples[1].implementation=="hy2" and .samples[1].failures==1 and .samples[1].client_diagnostic.category==$category and .samples[1].client_diagnostic.last_success_stage=="client_started" and .samples[1].client_diagnostic.last_success_source=="harness" and (has("summary")|not)' "$blocked" >/dev/null
+  [ "$(sha256sum "$bundle"|awk '{print $1}')" = "$(jq -r '.samples[1].client_diagnostic.bundle_sha256' "$blocked")" ]
+  [ "$(wc -c <"$bundle")" -eq "$(jq -r '.samples[1].client_diagnostic.bundle_bytes' "$blocked")" ]
+  ! grep -Eq 'hunter2|10\.23\.45\.67|/home/private' "$blocked" "$bundle"
+done
+# Exact workload and pinned artifact identity remain frozen in the production adapter.
+grep -Fq 'hy2_version:"v2.9.3"' "$source_script"
+grep -Fq 'hy2_binary_sha256:"66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1"' "$source_script"
+grep -Fq 'BYTES=${BENCH_PAYLOAD_BYTES:-1200}' "$source_script"
+grep -Fq 'RUNS=${BENCH_RUNS:-5}' "$source_script"
 # A routine validation in a disposable repository cannot create or alter default evidence.
 sentinel=$tmp/sentinel-repo; mkdir -p "$sentinel/scripts/bench" "$sentinel/artifacts/hy2-owned-lab"
 cp "$source_script" "$root/scripts/bench/owned-lab-control-plane.sh" \
