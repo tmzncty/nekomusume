@@ -1,137 +1,112 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-04 04:01 Asia/Shanghai
-Repository HEAD reviewed: `df4610b2915bc5be97b51133afbdf2937bfc9ae5`
-Previous reviewed coding/evidence HEAD: `60cd40d612b5582337c9fa04cc28b35aed98f322`
-Previous reviewer handoff commit: `4a2129ec01bcbd35fd1d6fd2952ef45390fd549a`
+Checked at: 2026-09-04 05:00 Asia/Shanghai
+Repository HEAD reviewed: `85346ce19f9941ac5c41437713e0c1aee81b2102`
+Previous reviewed coding/evidence HEAD: `df4610b2915bc5be97b51133afbdf2937bfc9ae5`
+Previous reviewer handoff commit: `2e6e46c24e40617963402d6e8cf64b719b545f53`
 
 ## What changed
 
-Two coding/evidence commits are newly reviewed after the previous handoff, and two previously uncommitted live outcomes are now durably archived.
+Two coding/evidence commits landed after the previous review.
 
-- `34e587d` — **periodic evidence-oracle repair; evidence tooling only, no wire/Session/Noise runtime semantic change.** It closes the prior R-008 success-predicate defect by normalizing and matching server/client workload parameters, rejecting duplicate/mismatched argv options before spawn, requiring complete declared application delivery for `passed`, parsing/enforcing `reconnects=0`, rejecting signal-interrupted samples, recomputing nearest-rank P50/P95 from interval rows, preserving client duplicate-ACK and server duplicate-data as distinct domains, and removing the synthetic `conflicts=0` claim. Deterministic regressions cover incomplete success, workload mismatch, reconnect, signals, bad percentiles and privacy/cleanup boundaries.
-- `df4610b` — **evidence/status reconciliation only.** It archives the final repeated-warm-failover current-line attempt and the prior periodic live attempt without rewriting their original failure/cleanup facts, updates resilience/capability evidence references, and preserves exact hashes and boundaries.
+- `00ac2c1` — **periodic remote-launch diagnostic instrumentation; evidence tooling only, no Session/wire/Noise/runtime semantic change.** It adds bounded per-stream diagnostic hashes/byte counts/truncation metadata and a closed classification helper for `ssh_transport_exit`, `remote_binary_identity_reject`, `remote_exec_protocol_reject`, `server_runtime_exit_before_ready`, `start_timeout_no_terminal_evidence`, and `log_overflow`. Deterministic tests cover the class mapping.
+- `85346ce` — **one final changed-hypothesis real self-owned VPS periodic attempt, retained as a typed negative; no positive Session/reliability evidence.** Exactly one live outer invocation followed one non-live structural preflight. The attempt ended before application traffic with server transport exit 255 / `ssh_transport_exit`, no readiness, no client launch, zero application traffic. Local and remote cleanup postchecks both report zero experiment-owned residue. This closes the current periodic orchestration line as `BLOCKED_ORCHESTRATION_CURRENT_LINE_PERIODIC`; an unchanged automatic retry is prohibited.
 
-Exact current HEAD `df4610b` has GitHub Actions run `33799316682` completed successfully (`Rust CI` conclusion `success`). Exact `34e587d` also has green run `33798025997`. This is repository CI evidence, not release/security approval.
+Exact current HEAD `85346ce` has GitHub Actions run `33805160164` completed successfully (`Rust CI` conclusion `success`). This is repository CI evidence, not security/release approval.
 
-### Accepted final repeated-failover boundary
+The periodic diagnostic change is directionally useful, but review found one evidence-semantic defect that must be repaired before the new result is propagated through status/ledger material:
 
-The exact-`4a2129e` final allowed repeated warm-failover attempt made one outer live invocation, no retry, retained `0/6` rows, and stopped at cycle 1 after 1,165 ms with `invalid_cycle_evidence`. The bounded private diagnostic classification is `server exited before JSON event: start`. The lane is now **`BLOCKED_ORCHESTRATION_CURRENT_LINE`**. This is not a runtime failover failure and must not receive another automatic repeated-failover retry under the same instrumentation line.
+### R-009 HIGH — `diagnostics.protocol_entered` overclaims remote-executor entry
 
-### Accepted periodic boundary
+Current `scripts/bench/run-periodic-command.py` sets:
 
-The exact-`60cd40d` periodic live attempt made one no-retry invocation and ended pre-application at `start_timeout`: SSH server transport exit 255, `periodic_client_entered=false`, client `not_started`, no application metrics. Artifact cleanup remains failed as originally collected; a later cleanup-only observation separately found zero local/remote residue. This is a pre-application orchestration negative, not a Session reliability sample.
+```text
+protocol_entered = (server_capture is not None)
+```
 
-Important consequence: `34e587d` closes the semantic-oracle defect but does **not** change the SSH exit-255 failure hypothesis. Therefore an immediate unchanged periodic retry is prohibited. The next periodic work must first add a narrow discriminating remote-launch diagnostic seam, then one materially changed live attempt may be made.
+`server_capture` becomes non-null immediately after the local wrapper spawns the server transport process and attaches stdout/stderr capture. It does **not** mechanically prove that the remote executor protocol was entered. The exact `85346ce` artifact therefore records:
+
+```text
+class = ssh_transport_exit
+server_exit = 255
+server stdout/stderr = empty
+readiness_observed = false
+protocol_entered = true
+```
+
+That combination is not a runtime contradiction, but the field name is an evidence claim stronger than the implementation proves. The previous handoff explicitly asked for “whether remote executor protocol was entered **if mechanically observable**”; capture allocation is not that proof.
+
+This is an evidence-integrity defect in diagnostic metadata, not a Nekomusume transport failure and not a reason to retry the VPS experiment. Preserve the exact `85346ce` artifact immutably and add a correction/erratum rather than rewriting the negative result.
 
 ## Review verdict
 
-**CONTINUE_WITH_REQUIRED_FIXES — R-008 is closed and current CI is green. Repeated warm failover is closed as `BLOCKED_ORCHESTRATION_CURRENT_LINE`. Periodic remains potentially valuable but requires one narrow SSH/remote-launch diagnostic change before a final changed-hypothesis live sample. The project is not globally blocked.**
+**CONTINUE_WITH_REQUIRED_FIXES — final periodic current-line attempt is accepted as a pre-application `ssh_transport_exit` negative and the lane is closed; repair R-009 locally, reconcile the matrix, then move to the remaining HY2 diagnostic opportunity and release-review preparation.**
 
-Do not return to broad repeated-failover harness rewrites. Do not spend VPS time on an unchanged periodic retry. Consume the rolling queue continuously: finish -> validate -> commit/push -> immediately continue when the next slice is dependency-satisfied.
+Do not perform another repeated-warm-failover or periodic live retry under the current instrumentation lines. Both current lines are closed as orchestration blockers. The project is not globally blocked: HY2 still has one materially changeable diagnostic path, and substantial local release/security preparation remains READY.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains the bounded research baseline.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
-- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain correct.
-- Exact `25e0daa` remains the accepted single controlled application-level UDP reply-cessation warm fallback: 3/3 logical records, 48 B, two uncertain/replayed, duplicate/lost 0, ~434 ms failure-decision-to-first-resumed-data. It is not natural loss/PTO-blackhole evidence.
-- Exact `25e0daa` also remains the accepted approximately five-minute direct periodic sample: 60 x 32 B, 60/60 confirmed. It is one bounded sample, not a reliability rate.
-- Exact `4a2129e` final repeated result is orchestration/evidence negative only; zero row means no per-cycle runtime/accounting/timing/reachability claim.
-- Exact `60cd40d` periodic result is pre-application SSH/server-launch negative only; no application metrics or reliability conclusion.
-- `34e587d` improves periodic evidence truthfulness but does not itself add live evidence or alter SSH behavior.
-- NAT/source-endpoint change, live migration-back, live key update and live PMTUD remain `BLOCKED_IMPLEMENTATION` under current executable reality unless that reality changes for an evidence-driven reason. Do not implement them merely to fill a matrix checkbox.
-- Owned end-to-end IPv6 remains `BLOCKED_ENVIRONMENT` unless a real owned path becomes available.
+- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
+- Exact `25e0daa` remains the accepted bounded positive controlled warm fallback (3/3 records, 48 B, two uncertain/replayed, duplicate/lost 0, ~434 ms) and one approximately five-minute periodic direct-path sample (60 x 32 B, 60/60 confirmed). Neither is a production reliability rate or natural degradation/PTO-blackhole proof.
+- Repeated warm failover current line is `BLOCKED_ORCHESTRATION_CURRENT_LINE`; no automatic retry.
+- Periodic current line is now `BLOCKED_ORCHESTRATION_CURRENT_LINE_PERIODIC` from exact `85346ce`; no automatic unchanged retry.
+- Exact `85346ce` proves only a pre-application SSH/server-transport failure classification plus zero-residue cleanup. It proves no Session establishment, application transfer, latency distribution, reconnect behavior, or long-lived reliability property.
+- The existing artifact’s `protocol_entered=true` must not be used as proof that the remote executor protocol was entered; R-009 requires an additive correction.
+- NAT/source-endpoint change, live migration-back, live key update and live PMTUD remain `BLOCKED_IMPLEMENTATION` under current executable reality. Do not implement them merely to fill a release matrix checkbox.
+- Owned end-to-end IPv6 remains `BLOCKED_ENVIRONMENT` unless a real owned path appears.
 - HY2 remains `BLOCKED_DIAGNOSTICS`; historical negative attempts remain valid and there is still no complete fair paired comparison.
-- Endpoint/user/address/private topology, private plans, identity paths, keys and raw diagnostics remain local/untracked. Only bounded non-sensitive classifications/hashes/counts belong in tracked evidence.
-- Standing authorization covers bounded self-owned TCP/UDP Session/benchmark/capture/cleanup work within its limits; no per-run approval is required.
+- Endpoint/user/address/private topology, key paths, keys, raw private diagnostics and protected identity material remain local/untracked. Only bounded classifications/hashes/counts belong in tracked evidence.
+- Standing authorization continues to cover bounded self-owned TCP/UDP Session, benchmark, capture, cleanup, HY2 comparison and package rehearsal within its limits. No per-run approval is required for the queue below.
 
 ## Rolling Work Queue
 
-This is a multi-hour capacity queue, not a one-hour ticket. **Every slice below is pre-authorized to continue into the next dependency-satisfied slice without waiting for another reviewer interval.** Pause only on a real stop condition.
+This queue is intentionally multi-hour. **Every dependency-satisfied slice is pre-authorized to start immediately after the previous coherent slice is validated, committed and pushed. Do not stop merely because one commit or one reviewer interval completed.** Pause only on a real stop condition from `AGENTS.md` / standing authorization / a new correctness-security-evidence blocker.
 
-### A — Add the minimum periodic remote-launch diagnostic discrimination
+### A — Repair R-009 diagnostic semantics and preserve an additive erratum
 
-**Status:** `READY_LOCAL`.
+**Status:** `READY_LOCAL` — highest priority.
 
-**Goal:** change the hypothesis behind the exact-`60cd40d` SSH exit-255/start-timeout negative without reopening orchestration architecture.
+**Goal:** make future periodic diagnostics distinguish local capture/process creation from actual remote-executor protocol entry, while preserving the already-retained exact `85346ce` negative unchanged.
 
-**Likely files:** `scripts/bench/run-periodic-command.py`, its deterministic tests, and existing small evidence schema/validator only if necessary.
+**Likely files**
 
-**Required behavior:**
+- `scripts/bench/run-periodic-command.py`;
+- `scripts/bench/run-periodic-command-test.py`;
+- a small additive erratum/correction artifact or evidence note referencing exact `85346ce` result/hash;
+- schema/validator only if the field contract is machine-checked there.
 
-1. Preserve bounded private server stdout/stderr capture and raw privacy boundaries.
-2. On pre-application remote failure, emit only a small tracked diagnostic object such as:
-   - fixed `classification` from a closed enum;
-   - transport/server exit code when available;
-   - bounded private diagnostic `sha256`, byte count and truncation flag;
-   - readiness state / whether remote executor protocol was entered if mechanically observable.
-3. Distinguish at least the evidence classes the current wrapper can prove without parsing secrets: e.g. `ssh_transport_exit`, `remote_exec_protocol_reject`, `remote_binary_identity_reject`, `server_runtime_exit_before_ready`, `start_timeout_no_terminal_evidence`, `log_overflow`.
-4. Do not regex raw host/user/path/key text into tracked output. Classification must be based on bounded structural/exit evidence; private raw text remains untracked.
-5. Do not change Nekomusume Session/wire/Noise semantics and do not add a generic remote orchestration framework.
-6. Preserve all `34e587d` workload/success/percentile/privacy invariants.
+**Required behavior**
 
-**Required tests:** one deterministic case per supported classification, unknown/private text remains private, truncated logs fail closed, early-exit/start-timeout paths remain bounded, and all prior periodic regressions stay green.
+1. Do not define remote-protocol entry from `server_capture is not None`.
+2. If remote-executor entry is not mechanically observable for a failure class, report `unknown`/null or omit the claim. A truthful `capture_started=true` / transport-process-started fact may be recorded separately if useful.
+3. Set remote-executor entry true only from a concrete structured marker or state transition that actually proves it. Do not parse host/user/path/key strings to infer it.
+4. For `ssh_transport_exit` with empty remote output, remote-executor entry must not be true.
+5. Preserve the closed diagnostic class enum, bounded private log hashes/counts and truncation fail-closed behavior.
+6. Do **not** rewrite `artifacts/periodic-session/00ac2c1-final-transport-exit/result.json`. Add an erratum/note that identifies the exact artifact/hash and states that its `protocol_entered=true` field means only that capture was attached under the old implementation and is not evidence of remote protocol entry.
+7. No Session/wire/Noise/carrier semantics change.
 
-**Validation/commit:** targeted tests -> full local gate -> `git diff --check` -> commit/push.
+**Tests**
 
-**Continue immediately to B:** yes.
+- SSH exit 255 + empty output => remote-protocol entry false/unknown, never true;
+- local capture/process start may still be represented truthfully;
+- positive remote-protocol marker, if one exists, is required for true;
+- all prior periodic diagnostic/workload/success/cleanup/privacy regressions remain green.
 
----
+**Validation / commit**
 
-### B — Exact-head CI gate plus changed-hypothesis periodic preflight
+targeted tests -> full local gate -> `git diff --check` -> commit/push. Fuzz only if the normal gate requires it; do not manufacture a protocol-fuzz claim for evidence-only code.
 
-**Dependency:** A pushed.
-
-- Wait for exact A-head stable/fuzz workflow as required by current CI policy before live periodic evidence.
-- While CI is pending, continue H/I read-only release/security preparation; do not idle.
-- Once exact-head CI is green, use validate/dry-run plus the same structured remote executor to confirm the plan reaches the newly discriminating remote-launch path without application traffic.
-- Dry-run/preflight is not live evidence and must remain labeled as such.
-
-If deterministic/preflight evidence exposes a correctness bug, repair locally and repeat the gate. If it only shows environment-specific private values, keep them private.
-
-**Continue immediately to C when exact-head CI is green:** yes.
+**Continue immediately to B:** yes. Exact-head CI is not required before documentation-only B, but any later live HY2 slice must obey its own CI gate.
 
 ---
 
-### C — One final materially changed periodic VPS attempt
+### B — Reconcile release/status matrices with the final periodic and repeated-failover boundaries
 
-**Status after A/B:** `READY_LIVE_CHANGED_HYPOTHESIS`.
+**Status:** `READY_LOCAL` after A.
 
-**Goal:** obtain one scientifically distinct longer periodic Session or close the current periodic instrumentation line with a discriminating pre-application negative.
-
-**Profile:**
-
-```text
-self-owned client + owned VPS only
-application phase: target ~480 s
-interval: 5 s
-count: target ~96
-payload: 32 B/record
-concurrency: 1
-single outer invocation; no retry
-total setup + application + cleanup < 10 min
-```
-
-Shorten only as needed to preserve the standing 10-minute bound; do not split one soak into multiple nominal runs.
-
-**Success evidence:** exact commit + executable hash/size, normalized workload, attempted==declared count, confirmed==attempted, missing=0, reconnects=0, validated P50/P95 from interval rows, separate client duplicate-ACK/server duplicate-data counters, application bytes, exits, no signal interruption, local resource scope if truthfully sampled, remote resources `not_collected_remote` unless genuinely sampled, and verified local/remote cleanup.
-
-**Failure evidence:** retain one typed result plus the new bounded diagnostic classification/hash/count. If the run fails pre-application in the same now-discriminated class, mark `BLOCKED_ORCHESTRATION_CURRENT_LINE_PERIODIC` and stop automatic periodic retries. If it exposes a real runtime correctness failure, preserve a deterministic reproducer and make correctness repair the next blocking slice.
-
-One success remains one bounded sample; no reliability-rate or production-long-lived claim.
-
-**Commit/push:** minimal sanitized evidence + validator checks + full gate.
-
-**Continue immediately to D:** yes.
-
----
-
-### D — Reconcile the release matrix after final A/C facts
-
-**Status:** `READY_LOCAL` after C, regardless of success/typed negative.
-
-Update from exact facts only:
+Update exact facts only in:
 
 - `docs/era4-e-resilience.md`;
 - `docs/status.md`;
@@ -141,170 +116,201 @@ Update from exact facts only:
 
 Required reconciliation:
 
-1. Record exact `4a2129e` as the final current-line repeated-failover orchestration negative and remove stale wording that still calls repeated failover merely `BLOCKED_DIAGNOSTICS` or suggests another automatic retry.
-2. Record the final periodic outcome from C. Preserve exact `60cd40d` as historical pre-application negative; do not overwrite it.
-3. Keep natural UDP degradation/PTO-blackhole unchecked unless new evidence actually proves it.
-4. Keep bounded periodic success scoped to exact sample duration; no general long-lived conclusion.
-5. Keep NAT/migration/key-update/PMTUD/IPv6/HY2 truthful to actual classifications.
-6. Release-evidence item 3 remains unchecked while declared gaps remain.
+1. Repeated warm failover current line = `BLOCKED_ORCHESTRATION_CURRENT_LINE`; retain exact final negative and no automatic retry.
+2. Periodic current line = `BLOCKED_ORCHESTRATION_CURRENT_LINE_PERIODIC`; retain exact `60cd40d` historical negative and exact `85346ce` final changed-hypothesis negative separately.
+3. Preserve exact `25e0daa` positive bounded samples; do not promote them to natural degradation, reliability rate, or production long-lived proof.
+4. Do not propagate the old `protocol_entered=true` field as a remote-protocol fact; link the A erratum.
+5. Keep NAT/migration/key-update/PMTUD as `BLOCKED_IMPLEMENTATION`, IPv6 as `BLOCKED_ENVIRONMENT`, HY2 as `BLOCKED_DIAGNOSTICS` unless later evidence changes them.
+6. Bounded release-evidence item 3 remains unchecked.
 7. No RC/global freeze/production/release flag changes.
 
 **Validation:** status/plan sync checks + `scripts/check.sh` + `git diff --check`.
+
+**Continue immediately to C:** yes.
+
+---
+
+### C — Add one minimal HY2 diagnostic discriminator; do not live-retry yet
+
+**Status:** `READY_LOCAL` after B, or while waiting on non-dependent CI.
+
+**Goal:** turn the retained HY2 `client_exit` into a materially changed hypothesis without reopening the full comparison harness.
+
+Reuse the pinned HY2 v2.9.3 artifact and existing fair-comparison lifecycle/security contract. Add only bounded diagnostics needed to classify the first failing HY2 pair stage, such as:
+
+- temporary HY2 server/listener readiness;
+- HY2 client transport process start/exit class;
+- whether QUIC/UDP send was observed and whether a server response direction was observed when existing bounded capture metadata can prove it;
+- TLS/auth/config stage only when structured logs/exit evidence support that classification;
+- bounded private stderr/log SHA-256 + byte count + truncation flag.
+
+Do not track raw addresses, credentials, certificate secrets, key paths or raw logs. Do not change firewall/route/qdisc/DNS/provider policy. Do not weaken TLS/authentication. Do not redesign the comparison workload.
+
+**Tests:** deterministic stage-classification cases; malformed/private diagnostics never leak tracked strings; valid prefix is retained; cleanup remains fail-closed; a failed first pair cannot generate comparative median/P95.
+
+**Validation / commit:** targeted tests -> full local gate -> push.
+
+**Continue immediately to D after exact C-head CI green:** yes. While CI is pending, consume F/G/H independent local work rather than idle.
+
+---
+
+### D — One changed-hypothesis HY2/Nekomusume paired attempt
+
+**Dependency:** C exact-head CI green.
+
+Run exactly one bounded self-owned attempt under standing authorization:
+
+- same owned client/VPS, route/time window, MTU/security/load class;
+- pinned HY2 v2.9.3;
+- deterministic 1200-byte payload;
+- concurrency 1;
+- 5 paired samples only if the first required Neko/HY2 pair succeeds and the existing contract permits continuation;
+- fresh unprivileged experiment ports;
+- total live invocation comfortably below 10 minutes;
+- bounded capture only around experiment ports/window when needed;
+- no production network/service changes;
+- complete cleanup verification.
+
+If the first HY2 pair fails, stop that live invocation, retain the typed new diagnostic and do **not** automatically retry again. Mark the current HY2 line blocked at the proven class.
+
+If all required pairs succeed, retain raw rows and only the fair-contract bounded median/P95/failure/resource summary. No superiority claim from one batch.
+
+**Commit/push:** minimal sanitized evidence + validator checks + full gate.
 
 **Continue immediately to E:** yes.
 
 ---
 
-### E — Add one minimal HY2 diagnostic discriminator; no live retry yet
+### E — Build the release-evidence closure ledger / blocker map
 
-**Status:** `READY_LOCAL` after higher-value periodic lane, or while C is blocked on CI.
+**Status:** `READY_LOCAL` after D or an honest D block.
 
-**Goal:** turn retained HY2 `client_exit` into a changed hypothesis without broad harness redesign.
+Create/update one machine-navigable review artifact for every declared release-evidence matrix row:
 
-Use existing pinned HY2 v2.9.3 and fair-comparison contract. Add only bounded private diagnostics sufficient to classify the next failure stage, for example:
+- required claim;
+- best exact positive evidence;
+- retained negatives;
+- current classification from a closed set such as `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`, `BLOCKED_ORCHESTRATION_CURRENT_LINE`, `BLOCKED_DIAGNOSTICS`, `BLOCKED_IMPLEMENTATION_ARCHITECTURE`, `BLOCKED_ENVIRONMENT`, `OPEN_READY`;
+- exact evidence needed to change classification;
+- whether doing so needs a new architecture/value/environment decision.
 
-- HY2 client process/transport exit classification;
-- whether client started, QUIC/UDP send was observed, server temporary listener was ready, and server response direction was observed when existing bounded capture/metadata can prove it;
-- bounded private stderr/log hash + byte count + truncation flag;
-- TLS/auth/config vs path/packet-direction classification only when evidence supports it.
+The ledger must not silently narrow the release scope or convert inability to collect evidence into PASS.
 
-Do not track raw addresses, credentials, certificate secrets or private logs. Do not change firewall/route/qdisc/DNS/provider policy. Do not weaken TLS/authentication.
+If there is no `OPEN_READY` VPS row after D, **stop spending rental time on generic repeats** and continue F/G/H. Do not invent a new live capability solely to use the VPS.
 
-**Tests:** deterministic stage-classification tests; failure rows retain valid prefix; cleanup remains fail-closed; malformed/private diagnostics never leak tracked strings.
-
-**Validation/commit:** targeted tests + full gate + push.
-
-**Continue immediately to F after exact-head CI green:** yes.
+**Continue immediately to F:** yes.
 
 ---
 
-### F — One changed-hypothesis HY2/Nekomusume paired attempt
+### F — Prepare the independent release/security review packet
 
-**Dependency:** E exact-head CI green.
+**Status:** `READY_LOCAL`; may be consumed while C-head CI is pending.
 
-Run exactly one bounded self-owned attempt using the existing comparison contract and new diagnostic seam:
+This is preparation, **not** the independent review itself and does not complete item 4.
 
-- 5 paired samples only if the first required pair succeeds and the harness contract permits continuation;
-- deterministic 1200-byte payload, concurrency 1;
-- same client/VPS/route/time window/MTU/security/load class;
-- pinned HY2 artifact already recorded;
-- no production-service/network-policy modifications;
-- bounded capture only around experiment ports/window when needed;
-- complete cleanup verification.
+Make a bounded machine-navigable packet that links exact current evidence for:
 
-If all required pairs succeed, retain raw rows and bounded median/P95/failure summaries only under the fair lifecycle/resource contract; no superiority claim.
+- canonical corpus/freeze identity + executable oracles;
+- negotiation compatibility policy;
+- Noise/trust/authz transcript binding;
+- wire/parser/fuzz evidence;
+- pre-auth/resource limits;
+- Session delivery ACK vs carrier/packet feedback separation;
+- failover/resume positive and negative evidence with exact boundaries;
+- package install/upgrade/rollback;
+- operator readiness/shutdown/cleanup;
+- VPS evidence matrix and blocker classifications;
+- HY2 methodology/current result boundary;
+- unresolved release/security findings.
 
-If the first required HY2 pair fails, stop that live invocation, retain the typed stage diagnostic, and do **not** automatically retry again. Mark the current HY2 line blocked at the proven class.
+Prefer links and generated indexes over duplicating normative prose. Do not label it an audit or security approval.
+
+**Validation:** link/path consistency + existing doc/status gates.
 
 **Continue immediately to G:** yes.
 
 ---
 
-### G — Release-evidence closure ledger and blocker map
+### G — Audit resource/abuse-limit evidence and close only small deterministic gaps
 
-**Status:** `READY_LOCAL` after F or an honest F block.
+**Status:** `READY_LOCAL`.
 
-Create/update one review-oriented release-evidence ledger derived from existing repository facts. For every declared item-3 row, record:
+Audit implementation/tests against `SECURITY.md` requirements:
 
-- required claim;
-- best exact positive evidence;
-- retained negatives;
-- current classification (`ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`, `BLOCKED_ORCHESTRATION_CURRENT_LINE`, `BLOCKED_DIAGNOSTICS`, `BLOCKED_IMPLEMENTATION_ARCHITECTURE`, `BLOCKED_ENVIRONMENT`, `OPEN_READY`);
-- what evidence would be needed to change classification;
-- whether doing so requires a new architecture/value decision.
+- per-connection/global memory, CPU/rate bounds;
+- UDP amplification / pre-auth admission;
+- malformed lengths/counts/offsets;
+- unknown version/type/frame handling;
+- old/duplicate packet numbers and replay;
+- fail-closed resource behavior;
+- secret-safe logging and no open-proxy behavior.
 
-The ledger must not silently narrow the release scope and must not treat inability to collect a row as PASS.
+First map existing tests/evidence. Do not duplicate already-covered checks. If a **small deterministic missing negative test** is found, add it and run the required gates. If a substantive design/resource-bound gap is found, record a release/security blocker; do not invent arbitrary production limits without a decision record.
 
-At this point, if no `OPEN_READY` VPS row remains, stop spending VPS time on generic repetition. Move to H/I and prepare the maintainer scope decision packet in J.
+No public listener or stress/capacity experiment beyond standing authorization.
 
-**Continue immediately to H:** yes.
+**Continue immediately to H if no new BLOCKER/HIGH:** yes.
 
 ---
 
-### H — Independent-review preparation packet (not an independent review)
+### H — Package/operator evidence link-integrity audit; rerun only if a real evidence gap exists
 
-**Status:** `READY_LOCAL`, may run while CI blocks live work.
+**Status:** `READY_LOCAL`.
 
-Prepare a bounded, machine-navigable packet for a future independent release/security reviewer. Reuse current evidence rather than re-running it.
+N5/package lifecycle is already positive evidence. Do not repeat install/rollback simply because the VPS exists. Instead verify the future independent reviewer can trace:
 
-Include links/identities for:
+- package/build identity and reproducibility claim;
+- install -> smoke/readiness -> upgrade -> rollback sequence;
+- external state retention boundary without reading protected identity material;
+- listener/process cleanup evidence;
+- exact commit/artifact hashes and the currently supported x86_64 first-RC scope.
 
-- canonical corpus/freeze identity and executable oracles;
-- negotiation compatibility policy;
-- Noise/trust/authz transcript binding;
-- parser/fuzz evidence;
-- pre-auth/resource limits;
-- Session vs Carrier ACK boundaries;
-- failover/resume evidence and exact limitations;
-- package install/upgrade/rollback evidence;
-- operator readiness/cleanup evidence;
-- VPS positive/negative matrix;
-- HY2 methodology/results boundary;
-- current unresolved findings/blockers.
-
-Do not label this packet a security audit and do not mark item 4 complete.
-
-**Validation:** link/path consistency + existing doc/status gates.
+If all evidence is already sufficient and linked, produce only an index/closure note. If one narrow operator assertion genuinely lacks current executable evidence and can be answered within standing authorization without touching protected identity material, a single bounded package rehearsal may be queued **only after documenting the missing question**. Do not rerun a sufficient lifecycle for freshness.
 
 **Continue immediately to I:** yes.
 
 ---
 
-### I — Resource/abuse-limit evidence audit and targeted deterministic gaps
+### I — RC-scope decision dossier; terminal maintainer gate if matrix has no READY path
 
-**Status:** `READY_LOCAL`.
+**Status:** `READY_LOCAL_PREPARATION`; any scope change itself is **not pre-authorized**.
 
-Audit the current implementation/tests against the explicit `SECURITY.md` requirements: per-connection/global memory, CPU/rate bounds, UDP amplification, malformed lengths/offsets/unknown versions/old packet numbers, pre-auth admission and fail-closed resource behavior.
+If E shows item 3 cannot complete because the remaining requirements are only blocked by current-line orchestration, architecture, or environment, prepare a concise maintainer decision dossier without choosing:
 
-Rules:
+1. keep the current release-evidence scope and remain pre-RC until the blocked evidence becomes genuinely available;
+2. define a narrower first-RC claim and state exactly which claims are deferred/removed;
+3. authorize the new implementation/environment work required to satisfy the existing matrix.
 
-- first map existing code/tests/evidence; do not duplicate already-covered checks;
-- if a small deterministic missing negative test is found, add it and run the required gate;
-- if a substantive design/resource-bound gap is found, record it as a release/security blocker and do not invent arbitrary production limits without a decision record;
-- no public listener or stress/capacity test beyond standing authorization.
+For each option state evidence consequences, compatibility/security risk, work required, and which existing artifacts remain valid.
 
-**Continue immediately to J:** yes if no BLOCKER/HIGH requires reviewer/maintainer decision.
+Do not alter `IMPLEMENTATION_PLAN.md` release scope, `RELEASE_CANDIDATE`, production readiness, global freeze, or release flags until the maintainer chooses.
 
----
-
-### J — RC-scope decision dossier; terminal maintainer gate if matrix has no READY path
-
-**Status:** `READY_LOCAL_PREPARATION`; any scope change itself is **not** pre-authorized.
-
-If G shows item 3 cannot complete because the remaining declared requirements are only blocked by architecture/environment/current-line orchestration, prepare a concise decision dossier with exact options, without choosing for the maintainer:
-
-1. keep the current release-evidence scope and remain pre-RC until IPv6/NAT/live migration/key-update/PMTUD/etc. become genuinely available where required;
-2. define a narrower first-RC claim (for example x86_64 Linux / owned IPv4 / explicitly bounded evidence) and state exactly which claims are removed/deferred;
-3. authorize new implementation/environment work needed to satisfy the existing matrix.
-
-For each option give evidence consequences, compatibility/security risk, work required and what existing artifacts remain valid. Do not change `IMPLEMENTATION_PLAN.md` release scope, RC flags or production claims until the maintainer chooses.
-
-**Stop condition:** this dossier is a real maintainer value-judgment gate. Once reached with no other independent READY work, notify the maintainer rather than silently selecting a scope.
+**Stop after I only if this is genuinely the first remaining gate requiring maintainer value judgment.**
 
 ## Completion gates for this rolling queue
 
-- R-008 periodic semantic oracle remains closed.
-- Repeated failover receives no further automatic retry under the closed current instrumentation line.
-- Periodic gets at most one materially changed live retry after a real diagnostic change and green exact-head CI.
-- HY2 gets at most one materially changed diagnostic retry after local discrimination and green exact-head CI.
-- No tracked private endpoint/key/argv/log material leaks.
-- Every live negative remains a negative; later cleanup does not rewrite artifact cleanup fields.
-- `IMPLEMENTATION_PLAN.md`, `ROADMAP.md`, `docs/status.md` and evidence indexes agree on final exact facts.
-- No experimental feature is implemented merely to fill a release checkbox.
-- RC/production/global-freeze/release flags remain unchanged absent a later reviewed maintainer decision.
+- R-009 corrected additively; exact `85346ce` artifact remains immutable and is not over-interpreted.
+- Repeated-failover and periodic current-line blockers are reflected consistently in status/plan/roadmap without erasing historical positives/negatives.
+- HY2 gets at most one materially changed diagnostic attempt after deterministic repair + exact-head CI; no unchanged retry loop.
+- Release-evidence ledger truthfully distinguishes sufficient bounded evidence, open work, orchestration blocks, implementation blocks and environment blocks.
+- Independent-review packet is navigable but not mislabeled as an audit.
+- Resource/abuse-limit audit closes only evidence-backed small gaps and records substantive gaps instead of inventing limits.
+- Package/operator evidence is traced, not needlessly rerun.
+- Governance remains: `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` unless a later explicit maintainer/reviewer decision changes the appropriate flag.
 
 ## Do not expand into
 
-- another broad repeated-failover harness rewrite;
-- unchanged WAN retries;
+- another repeated-warm-failover or periodic retry on the closed current instrumentation lines;
+- implementation of NAT rebinding, live migration-back, live key update or live PMTUD merely to fill item 3;
+- IPv6 claims without a real owned IPv6 path;
+- repeated HY2 attempts after the single changed-hypothesis D result;
+- disabling authentication/integrity for comparison;
 - production firewall/route/qdisc/DNS/proxy/tunnel changes;
 - third-party targets/scanning;
-- automatic NAT/migration/key-update/PMTUD implementation just to satisfy the matrix;
-- 0-RTT, enabled FEC, striping/aggregation or exotic carriers without an observed-problem gate;
-- weakening HY2/Nekomusume security for benchmark convenience;
-- self-declaring an independent security review;
-- changing RC/release scope without the maintainer decision in J.
+- speculative 0-RTT/FEC/striping/exotic carriers without observed-problem evidence;
+- reading/copying/committing protected identity or secret material;
+- RC/global freeze/release/production claims from bounded research evidence.
 
 ## Questions requiring maintainer decision
 
-none now. A maintainer decision becomes required only if/when slice J is reached and the remaining release-evidence matrix has no dependency-safe READY path under the current declared scope.
+none now. A maintainer decision may become required at slice I if the release-evidence matrix has no remaining `OPEN_READY` path and changing its scope/implementation/environment is the only way forward.
