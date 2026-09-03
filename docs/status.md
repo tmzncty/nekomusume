@@ -245,3 +245,8 @@ resources, accounting, timing, exits, and cleanup fields cannot be positively
 proved. External zero cleanup is a separate post-run observation. No runtime
 failover, WAN/public reachability, or production claim follows. Prior artifacts
 remain preserved and `docs/CHATGPT_HANDOFF.md` was not modified.
+
+
+### HY2 current-line closure (2026-09-04)
+
+The exact `61a6490` post-B C follow-up consumed exactly one new outer wrapper invocation and stopped at local port-range preflight (exit 2). It produced zero VPS deployments, samples, result artifact, comparative statistics, or runtime evidence. The historical bed2940 invocation remains separate (outer=1, local `NEKO_BIN` non-executable); both VPS counts are zero, cleanup residue is zero, and the existing Hysteria service was not touched. The current HY2 line is `BLOCKED_ORCHESTRATION_CURRENT_LINE_HY2`; no historical artifact is rewritten and governance/release flags remain unchanged.

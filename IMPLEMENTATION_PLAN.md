@@ -115,6 +115,7 @@ cleanup comes from separate direct post-exit observations.
   live key update (fixture/state transition only); live PMTUD (state model not
   integrated into a live probe/ACK path).
 - `BLOCKED_ENVIRONMENT`: IPv6 (no real owned IPv6 endpoint/path available).
+- `BLOCKED_ORCHESTRATION_CURRENT_LINE_HY2`: exact `61a6490` C follow-up consumed one new outer wrapper invocation but stopped at local port-range preflight (exit 2), with zero VPS deployments/samples/result/comparative statistics/runtime evidence; historical bed2940 outer=1 `NEKO_BIN` preflight is separate. Both lines verified zero cleanup and did not touch the existing Hysteria service.
 - `BLOCKED_DIAGNOSTICS`: HY2 (latest `hy2-1` client exit lacks discriminating
   diagnostics); repeated warm failover (exact-`07545f0` command boundary did
   not enter the batch runner).
