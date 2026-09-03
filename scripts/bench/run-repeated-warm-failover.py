@@ -16,11 +16,13 @@ import os
 import re
 import subprocess
 import sys
+import hashlib
 import time
 from typing import Any, Callable
 
 CYCLES = 6
 MAX_BATCH_SECONDS = 570
+MAX_DIAGNOSTIC_BYTES = 4096
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 STABLE_PARAMETER_FIELDS = ("record_count", "record_payload_bytes", "client_max_seconds", "server_max_seconds", "concurrency")
@@ -33,7 +35,24 @@ COUNT_FIELDS = (
 )
 
 class EvidenceError(ValueError):
-    pass
+    def __init__(self, message: str, diagnostic: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.diagnostic = diagnostic
+
+def retain_private_diagnostics(stderr: str, cycle_index: int) -> dict[str, Any]:
+    import re
+    text = stderr.replace("\x00", "�")
+    for pattern, replacement in ((r"(?i)(password|token|secret|private[_ -]?key|authorization)\s*[:=]\s*[^\s]+", r"\1=<redacted>"),(r"(?i)(ssh|https?|tcp|udp)://[^\s]+", r"\1://<redacted>"),(r"(?<![A-Za-z0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]{1,5})?", "<endpoint>"),(r"(?i)(?:/home|/root|/tmp|/media|[A-Za-z]:\\)[^\r\n ]*", "<path>")):
+        text = re.sub(pattern, replacement, text)
+    encoded = text.encode("utf-8", "replace")
+    data = encoded[:MAX_DIAGNOSTIC_BYTES]
+    root = os.path.abspath(os.environ.get("NEKO_PRIVATE_DIAGNOSTICS_DIR", os.path.join(os.path.expanduser("~"), ".cache", "nekomusume", "collector-diagnostics")))
+    os.makedirs(root, mode=0o700, exist_ok=True); os.chmod(root, 0o700)
+    target = os.path.join(root, f"cycle-{cycle_index}.stderr.txt")
+    with open(target + ".tmp", "wb") as handle:
+        os.fchmod(handle.fileno(), 0o600); handle.write(data)
+    os.replace(target + ".tmp", target)
+    return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data), "truncated": len(encoded) > len(data), "classification": "collector_failure"}
 
 def obj(value: Any, name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
@@ -186,9 +205,10 @@ def run(argv: list[str], invoke: Callable[..., subprocess.CompletedProcess[str]]
         try:
             completed = invoke(args.command, text=True, capture_output=True, timeout=remaining, env=env, check=False)
             if completed.returncode != 0:
+                diagnostic = retain_private_diagnostics(completed.stderr or "", index)
                 if completed.stdout.strip():
-                    raise EvidenceError("collector returned nonzero with a row")
-                raise EvidenceError("collector returned nonzero without a valid row")
+                    raise EvidenceError("collector returned nonzero with a row", diagnostic)
+                raise EvidenceError(f"collector returned nonzero ({completed.returncode}); diagnostic {diagnostic['classification']} sha256={diagnostic['sha256'][:16]} bytes={diagnostic['bytes']}", diagnostic)
             raw = json.loads(completed.stdout)
             row = validate_cycle(raw, index)
             if rows and any(row[key] != rows[0][key] for key in ("git_commit", "binary_sha256", "binary_bytes")):
@@ -201,6 +221,8 @@ def run(argv: list[str], invoke: Callable[..., subprocess.CompletedProcess[str]]
                 break
         except (subprocess.TimeoutExpired, json.JSONDecodeError, EvidenceError) as error:
             first_failure = {"cycle_index": index, "kind": "invalid_cycle_evidence", "detail": str(error)[:240]}
+            if isinstance(error, EvidenceError) and error.diagnostic is not None:
+                first_failure["diagnostic"] = error.diagnostic
             break
 
     elapsed_ms = int((clock() - started) * 1000)

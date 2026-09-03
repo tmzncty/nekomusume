@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import importlib.util
 import json
 import pathlib
@@ -90,6 +91,28 @@ def test_middle_failure_preserves_prefix() -> None:
     assert called == [1, 2, 3]
     assert [item["cycle_index"] for item in batch["cycles"]] == [1, 2, 3]
     assert batch["first_failure"] == {"cycle_index": 3, "kind": "cycle_failed", "detail": "readiness"}
+
+def test_nonzero_stderr_is_bounded_private_and_validate_only():
+    with tempfile.TemporaryDirectory() as td:
+        private = pathlib.Path(td) / "private"
+        def failing(*_args, **_kwargs):
+            return subprocess.CompletedProcess([], 7, "", "password=supersecret ssh://user@192.0.2.9 /home/user/private.log\n" * 1000)
+        output = private.parent / "result.json"
+        old = os.environ.get("NEKO_PRIVATE_DIAGNOSTICS_DIR")
+        os.environ["NEKO_PRIVATE_DIAGNOSTICS_DIR"] = str(private)
+        try:
+            batch, code = module.run(["--output", str(output), "--", "fake"], invoke=failing)
+        finally:
+            if old is None: os.environ.pop("NEKO_PRIVATE_DIAGNOSTICS_DIR", None)
+            else: os.environ["NEKO_PRIVATE_DIAGNOSTICS_DIR"] = old
+        assert code == 1 and batch["completed_cycles"] == 0
+        diagnostic = batch["first_failure"]["diagnostic"]
+        assert diagnostic["bytes"] <= module.MAX_DIAGNOSTIC_BYTES and diagnostic["truncated"]
+        assert "supersecret" not in pathlib.Path(private / "cycle-1.stderr.txt").read_text()
+        assert "192.0.2.9" not in pathlib.Path(private / "cycle-1.stderr.txt").read_text()
+        assert "supersecret" not in output.read_text()
+        assert oct((private.stat().st_mode & 0o777)) == "0o700"
+        assert oct((private / "cycle-1.stderr.txt").stat().st_mode & 0o777) == "0o600"
 
 def test_required_fields_fail_closed() -> None:
     value = row(1); del value["endpoint_provenance"]; expect_invalid(value, "endpoint_provenance")
