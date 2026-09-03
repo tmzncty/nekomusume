@@ -33,6 +33,11 @@ def plan(td,remote=False,server_mode='good',client_mode='good'):
  return {'git_commit':'0'*40,'server':server,'client':{'execution':'local','binary':binary(exe),'argv':args(exe,'client',client_mode)},'cleanup':clean,'timeout_seconds':2}
 def write(value,td):p=td/'plan.json';p.write_text(json.dumps(value));return str(p)
 def execute(p,td):out=td/'out';rc=m.run(write(p,td),str(out),False,False);return rc,json.loads(out.read_text())
+
+def test_diagnostic_classes_are_structural():
+ for args,want in [((255,None,'',False),'ssh_transport_exit'),((2,None,'identity mismatch',False),'remote_binary_identity_reject'),((2,None,'x',False),'remote_exec_protocol_reject'),((7,None,'x',False),'server_runtime_exit_before_ready'),((0,'start_timeout','',False),'start_timeout_no_terminal_evidence'),((0,None,'',True),'log_overflow')]:assert m.diagnostic_class(*args)==want
+
+
 def test_pass_contract_and_duplicate_domains():
  with tempfile.TemporaryDirectory() as raw:
   td=pathlib.Path(raw);rc,r=execute(plan(td,server_mode='serverdup'),td);x=r['result'];assert rc==0 and x['status']=='passed';assert x['attempted']==x['confirmed']==x['declared']['count']==2 and x['missing']==x['reconnects']==0;assert x['client_duplicates']==0 and x['server_duplicates']==1 and 'conflicts' not in x;assert x['confirmation_latencies_ms']==[5,9] and (x['median_confirmation_latency_ms'],x['p95_confirmation_latency_ms'])==(5,9);assert x['application_bytes']==64

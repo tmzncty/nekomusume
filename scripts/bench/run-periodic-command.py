@@ -145,6 +145,14 @@ def sample_local_process(pid: int, current: dict[str,Any]) -> None:
                 rss=int(line.split()[1]);current['max_rss_kib']=max(current.get('max_rss_kib',0),rss);break
     except (OSError,ValueError,IndexError): pass
 
+def diagnostic_class(server_exit: int|None, readiness: str|None, log: str, truncated: bool) -> str|None:
+    if truncated:return 'log_overflow'
+    if server_exit==255:return 'ssh_transport_exit'
+    if server_exit==2:return 'remote_binary_identity_reject' if 'identity mismatch' in log else 'remote_exec_protocol_reject'
+    if server_exit not in (None,0):return 'server_runtime_exit_before_ready'
+    if readiness=='start_timeout':return 'start_timeout_no_terminal_evidence'
+    return None
+
 class BoundedCapture:
     def __init__(self, process: subprocess.Popen[bytes]):
         self.buffers={'stdout':bytearray(),'stderr':bytearray()}; self.truncated=False; self.lock=threading.Lock(); self.threads=[]
@@ -280,7 +288,14 @@ def run(plan_path: str, output: str|None, validate_only: bool, dry_run: bool) ->
     server_text=server_capture.text('stdout') if server_capture else ''
     client_text=client_capture.text('stdout') if client_capture else ''
     truncated=bool((server_capture and server_capture.truncated) or (client_capture and client_capture.truncated))
-    report['private_logs']={'retained_for_parsing':True,'tracked':False,'storage':'bounded_memory','bounded_bytes_per_stream':MAX_LOG_BYTES,'streams':['server_stdout','server_stderr','client_stdout','client_stderr'],'truncated':truncated}
+    diagnostic_streams=[]
+    for scope,capture in (('server',server_capture),('client',client_capture)):
+        if capture:
+            for stream in ('stdout','stderr'):
+                payload=capture.text(stream).encode('utf-8')
+                diagnostic_streams.append({'scope':scope+'_'+stream,'sha256':hashlib.sha256(payload).hexdigest(),'bytes':len(payload),'truncated':capture.truncated})
+    report['private_logs']={'retained_for_parsing':True,'tracked':False,'storage':'bounded_memory','bounded_bytes_per_stream':MAX_LOG_BYTES,'streams':['server_stdout','server_stderr','client_stdout','client_stderr'],'truncated':truncated,'diagnostics':diagnostic_streams}
+    report['diagnostics']={'protocol_entered':server_capture is not None,'readiness_observed':readiness=='ready','class':diagnostic_class(server.returncode if server else None,readiness,server_text,truncated)}
     if readiness=='ready' and not timed_out and not startup_error and not truncated:
         try:parsed=parse_result(client_text,server_text,int((time.monotonic()-started)*1000),declared)
         except ValueError as exc:parse_error=str(exc)
