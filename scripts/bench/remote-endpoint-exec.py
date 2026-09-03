@@ -37,6 +37,7 @@ def main() -> int:
    stat=os.fstat(stream.fileno()); digest=hashlib.file_digest(stream,"sha256").hexdigest(); post=os.fstat(stream.fileno())
  except OSError: fail("underlying binary unavailable")
  if stat.st_size!=binary["bytes"] or post.st_size!=stat.st_size or digest!=binary["sha256"]: fail("underlying binary identity mismatch")
+ print(f"remote_exec_protocol_accepted protocol={request['protocol']} role={request['role']}",flush=True)
  for signum in (signal.SIGTERM,signal.SIGINT): signal.signal(signum,relay)
  try:
   child=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,start_new_session=True,shell=False)

@@ -145,6 +145,14 @@ def sample_local_process(pid: int, current: dict[str,Any]) -> None:
                 rss=int(line.split()[1]);current['max_rss_kib']=max(current.get('max_rss_kib',0),rss);break
     except (OSError,ValueError,IndexError): pass
 
+def remote_protocol_entered(text: str) -> bool:
+    matches=[line for line in text.splitlines() if line.startswith('remote_exec_protocol_accepted')]
+    if len(matches)!=1:return False
+    try:
+        name,value=fields(matches[0])
+        return name=='remote_exec_protocol_accepted' and value=={'protocol':REMOTE_EXEC_PROTOCOL,'role':'server'}
+    except ValueError:return False
+
 def diagnostic_class(server_exit: int|None, readiness: str|None, log: str, truncated: bool) -> str|None:
     if truncated:return 'log_overflow'
     if server_exit==255:return 'ssh_transport_exit'
@@ -295,7 +303,7 @@ def run(plan_path: str, output: str|None, validate_only: bool, dry_run: bool) ->
                 payload=capture.text(stream).encode('utf-8')
                 diagnostic_streams.append({'scope':scope+'_'+stream,'sha256':hashlib.sha256(payload).hexdigest(),'bytes':len(payload),'truncated':capture.truncated})
     report['private_logs']={'retained_for_parsing':True,'tracked':False,'storage':'bounded_memory','bounded_bytes_per_stream':MAX_LOG_BYTES,'streams':['server_stdout','server_stderr','client_stdout','client_stderr'],'truncated':truncated,'diagnostics':diagnostic_streams}
-    report['diagnostics']={'protocol_entered':server_capture is not None,'readiness_observed':readiness=='ready','class':diagnostic_class(server.returncode if server else None,readiness,server_text,truncated)}
+    report['diagnostics']={'capture_started':server_capture is not None,'protocol_entered':remote_protocol_entered(server_text),'readiness_observed':readiness=='ready','class':diagnostic_class(server.returncode if server else None,readiness,server_text,truncated)}
     if readiness=='ready' and not timed_out and not startup_error and not truncated:
         try:parsed=parse_result(client_text,server_text,int((time.monotonic()-started)*1000),declared)
         except ValueError as exc:parse_error=str(exc)

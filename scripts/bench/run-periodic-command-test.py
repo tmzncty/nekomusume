@@ -36,6 +36,10 @@ def execute(p,td):out=td/'out';rc=m.run(write(p,td),str(out),False,False);return
 
 def test_diagnostic_classes_are_structural():
  for args,want in [((255,None,'',False),'ssh_transport_exit'),((2,None,'identity mismatch',False),'remote_binary_identity_reject'),((2,None,'x',False),'remote_exec_protocol_reject'),((7,None,'x',False),'server_runtime_exit_before_ready'),((0,'start_timeout','',False),'start_timeout_no_terminal_evidence'),((0,None,'',True),'log_overflow')]:assert m.diagnostic_class(*args)==want
+ assert not m.remote_protocol_entered('')
+ assert not m.remote_protocol_entered('private host token')
+ assert m.remote_protocol_entered('remote_exec_protocol_accepted protocol=nekomusume.remote-exec.v1 role=server')
+ assert not m.remote_protocol_entered('remote_exec_protocol_accepted protocol=wrong role=server')
 
 
 def test_pass_contract_and_duplicate_domains():
@@ -59,7 +63,7 @@ def test_incomplete_reconnect_signal_and_percentile_fail_closed():
    td=pathlib.Path(raw);rc,r=execute(plan(td,client_mode=cm,server_mode=sm),td);assert rc==1 and r['result']['status']=='malformed_result' and reason in r['result']['failure_reason']
 def test_delayed_remote_readiness_private_and_cleanup():
  with tempfile.TemporaryDirectory() as raw:
-  td=pathlib.Path(raw);rc,r=execute(plan(td,True,'delayed'),td);raw_result=json.dumps(r);assert rc==0 and r['readiness']['status']=='ready';assert r['resources']['server']=={'status':'not_collected_remote'};assert r['private_logs']['tracked'] is False and not r['private_logs']['truncated'];assert 'argv' not in raw_result and 'transport_argv' not in raw_result and all(x['status']=='verified' for x in r['cleanup']['postchecks'])
+  td=pathlib.Path(raw);rc,r=execute(plan(td,True,'delayed'),td);raw_result=json.dumps(r);assert rc==0 and r['readiness']['status']=='ready';assert r['diagnostics']['capture_started'] and r['diagnostics']['protocol_entered'];assert r['resources']['server']=={'status':'not_collected_remote'};assert r['private_logs']['tracked'] is False and not r['private_logs']['truncated'];assert 'argv' not in raw_result and 'transport_argv' not in raw_result and all(x['status']=='verified' for x in r['cleanup']['postchecks'])
 def test_readiness_failures_never_launch_client():
  old=m.STARTUP_TIMEOUT_SECONDS;m.STARTUP_TIMEOUT_SECONDS=.2
  try:
