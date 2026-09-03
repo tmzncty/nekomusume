@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nekomusume.example/schema/repeated-warm-failover.v1.json",
+  "title": "Six-cycle controlled warm failover batch evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "expected_cycles", "concurrency", "status", "completed_cycles", "elapsed_ms", "cycles", "first_failure"],
+  "properties": {
+    "schema": {"const": "nekomusume.repeated-warm-failover.v1"},
+    "expected_cycles": {"const": 6},
+    "concurrency": {"const": 1},
+    "status": {"enum": ["passed", "failed"]},
+    "completed_cycles": {"type": "integer", "minimum": 0, "maximum": 6},
+    "elapsed_ms": {"type": "integer", "minimum": 0, "exclusiveMaximum": 600000},
+    "cycles": {"type": "array", "maxItems": 6, "items": {"$ref": "#/$defs/cycle"}},
+    "first_failure": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/failure"}]}
+  },
+  "$defs": {
+    "failure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cycle_index", "kind", "detail"],
+      "properties": {
+        "cycle_index": {"type": "integer", "minimum": 1, "maximum": 6},
+        "kind": {"enum": ["batch_timeout", "cycle_failed", "invalid_cycle_evidence"]},
+        "detail": {"type": "string", "maxLength": 240}
+      }
+    },
+    "count": {"type": "integer", "minimum": 0},
+    "cycle": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cycle_index", "git_commit", "binary_sha256", "binary_bytes", "parameters", "semantic", "accounting", "timing", "classification", "result", "cleanup"],
+      "properties": {
+        "cycle_index": {"type": "integer", "minimum": 1, "maximum": 6},
+        "git_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "binary_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "binary_bytes": {"type": "integer", "minimum": 1},
+        "parameters": {"type": "object", "additionalProperties": false, "required": ["record_count", "record_payload_bytes", "client_max_seconds", "server_max_seconds", "concurrency"], "properties": {"record_count": {"type": "integer", "minimum": 1}, "record_payload_bytes": {"type": "integer", "minimum": 1}, "client_max_seconds": {"type": "integer", "minimum": 1}, "server_max_seconds": {"type": "integer", "minimum": 1}, "concurrency": {"const": 1}, "udp_port": {"type": "integer", "minimum": 1024, "maximum": 65535}, "tcp_port": {"type": "integer", "minimum": 1024, "maximum": 65535}}},
+        "semantic": {"type": "object", "additionalProperties": false, "required": ["selected_version", "udp_negotiated", "udp_authenticated", "tcp_negotiated", "tcp_authenticated", "resume_validated", "readiness_proofs", "readiness_completed", "udp_confirmed_before_failure"], "properties": {"selected_version": {"type": "integer", "minimum": 0}, "udp_negotiated": {"type": "boolean"}, "udp_authenticated": {"type": "boolean"}, "tcp_negotiated": {"type": "boolean"}, "tcp_authenticated": {"type": "boolean"}, "resume_validated": {"type": "boolean"}, "readiness_proofs": {"type": "integer", "minimum": 0, "maximum": 3}, "readiness_completed": {"type": "boolean"}, "udp_confirmed_before_failure": {"type": "boolean"}}},
+        "accounting": {"type": "object", "additionalProperties": false, "required": ["udp_confirmed_records", "udp_confirmed_bytes", "uncertain_records", "uncertain_bytes", "replayed_records", "replayed_bytes", "confirmed_records", "confirmed_bytes", "duplicate_records", "duplicate_bytes", "lost_records", "lost_bytes", "conflicting_records", "conflicting_bytes"], "properties": {"udp_confirmed_records": {"$ref": "#/$defs/count"}, "udp_confirmed_bytes": {"$ref": "#/$defs/count"}, "uncertain_records": {"$ref": "#/$defs/count"}, "uncertain_bytes": {"$ref": "#/$defs/count"}, "replayed_records": {"$ref": "#/$defs/count"}, "replayed_bytes": {"$ref": "#/$defs/count"}, "confirmed_records": {"$ref": "#/$defs/count"}, "confirmed_bytes": {"$ref": "#/$defs/count"}, "duplicate_records": {"$ref": "#/$defs/count"}, "duplicate_bytes": {"$ref": "#/$defs/count"}, "lost_records": {"$ref": "#/$defs/count"}, "lost_bytes": {"$ref": "#/$defs/count"}, "conflicting_records": {"$ref": "#/$defs/count"}, "conflicting_bytes": {"$ref": "#/$defs/count"}}},
+        "timing": {"type": "object", "additionalProperties": false, "required": ["failure_decided_at_us", "first_resumed_data_at_us", "first_resumed_ack_at_us", "recovery_latency_us"], "properties": {"failure_decided_at_us": {"type": ["integer", "null"], "minimum": 0}, "first_resumed_data_at_us": {"type": ["integer", "null"], "minimum": 0}, "first_resumed_ack_at_us": {"type": ["integer", "null"], "minimum": 0}, "recovery_latency_us": {"type": ["integer", "null"], "minimum": 0}}},
+        "classification": {"type": "object", "additionalProperties": false, "required": ["failure_seam", "natural_blackhole", "pto_blackhole"], "properties": {"failure_seam": {"const": "controlled_application_reply_cessation"}, "natural_blackhole": {"const": false}, "pto_blackhole": {"const": false}}},
+        "result": {"type": "object", "additionalProperties": false, "required": ["status", "client_exit_code", "server_exit_code", "failure_stage", "failure_reason"], "properties": {"status": {"enum": ["passed", "failed"]}, "client_exit_code": {"type": "integer"}, "server_exit_code": {"type": "integer"}, "failure_stage": {"type": ["string", "null"]}, "failure_reason": {"type": ["string", "null"]}}},
+        "cleanup": {"type": "object", "additionalProperties": false, "required": ["status", "client_process_reaped", "server_process_reaped", "listeners_remaining", "temporary_files_removed"], "properties": {"status": {"enum": ["verified", "failed"]}, "client_process_reaped": {"type": "boolean"}, "server_process_reaped": {"type": "boolean"}, "listeners_remaining": {"type": "integer", "minimum": 0}, "temporary_files_removed": {"type": "boolean"}}},
+        "resources": {"type": ["object", "null"]}
+      }
+    }
+  }
+}
