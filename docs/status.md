@@ -225,3 +225,19 @@ batch runner. The bounded release matrix therefore remains open, with
 ### 2026-09-04 exact-a117086 corrected structured six-cycle outcome
 
 The sole authorized live outer invocation at exact `a117086fa69553a36021137900b6052050624a8b` is retained at `artifacts/repeated-warm-failover/a117086-typed-negative/`. It exited 1 after 2,303 ms with 0/6 completed cycles and a typed batch-level `invalid_cycle_evidence` at cycle 1 (`collector returned nonzero without a valid row`), result SHA-256 `71ab1cab9828f72f1b1e044bbbef5d39178ac0af9ea1a022916e872e3b5c63b6`. Invocation count is exactly 1; no retry. Synthetic preflight is separate and not live evidence. No full cycle, valid prefix, runtime failover conclusion, WAN/reachability claim, or unsupported deeper root cause is asserted. Per-cycle endpoint provenance, resources, accounting, timing, and exits are not collected because no row exists; remote resources remain `not_collected_remote`. Separate post-run cleanup process/listener/temporary-path postchecks were zero; these are not artifact-carried row fields. Historical `c156868` negative remains preserved.
+
+### Exact-`c6ab8fd` Follow-up B evidence boundary (2026-09-04)
+
+Exactly one live repeated-warm-failover invocation was retained at
+`artifacts/repeated-warm-failover/c6ab8fd-typed-negative/`; retry count was 0.
+The schema-valid result is a typed negative: 0/6 cycles, cycle 1
+`invalid_cycle_evidence`, collector exit 2, and no valid stdout row. The private
+0600 diagnostic's sanitized literal summary is `live failover collector: missing
+JSON event: start`; it remains outside Git. This proves only the immediate
+orchestration/evidence-collection seam. Whether the missing event reflects
+remote server event absence, output framing, or early exit is indeterminate;
+no deeper cause is claimed. With zero cycle rows, endpoint provenance,
+resources, accounting, timing, exits, and cleanup fields cannot be positively
+proved. External zero cleanup is a separate post-run observation. No runtime
+failover, WAN/public reachability, or production claim follows. Prior artifacts
+remain preserved and `docs/CHATGPT_HANDOFF.md` was not modified.

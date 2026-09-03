@@ -15,3 +15,15 @@ Exit status remains 0 for a reachable case, 1 for a completed failed case, and 2
 ## Cross-host failover evidence boundary
 
 The exact-`9fd2411` one-run repeated warm-failover result is retained at `artifacts/repeated-warm-failover/9fd2411-typed-negative/result.json`. It is a 0/6 `invalid_cycle_evidence` typed negative at the orchestration/evidence boundary, not a reachability matrix row and not evidence of WAN failover success, runtime correctness, public/general reachability, or production exposure. The separate six-row dry preflight was synthetic and lacked `endpoint_provenance`; it is not counted here.
+
+### Exact-`c6ab8fd` repeated warm-failover typed negative (2026-09-04)
+
+The exact-`c6ab8fd` one-invocation result is retained at
+`artifacts/repeated-warm-failover/c6ab8fd-typed-negative/result.json`.
+It is a schema-valid 0/6 `invalid_cycle_evidence` negative at the
+orchestration/evidence-collection boundary, with no retry. The private
+collector diagnostic records only `missing JSON event: start`; whether that
+reflects remote event absence, output framing, or early exit is indeterminate.
+It is not a reachability-matrix row and supplies no runtime failover,
+WAN/public reachability, or production evidence. Zero-row limitations and
+separate external cleanup are documented in the artifact README.
