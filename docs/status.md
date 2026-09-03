@@ -173,6 +173,10 @@ repair. GitHub Actions run `33755759414` completed successfully for that exact
 head; both stable and fuzz jobs were green. The run is repository CI evidence,
 not live-network, security-review, or release evidence.
 
+### Final periodic current-line boundary
+
+The exact-`60cd40d` `start_timeout` remains a separate historical pre-application negative. Exact `85346ce` retains the sole changed-hypothesis periodic follow-up from exact `00ac2c1`: `ssh_transport_exit` 255, no readiness, no client launch, no application traffic or metrics, and verified-zero local/remote cleanup. Per the additive R-009 erratum, the immutable result's legacy `protocol_entered=true` proves only local capture attachment; remote executor acceptance was not proved. The lane is `BLOCKED_ORCHESTRATION_CURRENT_LINE_PERIODIC`, not Session runtime or reliability evidence.
+
 The retained release-evidence rows are reconciled as follows:
 
 - The accepted exact-`25e0daa` D064 controlled warm fallback and its single
@@ -213,7 +217,7 @@ The retained release-evidence rows are reconciled as follows:
 - live PMTUD — `BLOCKED_IMPLEMENTATION`: PLPMTUD is bounded state-model evidence only and is not integrated into a live carrier probe/ACK path.
 - IPv6 — `BLOCKED_ENVIRONMENT`: no real owned IPv6 endpoint/path is currently available; historical probes do not supply the missing current environment.
 - HY2 fair pair — `BLOCKED_DIAGNOSTICS`: the latest retained prefix ends at `hy2-1` `client_exit` without enough retained diagnostics to distinguish harness, endpoint, or HY2 runtime cause; another unchanged live retry is not justified.
-- repeated warm failover — `BLOCKED_DIAGNOSTICS`: the exact-`07545f0` command boundary must first be corrected and locally dry-run through runner entry; neither retained orchestration negative is a runtime row.
+- repeated warm failover — `BLOCKED_ORCHESTRATION_CURRENT_LINE`: the exact-`07545f0` command boundary must first be corrected and locally dry-run through runner entry; neither retained orchestration negative is a runtime row.
 
 There is no `READY_LIVE` row. The smallest unlock seam is local and
 non-networked: correct and verify the exact-`07545f0` repeated-failover command

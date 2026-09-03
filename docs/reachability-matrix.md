@@ -33,3 +33,8 @@ separate external cleanup are documented in the artifact README.
 The final current-line attempt is retained at `artifacts/repeated-warm-failover/4a2129e-final-typed-negative/result.json` (SHA-256 `8af7aab8bb5f8a70c024fd6ef28ac8bc59a53147d86a2bd82a2cf23987fe8d3d`). Exactly one outer invocation, with no retry, retained 0/6 rows and stopped at cycle 1 after 1,165 ms with `invalid_cycle_evidence`; the bounded diagnostic says the server exited before its structured start event. The repeated lane is therefore `BLOCKED_ORCHESTRATION_CURRENT_LINE`. This is not a reachability row or runtime failover failure. Separate later cleanup found zero residue. Historical negatives remain unchanged.
 
 The exact-`60cd40d` periodic attempt is retained at `artifacts/periodic-session/60cd40d-start-timeout/result.json` (SHA-256 `c5a6576f3131f8e3a6bd120b8192fdaed40e50846ace6e124b2d07741ca5f9b2`). Its single no-retry invocation ended at `start_timeout` with SSH exit 255 before client start and before application metrics. Artifact cleanup failed during collection; a later cleanup-only observation separately found zero residue. It is not Session runtime or reachability evidence.
+
+
+### Final exact-`85346ce` periodic orchestration boundary
+
+The sole changed-hypothesis exact-`00ac2c1` invocation ended pre-application as `ssh_transport_exit` 255, without readiness, client launch, application traffic, or metrics; both cleanup postchecks were zero. The R-009 erratum clarifies that the immutable result's legacy `protocol_entered=true` did not prove remote executor acceptance. The prior exact-`60cd40d` `start_timeout` remains separate historical evidence. This is not a reachability/runtime row; the periodic lane is `BLOCKED_ORCHESTRATION_CURRENT_LINE_PERIODIC`.

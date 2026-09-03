@@ -205,3 +205,8 @@ entry. This checkpoint does not close the release-evidence milestone.
 ### 2026-09-04 exact-a117086 evidence checkpoint
 
 The corrected structured six-cycle attempt is a typed orchestration/evidence-collection negative: one live outer invocation only, 0/6 cycles, no valid prefix, cycle 1 `invalid_cycle_evidence`, no retry. Preflight is separate and non-live. The sanitized artifact is retained under `artifacts/repeated-warm-failover/a117086-typed-negative/`; no WAN/runtime/release claim is added, and prior `c156868` remains preserved.
+
+
+### 2026-09-04 final current-line orchestration boundaries
+
+The historical exact-`60cd40d` periodic pre-application negative remains retained. Exact `85346ce` archives the sole changed-hypothesis exact-`00ac2c1` follow-up: `ssh_transport_exit` 255, no readiness, client, application traffic, or metrics, with verified-zero cleanup. The R-009 erratum corrects the immutable result's legacy `protocol_entered=true` interpretation; it did not prove remote executor acceptance. Periodic is `BLOCKED_ORCHESTRATION_CURRENT_LINE_PERIODIC`; exact `4a2129e` keeps repeated failover `BLOCKED_ORCHESTRATION_CURRENT_LINE`. Natural loss stays unchecked; NAT/source change, migration-back, live key update, and live PMTUD stay `BLOCKED_IMPLEMENTATION`; IPv6 stays `BLOCKED_ENVIRONMENT`; HY2 stays `BLOCKED_DIAGNOSTICS`. Release evidence remains open and governance/release state is unchanged.
