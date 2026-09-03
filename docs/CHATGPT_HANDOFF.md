@@ -1,164 +1,106 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-03 20:00 Asia/Shanghai
-Repository HEAD reviewed: `1bf848d10e605121c6d11bd70d9c3a9a3b2d86f6`
-Previous reviewed coding/evidence HEAD: `de7ab0347f6bcca53b921cf32ee4828ed9e9ba88`
-Previous reviewer handoff commit: `90c5b4bef9e6cc22c1461cb38b3c8804415d6811`
+Checked at: 2026-09-03 21:02 Asia/Shanghai
+Repository HEAD reviewed: `07545f049790a088bfa655aff4995ab9d6e8fc29`
+Previous reviewed coding/evidence HEAD: `1bf848d10e605121c6d11bd70d9c3a9a3b2d86f6`
+Previous reviewer handoff commit: `c4786dc8570dc176fc47251f955979dff7de4b58`
 
 ## What changed
 
-Three coding-agent commits landed after the previous reviewer handoff:
+One coding-agent commit landed after the previous reviewer handoff:
 
-- `9df07d2` — **live repeated-failover cycle adapter + runtime diagnostic evidence; no wire-format or Session architecture change.** It adds `scripts/bench/run-live-warm-failover-cycle.py`, connects the six-cycle runner to the real `failover-server` / `failover-client` path, and adds runtime `failover_timing` / `failover_accounting` diagnostics needed to turn one live cycle into one machine-checkable row.
-- `67569e3` — **strict evidence-parser / adapter hardening; no transport semantic change.** It rejects malformed/invalid JSON-looking event rows, duplicate singleton JSON/carrier evidence, role/experiment identity mismatches, inconsistent start parameters, invalid event cardinality/order and contradictory terminal evidence. The deterministic combined attack fixture produces `ADVERSARIAL_REJECTED`.
-- `1bf848d` — **additional invariant hardening after the strict follow-up; no transport semantic change.** It extends rejection to JSON list/scalar/malformed-list lookalikes, exact non-negative integer typing (including bool rejection), negative/reversed/internally inconsistent failover timing, contradictory/negative/bool accounting, and preserves the legal zero-latency boundary. It also tightens the pass predicate so timing/accounting validity is not decorative.
+- `07545f0` — **live-evidence provenance binding + extra invariant regressions; no protocol/wire/Session/Noise/failover semantic change and no new VPS evidence yet.** It mechanically binds both real server/client command executables to the exact file named by `NEKO_FAILOVER_BINARY` using same-file identity, binds `NEKO_FAILOVER_GIT_COMMIT` to the actual checkout HEAD containing the live adapter, preserves the recorded executable SHA-256/size as the binary identity, and adds deterministic rejection of decoy server/client executables and wrong checkout commit declarations. It also adds useful non-blocking accounting regressions for wrong uncertain/replayed counts.
 
-The exact current HEAD has independent GitHub Actions run `33751892793`, completed successfully:
+Exact `07545f0` GitHub Actions run `33755759414` completed successfully:
 
-- `stable checks` — `bash scripts/check.sh` succeeded;
-- `nightly decode fuzz smoke` — pinned cargo-fuzz decode build and 30-second / 8,192-byte smoke succeeded.
+- `Rust CI` concluded `success` on exact HEAD `07545f049790a088bfa655aff4995ab9d6e8fc29`;
+- the repository stable gate and workflow-required fuzz smoke therefore passed at the exact provenance-repair HEAD.
 
-This closes the previous parser/semantic-oracle concerns. The coding-agent's extra local adversarial review found useful timing/accounting boundary cases, but a separate pre-push child review is **not** a standing gate going forward. The normal gate remains targeted/adversarial tests -> full local gate -> push -> exact-head GitHub CI. Do not recursively add another review layer without a new concrete failure model.
+The previous R-001 evidence-attribution blocker is closed. The adapter now proves that the direct server/client commands execute the same underlying file whose hash/size are recorded, and that the declared commit equals the adapter checkout HEAD. This does **not** prove a reproducible build from that commit by itself; the artifact truthfully retains both commit and executable hash for attribution.
 
-### New reviewer finding — R-001 HIGH: exact evidence provenance is not yet bound to the executed binary
-
-The live adapter currently computes `binary_sha256` / `binary_bytes` from `NEKO_FAILOVER_BINARY` and records `NEKO_FAILOVER_GIT_COMMIT`, but `NEKO_FAILOVER_SERVER_COMMAND_JSON` and `NEKO_FAILOVER_CLIENT_COMMAND_JSON` are only checked for required CLI tokens. The adapter does **not** mechanically prove that those command arrays actually execute the same binary whose SHA-256 is recorded, and it does not bind the declared commit to the checkout containing the adapter.
-
-That creates a realistic evidence-attribution failure: an accidental old/alternate `neko` executable could be used by the server/client commands while the artifact truthfully hashes a different file and labels the run with the new commit. Six successful cycles would then be valid behavior observations but falsely attributed to the exact HEAD/binary named in the release evidence.
-
-This is an evidence-integrity blocker for the paid six-cycle batch, not a protocol/runtime correctness failure. It is narrow and should be closed once, then the VPS run should proceed immediately.
+No new correctness/security blocker is visible from this delta. Do not add another generic pre-push/adversarial review layer. The current highest-value work is now real VPS evidence under standing authorization.
 
 ## Review verdict
 
-**CONTINUE_WITH_REQUIRED_FIXES — strict parser/invariant work accepted and exact-head CI green; close one provenance-binding defect, then execute the six-cycle VPS batch and longer periodic sample without another reviewer round-trip**
+**SAFE_TO_CONTINUE — provenance blocker closed and exact-head CI green; execute the six-cycle real warm-failover batch now, then the distinct longer periodic Session, without another reviewer round-trip**
 
-The project is not globally blocked. Do not return to HY2-only work and do not start another generic independent adversarial review before push. The highest-value path remains real repeated cross-process warm failover/recovery followed by the distinct longer periodic Session sample.
+The project is not blocked. The time-limited VPS is the scarce asset now; further local polish before the authorized evidence runs would reduce evidence value per rental day unless a real deterministic failure appears during execution.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains the bounded research baseline.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain correct.
-- `9df07d2` / `67569e3` / `1bf848d` add live evidence collection, diagnostics and fail-closed validation. They do **not** themselves add new VPS/WAN evidence.
-- Exact `1bf848d` has green independent stable CI and nightly decode fuzz smoke; this is repository CI evidence, not release/security approval.
+- `9df07d2` / `67569e3` / `1bf848d` / `07545f0` add live evidence collection, strict parsing/invariants and provenance enforcement. They do **not** themselves add real VPS/WAN behavior evidence.
+- Exact `07545f0` has independent exact-head CI success. This is repository CI evidence, not an independent security audit or release approval.
 - Exact `25e0daa` remains the accepted single controlled application-level UDP reply-cessation warm-fallback VPS row: 3/3 logical records, two uncertain/replayed ranges, duplicate/lost 0, about 434 ms failure-decision-to-first-resumed-data. It is not natural UDP loss/PTO-blackhole evidence.
 - The accepted approximately five-minute periodic direct-path row remains one bounded sample, not a production long-lived reliability conclusion.
-- Existing generic replacement/open-exchange-close evidence should not be repeated without a distinct question.
+- Existing generic replacement/open-exchange-close evidence should not be repeated without a distinct research question.
 - Live key update, live PMTUD, live migration-back, genuine NAT/source-endpoint change and owned end-to-end IPv6 remain unproven unless current executable surfaces can demonstrate them truthfully.
-- Historical HY2 negative evidence remains valid; HY2 stays a diagnostic side track and must not block the main VPS harvest.
-- Standing authorization covers the bounded self-owned TCP/UDP work below. No per-run WAN authorization is required.
+- Historical HY2 negative evidence remains valid. HY2 stays a diagnostic side track and must not block the main VPS harvest.
+- Standing authorization explicitly covers bounded self-owned TCP/UDP failover, Session, benchmark, capture, resource observation and cleanup within <=10 minutes / <=256 MiB / <=32 sessions. No per-run WAN authorization is required.
 
-## Work Package — Provenance Binding -> Exact-Head Gate -> Six-Cycle VPS Batch -> Longer Periodic Sample -> Matrix Reconciliation
+## Work Package — Six-Cycle VPS Failover -> Longer Periodic Session -> Matrix Reconciliation -> Next VPS Row
 
-### Primary A — Bind every live cycle artifact to the binary and checkout actually executed
+### Primary A — Execute the six-cycle repeated real warm-failover VPS batch immediately
+
+**Dependency:** already satisfied. `07545f0` is pushed and exact-head CI is green.
 
 **Goal**
 
-Make the live adapter's `git_commit`, `binary_sha256` and `binary_bytes` mechanically attributable to the executable used by both real failover processes before spending the rented VPS window.
+Obtain bounded repeatability evidence from the real `failover-server` / `failover-client` runtime using the now provenance-bound live cycle adapter and the fail-closed six-cycle aggregator.
 
-This is evidence infrastructure only. Do not change wire bytes, Session delivery semantics, Noise, readiness, failover promotion or Carrier Manager behavior.
+Do **not** wait for another reviewer handoff and do not add another generic local adversarial review before this run.
 
-**Likely files**
-
-- `scripts/bench/run-live-warm-failover-cycle.py`;
-- `scripts/bench/run-live-warm-failover-cycle-test.py`;
-- `scripts/bench/run-repeated-warm-failover.py` / its tests only if a small provenance field/contract propagation is genuinely needed;
-- schema only if a new machine-checked provenance field is required.
-
-#### A1. Bind server/client command execution to `NEKO_FAILOVER_BINARY`
-
-Before starting either process, mechanically prove that both server/client command arrays execute the same file identified by `NEKO_FAILOVER_BINARY`.
-
-Preferred direct-command contract:
-
-- normalize/resolve the executable path used by each command;
-- require both to refer to the same underlying file as `NEKO_FAILOVER_BINARY` (an `os.path.samefile`-style check is acceptable so a harmless symlink to the same inode is not falsely rejected);
-- reject a command pointing at a different/old/decoy binary even when it contains all required CLI tokens;
-- keep wrappers out of the paid path unless the adapter has an explicit, mechanically checkable way to identify the actual child binary. Do not weaken provenance just to support arbitrary wrappers.
-
-The cleanup command is not the experiment binary and does not need this identity rule.
-
-#### A2. Bind the declared commit to the checkout containing the live adapter
-
-The adapter runs from the repository worktree used to prepare the exact-head experiment. Before emitting a row:
-
-- mechanically obtain the repository HEAD for the checkout containing the adapter;
-- require it to equal `NEKO_FAILOVER_GIT_COMMIT`;
-- fail closed if HEAD cannot be resolved or differs;
-- do not infer a commit from a branch name.
-
-The recorded binary SHA-256 remains the actual executable identity. Do not claim that commit equality alone proves reproducible build identity; the evidence row keeps both commit and binary hash for that reason.
-
-A tracked-dirty-tree check is optional rather than required if the adapter can still prove exact HEAD plus exact binary hash. If implemented, do not inspect or commit protected identity files.
-
-#### A3. Regression tests
-
-Add deterministic tests proving at minimum:
-
-- success when server/client commands execute the exact declared binary;
-- success through a symlink only when it resolves to the same underlying binary, if symlink support is retained;
-- rejection with empty stdout / collector nonzero when server command uses a decoy binary;
-- same for client command;
-- rejection when `NEKO_FAILOVER_GIT_COMMIT` differs from the adapter checkout HEAD;
-- existing malformed/duplicate/identity/order/timing/accounting/adversarial/privacy tests remain green;
-- the collector contract remains: exit 0 = one valid evidence row collected, not necessarily experiment success.
-
-The current fixture uses a fake executable path that is not the same as `sys.executable`; update the fixture honestly rather than adding a test-only bypass to the production provenance check.
-
-**Non-blocking parser note**
-
-Do not open another broad parser rewrite. If, while touching the fixture, it is trivial to assert exact per-record sequence identities (`udp_delivery_ack_validated` for the first record, two distinct TCP delivery-ack sequences, readiness sequence `{1,2,3}`), that is useful hardening, but it is not a reason to delay the provenance fix or reopen already accepted parser semantics.
-
-#### A4. Gate and push
-
-Run targeted adapter/runner tests, the normal full local gate and `git diff --check`. Fuzz is required only if production network-input/wire/parser behavior changes; evidence-parser-only tests already have the current fuzz evidence and should not manufacture a new protocol-fuzz claim.
-
-Then **push normally**. Do not insert another generic pre-push child-agent review. Wait only for exact new-HEAD GitHub CI (`stable checks` + nightly decode fuzz smoke if triggered by the workflow). If exact-head CI is green, proceed directly to B without waiting for a new reviewer handoff.
-
-### Follow-up B — Execute the six-cycle repeated warm-failover VPS batch immediately
-
-**Dependency:** A complete, pushed, exact-head CI green.
-
-Use standing authorization directly. No additional administrator/reviewer approval is required.
-
-**Profile**
+**Execution profile**
 
 - self-owned client + self-owned VPS only;
-- one outer `run-repeated-warm-failover.py` invocation;
+- exact checkout HEAD `07545f049790a088bfa655aff4995ab9d6e8fc29` unless GitHub advances before the run; if it advances, use the exact current coding HEAD and record it truthfully rather than pretending the run used `07545f0`;
+- build/stage one exact executable and record SHA-256/size;
+- use the repository-tracked `run-live-warm-failover-cycle.py` as the cycle command for `run-repeated-warm-failover.py`;
+- one outer aggregator invocation;
 - exactly 6 sequential fresh server/client cycles;
-- live cycle command = the repository-tracked provenance-bound adapter from A;
 - concurrency 1;
-- same exact commit, executable SHA-256/size and parameters across all rows;
-- small workload comparable to the accepted D064 semantics (`3` logical records x `16 B` is preferred if still supported truthfully);
-- controlled application-level UDP reply cessation only;
-- unprivileged experiment ports within the existing CLI/standing-authorization range;
-- full batch including cleanup comfortably below 10 minutes;
-- no retry of a failing cycle inside the batch;
-- no production firewall/route/qdisc/DNS/proxy/tunnel/service modification.
+- same exact executable identity and stable application parameters across all cycles;
+- controlled application-level UDP reply cessation only, matching the accepted semantic class; do not relabel it natural packet loss/PTO blackhole;
+- preferred workload remains 3 logical records x 16 B if the current live CLI still supports that exact truthful contract;
+- unprivileged ports within the existing 40080-40100 bounded range, with cleanup verified before reuse/change;
+- no retry of a failed cycle inside the batch;
+- the complete six-cycle experiment including cleanup must stay comfortably below the standing 10-minute bound;
+- no production firewall/route/qdisc/DNS/proxy/tunnel/service changes.
 
-**Retain**
+**Required evidence**
 
-- exact commit/binary provenance now mechanically bound by A;
-- six rows or valid prefix through first failure;
-- negotiation/auth/resume/readiness evidence;
-- UDP-confirmed / uncertain / replayed / confirmed / duplicate / lost / conflict accounting;
-- recovery timings;
-- client/server exits;
-- resource/process/socket evidence at its truthful scope;
-- cleanup state;
-- compact artifact hashes/index.
+Retain either all six valid rows or the valid prefix through the first failure. Each successful row must machine-prove, from real runtime output rather than constants:
 
-If all six pass, report only bounded descriptive repeatability for this controlled seam. Six successes are not a general reliability rate and are not natural-WAN/PTO-blackhole evidence.
+- canonical negotiation and authenticated Session identity;
+- at least one UDP delivery confirmation before the controlled failure decision;
+- warm TCP negotiation/authentication/resume validation;
+- exactly three authenticated readiness proofs before promotion;
+- no TCP application data before promotion where the current evidence contract observes that invariant;
+- UNCERTAIN -> replay -> DeliveryAck accounting;
+- confirmed / duplicate / lost / conflict counts and bytes;
+- failure-decision / first-resumed-data / first-resumed-ack timing when exposed;
+- client/server exit state;
+- CPU/RSS/FD/socket/process observations at the sampler's truthful scope;
+- cleanup status;
+- exact commit + executable hash/size provenance now enforced by `07545f0`.
 
-If one cycle fails, preserve the prefix exactly. Continue to C unless the failure demonstrates a genuine Nekomusume runtime correctness defect that invalidates further current-runtime evidence.
+**Outcome boundary**
 
-### Follow-up C — One scientifically distinct longer periodic direct-path Session
+- 6/6 passes = one bounded repeatability batch for a controlled application-level failure seam only;
+- a middle-cycle failure = valid partial/negative evidence; preserve the prefix and do not retry unchanged;
+- no reliability-rate, natural-WAN-degradation, public-reachability or production claim from six successes.
 
-**Dependency:** B complete or honestly retained as typed partial/negative. This is independent of HY2.
+If the run exposes a genuine Nekomusume runtime correctness defect, retain the failing evidence and stop only the failover claim path for correctness repair. If it exposes only orchestration/evidence failure, retain it and proceed to B while repairing the exact harness defect separately.
+
+### Follow-up B — Execute one scientifically distinct longer periodic direct-path Session
+
+**Dependency:** A complete or honestly retained as a typed partial/negative. This run is independent of HY2 and normally independent of a failover-only orchestration defect.
 
 Use the existing real `periodic-*` runtime for a longer bounded sample than the accepted approximately five-minute row.
 
-Recommended profile, adjusted so setup + application + cleanup remain safely below the standing 10-minute ceiling:
+Recommended profile, as a **separate experiment** from A rather than a continuation used to evade the 10-minute limit:
 
 ```text
 application phase: about 480 s
@@ -168,22 +110,40 @@ payload: 32 B/record
 concurrency: 1
 ```
 
-Record exact commit/binary identity, actual setup/application timestamps, records/bytes, confirmation/missing/duplicate/conflict counts, supported confirmation-latency statistics, CPU/RSS/FD/socket/process evidence, exits and cleanup.
+Keep total setup + application + cleanup below 10 minutes. Record:
 
-This proves one longer bounded sample only. Do not call it production long-lived stability. Do not repeat the old five-minute condition unchanged.
+- exact commit/binary SHA-256/size;
+- actual setup/application start/end timestamps;
+- record/byte counts;
+- confirmed/missing/duplicate/conflict counts;
+- supported confirmation-latency median/P95 or raw distribution summary;
+- CPU/RSS/FD/socket/process observations at truthful scope;
+- client/server exits;
+- cleanup state.
 
-### Follow-up D — Reconcile the release-evidence matrix and immediately choose the next VPS opportunity
+This is one longer bounded sample only. Do not call it production long-lived stability or infer a reliability rate.
 
-**Dependency:** B/C complete.
+Do not repeat the prior ~5-minute condition unchanged.
 
-Update only from actual evidence:
+### Follow-up C — Reconcile the release-evidence matrix from A/B
 
-- `docs/era4-e-resilience.md` — repeated cross-process failover/recovery becomes positive only to the exact extent B supports;
-- `docs/status.md` — add exact B/C evidence and boundaries;
-- `IMPLEMENTATION_PLAN.md` / `ROADMAP.md` — keep the full release matrix incomplete while declared rows remain open; keep controlled application reply cessation distinct from natural degradation/PTO blackhole;
-- preserve all historical negative HY2/failover evidence.
+**Dependency:** A/B complete or honestly retained as typed negatives.
 
-Then classify each remaining row from executable reality:
+Update only from actual artifacts and exact execution identities:
+
+- `docs/era4-e-resilience.md` — repeated cross-process failover/recovery may become positive only to the exact extent A supports;
+- `docs/status.md` — add exact A/B evidence, hashes and narrow boundaries;
+- `IMPLEMENTATION_PLAN.md` / `ROADMAP.md` — keep the full bounded release-evidence matrix incomplete while declared rows remain open;
+- preserve the distinction between controlled application-level reply cessation and natural UDP degradation/PTO blackhole;
+- preserve all historical negative HY2/failover evidence rather than rewriting history.
+
+Do not change RC/production/global-freeze/release flags.
+
+### Follow-up D — Immediately select the next highest-value VPS-only row from executable reality
+
+**Dependency:** C complete.
+
+Classify each remaining row using current code/evidence, not labels:
 
 ```text
 NAT/source-endpoint change
@@ -194,53 +154,70 @@ IPv6
 HY2 comparison
 ```
 
-Use `READY_LIVE`, `BLOCKED_IMPLEMENTATION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_DIAGNOSTICS`, or `ALREADY_SUFFICIENT_FOR_CURRENT_BOUNDARY` with an exact code/evidence reason.
+Use exactly one of:
 
-If any row is `READY_LIVE`, execute one bounded VPS row immediately under standing authorization in the same overall package. If none is ready, implement only the smallest direct runtime/instrumentation seam that unlocks the highest-value row. Do not open an unrelated feature track.
+- `READY_LIVE`
+- `BLOCKED_IMPLEMENTATION`
+- `BLOCKED_ENVIRONMENT`
+- `BLOCKED_DIAGNOSTICS`
+- `ALREADY_SUFFICIENT_FOR_CURRENT_BOUNDARY`
+
+For every classification give an exact runtime/evidence reason.
+
+If any row is `READY_LIVE`, execute one bounded row immediately under standing authorization in the same overall package. Prefer VPS-only evidence over local polish.
+
+If none is `READY_LIVE`, implement only the **smallest direct runtime/instrumentation seam** that unlocks the highest-value row, with targeted tests + full gate + normal push/exact-head CI. Do not open an unrelated feature track.
 
 ### Follow-up E — HY2 diagnostic side track after the main VPS harvest
 
-**Dependency:** B complete; C/D may proceed before E. HY2 must not block B/C/D.
+**Dependency:** A complete; B/C/D may proceed before E. HY2 must not block them.
 
-`de7ab03` already added useful sanitized diagnostic categories. Before another paid HY2 retry, prove the live harness actually feeds the generated HY2 client stderr/log into that diagnostic path and that a blocked artifact retains the last successful stage plus sanitized category/summary (and optional raw-log SHA-256). Require a materially new diagnosis variable compared with exact `3d54585`; do not spend another VPS invocation just to obtain another generic `client_exit`.
+`de7ab03` added sanitized diagnostic categories. Before any new paid HY2 retry, prove the live failure path actually feeds HY2 client stderr/log into that diagnostic input and that a blocked artifact retains:
+
+- last successful harness stage;
+- sanitized failure category/summary;
+- optional raw-log SHA-256 when useful;
+- cleanup truthfully;
+- no endpoint/credential/private-topology leakage.
+
+A future HY2 retry must have a materially new diagnostic hypothesis/instrumentation variable compared with exact `3d54585`. Do not spend another VPS invocation just to get another generic `client_exit`.
 
 ### Optional stretch F — Independent release/security review preparation
 
-**Dependency:** B/D substantially complete; lower priority than VPS-only evidence.
+**Dependency:** A/C substantially complete; lower priority than VPS-only evidence.
 
-Prepare a compact reviewer map of resource/abuse limits, compatibility policy, package rollback/readiness, canonical corpus/freeze, operator lifecycle/cleanup, and release-matrix positive/negative/blocked rows. This is preparation only, not an independent security review and not an RC decision.
+Prepare a compact map of resource/abuse limits, compatibility policy, package install/upgrade/rollback/readiness, canonical corpus/freeze, operator lifecycle/cleanup, and release-matrix positive/negative/blocked rows. This is preparation only, not an independent security review or RC decision.
 
 ## Fallback
 
-If A reveals that the real paid command genuinely requires a wrapper, do not bypass executable identity. Add the smallest explicit wrapper-to-child provenance contract that mechanically proves the child binary path/hash, test it, and continue B after exact-head CI.
+If A exposes a provenance issue despite `07545f0`, retain the failed collector state and repair only the exact attribution defect. Do not weaken same-file/checkout-HEAD binding.
 
-If B exposes a genuine runtime correctness defect:
+If A exposes a genuine failover runtime correctness defect:
 
-1. retain the failing cycle and valid prefix;
+1. retain the valid prefix/failing cycle;
 2. stop further failover claims;
-3. repair correctness first with deterministic regression;
-4. run parser/fuzz gates if the defect touches external input/wire behavior;
-5. rerun B only after a material implementation change;
-6. continue C if the defect is isolated to failover and does not invalidate direct periodic Session evidence.
+3. repair correctness with a deterministic regression;
+4. run parser/fuzz gates only if the defect touches external input/wire behavior;
+5. rerun A only after a material implementation change;
+6. continue B if the defect is isolated to failover and direct periodic Session remains valid.
 
-If B is blocked only by orchestration/evidence, retain the partial batch, repair that exact issue and continue C while the repair proceeds. Do not freeze the whole project.
+If A is blocked only by orchestration/evidence, retain the partial batch, repair that exact harness issue, and continue B meanwhile. Do not freeze the whole project.
 
-If C fails, retain it and continue D/E; no unchanged retry.
+If B fails, retain it and continue C/D/E; no unchanged retry.
 
-If any row requires new credentials, another server, third-party access, production network modification or anything outside standing authorization, stop only that row and continue other READY work.
+If any candidate row requires new credentials, another server, third-party access, production-network modification or anything outside standing authorization, stop only that row and continue other READY work.
 
 ## Completion gates
 
-- the current strict parser/invariant work remains accepted and green;
-- live server/client command execution is mechanically bound to the artifact's recorded binary identity;
-- declared commit is mechanically bound to the adapter checkout HEAD;
-- the provenance repair is pushed and exact-head GitHub CI is green;
-- no extra generic pre-push review layer is inserted without a new concrete failure model;
+- R-001 provenance binding remains closed at `07545f0` or later exact coding HEAD;
+- exact current provenance-repair HEAD has green GitHub CI;
+- no extra generic pre-push review layer is inserted without a concrete new failure model;
 - one six-cycle real cross-process warm-failover batch is executed or retained as a typed partial negative;
 - one longer bounded periodic direct-path sample is executed or retained as a typed negative;
-- no unchanged WAN failure is rerun;
+- no unchanged WAN/HY2 failure is rerun;
 - HY2 remains non-blocking;
 - release/status documents reflect only evidence actually obtained;
+- at least one next VPS opportunity is either executed truthfully or reduced to a concrete blocked classification + smallest unlock seam;
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain unchanged.
 
 ## Do not expand into
@@ -248,7 +225,7 @@ If any row requires new credentials, another server, third-party access, product
 - protocol/wire/Session/Noise changes merely for evidence convenience;
 - weakening authentication/integrity/readiness/provenance checks;
 - another generic independent pre-push review without a concrete new failure model;
-- production network changes, third-party targets or scanning;
+- production-network changes, third-party targets or scanning;
 - repeated unchanged WAN/HY2 attempts;
 - publishing superiority or reliability-rate claims from one bounded batch;
 - treating fixture-only key-update/PLPMTUD/manager behavior as live WAN evidence;
@@ -258,4 +235,4 @@ If any row requires new credentials, another server, third-party access, product
 
 none.
 
-Standing authorization covers B, C and any immediately READY D follow-up that remains within the existing self-owned bounded TCP/UDP experiment contract. A maintainer decision is required only for a genuinely new credential/server/third-party requirement, production-network change, out-of-authorization experiment or major architecture choice.
+Standing authorization covers A, B and any immediately READY D row that stays within the existing bounded self-owned TCP/UDP experiment contract. No additional maintainer approval is required for those runs.
