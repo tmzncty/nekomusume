@@ -84,4 +84,34 @@ good.write_text('{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":1,"cpu_u
 out=v.make_sample('nekomusume',1,0,good,resource,diag,1200,h,'sha256:7')
 assert (out['cpu_user_seconds'],out['cpu_system_seconds'],out['rss_kib'],out['fd_count'])==(7,8,99,11)
 
+# R-HY2-15 mutation matrix: every identity, deadline, and byte-bound edit fails closed.
+server_resources=[
+    {'experiment_id':'server-retained-nekomusume','implementation':'nekomusume','identity':'sha256:'+('a'*64),'role':'server','cpu':{'user_seconds':0,'system_seconds':0},'rss':{'max_kib':1},'fd':{'peak_count':1},'cleanup':{'process_reaped':True,'process_group_empty':True,'owned_sockets_after_exit':0,'complete':True}},
+    {'experiment_id':'server-retained-hy2','implementation':'hy2-v2.9.3','identity':'sha256:'+('b'*64),'role':'server','cpu':{'user_seconds':0,'system_seconds':0},'rss':{'max_kib':1},'fd':{'peak_count':1},'cleanup':{'process_reaped':True,'process_group_empty':True,'owned_sockets_after_exit':0,'complete':True}},
+]
+complete_with_servers=dict(complete,resources=complete['resources']+server_resources)
+v.atomic_write(result,complete_with_servers); v.validate_result(result)
+mutations=[]
+for key,value in [('nekomusume_binary_sha256','a'),('hy2_binary_sha256','b')]:
+    mutations += [dict(complete_with_servers,contract=dict(complete_contract,**{key:value*63})), dict(complete_with_servers,contract=dict(complete_contract,**{key:value*65}))]
+mutations += [
+    dict(complete_with_servers, resources=[dict(server_resources[0], identity='sha256:'+('a'*63)), server_resources[1], *complete['resources']]),
+    dict(complete_with_servers, resources=[dict(server_resources[0], identity='sha256:'+('c'*64)), server_resources[1], *complete['resources']]),
+    dict(complete_with_servers, resources=[dict(complete['resources'][0], identity='sha256:'+('c'*64)), *complete['resources'][1:], *server_resources]),
+    dict(complete_with_servers, resources=[complete['resources'][0], dict(complete['resources'][1], identity='sha256:'+('c'*64)), *complete['resources'][2:], *server_resources]),
+]
+for key in ('work_deadline_ms','cleanup_reserve_ms','whole_lab_deadline_ms'):
+    c=dict(complete_contract); c[key]=c[key]+1; mutations.append(dict(complete_with_servers,contract=c))
+mutations += [
+    dict(complete_with_servers,contract=dict(complete_contract,whole_lab_deadline_ms=600001),bounds=dict(complete_with_servers['bounds'],maximum_duration_ms=600001)),
+    dict(complete_with_servers,contract=dict(complete_contract,work_deadline_ms=479999)),
+    dict(complete_with_servers,bounds=dict(complete_with_servers['bounds'],maximum_duration_ms=540001)),
+    dict(complete_with_servers,bounds=dict(complete_with_servers['bounds'],application_bytes_max=1200*5*2+1)),
+]
+for candidate in mutations:
+    v.atomic_write(result,candidate)
+    try: v.validate_result(result)
+    except ValueError: pass
+    else: raise AssertionError('R-HY2-15 mutation accepted')
+print('R-HY2-15-mutation-matrix-ok',len(mutations))
 print('validate-hy2-owned-lab-test-ok')
