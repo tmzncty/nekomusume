@@ -12,9 +12,10 @@ server/client arrays must invoke the existing failover-server/failover-client
 CLI modes; the server must select --cease-udp-replies-after 1 and the client
 must select --automatic-health-failover.  CLEANUP must print exactly
 {"listeners_remaining":N}.  NEKO_FAILOVER_BINARY identifies the local binary
-whose SHA-256/size are recorded, and NEKO_FAILOVER_GIT_COMMIT is its exact
-commit.  Logs and sampler output live in a mode-0700 temporary directory and
-are deleted before the sole stdout row is emitted.
+executed directly by both commands and whose SHA-256/size are recorded.
+NEKO_FAILOVER_GIT_COMMIT must be the exact HEAD of the checkout containing
+this adapter.  Logs and sampler output live in a mode-0700 temporary directory
+and are deleted before the sole stdout row is emitted.
 """
 from __future__ import annotations
 
@@ -55,6 +56,44 @@ def command(name: str) -> list[str]:
             any(not isinstance(arg, str) or not arg or "\0" in arg or len(arg) > 4096 for arg in value)):
         raise CollectionError(f"invalid {name}")
     return value
+
+def executable_path(value: str) -> pathlib.Path:
+    candidate = pathlib.Path(value).expanduser()
+    if not candidate.is_absolute() and candidate.parent == pathlib.Path("."):
+        found = shutil.which(value)
+        if found is None:
+            raise CollectionError("command executable is unavailable")
+        candidate = pathlib.Path(found)
+    try:
+        return candidate.resolve(strict=True)
+    except OSError as exc:
+        raise CollectionError("command executable is unavailable") from exc
+
+def require_same_executable(argv: list[str], binary: pathlib.Path) -> None:
+    try:
+        same = os.path.samefile(executable_path(argv[0]), binary)
+    except OSError as exc:
+        raise CollectionError("cannot compare command executable") from exc
+    if not same:
+        raise CollectionError("command executable differs from declared binary")
+
+def checkout_head() -> str:
+    try:
+        root = subprocess.run(
+            ["git", "-C", str(HERE), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+        if not root:
+            raise CollectionError("adapter checkout is unavailable")
+        head = subprocess.run(
+            ["git", "-C", root, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CollectionError("adapter checkout is unavailable") from exc
+    if not HEX40.fullmatch(head):
+        raise CollectionError("adapter checkout HEAD is invalid")
+    return head
 
 def requires(argv: list[str], token: str, value: str | None = None) -> None:
     if token not in argv:
@@ -184,6 +223,8 @@ def main() -> int:
         commit = os.environ.get("NEKO_FAILOVER_GIT_COMMIT", "")
         if not HEX40.fullmatch(commit):
             raise CollectionError("invalid git commit")
+        if checkout_head() != commit:
+            raise CollectionError("git commit differs from adapter checkout HEAD")
         binary = pathlib.Path(os.environ.get("NEKO_FAILOVER_BINARY", ""))
         if not binary.is_file():
             raise CollectionError("binary is not a file")
@@ -193,6 +234,8 @@ def main() -> int:
         binary_sha = hashlib.sha256(binary.read_bytes()).hexdigest()
         server_argv, client_argv, cleanup_argv = (command(name) for name in (
             "NEKO_FAILOVER_SERVER_COMMAND_JSON", "NEKO_FAILOVER_CLIENT_COMMAND_JSON", "NEKO_FAILOVER_CLEANUP_COMMAND_JSON"))
+        require_same_executable(server_argv, binary)
+        require_same_executable(client_argv, binary)
         requires(server_argv, "failover-server")
         requires(server_argv, "--diagnostic")
         requires(server_argv, "--cease-udp-replies-after", "1")

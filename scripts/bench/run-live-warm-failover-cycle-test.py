@@ -49,6 +49,8 @@ if mode == "failover-client":
  if scenario not in ("timeout","missing_resume","missing_readiness","missing_timing","missing_accounting"):
   accounting=dict(udp_confirmed_records=1,udp_confirmed_bytes=16,uncertain_records=2,uncertain_bytes=32,replayed_records=2,replayed_bytes=32,confirmed_records=3,confirmed_bytes=48,duplicate_records=0,duplicate_bytes=0,lost_records=0,lost_bytes=0,conflicting_records=0,conflicting_bytes=0)
   if scenario == "contradictory_accounting": accounting["udp_confirmed_bytes"]=15
+  if scenario == "wrong_uncertain": accounting["uncertain_records"]=1; accounting["uncertain_bytes"]=16
+  if scenario == "wrong_replayed": accounting["replayed_records"]=1; accounting["replayed_bytes"]=16
   if scenario == "negative_accounting": accounting["lost_records"]=-1
   if scenario == "boolean_accounting": accounting["confirmed_records"]=True
   j("failover_accounting",3,**accounting)
@@ -60,20 +62,38 @@ if mode == "cleanup":
  print(json.dumps({"listeners_remaining":1 if scenario=="cleanup" else 0})); sys.exit(1 if scenario=="cleanup" else 0)
 '''
 
-def invoke(scenario="success", marker=""):
+HEAD = subprocess.run(
+ ["git", "-C", str(HERE), "rev-parse", "HEAD"],
+ check=True, capture_output=True, text=True,
+).stdout.strip()
+
+def invoke(scenario="success", marker="", server_executable=None, client_executable=None, binary=None, commit=None):
 
  with tempfile.TemporaryDirectory() as td:
   fake=pathlib.Path(td)/"fake.py"; fake.write_text(FAKE); fake.chmod(0o700)
-  env=os.environ.copy(); env.update(SCENARIO=scenario,NEKO_FAILOVER_CYCLE_INDEX="1",NEKO_FAILOVER_GIT_COMMIT="a"*40,NEKO_FAILOVER_BINARY=sys.executable,NEKO_FAILOVER_UDP_PORT="40081",NEKO_FAILOVER_TCP_PORT="40080",NEKO_FAILOVER_SERVER_STARTUP_SECONDS="0.01")
-  base=[sys.executable,str(fake)]
+  env=os.environ.copy(); env.update(SCENARIO=scenario,NEKO_FAILOVER_CYCLE_INDEX="1",NEKO_FAILOVER_GIT_COMMIT=commit or HEAD,NEKO_FAILOVER_BINARY=binary or sys.executable,NEKO_FAILOVER_UDP_PORT="40081",NEKO_FAILOVER_TCP_PORT="40080",NEKO_FAILOVER_SERVER_STARTUP_SECONDS="0.01")
   suffix=[marker] if marker else []
-  env["NEKO_FAILOVER_SERVER_COMMAND_JSON"]=json.dumps(base+["failover-server","--diagnostic","--experiment-id","warm-cycle-1-server","--cease-udp-replies-after","1"]+suffix)
-  env["NEKO_FAILOVER_CLIENT_COMMAND_JSON"]=json.dumps(base+["failover-client","--diagnostic","--experiment-id","warm-cycle-1-client","--automatic-health-failover"]+suffix)
-  env["NEKO_FAILOVER_CLEANUP_COMMAND_JSON"]=json.dumps(base+["cleanup"])
+  env["NEKO_FAILOVER_SERVER_COMMAND_JSON"]=json.dumps([server_executable or sys.executable,str(fake),"failover-server","--diagnostic","--experiment-id","warm-cycle-1-server","--cease-udp-replies-after","1"]+suffix)
+  env["NEKO_FAILOVER_CLIENT_COMMAND_JSON"]=json.dumps([client_executable or sys.executable,str(fake),"failover-client","--diagnostic","--experiment-id","warm-cycle-1-client","--automatic-health-failover"]+suffix)
+  env["NEKO_FAILOVER_CLEANUP_COMMAND_JSON"]=json.dumps([sys.executable,str(fake),"cleanup"])
   p=subprocess.run([sys.executable,str(ADAPTER)],env=env,text=True,capture_output=True,timeout=30)
   return p, json.loads(p.stdout) if p.stdout.strip() else None
 
 p,row=invoke(); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]["status"]=="passed"; assert row["semantic"]["readiness_proofs"]==3; assert row["accounting"]["uncertain_records"]==2
+with tempfile.TemporaryDirectory() as td:
+ symlink=pathlib.Path(td)/"python-symlink"
+ try:
+  symlink.symlink_to(sys.executable)
+ except (NotImplementedError, OSError):
+  pass
+ else:
+  p,row=invoke(server_executable=str(symlink),client_executable=str(symlink)); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]["status"]=="passed"
+for role in ("server", "client"):
+ with tempfile.TemporaryDirectory() as td:
+  decoy=pathlib.Path(td)/"decoy"; decoy.write_bytes(pathlib.Path(sys.executable).read_bytes()); decoy.chmod(0o700)
+  kwargs={f"{role}_executable":str(decoy)}
+  p,row=invoke(**kwargs); assert p.returncode==2 and p.stdout == "" and row is None, (role,p.returncode,p.stdout,p.stderr)
+p,row=invoke(commit="b"*40); assert p.returncode==2 and p.stdout == "" and row is None, (p.returncode,p.stdout,p.stderr)
 p,row=invoke("timeout"); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]=={"status":"failed","client_exit_code":124,"server_exit_code":0,"failure_stage":"client","failure_reason":"client_timeout"}; assert row["cleanup"]["status"]=="verified"
 for scenario in ("server_mismatch","missing_resume","missing_readiness","missing_timing","missing_accounting","cleanup"):
  p,row=invoke(scenario); assert p.returncode==0 and row["result"]["status"]=="failed", scenario
@@ -81,7 +101,7 @@ for scenario in ("server_mismatch","missing_resume","missing_readiness","missing
 for scenario in ("malformed_json", "invalid_event_object", "json_list", "json_scalar", "malformed_list", "duplicate_start", "duplicate_timing", "duplicate_accounting", "duplicate_summary", "start_mismatch", "adversarial"):
  p,row=invoke(scenario); assert p.returncode==2 and p.stdout == "" and row is None, (scenario,p.returncode,p.stdout,p.stderr)
 print("ADVERSARIAL_REJECTED")
-for scenario in ("negative_timing", "reversed_timing", "inconsistent_timing", "boolean_timing", "contradictory_accounting", "negative_accounting", "boolean_accounting"):
+for scenario in ("negative_timing", "reversed_timing", "inconsistent_timing", "boolean_timing", "contradictory_accounting", "wrong_uncertain", "wrong_replayed", "negative_accounting", "boolean_accounting"):
  p,row=invoke(scenario); assert p.returncode==2 and p.stdout == "" and row is None, (scenario,p.returncode,p.stdout,p.stderr)
 p,row=invoke("boundary_timing"); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]["status"]=="passed" and row["timing"]["recovery_latency_us"]==0
 p,row=invoke("success", "super-secret-key")
