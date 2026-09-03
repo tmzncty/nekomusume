@@ -3,6 +3,28 @@ import argparse, json, math, os, pathlib, re, tempfile
 
 SENTINEL = "nekomusume.gnu-time.v1"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+DIAGNOSTIC_LIMIT = 256
+DIAGNOSTIC_PATTERNS = (
+    ("tls", re.compile(r"\b(tls|certificate|x509|pin(?:sha256)?|handshake)\b", re.I)),
+    ("auth", re.compile(r"\b(auth(?:entication|orization)?|unauthorized|forbidden|password|credential)\b", re.I)),
+    ("config", re.compile(r"\b(config(?:uration)?|yaml|unknown (?:field|option)|invalid (?:field|option|value))\b", re.I)),
+    ("path", re.compile(r"\b(connection refused|no route|network is unreachable|timeout|timed out|no such file|path)\b", re.I)),
+    ("readiness", re.compile(r"\b(not ready|readiness|listener|failed to listen|address already in use)\b", re.I)),
+)
+
+
+def client_diagnostic(path):
+    try:
+        text = pathlib.Path(path).read_bytes()[:4096].decode("utf-8", "replace")
+    except OSError:
+        return None
+    # Persist only a fixed classification. Raw diagnostics can contain endpoints,
+    # credentials, filesystem paths, or private topology.
+    for category, pattern in DIAGNOSTIC_PATTERNS:
+        if pattern.search(text):
+            summary = f"client reported {category} failure"
+            return {"category": category, "summary": summary[:DIAGNOSTIC_LIMIT]}
+    return None
 
 
 def finite_nonnegative(value, integer=False):
@@ -90,7 +112,7 @@ def read_client_output(path):
 
 
 def make_sample(implementation, run, return_code, time_path, resource_path, output_path,
-                payload_bytes, payload_hash, expected_identity=None):
+                payload_bytes, payload_hash, expected_identity=None, diagnostic_path=None):
     if implementation not in ("nekomusume", "hy2") or not isinstance(run, int) or run < 1:
         raise ValueError("invalid sample identity")
     exit_code = return_code if isinstance(return_code, int) and 0 <= return_code <= 255 else None
@@ -139,6 +161,7 @@ def make_sample(implementation, run, return_code, time_path, resource_path, outp
     elif fd_count is None or not resource_ok:
         stage = "resource_evidence"
     failure = int(stage is not None)
+    diagnostic = client_diagnostic(diagnostic_path) if exit_code != 0 and diagnostic_path else None
     return {
         "name": f"{implementation}-{run}", "implementation": implementation,
         "run": run, "failures": failure,
@@ -148,7 +171,7 @@ def make_sample(implementation, run, return_code, time_path, resource_path, outp
         "rss_kib": rss_kib if resource_ok else None,
         "fd_count": fd_count, "application_bytes": application_bytes,
         "payload_sha256": observed_hash, "wire_bytes": None,
-        "exit_code": exit_code, "failure_stage": stage,
+        "exit_code": exit_code, "failure_stage": stage, "client_diagnostic": diagnostic,
     }
 
 
@@ -192,6 +215,15 @@ def validate_samples(samples, contract, require_complete):
             raise ValueError("successful sample violates exit/app-byte/hash evidence")
         if not success and (not isinstance(row["failure_stage"], str) or not row["failure_stage"]):
             raise ValueError("failed sample lacks failure stage")
+        diagnostic = row.get("client_diagnostic")
+        if diagnostic is not None:
+            if (not isinstance(diagnostic, dict) or set(diagnostic) != {"category", "summary"}
+                    or diagnostic.get("category") not in {item[0] for item in DIAGNOSTIC_PATTERNS}
+                    or diagnostic.get("summary") != f"client reported {diagnostic.get('category')} failure"
+                    or len(diagnostic["summary"]) > DIAGNOSTIC_LIMIT):
+                raise ValueError("sample has unsafe client diagnostic")
+            if success:
+                raise ValueError("successful sample has client diagnostic")
         if row["wire_bytes"] is not None and not finite_nonnegative(row["wire_bytes"], True):
             raise ValueError("invalid wire_bytes")
     if len(set(seen)) != len(seen):
@@ -318,7 +350,7 @@ def main():
     sample.add_argument("--implementation", required=True); sample.add_argument("--run", required=True, type=int)
     sample.add_argument("--return-code", required=True, type=int); sample.add_argument("--time", required=True); sample.add_argument("--resource", required=True)
     sample.add_argument("--client-output", required=True); sample.add_argument("--bytes", required=True, type=int)
-    sample.add_argument("--payload-hash", required=True); sample.add_argument("--expected-identity")
+    sample.add_argument("--payload-hash", required=True); sample.add_argument("--expected-identity"); sample.add_argument("--client-diagnostics")
     blocked = sub.add_parser("blocked")
     blocked.add_argument("--records", required=True); blocked.add_argument("--output", required=True)
     blocked.add_argument("--stage", required=True); blocked.add_argument("--commit", required=True)
@@ -332,7 +364,7 @@ def main():
         print(json.dumps(parse_time(args.path), sort_keys=True, separators=(",", ":")))
     elif args.command == "make-sample":
         value = make_sample(args.implementation, args.run, args.return_code, args.time, args.resource,
-                            args.client_output, args.bytes, args.payload_hash, args.expected_identity)
+                            args.client_output, args.bytes, args.payload_hash, args.expected_identity, args.client_diagnostics)
         print(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False))
     elif args.command == "blocked":
         truth=lambda x: None if x=="unknown" else x=="true"

@@ -30,6 +30,7 @@ base="PATH=$tmp:$PATH NEKO_OWNED_LAB=yes LAB_SSH_TARGET=owned LAB_ENDPOINT_ID=ow
 interfaces='[{"ifname":"eth0","addr_info":[{"family":"inet","local":"192.0.2.9","prefixlen":24}]}]'
 # A dedicated assigned address validates even when it differs from the SSH/connection address.
 env $base LAB_REMOTE_BIND_ADDRESS=192.0.2.9 MOCK_REMOTE_INTERFACES="$interfaces" "$s" --validate "$validation_out" | grep -qx validated
+[ ! -e "$validation_out" ] && [ ! -e "$validation_out.samples.jsonl" ]
 # Fail closed when the dedicated address is absent or unsafe.
 for address in '' 0.0.0.0 :: 127.0.0.1 ::1 224.0.0.1 ff02::1; do
   if env $base LAB_REMOTE_BIND_ADDRESS="$address" MOCK_REMOTE_INTERFACES="$interfaces" "$s" --validate "$validation_out" >/dev/null 2>&1; then echo "unsafe bind accepted: $address" >&2; exit 1; fi
@@ -135,20 +136,43 @@ hash0=$(printf test-payload | sha256sum | awk '{print $1}')
 printf '%s\n' 'client diagnostic: connection refused' 'second diagnostic line' >"$tmp/neko-first.out"
 printf '%s\n' 'Command exited with non-zero status 9' '{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":0.25,"cpu_user_seconds":0.01,"cpu_system_seconds":0.02,"rss_kib":9,"exit_code":9}' >"$tmp/neko-first.time"
 printf '%s\n' '{"experiment_id":"nekomusume-owned-lab-1","implementation":"nekomusume","role":"client","fd":{"peak_count":4},"sampling":{"scope":"sampler-created process group"},"cleanup":{"process_reaped":true,"process_group_empty":true,"owned_sockets_after_exit":0,"complete":true}}' >"$tmp/neko-first.resource"
-python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation nekomusume --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output "$tmp/neko-first.out" --bytes 1200 --payload-hash "$hash0" >"$tmp/first.jsonl" 2>"$tmp/make.err"
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation nekomusume --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output "$tmp/neko-first.out" --client-diagnostics "$tmp/neko-first.out" --bytes 1200 --payload-hash "$hash0" >"$tmp/first.jsonl" 2>"$tmp/make.err"
 [ ! -s "$tmp/make.err" ]; [ "$(wc -l <"$tmp/first.jsonl")" -eq 1 ]
-jq -e '.name=="nekomusume-1" and .failures==1 and .exit_code==9 and .failure_stage=="client_exit" and .application_bytes==0 and .payload_sha256==null' "$tmp/first.jsonl" >/dev/null
+jq -e '.name=="nekomusume-1" and .failures==1 and .exit_code==9 and .failure_stage=="client_exit" and .application_bytes==0 and .payload_sha256==null and .client_diagnostic.category=="path"' "$tmp/first.jsonl" >/dev/null
 ! grep -q -- '--argjson' "$source_script"
 python3 "$root/scripts/bench/validate-hy2-owned-lab.py" blocked --records "$tmp/first.jsonl" --output "$tmp/blocked.json" --stage nekomusume-1-client --commit "$(printf %040d 0)" --runs 5 --bytes 1200 --payload-prepared true --payload-hash "$hash0" --local-reaped true --local-listeners 0 --remote-reaped true --remote-listeners 0 --remote-path-removed true
 python3 "$root/scripts/bench/validate-hy2-owned-lab.py" validate-result "$tmp/blocked.json" | grep -qx validated
 jq -e '.status=="BLOCKED_HARNESS" and (.samples|length)==1 and .cleanup_status=="verified"' "$tmp/blocked.json" >/dev/null
-# A routine validation in a disposable repository cannot alter default evidence.
+# Canonical cleanup booleans preserve true and false exactly, including shell 1/0 conversion.
+canonical_bool=$(awk '/^canonical_bool\(\)/{print; exit}' "$source_script")
+[ "$(eval "$canonical_bool"; canonical_bool 1)" = true ]
+[ "$(eval "$canonical_bool"; canonical_bool 0)" = false ]
+[ "$(eval "$canonical_bool"; canonical_bool unknown)" = unknown ]
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" blocked --records /dev/null --output "$tmp/cleanup-true.json" --stage cleanup --commit "$(printf %040d 0)" --runs 5 --bytes 1200 --payload-prepared false --local-reaped true --local-listeners 0 --remote-reaped true --remote-listeners 0 --remote-path-removed true
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" blocked --records /dev/null --output "$tmp/cleanup-false.json" --stage cleanup --commit "$(printf %040d 0)" --runs 5 --bytes 1200 --payload-prepared false --local-reaped false --local-listeners 0 --remote-reaped false --remote-listeners 0 --remote-path-removed false
+jq -e '.cleanup_evidence.local_processes_reaped==true and .cleanup_evidence.remote_process_groups_reaped==true and .cleanup_evidence.remote_temp_path_removed==true' "$tmp/cleanup-true.json" >/dev/null
+jq -e '.cleanup_evidence.local_processes_reaped==false and .cleanup_evidence.remote_process_groups_reaped==false and .cleanup_evidence.remote_temp_path_removed==false' "$tmp/cleanup-false.json" >/dev/null
+# Future nonzero client diagnostics retain only bounded safe classifications.
+for spec in 'tls:TLS certificate pin failed' 'auth:authentication failed password=hunter2' 'config:invalid config yaml' 'path:connection refused 10.23.45.67:443 /home/private/key' 'readiness:listener not ready'; do
+  category=${spec%%:*}; message=${spec#*:}; printf '%s\n' "$message" >"$tmp/diagnostic.err"
+  python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation hy2 --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output /dev/null --client-diagnostics "$tmp/diagnostic.err" --bytes 1200 --payload-hash "$hash0" >"$tmp/diagnostic.json"
+  jq -e --arg category "$category" '.failure_stage=="client_exit" and .client_diagnostic.category==$category and (.client_diagnostic.summary|length)<=256' "$tmp/diagnostic.json" >/dev/null
+  ! grep -Eq 'hunter2|10\.23\.45\.67|/home/private' "$tmp/diagnostic.json"
+done
+python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation hy2 --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output /dev/null --client-diagnostics /dev/null --bytes 1200 --payload-hash "$hash0" >"$tmp/no-diagnostic.json"
+jq -e '.failure_stage=="client_exit" and .client_diagnostic==null' "$tmp/no-diagnostic.json" >/dev/null
+# A routine validation in a disposable repository cannot create or alter default evidence.
 sentinel=$tmp/sentinel-repo; mkdir -p "$sentinel/scripts/bench" "$sentinel/artifacts/hy2-owned-lab"
 cp "$source_script" "$root/scripts/bench/owned-lab-control-plane.sh" \
   "$root/scripts/bench/parse-listener.py" "$root/scripts/bench/validate-hy2-owned-lab.py" "$sentinel/scripts/bench/"
 printf '\000real-result\n' >"$sentinel/artifacts/hy2-owned-lab/result.json"
 printf 'sample\000companion\n' >"$sentinel/artifacts/hy2-owned-lab/result.json.samples.jsonl"
 ( cd "$sentinel"; git init -q; git config user.email test@example.invalid; git config user.name test; git add .; git commit -qm sentinel )
+rm -f "$sentinel/artifacts/hy2-owned-lab/result.json" "$sentinel/artifacts/hy2-owned-lab/result.json.samples.jsonl"
+( cd "$sentinel"; env $base LAB_REMOTE_BIND_ADDRESS=192.0.2.9 MOCK_REMOTE_INTERFACES="$interfaces" scripts/bench/compare-hy2-owned-lab.sh --validate | grep -qx validated )
+[ ! -e "$sentinel/artifacts/hy2-owned-lab/result.json" ] && [ ! -e "$sentinel/artifacts/hy2-owned-lab/result.json.samples.jsonl" ]
+printf '\000real-result\n' >"$sentinel/artifacts/hy2-owned-lab/result.json"
+printf 'sample\000companion\n' >"$sentinel/artifacts/hy2-owned-lab/result.json.samples.jsonl"
 before=$(sha256sum "$sentinel/artifacts/hy2-owned-lab/result.json" "$sentinel/artifacts/hy2-owned-lab/result.json.samples.jsonl")
 ( cd "$sentinel"; env $base LAB_REMOTE_BIND_ADDRESS=192.0.2.9 MOCK_REMOTE_INTERFACES="$interfaces" scripts/bench/compare-hy2-owned-lab.sh --validate | grep -qx validated )
 after=$(sha256sum "$sentinel/artifacts/hy2-owned-lab/result.json" "$sentinel/artifacts/hy2-owned-lab/result.json.samples.jsonl")

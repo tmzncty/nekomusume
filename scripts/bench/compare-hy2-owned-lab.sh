@@ -5,6 +5,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 LISTENER_PARSER=$SCRIPT_DIR/parse-listener.py
 . "$SCRIPT_DIR/owned-lab-control-plane.sh"
 need(){ [ -n "${!1:-}" ] || fail "missing $1"; }
+canonical_bool(){ case "$1" in 1|true) printf true;; 0|false) printf false;; *) printf unknown;; esac; }
 for v in LAB_SSH_TARGET LAB_ENDPOINT_ID LAB_ENDPOINT_SHA256 LAB_REMOTE_ADDRESS LAB_REMOTE_BIND_ADDRESS NEKO_BIN HY2_BIN; do need "$v"; done
 [ "${NEKO_OWNED_LAB:-}" = yes ] || fail 'NEKO_OWNED_LAB=yes is required'
 case "$LAB_SSH_TARGET" in *[!A-Za-z0-9._-]*|'') fail 'invalid SSH target';; esac
@@ -41,9 +42,13 @@ WHOLE_LAB_SEC=$((WORK_SEC + CLEANUP_SEC)); olcp_init_deadlines "$WORK_SEC" "$WHO
 # Initialize the typed evidence context before any SSH-dependent operation.  Every
 # preflight failure is therefore emitted as a schema-valid BLOCKED_HARNESS artifact.
 validate_only=0; out=${1:-artifacts/hy2-owned-lab/result.json}; [ "$out" != --validate ] || { validate_only=1; out=${2:-artifacts/hy2-owned-lab/result.json}; }; case "$out" in /*|*..*) fail 'output must be relative and non-traversing';; esac
-root=$(git rev-parse --show-toplevel); cd "$root"; mkdir -p "$(dirname "$out")"
+root=$(git rev-parse --show-toplevel); cd "$root"; records="$out.samples.jsonl"
 runtime_template=${OWNED_LAB_RUNTIME_TEMPLATE:-/tmp/neko-hy2-owned.XXXXXXXX}
-run=$(mktemp -d "$runtime_template"); remote="/tmp/$(basename "$run")"; records="$out.samples.jsonl"; touch "$records"
+run=; remote=
+if [ "$validate_only" -eq 0 ]; then
+  mkdir -p "$(dirname "$out")"
+  run=$(mktemp -d "$runtime_template"); remote="/tmp/$(basename "$run")"; touch "$records"
+fi
 early_cleanup(){ local rc=${1:-$?}; trap - EXIT INT TERM; rm -rf "$run"; return "$rc"; }
 on_early_exit(){ local rc=$?; early_cleanup "$rc"; exit "$rc"; }
 trap on_early_exit EXIT; trap 'exit 130' INT TERM
@@ -53,6 +58,7 @@ local_processes_reaped=false; local_listeners_remaining=unknown; remote_process_
 atomic_append(){ local source=$1 temporary; temporary=$(mktemp "$(dirname "$records")/.samples.XXXXXXXX"); cat "$records" "$source" >"$temporary"; mv -f "$temporary" "$records"; }
 preflight_blocked(){
   failure_stage=$1
+  [ "$validate_only" -eq 0 ] || fail "validation failed: $1"
   python3 "$validator" blocked --records "$records" --output "$out" --stage "$1" --commit "$(git rev-parse HEAD)" --runs "$RUNS" --bytes "$BYTES" --payload-prepared false --local-reaped unknown --local-listeners unknown --remote-reaped unknown --remote-listeners unknown --remote-path-removed unknown
   exit 2
 }
@@ -108,17 +114,18 @@ REMOTE
     remote_rc=$?
     marker=$(tail -n 1 "$remote_resources.tmp" 2>/dev/null)
     sed '$d' "$remote_resources.tmp" >"$remote_resources" 2>/dev/null; rm -f "$remote_resources.tmp"
-    remote_process_groups_reaped=$(printf '%s' "$marker" | awk '/^__CLEANUP__ [01] [0-9]+$/{print $2}')
+    remote_reaped_flag=$(printf '%s' "$marker" | awk '/^__CLEANUP__ [01] [0-9]+$/{print $2}')
+    remote_process_groups_reaped=$(canonical_bool "$remote_reaped_flag")
     remote_listeners_remaining=$(printf '%s' "$marker" | awk '/^__CLEANUP__ [01] [0-9]+$/{print $3}')
-    : "${remote_process_groups_reaped:=unknown}"; : "${remote_listeners_remaining:=unknown}"
-    if [ "$remote_rc" -eq 0 ] && [ "$remote_process_groups_reaped" = 1 ] && [ "$remote_listeners_remaining" -eq 0 ]; then
+    : "${remote_listeners_remaining:=unknown}"
+    if [ "$remote_rc" -eq 0 ] && [ "$remote_process_groups_reaped" = true ] && [ "$remote_listeners_remaining" -eq 0 ]; then
       for _ in $(seq 1 20); do
         ssh_bounded "$LAB_SSH_TARGET" "rm -rf '$remote'; test ! -e '$remote'" >/dev/null 2>&1 && { remote_temp_path_removed=true; break; }
         "${OWNED_LAB_SLEEP_BIN:-sleep}" .05
       done
     fi
   else remote_process_groups_reaped=true; remote_listeners_remaining=0; remote_temp_path_removed=true; fi
-  [ "$local_processes_reaped" = true ] && [ "$local_listeners_remaining" -eq 0 ] && [ "$remote_process_groups_reaped" = 1 ] && [ "$remote_listeners_remaining" -eq 0 ] && [ "$remote_temp_path_removed" = true ] && cleanup_ok=1
+  [ "$local_processes_reaped" = true ] && [ "$local_listeners_remaining" -eq 0 ] && [ "$remote_process_groups_reaped" = true ] && [ "$remote_listeners_remaining" -eq 0 ] && [ "$remote_temp_path_removed" = true ] && cleanup_ok=1
   return "$rc"
 }
 blocked(){
@@ -175,7 +182,7 @@ ssh_bounded "$LAB_SSH_TARGET" "umask 077; mkdir '$remote'"; remote_started=1; ta
 ssh_bounded "$LAB_SSH_TARGET" "nohup setsid python3 '$remote/echo-server.py' '${ports[3]}' '$RUNS' '$BYTES' >'$remote/echo.log' 2>&1 </dev/null & echo \$! >>'$remote/pids'; nohup setsid python3 '$remote/process-resource-sampler.py' --experiment-id hy2-owned-lab --implementation hy2-v2.9.3 --role server --identity sha256:66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1 --application-bytes '$((RUNS*BYTES))' --owned-port '${ports[1]}' --interval-ms 10 --max-seconds '$((RUNS*TIMEOUT+10))' --output '$remote/hy2-server-resource.json' -- '$remote/hysteria' server -c '$remote/hy2-server.yaml' >'$remote/hy2-server.log' 2>&1 </dev/null & echo \$! >>'$remote/pids'"
 require_remote_listener udp "$LAB_REMOTE_BIND_ADDRESS" "${ports[1]}" 200 "" hy2-server-readiness
 run_client(){
- local impl=$1 run_no=$2 owned_port=$3 cmd=$4 raw stats row resource rc
+ local impl=$1 run_no=$2 owned_port=$3 cmd=$4 raw stats row resource diagnostics rc
  raw=$run/raw.json; stats=$run/stats.jsonl; row=$run/record.json; resource=$run/$impl-client-$run_no-resource.json
  : >"$raw"; : >"$stats"; failure_stage="$impl-$run_no-client"
  set +e
@@ -183,7 +190,8 @@ run_client(){
    -f '{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":%e,"cpu_user_seconds":%U,"cpu_system_seconds":%S,"rss_kib":%M,"exit_code":%x}' -o "$stats" \
    python3 "$run/process-resource-sampler.py" --experiment-id "$impl-owned-lab-$run_no" --implementation "$impl" --role client --identity "sha256:${client_identity[$impl]}" --application-bytes "$BYTES" --owned-port "$owned_port" --interval-ms 10 --max-seconds "$TIMEOUT" --output "$resource" -- bash -c "$cmd" >"$raw" 2>"$run/client.err"
  rc=$?; set -e
- python3 "$validator" make-sample --implementation "$impl" --run "$run_no" --return-code "$rc" --time "$stats" --resource "$resource" --client-output "$raw" --bytes "$BYTES" --payload-hash "$payload_hash" --expected-identity "sha256:${client_identity[$impl]}" >"$row"
+ diagnostics=$run/client.err; [ "$impl" != hy2 ] || diagnostics=$run/hy2-client-$run_no.log
+ python3 "$validator" make-sample --implementation "$impl" --run "$run_no" --return-code "$rc" --time "$stats" --resource "$resource" --client-output "$raw" --client-diagnostics "$diagnostics" --bytes "$BYTES" --payload-hash "$payload_hash" --expected-identity "sha256:${client_identity[$impl]}" >"$row"
  atomic_append "$row"
  [ "$(jq -r .failures "$row")" -eq 0 ] || { failure_stage="$impl-$run_no-failed"; blocked "$failure_stage"; }
 }
