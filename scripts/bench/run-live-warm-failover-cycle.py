@@ -66,28 +66,61 @@ def requires(argv: list[str], token: str, value: str | None = None) -> None:
 
 def event_objects(text: str) -> list[dict[str, Any]]:
     values = []
-    for line in text.splitlines():
-        if not line.startswith("{"):
+    for line_number, line in enumerate(text.splitlines(), 1):
+        candidate = line.lstrip()
+        if not candidate.startswith("{"):
             continue
         try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict) and isinstance(value.get("event"), str):
-            values.append(value)
+            value = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            raise CollectionError(f"malformed JSON event on line {line_number}") from exc
+        if not isinstance(value, dict) or not isinstance(value.get("event"), str):
+            raise CollectionError(f"invalid JSON event on line {line_number}")
+        values.append(value)
     return values
 
 def carrier(text: str, name: str) -> list[str]:
     return [line for line in text.splitlines() if line.startswith("carrier_event ") and f"name={name} " in line]
 
-def version(text: str, name: str) -> int | None:
+def singleton_carrier(text: str, name: str) -> str | None:
     rows = carrier(text, name)
-    match = re.search(r"(?:^| )version=([0-9]+)(?: |$)", rows[-1]) if rows else None
+    if len(rows) > 1:
+        raise CollectionError(f"duplicate carrier event: {name}")
+    return rows[0] if rows else None
+
+def version(text: str, name: str) -> int | None:
+    row = singleton_carrier(text, name)
+    match = re.search(r"(?:^| )version=([0-9]+)(?: |$)", row) if row else None
     return int(match.group(1)) if match else None
 
-def one_event(events: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+def one_event(events: list[dict[str, Any]], name: str, required: bool = False) -> dict[str, Any] | None:
     matches = [item for item in events if item.get("event") == name]
-    return matches[-1] if matches else None
+    if len(matches) > 1:
+        raise CollectionError(f"duplicate JSON event: {name}")
+    if required and not matches:
+        raise CollectionError(f"missing JSON event: {name}")
+    return matches[0] if matches else None
+
+def validate_event_stream(events: list[dict[str, Any]], role: str, identity: str) -> None:
+    for item in events:
+        if item.get("role") != role or item.get("experiment_id") != identity:
+            raise CollectionError(f"{role} event identity mismatch")
+
+def event_position(text: str, name: str) -> int:
+    for index, line in enumerate(text.splitlines()):
+        candidate = line.lstrip()
+        if candidate.startswith("{") and json.loads(candidate).get("event") == name:
+            return index
+    raise CollectionError(f"missing JSON event: {name}")
+
+def carrier_position(text: str, name: str) -> int:
+    for index, line in enumerate(text.splitlines()):
+        if line.startswith("carrier_event ") and f"name={name} " in line:
+            return index
+    raise CollectionError(f"missing carrier event: {name}")
+
+def strictly_ordered(*positions: int) -> bool:
+    return all(left < right for left, right in zip(positions, positions[1:]))
 
 def count_events(events: list[dict[str, Any]], name: str) -> int:
     return sum(item.get("event") == name for item in events)
@@ -155,10 +188,10 @@ def main() -> int:
         server_argv, client_argv, cleanup_argv = (command(name) for name in (
             "NEKO_FAILOVER_SERVER_COMMAND_JSON", "NEKO_FAILOVER_CLIENT_COMMAND_JSON", "NEKO_FAILOVER_CLEANUP_COMMAND_JSON"))
         requires(server_argv, "failover-server")
-        requires(server_argv, "--diagnostic-id")
+        requires(server_argv, "--diagnostic")
         requires(server_argv, "--cease-udp-replies-after", "1")
         requires(client_argv, "failover-client")
-        requires(client_argv, "--diagnostic-id")
+        requires(client_argv, "--diagnostic")
         requires(client_argv, "--automatic-health-failover")
         udp_port = int(os.environ.get("NEKO_FAILOVER_UDP_PORT", "40081"))
         tcp_port = int(os.environ.get("NEKO_FAILOVER_TCP_PORT", "40080"))
@@ -198,22 +231,61 @@ def main() -> int:
         sr, cr = load_json(server_resource_path), load_json(client_resource_path)
         server_exit = exit_code(sr, server.returncode if server and server.returncode is not None else 124)
         client_exit = exit_code(cr, client.returncode if client and client.returncode is not None else 124)
-        readiness = {item.get("seq") for item in ce if item.get("event") == "tcp_warm_readiness" and item.get("seq") in (1, 2, 3)}
+        server_identity = f"warm-cycle-{index}-server"
+        client_identity = f"warm-cycle-{index}-client"
+        requires(server_argv, "--experiment-id", server_identity)
+        requires(client_argv, "--experiment-id", client_identity)
+        validate_event_stream(se, "server", server_identity)
+        validate_event_stream(ce, "client", client_identity)
+        client_start = one_event(ce, "start", required=True)
+        server_start = one_event(se, "start", required=True)
         timing_event = one_event(ce, "failover_timing")
-        client_start, server_start = one_event(ce, "start"), one_event(se, "start")
-        summary_client, summary_server = one_event(ce, "summary"), one_event(se, "summary")
-        if client_start and server_start:
-            starts_match = all(client_start.get(key) == server_start.get(key) for key in ("count", "record_payload_bytes"))
-            if starts_match and isinstance(client_start.get("count"), int) and isinstance(client_start.get("record_payload_bytes"), int):
-                parameters["record_count"] = client_start["count"]
-                parameters["record_payload_bytes"] = client_start["record_payload_bytes"]
-            parameters["client_max_seconds"] = client_start.get("max_seconds", PARAMETERS["client_max_seconds"])
-            parameters["server_max_seconds"] = server_start.get("max_seconds", PARAMETERS["server_max_seconds"])
+        accounting_event = one_event(ce, "failover_accounting")
+        summary_client = one_event(ce, "summary")
+        summary_server = one_event(se, "summary")
+        expected_client = {"count": PARAMETERS["record_count"], "record_payload_bytes": PARAMETERS["record_payload_bytes"],
+                           "application_bytes_total": PARAMETERS["record_count"] * PARAMETERS["record_payload_bytes"],
+                           "udp_port": udp_port, "tcp_port": tcp_port, "max_seconds": PARAMETERS["client_max_seconds"]}
+        expected_server = dict(expected_client, max_seconds=PARAMETERS["server_max_seconds"])
+        if any(client_start.get(key) != value for key, value in expected_client.items()) or any(
+                server_start.get(key) != value for key, value in expected_server.items()):
+            raise CollectionError("start parameters mismatch")
+        if any(client_start.get(key) != server_start.get(key) for key in
+               ("count", "record_payload_bytes", "application_bytes_total", "udp_port", "tcp_port")):
+            raise CollectionError("server/client start parameters mismatch")
+        readiness_events = [item for item in ce if item.get("event") == "tcp_warm_readiness"]
+        readiness = {item.get("seq") for item in readiness_events}
+        event_cardinality = {
+            "client UDP delivery acknowledgements": (count_events(ce, "udp_delivery_ack_validated"), 1),
+            "client uncertain range": (count_events(ce, "udp_uncertain_range_sent"), 1),
+            "client TCP readiness proofs": (len(readiness_events), 3),
+            "client TCP delivery acknowledgements": (count_events(ce, "tcp_delivery_ack_validated"), 2),
+            "server TCP readiness responses": (count_events(se, "tcp_readiness_response"), 3),
+            "server TCP delivery acknowledgements": (count_events(se, "tcp_delivery_ack_sent"), 2),
+        }
+        if all(item is not None for item in (timing_event, accounting_event, summary_client)):
+            for label, (actual, expected) in event_cardinality.items():
+                if actual != expected:
+                    raise CollectionError(f"invalid {label} cardinality")
+        if len(readiness_events) != len(readiness):
+            raise CollectionError("duplicate TCP readiness evidence")
+        terminal_events = [name for name, item in (("failover_timing", timing_event), ("failover_accounting", accounting_event),
+                                             ("summary", summary_client)) if item is not None]
+        if terminal_events == ["failover_timing", "failover_accounting", "summary"] and not strictly_ordered(
+                event_position(client_text, "start"), event_position(client_text, "udp_delivery_ack_validated"),
+                event_position(client_text, "tcp_warm_readiness"), carrier_position(client_text, "tcp_warm"),
+                event_position(client_text, "failover_timing"), event_position(client_text, "failover_accounting"),
+                carrier_position(client_text, "ordered_records_complete"), event_position(client_text, "summary")):
+            raise CollectionError("client evidence out of order")
+        if summary_server is not None and not strictly_ordered(
+                event_position(server_text, "start"), carrier_position(server_text, "udp_negotiated"),
+                carrier_position(server_text, "udp_authenticated"), carrier_position(server_text, "tcp_negotiated"),
+                carrier_position(server_text, "tcp_authenticated"), carrier_position(server_text, "tcp_resume_validated"),
+                carrier_position(server_text, "tcp_resumed"), event_position(server_text, "summary")):
+            raise CollectionError("server evidence out of order")
         udp_acks = count_events(ce, "udp_delivery_ack_validated")
-        uncertain = [item for item in ce if item.get("event") == "udp_uncertain_range_sent" and isinstance(item.get("len"), int)]
-        tcp_acks = count_events(ce, "tcp_delivery_ack_validated")
-        ordered = bool(carrier(client_text, "ordered_records_complete"))
-        server_resumed = bool(carrier(server_text, "tcp_resumed"))
+        ordered = singleton_carrier(client_text, "ordered_records_complete") is not None
+        server_resumed = singleton_carrier(server_text, "tcp_resumed") is not None
         complete = (ordered and server_resumed and summary_client is not None and summary_server is not None and
                     summary_client.get("records") == summary_server.get("records") == 3 and
                     summary_client.get("application_bytes_total") == summary_server.get("application_bytes_total") == 48)
@@ -222,17 +294,16 @@ def main() -> int:
         semantic = {
             "selected_version": selected if selected is not None else 0,
             "udp_negotiated": selected is not None,
-            "udp_authenticated": bool(carrier(server_text, "udp_authenticated")) and bool(carrier(client_text, "udp_authenticated")),
+            "udp_authenticated": singleton_carrier(server_text, "udp_authenticated") is not None and singleton_carrier(client_text, "udp_authenticated") is not None,
             "tcp_negotiated": tcp_selected is not None and tcp_selected == selected,
-            "tcp_authenticated": bool(carrier(server_text, "tcp_authenticated")),
-            "resume_validated": bool(carrier(server_text, "tcp_resume_validated")),
+            "tcp_authenticated": singleton_carrier(server_text, "tcp_authenticated") is not None,
+            "resume_validated": singleton_carrier(server_text, "tcp_resume_validated") is not None,
             "readiness_proofs": len(readiness),
-            "readiness_completed": readiness == {1, 2, 3} and any("application_data=0" in line for line in carrier(client_text, "tcp_warm")),
+            "readiness_completed": readiness == {1, 2, 3} and (warm := singleton_carrier(client_text, "tcp_warm")) is not None and "application_data=0" in warm,
             "udp_confirmed_before_failure": udp_acks >= 1,
         }
         # The CLI emits the first uncertain send as a representative runtime event;
         # the real start/count and validated acknowledgements bound the whole range.
-        accounting_event = one_event(ce, "failover_accounting")
         accounting = {key: accounting_event.get(key, 0) if accounting_event else 0 for key in (
             "udp_confirmed_records", "udp_confirmed_bytes", "uncertain_records", "uncertain_bytes",
             "replayed_records", "replayed_bytes", "confirmed_records", "confirmed_bytes",
@@ -246,7 +317,7 @@ def main() -> int:
         client_reaped = bool(cr and cr.get("cleanup", {}).get("complete"))
         server_reaped = bool(sr and sr.get("cleanup", {}).get("complete"))
         cleanup_verified = cleanup.returncode == 0 and listeners == 0 and client_reaped and server_reaped
-        evidence_pass = (all(semantic[key] for key in ("udp_negotiated", "udp_authenticated", "tcp_negotiated", "tcp_authenticated", "resume_validated", "readiness_completed", "udp_confirmed_before_failure")) and
+        evidence_pass = (complete and all(semantic[key] for key in ("udp_negotiated", "udp_authenticated", "tcp_negotiated", "tcp_authenticated", "resume_validated", "readiness_completed", "udp_confirmed_before_failure")) and
                          semantic["readiness_proofs"] == 3 and accounting["confirmed_records"] == parameters["record_count"] and accounting["confirmed_bytes"] == parameters["record_count"] * parameters["record_payload_bytes"] and
                          accounting["uncertain_records"] == accounting["replayed_records"] and accounting["uncertain_bytes"] == accounting["replayed_bytes"] and
                          all(accounting[key] == 0 for key in ("duplicate_records", "duplicate_bytes", "lost_records", "lost_bytes", "conflicting_records", "conflicting_bytes")) and
