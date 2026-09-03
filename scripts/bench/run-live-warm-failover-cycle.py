@@ -201,12 +201,13 @@ def version(text: str, name: str) -> int | None:
     match = re.search(r"(?:^| )version=([0-9]+)(?: |$)", row) if row else None
     return int(match.group(1)) if match else None
 
-def one_event(events: list[dict[str, Any]], name: str, required: bool = False) -> dict[str, Any] | None:
+def one_event(events: list[dict[str, Any]], name: str, required: bool = False, role: str | None = None) -> dict[str, Any] | None:
     matches = [item for item in events if item.get("event") == name]
     if len(matches) > 1:
         raise CollectionError(f"duplicate JSON event: {name}")
     if required and not matches:
-        raise CollectionError(f"missing JSON event: {name}")
+        prefix = f"{role} " if role else ""
+        raise CollectionError(f"missing {prefix}JSON event: {name}")
     return matches[0] if matches else None
 
 def exact_nonnegative_int(value: Any) -> bool:
@@ -276,6 +277,31 @@ def terminate(process: subprocess.Popen[bytes] | None) -> None:
         except ProcessLookupError: pass
         process.wait(timeout=1)
 
+def server_start_readiness(log_path: pathlib.Path, process: subprocess.Popen[bytes], role: str,
+                           identity: str, expected: dict[str, int], timeout: float) -> None:
+    """Wait for one complete, validated start event without consuming the log."""
+    if not 0 < timeout <= 10:
+        raise CollectionError("invalid server startup timeout")
+    deadline = time.monotonic() + timeout
+    while True:
+        text = log_path.read_text(errors="replace") if log_path.exists() else ""
+        try:
+            events = event_objects(text)
+            validate_event_stream(events, role, identity)
+            start = one_event(events, "start", role=role)
+            if start is not None:
+                if any(not exact_nonnegative_int(start.get(key)) or start.get(key) != value
+                       for key, value in expected.items()):
+                    raise CollectionError("malformed server JSON event: start")
+                return
+        except CollectionError as exc:
+            raise CollectionError("malformed server JSON event: start") from exc
+        if process.poll() is not None:
+            raise CollectionError("server exited before JSON event: start")
+        if time.monotonic() >= deadline:
+            raise CollectionError("server_start_timeout")
+        time.sleep(0.01)
+
 def main() -> int:
     emitted = False
     tmp_path: pathlib.Path | None = None
@@ -313,6 +339,10 @@ def main() -> int:
         if not all(40080 <= value <= 40100 for value in (udp_port, tcp_port)) or udp_port == tcp_port:
             raise CollectionError("ports outside CLI bounded range")
         parameters = dict(PARAMETERS, udp_port=udp_port, tcp_port=tcp_port)
+        server_identity = f"warm-cycle-{index}-server"
+        client_identity = f"warm-cycle-{index}-client"
+        requires(server_argv, "--experiment-id", server_identity)
+        requires(client_argv, "--experiment-id", client_identity)
         tmp_path = pathlib.Path(tempfile.mkdtemp(prefix=f"neko-warm-cycle-{index}-"))
         os.chmod(tmp_path, 0o700)
         identity = f"git:{commit}"
@@ -326,18 +356,28 @@ def main() -> int:
         client_cmd, client_resource_path = sampled_command(tmp_path, "client", identity, [], client_exec)
         server_log = open(tmp_path / "server.log", "xb")
         client_log = open(tmp_path / "client.log", "xb")
+        startup_error: CollectionError | None = None
         try:
             server = subprocess.Popen(server_cmd, stdin=subprocess.PIPE if server_input is not None else subprocess.DEVNULL, stdout=server_log, stderr=subprocess.STDOUT, start_new_session=True, shell=False)
             if server_input is not None:
                 assert server.stdin is not None; server.stdin.write(server_input); server.stdin.close()
-            time.sleep(float(os.environ.get("NEKO_FAILOVER_SERVER_STARTUP_SECONDS", "0.2")))
-            client = subprocess.Popen(client_cmd, stdin=subprocess.PIPE if client_input is not None else subprocess.DEVNULL, stdout=client_log, stderr=subprocess.STDOUT, start_new_session=True, shell=False)
-            if client_input is not None:
-                assert client.stdin is not None; client.stdin.write(client_input); client.stdin.close()
-            try: client.wait(timeout=22)
-            except subprocess.TimeoutExpired: terminate(client)
-            try: server.wait(timeout=3)
-            except subprocess.TimeoutExpired: terminate(server)
+            startup_timeout = float(os.environ.get("NEKO_FAILOVER_SERVER_STARTUP_TIMEOUT_SECONDS", "5"))
+            try:
+                server_start_readiness(tmp_path / "server.log", server, "server", server_identity,
+                                       {"count": PARAMETERS["record_count"], "record_payload_bytes": PARAMETERS["record_payload_bytes"],
+                                        "application_bytes_total": PARAMETERS["record_count"] * PARAMETERS["record_payload_bytes"],
+                                        "udp_port": udp_port, "tcp_port": tcp_port,
+                                        "max_seconds": PARAMETERS["server_max_seconds"]}, startup_timeout)
+            except CollectionError as exc:
+                startup_error = exc
+            if startup_error is None:
+                client = subprocess.Popen(client_cmd, stdin=subprocess.PIPE if client_input is not None else subprocess.DEVNULL, stdout=client_log, stderr=subprocess.STDOUT, start_new_session=True, shell=False)
+                if client_input is not None:
+                    assert client.stdin is not None; client.stdin.write(client_input); client.stdin.close()
+                try: client.wait(timeout=22)
+                except subprocess.TimeoutExpired: terminate(client)
+                try: server.wait(timeout=3)
+                except subprocess.TimeoutExpired: terminate(server)
         finally:
             terminate(client); terminate(server)
             server_log.close(); client_log.close()
@@ -354,6 +394,8 @@ def main() -> int:
                 raise ValueError
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             raise CollectionError("cleanup command did not return bounded evidence")
+        if startup_error is not None:
+            raise startup_error
 
         server_text = (tmp_path / "server.log").read_text(errors="replace")
         client_text = (tmp_path / "client.log").read_text(errors="replace")
@@ -361,14 +403,10 @@ def main() -> int:
         sr, cr = load_json(server_resource_path), load_json(client_resource_path)
         server_exit = exit_code(sr, server.returncode if server and server.returncode is not None else 124)
         client_exit = exit_code(cr, client.returncode if client and client.returncode is not None else 124)
-        server_identity = f"warm-cycle-{index}-server"
-        client_identity = f"warm-cycle-{index}-client"
-        requires(server_argv, "--experiment-id", server_identity)
-        requires(client_argv, "--experiment-id", client_identity)
         validate_event_stream(se, "server", server_identity)
         validate_event_stream(ce, "client", client_identity)
-        client_start = one_event(ce, "start", required=True)
-        server_start = one_event(se, "start", required=True)
+        client_start = one_event(ce, "start", required=True, role="client")
+        server_start = one_event(se, "start", required=True, role="server")
         timing_event = one_event(ce, "failover_timing")
         accounting_event = one_event(ce, "failover_accounting")
         summary_client = one_event(ce, "summary")

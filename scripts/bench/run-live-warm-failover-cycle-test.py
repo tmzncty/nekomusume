@@ -16,6 +16,8 @@ role="server" if mode == "failover-server" else "client"
 experiment_id="warm-cycle-1-"+role
 def j(event,seq=0,**kw): print(json.dumps(dict(experiment_id=experiment_id,role=role,event=event,seq=seq,**kw)),flush=True)
 if mode == "failover-server":
+ if scenario == "delayed_start": import time; time.sleep(0.15)
+ if scenario == "early_exit": sys.exit(9)
  j("start",count=4 if scenario in ("start_mismatch","adversarial") else 3,record_payload_bytes=16,application_bytes_total=48,udp_port=40081,tcp_port=40080,max_seconds=15);
  if scenario in ("duplicate_start","adversarial"): j("start",count=3,record_payload_bytes=16,application_bytes_total=48,udp_port=40081,tcp_port=40080,max_seconds=15)
  if scenario in ("malformed_json","adversarial"): print("  {not-json")
@@ -31,7 +33,9 @@ if mode == "failover-server":
   j("tcp_delivery_ack_sent",1); j("tcp_delivery_ack_sent",2); print("carrier_event name=tcp_resumed session=7001 generation=1"); j("summary",3,records=3,application_bytes_total=48)
  sys.exit(7 if scenario=="server_mismatch" else 0)
 if mode == "failover-client":
- j("start",count=3,record_payload_bytes=16,application_bytes_total=48,udp_port=40081,tcp_port=40080,max_seconds=12);
+ if scenario == "missing_client_start": pass
+ else: j("start",count=3,record_payload_bytes=16,application_bytes_total=48,udp_port=40081,tcp_port=40080,max_seconds=12)
+
  print("carrier_event name=udp_authenticated session=7001 generation=0"); j("udp_delivery_ack_validated",1); j("udp_uncertain_range_sent",2,len=16)
  if scenario != "missing_readiness":
   [j("tcp_warm_readiness",n,warm=n==3) for n in (1,2,3)]; print("carrier_event name=tcp_warm session=7001 generation=1 readiness=3 application_data=0")
@@ -83,6 +87,10 @@ def invoke(scenario="success", marker="", server_executable=None, client_executa
   return p, json.loads(p.stdout) if p.stdout.strip() else None
 
 p,row=invoke(); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]["status"]=="passed"; assert row["semantic"]["readiness_proofs"]==3; assert row["accounting"]["uncertain_records"]==2
+p,row=invoke("delayed_start"); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]["status"]=="passed"
+p,row=invoke("early_exit"); assert p.returncode==2 and p.stdout == "" and "server exited before JSON event: start" in p.stderr
+p,row=invoke("missing_client_start"); assert p.returncode==2 and p.stdout == "" and "missing client JSON event: start" in p.stderr
+p,row=invoke("malformed_json"); assert p.returncode==2 and p.stdout == "" and "malformed server JSON event: start" in p.stderr
 with tempfile.TemporaryDirectory() as td:
  symlink=pathlib.Path(td)/"python-symlink"
  try:
