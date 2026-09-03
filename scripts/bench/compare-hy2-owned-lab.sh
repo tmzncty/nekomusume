@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 fail(){ echo "compare-hy2-owned-lab: $*" >&2; exit 2; }
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+LISTENER_PARSER=$SCRIPT_DIR/parse-listener.py
+. "$SCRIPT_DIR/owned-lab-control-plane.sh"
 need(){ [ -n "${!1:-}" ] || fail "missing $1"; }
 for v in LAB_SSH_TARGET LAB_ENDPOINT_ID LAB_ENDPOINT_SHA256 LAB_REMOTE_ADDRESS LAB_REMOTE_BIND_ADDRESS NEKO_BIN HY2_BIN; do need "$v"; done
 [ "${NEKO_OWNED_LAB:-}" = yes ] || fail 'NEKO_OWNED_LAB=yes is required'
@@ -28,21 +31,17 @@ mapfile -t authorities <<<"$authorities_text"
 [ "${#authorities[@]}" -eq 2 ] || fail 'cannot derive bind/connect authorities'
 bind_authority=${authorities[0]}
 connect_authority=${authorities[1]}
-resolved=$(ssh -G "$LAB_SSH_TARGET" 2>/dev/null | awk '$1=="hostname"{print $2;exit}')
-[ -n "$resolved" ] || fail 'SSH target does not resolve'
-[ "$(printf %s "$resolved" | sha256sum | awk '{print $1}')" = "$LAB_ENDPOINT_SHA256" ] || fail 'SSH endpoint contract mismatch'
-[ "$resolved" = "$LAB_REMOTE_ADDRESS" ] || fail 'remote address differs from SSH endpoint'
 RUNS=${BENCH_RUNS:-5}; BYTES=${BENCH_PAYLOAD_BYTES:-1200}; TIMEOUT=${BENCH_TIMEOUT_SEC:-30}
 [[ "$RUNS" =~ ^[0-9]+$ && "$RUNS" -ge 3 && "$RUNS" -le 10 ]] || fail 'BENCH_RUNS must be 3..10'
 [[ "$BYTES" =~ ^[0-9]+$ && "$BYTES" -gt 0 && "$BYTES" -le 1200 ]] || fail 'BENCH_PAYLOAD_BYTES must be 1..1200'
 [[ "$TIMEOUT" =~ ^[0-9]+$ && "$TIMEOUT" -gt 0 && "$TIMEOUT" -le 30 ]] || fail 'BENCH_TIMEOUT_SEC must be 1..30'
 SETUP_SEC=30; READINESS_SEC=10; DIAGNOSTIC_SEC=20; CLEANUP_SEC=60
 WORK_SEC=$((SETUP_SEC + RUNS * 2 * (TIMEOUT + READINESS_SEC + 2) + DIAGNOSTIC_SEC))
-WHOLE_LAB_SEC=$((WORK_SEC + CLEANUP_SEC)); [ "$WHOLE_LAB_SEC" -le 600 ] || fail "whole-lab budget exceeds 600s: ${WHOLE_LAB_SEC}s"
-START_MS=$(date +%s%3N); WORK_DEADLINE_MS=$((WORK_SEC * 1000)); GLOBAL_DEADLINE_MS=$((WHOLE_LAB_SEC * 1000)); DEADLINE_MS=$((START_MS + WORK_DEADLINE_MS)); CLEANUP_DEADLINE_MS=$((START_MS + WHOLE_LAB_SEC * 1000)); cleanup_mode=0
-remaining_sec(){ local end=$DEADLINE_MS; [ "$cleanup_mode" -eq 1 ] && end=$CLEANUP_DEADLINE_MS; local left=$((end/1000-$(date +%s))); [ "$left" -gt 0 ] && echo "$left" || echo 0; }
-ssh_bounded(){ local left=$(remaining_sec); [ "$left" -gt 0 ] || return 124; timeout "$left" ssh -o ConnectTimeout="$left" -o BatchMode=yes "$@"; }
-remote_listener_ready(){ local protocol=$1 address=$2 port=$3; local flag=0; ssh_bounded "$LAB_SSH_TARGET" "ss -H -l${protocol} | python3 '$remote/parse-listener.py' $protocol $address $port" >/dev/null 2>&1 && flag=1; [ "$flag" -eq 1 ]; }
+WHOLE_LAB_SEC=$((WORK_SEC + CLEANUP_SEC)); olcp_init_deadlines "$WORK_SEC" "$WHOLE_LAB_SEC" || fail "whole-lab budget exceeds 600s: ${WHOLE_LAB_SEC}s"
+resolved=$("${OWNED_LAB_SSH_BIN:-ssh}" -G "$LAB_SSH_TARGET" 2>/dev/null | awk '$1=="hostname"{print $2;exit}')
+[ -n "$resolved" ] || fail 'SSH target does not resolve'
+[ "$(printf %s "$resolved" | sha256sum | awk '{print $1}')" = "$LAB_ENDPOINT_SHA256" ] || fail 'SSH endpoint contract mismatch'
+[ "$resolved" = "$LAB_REMOTE_ADDRESS" ] || fail 'remote address differs from SSH endpoint'
 remote_interfaces=$(ssh_bounded "$LAB_SSH_TARGET" "ip -j address show") || fail 'cannot read remote interface addresses'
 printf '%s' "$remote_interfaces" | python3 -c 'import json,sys; expected=sys.argv[1]; data=json.load(sys.stdin); raise SystemExit(0 if any(a.get("local")==expected for i in data for a in i.get("addr_info",[])) else 1)' "$LAB_REMOTE_BIND_ADDRESS" || fail 'remote bind address is not assigned to a local VPS interface'
 ports=("${NEKO_PORT:-40097}" "${HY2_UDP_PORT:-40098}" "${HY2_LOCAL_PORT:-40099}" "${ECHO_PORT:-40100}")
@@ -124,7 +123,7 @@ on_exit(){ local rc=$?; [ "$rc" -eq 0 ] || blocked "$failure_stage"; }
 trap on_exit EXIT; trap on_signal INT TERM
 for p in "${ports[@]}"; do ! ss -H -lntup "sport = :$p" | grep -q . || fail "local experimental port $p occupied"; ssh_bounded "$LAB_SSH_TARGET" "! ss -H -lntup 'sport = :$p' | grep -q ." || fail "remote experimental port $p occupied"; done
 payload=$run/payload.bin; dd if=/dev/zero of="$payload" bs=1 count="$BYTES" status=none; payload_prepared=true; payload_hash=$(sha256sum "$payload"|awk '{print $1}')
-cp "$NEKO_BIN" "$run/neko-cli"; cp "$HY2_BIN" "$run/hysteria"; cp scripts/bench/process-resource-sampler.py scripts/bench/echo-payload.py "$run/"
+cp "$NEKO_BIN" "$run/neko-cli"; cp "$HY2_BIN" "$run/hysteria"; cp scripts/bench/process-resource-sampler.py scripts/bench/echo-payload.py scripts/bench/parse-listener.py "$run/"
 "$run/neko-cli" keygen --identity "$run/client.identity" >"$run/client-key"; "$run/neko-cli" keygen --identity "$run/server.identity" >"$run/server-key"
 client_pub=$(sed -n 's/^client_public_key=//p' "$run/client-key"); server_pub=$(sed -n 's/^client_public_key=//p' "$run/server-key"); [ -n "$client_pub" ] && [ -n "$server_pub" ] || fail 'identity generation failed'
 mkdir -m700 "$run/tls"; openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=neko-owned-lab -addext "subjectAltName=IP:$LAB_REMOTE_BIND_ADDRESS" -keyout "$run/tls/key.pem" -out "$run/tls/cert.pem" >/dev/null 2>&1
@@ -165,18 +164,12 @@ PY
 chmod 700 "$run"/* "$run/tls"/* 2>/dev/null || true
 ssh_bounded "$LAB_SSH_TARGET" "umask 077; mkdir '$remote'"; remote_started=1; tar -C "$run" -cf - neko-cli hysteria process-resource-sampler.py echo-payload.py echo-server.py parse-listener.py payload.bin server.identity tls hy2-server.yaml | ssh_bounded "$LAB_SSH_TARGET" "tar -C '$remote' -xf -; chmod 700 '$remote/neko-cli' '$remote/hysteria'; : >'$remote/pids'"
 ssh_bounded "$LAB_SSH_TARGET" "nohup setsid python3 '$remote/echo-server.py' '${ports[3]}' '$RUNS' '$BYTES' >'$remote/echo.log' 2>&1 </dev/null & echo \$! >>'$remote/pids'; nohup setsid python3 '$remote/process-resource-sampler.py' --experiment-id hy2-owned-lab --implementation hy2-v2.9.3 --role server --identity sha256:66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1 --application-bytes '$((RUNS*BYTES))' --owned-port '${ports[1]}' --interval-ms 10 --max-seconds '$((RUNS*TIMEOUT+10))' --output '$remote/hy2-server-resource.json' -- '$remote/hysteria' server -c '$remote/hy2-server.yaml' >'$remote/hy2-server.log' 2>&1 </dev/null & echo \$! >>'$remote/pids'"
-hy2_ready=0
-for _ in $(seq 1 200); do
- [ "$(remaining_sec)" -gt 0 ] || break
- ssh_bounded "$LAB_SSH_TARGET" "ss -H -lun | python3 '$remote/parse-listener.py' udp '$LAB_REMOTE_BIND_ADDRESS' '${ports[1]}'" >/dev/null 2>&1 && { hy2_ready=1; break; }
- sleep .05
-done
-[ "$hy2_ready" -eq 1 ] || { failure_stage=hy2-server-readiness; blocked "$failure_stage"; }
+require_remote_listener udp "$LAB_REMOTE_BIND_ADDRESS" "${ports[1]}" 200 "" hy2-server-readiness
 run_client(){
  local impl=$1 run_no=$2 owned_port=$3 cmd=$4 raw=$run/raw.json stats=$run/stats.jsonl row=$run/record.json resource=$run/$impl-client-$run_no-resource.json rc
  : >"$raw"; : >"$stats"; failure_stage="$impl-$run_no-client"
  set +e
- timeout "$(remaining_sec)" /usr/bin/time -a \
+ run_bounded "$TIMEOUT" /usr/bin/time -a \
    -f '{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":%e,"cpu_user_seconds":%U,"cpu_system_seconds":%S,"rss_kib":%M,"exit_code":%x}' -o "$stats" \
    python3 "$run/process-resource-sampler.py" --experiment-id "$impl-owned-lab-$run_no" --implementation "$impl" --role client --identity "sha256:${client_identity[$impl]}" --application-bytes "$BYTES" --owned-port "$owned_port" --interval-ms 10 --max-seconds "$TIMEOUT" --output "$resource" -- bash -c "$cmd" >"$raw" 2>"$run/client.err"
  rc=$?; set -e
@@ -189,8 +182,7 @@ declare -A client_identity=([nekomusume]="$neko_identity" [hy2]=66dbdb0608f25f30
 for i in $(seq 1 "$RUNS"); do
  [ "$(remaining_sec)" -gt 0 ] || { failure_stage=deadline; blocked "$failure_stage"; }
  ssh_bounded "$LAB_SSH_TARGET" "python3 '$remote/process-resource-sampler.py' --experiment-id neko-owned-lab-$i --implementation nekomusume --role server --identity sha256:$(sha256sum "$run/neko-cli"|awk '{print $1}') --application-bytes '$BYTES' --owned-port '${ports[0]}' --interval-ms 10 --max-seconds '$TIMEOUT' --output '$remote/neko-server-$i-resource.json' -- '$remote/neko-cli' server --transport tcp --bind '${bind_authority}:${ports[0]}' --port '${ports[0]}' --identity '$remote/server.identity' --client-key '$client_pub' --bytes '$BYTES' --count 1 --duration '$TIMEOUT' >'$remote/neko-server-$i.log' 2>&1" & spid=$!; active_spid=$spid
- ready=0; for _ in $(seq 1 200); do ssh_bounded "$LAB_SSH_TARGET" "ss -H -ltn | python3 '$remote/parse-listener.py' tcp '$LAB_REMOTE_BIND_ADDRESS' '${ports[0]}'" >/dev/null 2>&1 && { ready=1; break; }; kill -0 "$spid" 2>/dev/null || break; sleep .05; done
- [ "$ready" -eq 1 ] || { failure_stage=nekomusume-readiness; wait "$spid" 2>/dev/null || true; blocked "$failure_stage"; }
+ require_remote_listener tcp "$LAB_REMOTE_BIND_ADDRESS" "${ports[0]}" 200 "$spid" nekomusume-readiness
  run_client nekomusume "$i" "${ports[0]}" "'$run/neko-cli' client --transport tcp --addr '${connect_authority}:${ports[0]}' --port '${ports[0]}' --identity '$run/client.identity' --server-key '$server_pub' --bytes '$BYTES' --count 1 --duration '$TIMEOUT' --payload-file '$payload' --json"
  wait "$spid" || true; active_spid=
  run_client hy2 "$i" "${ports[2]}" "

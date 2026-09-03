@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd); source_script=$root/scripts/bench/compare-hy2-owned-lab.sh; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-cp "$source_script" "$tmp/adapter.sh"; s=$tmp/adapter.sh
+cp "$source_script" "$tmp/adapter.sh"; cp "$root/scripts/bench/owned-lab-control-plane.sh" "$tmp/"; s=$tmp/adapter.sh
 cat >"$tmp/ssh" <<'SH'
 #!/bin/sh
 [ "$1" = -G ] && { echo 'hostname 192.0.2.8'; exit; }
