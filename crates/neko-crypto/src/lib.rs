@@ -1081,12 +1081,21 @@ impl ProcessPreauthAdmission {
         self.refresh_window(now_ms)?;
         let source = self.live(id, now_ms)?.source.clone();
         let usage = self.sources.get(&source).ok_or(SessionRejected)?;
-        let source_bytes = usage.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
+        let source_bytes = usage
+            .input_bytes
+            .checked_add(bytes)
+            .ok_or(SessionRejected)?;
         let source_packets = usage.input_packets.checked_add(1).ok_or(SessionRejected)?;
-        let source_work = usage.work_units.checked_add(work_units).ok_or(SessionRejected)?;
+        let source_work = usage
+            .work_units
+            .checked_add(work_units)
+            .ok_or(SessionRejected)?;
         let input_bytes = self.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
         let input_packets = self.input_packets.checked_add(1).ok_or(SessionRejected)?;
-        let work = self.work_units.checked_add(work_units).ok_or(SessionRejected)?;
+        let work = self
+            .work_units
+            .checked_add(work_units)
+            .ok_or(SessionRejected)?;
         if work_units > self.limits.max_work_per_packet
             || source_bytes > self.limits.max_input_bytes_per_source
             || source_packets > self.limits.max_input_packets_per_source
@@ -1104,7 +1113,10 @@ impl ProcessPreauthAdmission {
         self.input_bytes = input_bytes;
         self.input_packets = input_packets;
         self.work_units = work;
-        self.states.get_mut(&id).ok_or(SessionRejected)?.last_progress_ms = now_ms;
+        self.states
+            .get_mut(&id)
+            .ok_or(SessionRejected)?
+            .last_progress_ms = now_ms;
         Ok(())
     }
 
@@ -1144,10 +1156,22 @@ impl ProcessPreauthAdmission {
         self.refresh_window(now_ms)?;
         let source = self.live(id, now_ms)?.source.clone();
         let usage = self.sources.get(&source).ok_or(SessionRejected)?;
-        let source_bytes = usage.response_bytes.checked_add(bytes).ok_or(SessionRejected)?;
-        let source_packets = usage.response_packets.checked_add(1).ok_or(SessionRejected)?;
-        let response_bytes = self.response_bytes.checked_add(bytes).ok_or(SessionRejected)?;
-        let response_packets = self.response_packets.checked_add(1).ok_or(SessionRejected)?;
+        let source_bytes = usage
+            .response_bytes
+            .checked_add(bytes)
+            .ok_or(SessionRejected)?;
+        let source_packets = usage
+            .response_packets
+            .checked_add(1)
+            .ok_or(SessionRejected)?;
+        let response_bytes = self
+            .response_bytes
+            .checked_add(bytes)
+            .ok_or(SessionRejected)?;
+        let response_packets = self
+            .response_packets
+            .checked_add(1)
+            .ok_or(SessionRejected)?;
         if source_bytes > self.limits.max_response_bytes_per_source
             || source_packets > self.limits.max_response_packets_per_source
             || response_bytes > self.limits.max_response_bytes_per_window
@@ -1191,7 +1215,7 @@ impl ProcessPreauthAdmission {
                     && now_ms >= state.last_progress_ms
                     && (now_ms - state.last_progress_ms >= self.limits.idle_timeout_ms
                         || now_ms - state.created_at_ms >= self.limits.max_lifetime_ms))
-                .then_some(*id)
+                    .then_some(*id)
             })
             .collect();
         for id in &expired {
@@ -1295,12 +1319,15 @@ mod preauth_tests {
         assert_eq!(admission.enqueue(id, 0), Err(SessionRejected));
         assert_eq!((admission.queued(), admission.memory_bytes()), (1, 2));
         admission.dequeue(id).unwrap();
-        // A new monotonic window resets rate counters but not live state.
-        admission.charge_input(id, 4, 5, 10).unwrap();
-        assert_eq!(admission.live_states(), 1);
+        // A new monotonic window resets global rate counters, never the
+        // state-lifetime source counters. A distinct source can use the window.
+        assert_eq!(admission.charge_input(id, 1, 0, 10), Err(SessionRejected));
+        let other = admission.admit_state(b"other", 2, 10).unwrap();
+        admission.charge_input(other, 4, 5, 10).unwrap();
+        assert_eq!(admission.live_states(), 2);
         assert_eq!(admission.charge_input(id, 1, 0, 9), Err(SessionRejected));
         assert_eq!(admission.charge_input(id, 1, 0, 20), Err(SessionRejected));
-        assert_eq!(admission.expire(20), Ok(1));
+        assert_eq!(admission.expire(20), Ok(2));
         assert_eq!(
             (
                 admission.live_states(),

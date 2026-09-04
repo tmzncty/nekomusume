@@ -26,7 +26,11 @@ impl ListenerAdmission {
     }
 
     fn now_ms(&self) -> u64 {
-        self.started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
+        self.started
+            .elapsed()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX)
     }
 
     pub(crate) fn expire(&mut self) {
