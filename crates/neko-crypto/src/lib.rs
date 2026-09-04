@@ -1327,15 +1327,17 @@ mod preauth_tests {
         assert_eq!(admission.live_states(), 2);
         assert_eq!(admission.charge_input(id, 1, 0, 9), Err(SessionRejected));
         assert_eq!(admission.charge_input(id, 1, 0, 20), Err(SessionRejected));
-        assert_eq!(admission.expire(20), Ok(2));
+        assert_eq!(admission.expire(20), Ok(1));
         assert_eq!(
             (
                 admission.live_states(),
                 admission.memory_bytes(),
                 admission.queued()
             ),
-            (0, 0, 0)
+            (1, 2, 0)
         );
+        admission.release(other).unwrap();
+        assert_eq!((admission.live_states(), admission.memory_bytes()), (0, 0));
     }
 
     #[test]
