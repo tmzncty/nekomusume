@@ -1448,7 +1448,10 @@ mod preauth_tests {
         let id = admission.admit_state(b"source", 2, 0).unwrap();
         admission.charge_input(id, 1, 1, 0).unwrap();
         let permit = admission.charge_response(id, 1, 0).unwrap();
-        assert_eq!(admission.complete_response(permit, 101), Err(SessionRejected));
+        assert_eq!(
+            admission.complete_response(permit, 101),
+            Err(SessionRejected)
+        );
         assert_eq!(admission.charge_input(id, 1, 1, 10), Err(SessionRejected));
         admission.release(id).unwrap();
     }
@@ -1456,26 +1459,37 @@ mod preauth_tests {
     #[test]
     fn process_window_queue_and_lifetime_fail_closed() {
         let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
-        let id = admission.admit_state(b"source", 2, 0).unwrap();
-        admission.charge_input(id, 4, 5, 0).unwrap();
-        assert_eq!(admission.charge_input(id, 1, 0, 0), Err(SessionRejected));
-        let response = admission.charge_response(id, 3, 0).unwrap();
-        assert_eq!(admission.complete_response(response, 100), Ok(()));
+        let rejected = admission.admit_state(b"source", 2, 0).unwrap();
+        admission.charge_input(rejected, 4, 5, 0).unwrap();
+        assert_eq!(
+            admission.charge_input(rejected, 1, 0, 0),
+            Err(SessionRejected)
+        );
+        assert_eq!(
+            admission.charge_input(rejected, 1, 0, 10),
+            Err(SessionRejected)
+        );
+        admission.release(rejected).unwrap();
+
+        let id = admission.admit_state(b"source-b", 2, 10).unwrap();
+        admission.charge_input(id, 4, 5, 10).unwrap();
+        let response = admission.charge_response(id, 3, 10).unwrap();
+        assert_eq!(admission.complete_response(response, 110), Ok(()));
+        let queue = admission.enqueue(id, 10).unwrap();
+        assert_eq!(admission.enqueue(id, 10), Err(SessionRejected));
+        assert_eq!((admission.queued(), admission.memory_bytes()), (1, 2));
+        admission.dequeue(queue).unwrap();
         assert!(matches!(
             admission.charge_response(id, 1, 0),
             Err(SessionRejected)
         ));
-        let queue = admission.enqueue(id, 0).unwrap();
-        assert_eq!(admission.enqueue(id, 0), Err(SessionRejected));
-        assert_eq!(admission.charge_input(id, 1, 1, 10), Err(SessionRejected));
-        assert_eq!((admission.queued(), admission.memory_bytes()), (1, 2));
-        admission.dequeue(queue).unwrap();
         // A new monotonic window resets global rate counters, never the
         // state-lifetime source counters. A distinct source can use the window.
         assert_eq!(admission.charge_input(id, 1, 0, 10), Err(SessionRejected));
-        let other = admission.admit_state(b"other", 2, 10).unwrap();
-        admission.charge_input(other, 4, 5, 10).unwrap();
-        assert_eq!(admission.live_states(), 2);
+        admission.release(id).unwrap();
+        let other = admission.admit_state(b"other", 2, 20).unwrap();
+        admission.charge_input(other, 4, 5, 20).unwrap();
+        assert_eq!(admission.live_states(), 1);
         assert_eq!(admission.charge_input(id, 1, 0, 9), Err(SessionRejected));
         assert_eq!(admission.charge_input(id, 1, 0, 200), Err(SessionRejected));
         assert_eq!(admission.expire(200), Ok(1));
