@@ -863,6 +863,18 @@ impl PreauthBudget {
         self.response_packets = new_packets;
         Ok(())
     }
+
+    pub fn rollback_input(&mut self, bytes: usize) -> Result<(), SessionRejected> {
+        self.input_bytes = self.input_bytes.checked_sub(bytes).ok_or(SessionRejected)?;
+        self.input_packets = self.input_packets.checked_sub(1).ok_or(SessionRejected)?;
+        Ok(())
+    }
+
+    pub fn rollback_response(&mut self, bytes: usize) -> Result<(), SessionRejected> {
+        self.response_bytes = self.response_bytes.checked_sub(bytes).ok_or(SessionRejected)?;
+        self.response_packets = self.response_packets.checked_sub(1).ok_or(SessionRejected)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

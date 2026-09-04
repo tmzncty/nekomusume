@@ -61,10 +61,16 @@ impl ListenerAdmission {
         work_units: usize,
     ) -> Result<(), ()> {
         let now = self.now_ms();
-        self.process
+        ticket.budget.charge_input(bytes).map_err(|_| ())?;
+        if self
+            .process
             .charge_input(ticket.id, bytes, work_units, now)
-            .map_err(|_| ())?;
-        ticket.budget.charge_input(bytes).map_err(|_| ())
+            .is_err()
+        {
+            let _ = ticket.budget.rollback_input(bytes);
+            return Err(());
+        }
+        Ok(())
     }
 
     pub(crate) fn charge_response(
@@ -74,9 +80,11 @@ impl ListenerAdmission {
     ) -> Result<(), ()> {
         let now = self.now_ms();
         ticket.budget.charge_response(bytes).map_err(|_| ())?;
-        self.process
-            .charge_response(ticket.id, bytes, now)
-            .map_err(|_| ())
+        if self.process.charge_response(ticket.id, bytes, now).is_err() {
+            let _ = ticket.budget.rollback_response(bytes);
+            return Err(());
+        }
+        Ok(())
     }
 
     pub(crate) fn release(&mut self, ticket: AdmissionTicket) {
