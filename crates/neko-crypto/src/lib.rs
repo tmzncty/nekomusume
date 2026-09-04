@@ -873,12 +873,19 @@ pub struct ProcessPreauthLimits {
     pub max_memory_global: usize,
     pub max_queue_per_source: usize,
     pub max_queue_global: usize,
+    pub max_input_bytes_per_source: usize,
+    pub max_input_packets_per_source: usize,
     pub max_input_bytes_per_window: usize,
     pub max_input_packets_per_window: usize,
+    pub max_work_per_packet: usize,
+    pub max_work_per_source: usize,
     pub max_work_per_window: usize,
+    pub max_response_bytes_per_source: usize,
+    pub max_response_packets_per_source: usize,
     pub max_response_bytes_per_window: usize,
     pub max_response_packets_per_window: usize,
     pub admission_window_ms: u64,
+    pub idle_timeout_ms: u64,
     pub max_lifetime_ms: u64,
 }
 impl Default for ProcessPreauthLimits {
@@ -890,12 +897,19 @@ impl Default for ProcessPreauthLimits {
             max_memory_global: 16 * 1024 * 1024,
             max_queue_per_source: 4,
             max_queue_global: 256,
+            max_input_bytes_per_source: 64 * 1024,
+            max_input_packets_per_source: 64,
             max_input_bytes_per_window: 8 * 1024 * 1024,
             max_input_packets_per_window: 8192,
+            max_work_per_packet: 4096,
+            max_work_per_source: 131_072,
             max_work_per_window: 1_048_576,
+            max_response_bytes_per_source: 2048,
+            max_response_packets_per_source: 4,
             max_response_bytes_per_window: 256 * 1024,
             max_response_packets_per_window: 512,
             admission_window_ms: 1000,
+            idle_timeout_ms: 1000,
             max_lifetime_ms: 5000,
         }
     }
@@ -910,6 +924,18 @@ struct ProcessPreauthState {
     memory_bytes: usize,
     queued: usize,
     created_at_ms: u64,
+    last_progress_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ProcessPreauthSource {
+    states: usize,
+    queued: usize,
+    input_bytes: usize,
+    input_packets: usize,
+    work_units: usize,
+    response_bytes: usize,
+    response_packets: usize,
 }
 
 /// Process-owned admission accounting for unauthenticated work. Source keys are
@@ -920,6 +946,7 @@ pub struct ProcessPreauthAdmission {
     limits: ProcessPreauthLimits,
     next_id: u64,
     states: BTreeMap<PreauthStateId, ProcessPreauthState>,
+    sources: BTreeMap<Vec<u8>, ProcessPreauthSource>,
     memory_bytes: usize,
     queued: usize,
     window_started_ms: u64,
@@ -940,12 +967,20 @@ impl ProcessPreauthAdmission {
             || limits.max_queue_per_source == 0
             || limits.max_queue_global == 0
             || limits.max_queue_per_source > limits.max_queue_global
+            || limits.max_input_bytes_per_source == 0
+            || limits.max_input_packets_per_source == 0
             || limits.max_input_bytes_per_window == 0
             || limits.max_input_packets_per_window == 0
+            || limits.max_work_per_packet == 0
+            || limits.max_work_per_source == 0
             || limits.max_work_per_window == 0
+            || limits.max_response_bytes_per_source == 0
+            || limits.max_response_packets_per_source == 0
             || limits.max_response_bytes_per_window == 0
             || limits.max_response_packets_per_window == 0
             || limits.admission_window_ms == 0
+            || limits.idle_timeout_ms == 0
+            || limits.idle_timeout_ms > limits.max_lifetime_ms
             || limits.max_lifetime_ms == 0
         {
             return Err(SessionRejected);
@@ -954,6 +989,7 @@ impl ProcessPreauthAdmission {
             limits,
             next_id: 0,
             states: BTreeMap::new(),
+            sources: BTreeMap::new(),
             memory_bytes: 0,
             queued: 0,
             window_started_ms: now_ms,
@@ -987,6 +1023,8 @@ impl ProcessPreauthAdmission {
     ) -> Result<&ProcessPreauthState, SessionRejected> {
         let state = self.states.get(&id).ok_or(SessionRejected)?;
         if now_ms < state.created_at_ms
+            || now_ms < state.last_progress_ms
+            || now_ms - state.last_progress_ms >= self.limits.idle_timeout_ms
             || now_ms - state.created_at_ms >= self.limits.max_lifetime_ms
         {
             return Err(SessionRejected);
@@ -1006,11 +1044,7 @@ impl ProcessPreauthAdmission {
             || memory_bytes == 0
             || memory_bytes > self.limits.max_memory_per_state
             || self.states.len() >= self.limits.max_states_global
-            || self
-                .states
-                .values()
-                .filter(|state| state.source == source)
-                .count()
+            || self.sources.get(source).map_or(0, |usage| usage.states)
                 >= self.limits.max_states_per_source
             || self
                 .memory_bytes
@@ -1029,9 +1063,11 @@ impl ProcessPreauthAdmission {
                 memory_bytes,
                 queued: 0,
                 created_at_ms: now_ms,
+                last_progress_ms: now_ms,
             },
         );
         self.memory_bytes += memory_bytes;
+        self.sources.entry(source.to_vec()).or_default().states += 1;
         Ok(id)
     }
 
@@ -1043,34 +1079,46 @@ impl ProcessPreauthAdmission {
         now_ms: u64,
     ) -> Result<(), SessionRejected> {
         self.refresh_window(now_ms)?;
-        self.live(id, now_ms)?;
+        let source = self.live(id, now_ms)?.source.clone();
+        let usage = self.sources.get(&source).ok_or(SessionRejected)?;
+        let source_bytes = usage.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
+        let source_packets = usage.input_packets.checked_add(1).ok_or(SessionRejected)?;
+        let source_work = usage.work_units.checked_add(work_units).ok_or(SessionRejected)?;
         let input_bytes = self.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
         let input_packets = self.input_packets.checked_add(1).ok_or(SessionRejected)?;
-        let work = self
-            .work_units
-            .checked_add(work_units)
-            .ok_or(SessionRejected)?;
-        if input_bytes > self.limits.max_input_bytes_per_window
+        let work = self.work_units.checked_add(work_units).ok_or(SessionRejected)?;
+        if work_units > self.limits.max_work_per_packet
+            || source_bytes > self.limits.max_input_bytes_per_source
+            || source_packets > self.limits.max_input_packets_per_source
+            || source_work > self.limits.max_work_per_source
+            || input_bytes > self.limits.max_input_bytes_per_window
             || input_packets > self.limits.max_input_packets_per_window
             || work > self.limits.max_work_per_window
         {
             return Err(SessionRejected);
         }
+        let usage = self.sources.get_mut(&source).ok_or(SessionRejected)?;
+        usage.input_bytes = source_bytes;
+        usage.input_packets = source_packets;
+        usage.work_units = source_work;
         self.input_bytes = input_bytes;
         self.input_packets = input_packets;
         self.work_units = work;
+        self.states.get_mut(&id).ok_or(SessionRejected)?.last_progress_ms = now_ms;
         Ok(())
     }
 
     pub fn enqueue(&mut self, id: PreauthStateId, now_ms: u64) -> Result<(), SessionRejected> {
         self.refresh_window(now_ms)?;
-        let state = self.live(id, now_ms)?;
-        if state.queued >= self.limits.max_queue_per_source
+        let source = self.live(id, now_ms)?.source.clone();
+        let source_queued = self.sources.get(&source).ok_or(SessionRejected)?.queued;
+        if source_queued >= self.limits.max_queue_per_source
             || self.queued >= self.limits.max_queue_global
         {
             return Err(SessionRejected);
         }
         self.states.get_mut(&id).ok_or(SessionRejected)?.queued += 1;
+        self.sources.get_mut(&source).ok_or(SessionRejected)?.queued += 1;
         self.queued += 1;
         Ok(())
     }
@@ -1080,7 +1128,9 @@ impl ProcessPreauthAdmission {
         if state.queued == 0 {
             return Err(SessionRejected);
         }
+        let source = state.source.clone();
         state.queued -= 1;
+        self.sources.get_mut(&source).ok_or(SessionRejected)?.queued -= 1;
         self.queued -= 1;
         Ok(())
     }
@@ -1092,20 +1142,22 @@ impl ProcessPreauthAdmission {
         now_ms: u64,
     ) -> Result<(), SessionRejected> {
         self.refresh_window(now_ms)?;
-        self.live(id, now_ms)?;
-        let response_bytes = self
-            .response_bytes
-            .checked_add(bytes)
-            .ok_or(SessionRejected)?;
-        let response_packets = self
-            .response_packets
-            .checked_add(1)
-            .ok_or(SessionRejected)?;
-        if response_bytes > self.limits.max_response_bytes_per_window
+        let source = self.live(id, now_ms)?.source.clone();
+        let usage = self.sources.get(&source).ok_or(SessionRejected)?;
+        let source_bytes = usage.response_bytes.checked_add(bytes).ok_or(SessionRejected)?;
+        let source_packets = usage.response_packets.checked_add(1).ok_or(SessionRejected)?;
+        let response_bytes = self.response_bytes.checked_add(bytes).ok_or(SessionRejected)?;
+        let response_packets = self.response_packets.checked_add(1).ok_or(SessionRejected)?;
+        if source_bytes > self.limits.max_response_bytes_per_source
+            || source_packets > self.limits.max_response_packets_per_source
+            || response_bytes > self.limits.max_response_bytes_per_window
             || response_packets > self.limits.max_response_packets_per_window
         {
             return Err(SessionRejected);
         }
+        let usage = self.sources.get_mut(&source).ok_or(SessionRejected)?;
+        usage.response_bytes = source_bytes;
+        usage.response_packets = source_packets;
         self.response_bytes = response_bytes;
         self.response_packets = response_packets;
         Ok(())
@@ -1115,6 +1167,15 @@ impl ProcessPreauthAdmission {
         let state = self.states.remove(&id).ok_or(SessionRejected)?;
         self.memory_bytes -= state.memory_bytes;
         self.queued -= state.queued;
+        let remove_source = {
+            let usage = self.sources.get_mut(&state.source).ok_or(SessionRejected)?;
+            usage.states -= 1;
+            usage.queued -= state.queued;
+            usage.states == 0
+        };
+        if remove_source {
+            self.sources.remove(&state.source);
+        }
         Ok(())
     }
 
@@ -1127,8 +1188,10 @@ impl ProcessPreauthAdmission {
             .iter()
             .filter_map(|(id, state)| {
                 (now_ms >= state.created_at_ms
-                    && now_ms - state.created_at_ms >= self.limits.max_lifetime_ms)
-                    .then_some(*id)
+                    && now_ms >= state.last_progress_ms
+                    && (now_ms - state.last_progress_ms >= self.limits.idle_timeout_ms
+                        || now_ms - state.created_at_ms >= self.limits.max_lifetime_ms))
+                .then_some(*id)
             })
             .collect();
         for id in &expired {
@@ -1182,12 +1245,19 @@ mod preauth_tests {
             max_memory_global: 6,
             max_queue_per_source: 1,
             max_queue_global: 1,
+            max_input_bytes_per_source: 4,
+            max_input_packets_per_source: 2,
             max_input_bytes_per_window: 4,
             max_input_packets_per_window: 2,
+            max_work_per_packet: 5,
+            max_work_per_source: 5,
             max_work_per_window: 5,
+            max_response_bytes_per_source: 3,
+            max_response_packets_per_source: 1,
             max_response_bytes_per_window: 3,
             max_response_packets_per_window: 1,
             admission_window_ms: 10,
+            idle_timeout_ms: 20,
             max_lifetime_ms: 20,
         }
     }

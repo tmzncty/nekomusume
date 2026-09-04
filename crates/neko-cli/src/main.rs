@@ -7,6 +7,7 @@ mod framed;
 mod health_window;
 mod multistream;
 mod periodic;
+mod preauth;
 mod reachability;
 
 use neko_carrier::{
@@ -451,6 +452,7 @@ fn server(args: &[String]) {
         println!("server_public_key={}", hex(id.public_key()));
     }
     let start = Instant::now();
+    let mut preauth = preauth::ListenerAdmission::new();
     let client_hex = parse(args, "--client-key", None);
     let client_key = unhex(&client_hex);
     let policy = TrustPolicy::new(vec![TrustRecord {
@@ -483,21 +485,33 @@ fn server(args: &[String]) {
         emit_lifecycle(&lifecycle);
         while start.elapsed() < d && !shutdown.load(Ordering::Acquire) {
             match l.accept() {
-                Ok((mut s, _)) => {
+                Ok((mut s, peer)) => {
+                    let mut admission = preauth
+                        .admit(peer)
+                        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
                     let mut negotiation =
                         VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
                             .unwrap_or_else(|_| fail("negotiation setup failed"));
                     let hello = read_frame(&mut s, MAX_NEGOTIATION_FRAME)
                         .unwrap_or_else(|_| fail("malformed negotiation"));
+                    preauth
+                        .charge_input(&mut admission, hello.len() + 4, 64)
+                        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
                     let selection = negotiation
                         .server_accept_hello(&hello)
                         .unwrap_or_else(|_| fail("incompatible negotiation"));
+                    preauth
+                        .charge_response(&mut admission, selection.len() + 4)
+                        .unwrap_or_else(|_| fail("pre-auth response rejected"));
                     write_frame(&mut s, &selection)
                         .unwrap_or_else(|_| fail("negotiation response failed"));
                     let binding = negotiation
                         .authenticated_binding()
                         .unwrap_or_else(|_| fail("negotiation binding failed"));
                     let first = read_frame(&mut s, 1024).unwrap_or_else(|_| fail("bad handshake"));
+                    preauth
+                        .charge_input(&mut admission, first.len() + 4, 4096)
+                        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
                     let (resp, mut ss) = ResponderHandshake::new_with_prologue_binding(
                         &id,
                         policy.clone(),
@@ -507,11 +521,15 @@ fn server(args: &[String]) {
                     .unwrap_or_else(|_| fail("handshake setup failed"))
                     .receive_first(&first, context(0))
                     .unwrap_or_else(|_| fail("unauthorized handshake"));
+                    preauth
+                        .charge_response(&mut admission, resp.len() + 4)
+                        .unwrap_or_else(|_| fail("pre-auth response rejected"));
                     write_frame(&mut s, &resp)
                         .unwrap_or_else(|_| fail("handshake response failed"));
                     negotiation
                         .admit_data()
                         .unwrap_or_else(|_| fail("data admission denied"));
+                    preauth.release(admission);
                     for _ in 0..count {
                         let frame =
                             read_frame(&mut s, max + 64).unwrap_or_else(|_| fail("bad data"));
@@ -557,12 +575,21 @@ fn server(args: &[String]) {
         let mut b = [0; 65536];
         while start.elapsed() < d && !shutdown.load(Ordering::Acquire) {
             if let Ok((n, peer)) = u.recv_from(&mut b) {
+                let mut admission = preauth
+                    .admit(peer)
+                    .unwrap_or_else(|_| fail("pre-auth admission rejected"));
+                preauth
+                    .charge_input(&mut admission, n, 64)
+                    .unwrap_or_else(|_| fail("pre-auth admission rejected"));
                 let mut negotiation =
                     VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
                         .unwrap_or_else(|_| fail("negotiation setup failed"));
                 let selection = negotiation
                     .server_accept_hello(&b[..n])
                     .unwrap_or_else(|_| fail("incompatible negotiation"));
+                preauth
+                    .charge_response(&mut admission, selection.len())
+                    .unwrap_or_else(|_| fail("pre-auth response rejected"));
                 u.send_to(&selection, peer)
                     .unwrap_or_else(|_| fail("negotiation response failed"));
                 let binding = negotiation
@@ -574,6 +601,9 @@ fn server(args: &[String]) {
                 if handshake_peer != peer {
                     fail("handshake peer changed");
                 }
+                preauth
+                    .charge_input(&mut admission, n, 4096)
+                    .unwrap_or_else(|_| fail("pre-auth admission rejected"));
                 let (resp, mut ss) = ResponderHandshake::new_with_prologue_binding(
                     &id,
                     policy.clone(),
@@ -583,11 +613,15 @@ fn server(args: &[String]) {
                 .unwrap_or_else(|_| fail("handshake setup failed"))
                 .receive_first(&b[..n], context(0))
                 .unwrap_or_else(|_| fail("unauthorized handshake"));
+                preauth
+                    .charge_response(&mut admission, resp.len())
+                    .unwrap_or_else(|_| fail("pre-auth response rejected"));
                 u.send_to(&resp, peer)
                     .unwrap_or_else(|_| fail("handshake response failed"));
                 negotiation
                     .admit_data()
                     .unwrap_or_else(|_| fail("data admission denied"));
+                preauth.release(admission);
                 let application_deadline = Instant::now() + d;
                 for _ in 0..count {
                     let (n, data_peer) =
