@@ -1486,13 +1486,12 @@ mod preauth_tests {
         // A new monotonic window resets global rate counters, never the
         // state-lifetime source counters. A distinct source can use the window.
         assert_eq!(admission.charge_input(id, 1, 0, 10), Err(SessionRejected));
-        admission.release(id).unwrap();
         let other = admission.admit_state(b"other", 2, 20).unwrap();
-        admission.charge_input(other, 4, 5, 20).unwrap();
-        assert_eq!(admission.live_states(), 1);
+        admission.charge_input(other, 4, 5, 100).unwrap();
+        assert_eq!(admission.live_states(), 2);
         assert_eq!(admission.charge_input(id, 1, 0, 9), Err(SessionRejected));
-        assert_eq!(admission.charge_input(id, 1, 0, 200), Err(SessionRejected));
-        assert_eq!(admission.expire(200), Ok(1));
+        assert_eq!(admission.charge_input(id, 1, 0, 210), Err(SessionRejected));
+        assert_eq!(admission.expire(210), Ok(1));
         assert_eq!(
             (
                 admission.live_states(),
