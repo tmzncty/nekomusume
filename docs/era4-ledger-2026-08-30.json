@@ -67,8 +67,8 @@
         "docs/status.md",
         "docs/decisions.md"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "the declared bounded question already has adequate evidence; do not re-run merely because more testing is possible"
     },
     {
       "id": "B",
@@ -86,7 +86,11 @@
         "docs/spec/m0-wire-corpus.md"
       ],
       "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
+      "evidence_needed": "Evidence for the unresolved wire and frame contract question, limited to the declared bounded scope.",
+      "next_action": "Confirm the candidate v1 wire contract against the frozen corpus and record any unresolved compatibility boundary.",
+      "execution_scope": "local",
+      "requires": "Dependencies A remain satisfied at the reviewed tree."
     },
     {
       "id": "C",
@@ -103,7 +107,11 @@
         "crates/neko-session/src/lib.rs"
       ],
       "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
+      "evidence_needed": "Evidence for the unresolved session delivery ledger question, limited to the declared bounded scope.",
+      "next_action": "Add or review deterministic Session delivery edge-case coverage for the remaining candidate semantics.",
+      "execution_scope": "local",
+      "requires": "Dependencies B remain satisfied at the reviewed tree."
     },
     {
       "id": "D",
@@ -122,7 +130,11 @@
         "docs/research/crypto-dependency-review-2026-08-29.md"
       ],
       "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
+      "evidence_needed": "Evidence for the unresolved crypto and authenticated record question, limited to the declared bounded scope.",
+      "next_action": "Run the existing authenticated-record negative/security test matrix and record unresolved candidate gaps.",
+      "execution_scope": "local",
+      "requires": "Dependencies B, C remain satisfied at the reviewed tree."
     },
     {
       "id": "E",
@@ -141,7 +153,11 @@
         "crates/neko-carrier/tests/encrypted_udp_echo.rs"
       ],
       "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
+      "evidence_needed": "Evidence for the unresolved UDP carrier question, limited to the declared bounded scope.",
+      "next_action": "Run the existing encrypted UDP loopback/lifecycle gate and record only reproducible failures or bounded evidence.",
+      "execution_scope": "local",
+      "requires": "Dependencies D remain satisfied at the reviewed tree."
     },
     {
       "id": "F",
@@ -160,7 +176,11 @@
         "docs/spec/m3-tcp-failover.md"
       ],
       "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
+      "evidence_needed": "Evidence for the unresolved TCP carrier and framing question, limited to the declared bounded scope.",
+      "next_action": "Run the existing TCP framing/failover deterministic gate and record unresolved cross-carrier boundaries.",
+      "execution_scope": "local",
+      "requires": "Dependencies D remain satisfied at the reviewed tree."
     },
     {
       "id": "G",
@@ -179,8 +199,8 @@
         "docs/m3-runtime-contract-2026-08-29.md",
         "docs/vps-failover-success-2026-08-30.md"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "the declared bounded question already has adequate evidence; do not re-run merely because more testing is possible"
     },
     {
       "id": "H",
@@ -197,8 +217,8 @@
       "artifacts": [
         "crates/neko-session/src/lib.rs"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "the declared bounded question already has adequate evidence; do not re-run merely because more testing is possible"
     },
     {
       "id": "I",
@@ -214,8 +234,8 @@
       "artifacts": [
         "crates/neko-carrier/src/lib.rs"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "the declared bounded question already has adequate evidence; do not re-run merely because more testing is possible"
     },
     {
       "id": "J",
@@ -232,8 +252,8 @@
       "artifacts": [
         "docs/adr/m4-migration-back-state-machine.md"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "the declared bounded question already has adequate evidence; do not re-run merely because more testing is possible"
     },
     {
       "id": "K",
@@ -274,7 +294,11 @@
         "artifacts/periodic-session/00ac2c1-final-transport-exit/ERRATUM-R009.md"
       ],
       "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
+      "evidence_needed": "Evidence for the unresolved observability and bounded timelines question, limited to the declared bounded scope.",
+      "next_action": "Reconcile observability claims against retained artifacts and identify one bounded missing metric, if any.",
+      "execution_scope": "local",
+      "requires": "Dependencies G, J remain satisfied at the reviewed tree."
     },
     {
       "id": "M",
@@ -293,7 +317,11 @@
         "scripts/fuzz-smoke.sh"
       ],
       "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
+      "evidence_needed": "Evidence for the unresolved deterministic fault and regression harness question, limited to the declared bounded scope.",
+      "next_action": "Run the deterministic fault/regression gate and preserve any new typed failure without reopening closed WAN lines.",
+      "execution_scope": "local",
+      "requires": "Dependencies G, H remain satisfied at the reviewed tree."
     },
     {
       "id": "N",
@@ -312,7 +340,11 @@
         "docs/bench/latest-netns.json"
       ],
       "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
+      "evidence_needed": "Evidence for the unresolved controlled netns benchmark matrix question, limited to the declared bounded scope.",
+      "next_action": "Run the isolated netns benchmark matrix only if its privileged environment is available; otherwise retain the environment blocker.",
+      "execution_scope": "local",
+      "requires": "Dependencies M, K remain satisfied at the reviewed tree."
     },
     {
       "id": "O",
@@ -330,7 +362,11 @@
         "docs/vps-failover-success-2026-08-30.md"
       ],
       "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
+      "evidence_needed": "Evidence for the unresolved VPS bounded observation question, limited to the declared bounded scope.",
+      "next_action": "Audit current authorized VPS readiness and execute one smallest declared bounded observation only if all dependencies are live-ready.",
+      "execution_scope": "vps",
+      "requires": "Dependencies L, N remain satisfied at the reviewed tree."
     },
     {
       "id": "P",
@@ -345,7 +381,7 @@
       "artifacts": [
         "docs/reachability-matrix.md"
       ],
-      "gate": "new authorization required",
+      "gate": "standing authorization covers bounded self-owned TCP/UDP reachability; public/general, third-party, exotic raw/public carrier, and production work remain outside this ledger",
       "classification": "GOVERNANCE_GATE",
       "classification_basis": "independent review, authorization, or maintainer value judgment before promotion"
     },
@@ -424,7 +460,11 @@
         "docs/spec/m2-unreliable-datagram.md"
       ],
       "classification": "OPEN_READY",
-      "classification_basis": "bounded local evidence or the declared exact controlled observation; no release claim by itself"
+      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
+      "evidence_needed": "Evidence for the unresolved unreliable datagram boundary question, limited to the declared bounded scope.",
+      "next_action": "Run the existing authenticated unreliable-datagram boundary tests and record the remaining candidate limitation.",
+      "execution_scope": "local",
+      "requires": "Dependencies B, D remain satisfied at the reviewed tree."
     },
     {
       "id": "U",
@@ -490,9 +530,10 @@
   ],
   "closure": {
     "schema": "nekomusume.era4-release-evidence-closure.v1",
-    "classified_at_commit": "88f4a6d414ff94df260d5c4ed6f4be8348090c98",
+    "classified_at_commit": "closure-taxonomy-repair-2026-09-04", 
     "handoff_sha256": "6de20f52b7d7faa7c43961ba64b2e00ac8076385a83219cd5462966daff066a4",
     "allowed_classifications": [
+      "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
       "BLOCKED_ENVIRONMENT",
       "BLOCKED_IMPLEMENTATION",
       "BLOCKED_ORCHESTRATION_CURRENT_LINE",
@@ -500,16 +541,11 @@
       "OPEN_READY"
     ],
     "open_ready_rows": [
-      "A",
       "B",
       "C",
       "D",
       "E",
       "F",
-      "G",
-      "H",
-      "I",
-      "J",
       "L",
       "M",
       "N",
@@ -524,7 +560,15 @@
       "hy2": "BLOCKED_ORCHESTRATION_CURRENT_LINE",
       "nat_migration_key_update_pmtud": "BLOCKED_IMPLEMENTATION",
       "ipv6": "BLOCKED_ENVIRONMENT",
-      "governance": "GOVERNANCE_GATE; release_candidate=false; production_ready=false; freeze=false; released=false"
-    }
+      "governance": "GOVERNANCE_GATE; release_candidate=false; production_ready=false; freeze=false; released=false",
+      "open_ready_definition": "Only rows with a specific unresolved question, evidence_needed, next_action, satisfied dependencies and no current blocker."
+    },
+    "already_sufficient_rows": [
+      "A",
+      "G",
+      "H",
+      "I",
+      "J"
+    ]
   }
 }

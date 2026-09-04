@@ -254,9 +254,10 @@ The exact `61a6490` post-B C follow-up consumed exactly one new outer wrapper in
 
 ### Release-evidence closure index (2026-09-04)
 
-At exact `88f4a6d`, every Era-4 ledger row has one closed classification in `docs/era4-ledger-2026-08-30.json`: `OPEN_READY`, `BLOCKED_IMPLEMENTATION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_ORCHESTRATION_CURRENT_LINE`, or `GOVERNANCE_GATE`.
+At the reviewed tree, every Era-4 ledger row has one closed classification in `docs/era4-ledger-2026-08-30.json`: `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`, `OPEN_READY`, `BLOCKED_IMPLEMENTATION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_ORCHESTRATION_CURRENT_LINE`, or `GOVERNANCE_GATE`.
 
-- `OPEN_READY`: A, B, C, D, E, F, G, H, I, J, L, M, N, O, T (local bounded evidence remains possible; no release claim).
+- `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`: A, G, H, I, J (their declared bounded questions already have adequate evidence; do not re-run merely because more testing is possible).
+- `OPEN_READY`: B, C, D, E, F, L, M, N, O, T. Each carries a specific unresolved question, `evidence_needed`, `next_action`, dependency statement, and local/VPS execution scope; this is an opportunity classification, not authorization or a release claim).
 - `BLOCKED_IMPLEMENTATION`: K (migration-back), R (PLPMTUD integration). NAT/source-endpoint change, live key update and live PMTUD remain implementation-blocked.
 - `BLOCKED_ENVIRONMENT`: IPv6 (no real owned IPv6 path).
 - `BLOCKED_ORCHESTRATION_CURRENT_LINE`: periodic, repeated warm failover, and HY2; the exact `61a6490` HY2 follow-up consumed one outer invocation and stopped at local port-range preflight (exit 2), with no VPS deployment, samples, result, metrics, or runtime evidence.

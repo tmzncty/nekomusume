@@ -30,6 +30,6 @@
 
 ## Current classifications
 
-The machine-readable closure is authoritative: [`docs/era4-ledger-2026-08-30.json`](era4-ledger-2026-08-30.json). Its closed set is `OPEN_READY`, `BLOCKED_IMPLEMENTATION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_ORCHESTRATION_CURRENT_LINE`, and `GOVERNANCE_GATE`. `OPEN_READY` means only that bounded local evidence may be considered; it is not authorization to execute a row.
+The machine-readable closure is the reviewed navigation source: [`docs/era4-ledger-2026-08-30.json`](era4-ledger-2026-08-30.json). It distinguishes `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` from `OPEN_READY`, `BLOCKED_IMPLEMENTATION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_ORCHESTRATION_CURRENT_LINE`, and `GOVERNANCE_GATE`. `OPEN_READY` now requires a specific unresolved question, `evidence_needed`, a concrete `next_action`, satisfied dependencies, and an explicit local/VPS scope; it is an opportunity classification, not authorization to execute a row. `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` rows must not be re-run merely because more testing is possible.
 
-Current actionable next row: **none for live execution**. The next safe action is an independent maintainer/security review of this packet and the linked evidence; no VPS/live retry is authorized by this packet.
+Current actionable next row: **none for live execution**. The next safe action is an independent maintainer/security review of this packet and the linked evidence; standing authorization and technical readiness remain separate, and this packet does not authorize or de-authorize VPS/live work.
