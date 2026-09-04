@@ -980,7 +980,11 @@ impl ProcessPreauthAdmission {
         Ok(())
     }
 
-    fn live(&self, id: PreauthStateId, now_ms: u64) -> Result<&ProcessPreauthState, SessionRejected> {
+    fn live(
+        &self,
+        id: PreauthStateId,
+        now_ms: u64,
+    ) -> Result<&ProcessPreauthState, SessionRejected> {
         let state = self.states.get(&id).ok_or(SessionRejected)?;
         if now_ms < state.created_at_ms
             || now_ms - state.created_at_ms >= self.limits.max_lifetime_ms
@@ -1002,9 +1006,16 @@ impl ProcessPreauthAdmission {
             || memory_bytes == 0
             || memory_bytes > self.limits.max_memory_per_state
             || self.states.len() >= self.limits.max_states_global
-            || self.states.values().filter(|state| state.source == source).count()
+            || self
+                .states
+                .values()
+                .filter(|state| state.source == source)
+                .count()
                 >= self.limits.max_states_per_source
-            || self.memory_bytes.checked_add(memory_bytes).ok_or(SessionRejected)?
+            || self
+                .memory_bytes
+                .checked_add(memory_bytes)
+                .ok_or(SessionRejected)?
                 > self.limits.max_memory_global
         {
             return Err(SessionRejected);
@@ -1035,7 +1046,10 @@ impl ProcessPreauthAdmission {
         self.live(id, now_ms)?;
         let input_bytes = self.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
         let input_packets = self.input_packets.checked_add(1).ok_or(SessionRejected)?;
-        let work = self.work_units.checked_add(work_units).ok_or(SessionRejected)?;
+        let work = self
+            .work_units
+            .checked_add(work_units)
+            .ok_or(SessionRejected)?;
         if input_bytes > self.limits.max_input_bytes_per_window
             || input_packets > self.limits.max_input_packets_per_window
             || work > self.limits.max_work_per_window
@@ -1079,8 +1093,14 @@ impl ProcessPreauthAdmission {
     ) -> Result<(), SessionRejected> {
         self.refresh_window(now_ms)?;
         self.live(id, now_ms)?;
-        let response_bytes = self.response_bytes.checked_add(bytes).ok_or(SessionRejected)?;
-        let response_packets = self.response_packets.checked_add(1).ok_or(SessionRejected)?;
+        let response_bytes = self
+            .response_bytes
+            .checked_add(bytes)
+            .ok_or(SessionRejected)?;
+        let response_packets = self
+            .response_packets
+            .checked_add(1)
+            .ok_or(SessionRejected)?;
         if response_bytes > self.limits.max_response_bytes_per_window
             || response_packets > self.limits.max_response_packets_per_window
         {
@@ -1211,7 +1231,14 @@ mod preauth_tests {
         assert_eq!(admission.charge_input(id, 1, 0, 9), Err(SessionRejected));
         assert_eq!(admission.charge_input(id, 1, 0, 20), Err(SessionRejected));
         assert_eq!(admission.expire(20), Ok(1));
-        assert_eq!((admission.live_states(), admission.memory_bytes(), admission.queued()), (0, 0, 0));
+        assert_eq!(
+            (
+                admission.live_states(),
+                admission.memory_bytes(),
+                admission.queued()
+            ),
+            (0, 0, 0)
+        );
     }
 
     #[test]
