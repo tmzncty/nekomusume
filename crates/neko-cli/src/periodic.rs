@@ -149,6 +149,8 @@ fn handshake_server(
     deadline: Instant,
     id: &LocalIdentity,
     policy: TrustPolicy,
+    admission: &mut preauth::ListenerAdmission,
+    ticket: &mut preauth::AdmissionTicket,
 ) -> neko_crypto::SecureSession {
     bound_setup(stream, deadline, "setup deadline elapsed");
     let mut negotiation =
@@ -160,19 +162,31 @@ fn handshake_server(
         deadline,
         "malformed negotiation",
     );
+    admission
+        .charge_input(ticket, hello.len() + 4, 64)
+        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
     let selection = negotiation
         .server_accept_hello(&hello)
         .unwrap_or_else(|_| fail("incompatible negotiation"));
     bound_setup(stream, deadline, "setup deadline elapsed");
+    admission
+        .charge_response(ticket, selection.len() + 4)
+        .unwrap_or_else(|_| fail("pre-auth response rejected"));
     write_frame(stream, &selection).unwrap_or_else(|_| fail("negotiation response failed"));
     let binding = negotiation.authenticated_binding().unwrap();
     let first = frame_or_fail(reader, stream, 1024, deadline, "bad handshake");
+    admission
+        .charge_input(ticket, first.len() + 4, 4096)
+        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
     let (response, secure) =
         ResponderHandshake::new_with_prologue_binding(id, policy, DOMAIN, binding.as_bytes())
             .unwrap()
             .receive_first(&first, context(0))
             .unwrap_or_else(|_| fail("unauthorized handshake"));
     bound_setup(stream, deadline, "setup deadline elapsed");
+    admission
+        .charge_response(ticket, response.len() + 4)
+        .unwrap_or_else(|_| fail("pre-auth response rejected"));
     write_frame(stream, &response).unwrap_or_else(|_| fail("handshake response failed"));
     negotiation
         .admit_data()
@@ -255,11 +269,15 @@ pub(super) fn server(args: &[String]) {
     );
     std::io::stdout().flush().unwrap();
     let start = Instant::now();
+    let mut preauth = preauth::ListenerAdmission::new();
     let mut accepted = None;
     while start.elapsed() < cfg.duration && !shutdown.load(Ordering::Acquire) {
         match listener.accept() {
-            Ok(x) => {
-                accepted = Some(x.0);
+            Ok((stream, peer)) => {
+                let ticket = preauth
+                    .admit(peer)
+                    .unwrap_or_else(|_| fail("pre-auth admission rejected"));
+                accepted = Some((stream, ticket));
                 break;
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -268,7 +286,7 @@ pub(super) fn server(args: &[String]) {
             Err(_) => fail("accept failed"),
         }
     }
-    let Some(mut stream) = accepted else {
+    let Some((mut stream, mut admission)) = accepted else {
         println!(
             "periodic_server_summary authenticated=false received=0 confirmed=0 duplicates=0 elapsed_ms={} cleanup=verified",
             start.elapsed().as_millis()
@@ -298,7 +316,16 @@ pub(super) fn server(args: &[String]) {
     if setup_delay > 0 {
         std::thread::sleep(Duration::from_millis(setup_delay));
     }
-    let mut secure = handshake_server(&mut stream, &mut framed, setup_deadline, &id, policy);
+    let mut secure = handshake_server(
+        &mut stream,
+        &mut framed,
+        setup_deadline,
+        &id,
+        policy,
+        &mut preauth,
+        &mut admission,
+    );
+    preauth.release(admission);
     framed.set_max_frame_len(PROCESS_FRAME_MAX + 128).unwrap();
     println!("periodic_server_authenticated session=7201 stream=1");
     let mut runtime = SessionRuntime::new(SESSION, limits(cfg), 0).unwrap();

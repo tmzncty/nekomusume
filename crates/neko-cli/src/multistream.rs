@@ -73,13 +73,21 @@ fn server_handshake(
     socket: &mut TcpStream,
     id: LocalIdentity,
     client_key: Vec<u8>,
+    admission: &mut crate::preauth::ListenerAdmission,
+    ticket: &mut crate::preauth::AdmissionTicket,
 ) -> SecureSession {
     let mut negotiation = VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
         .unwrap_or_else(|_| fail("handshake setup failed".into()));
     let hello = frame_read(socket).unwrap_or_else(|_| fail("handshake rejected".into()));
+    admission
+        .charge_input(ticket, hello.len() + 4, 64)
+        .unwrap_or_else(|_| fail("pre-auth admission rejected".into()));
     let response = negotiation
         .server_accept_hello(&hello)
         .unwrap_or_else(|_| fail("handshake rejected".into()));
+    admission
+        .charge_response(ticket, response.len() + 4)
+        .unwrap_or_else(|_| fail("pre-auth response rejected".into()));
     frame_write(socket, &response).unwrap_or_else(|_| fail("handshake rejected".into()));
     let binding = negotiation
         .authenticated_binding()
@@ -93,9 +101,15 @@ fn server_handshake(
     let hs = ResponderHandshake::new_with_prologue_binding(&id, policy, DOMAIN, binding.as_bytes())
         .unwrap_or_else(|_| fail("handshake setup failed".into()));
     let first = frame_read(socket).unwrap_or_else(|_| fail("handshake rejected".into()));
+    admission
+        .charge_input(ticket, first.len() + 4, 4096)
+        .unwrap_or_else(|_| fail("pre-auth admission rejected".into()));
     let (response, session) = hs
         .receive_first(&first, context())
         .unwrap_or_else(|_| fail("handshake rejected".into()));
+    admission
+        .charge_response(ticket, response.len() + 4)
+        .unwrap_or_else(|_| fail("pre-auth response rejected".into()));
     frame_write(socket, &response).unwrap_or_else(|_| fail("handshake rejected".into()));
     negotiation
         .admit_data()
@@ -242,12 +256,23 @@ pub fn run(args: &[String]) {
         let (mut socket, peer) = listener
             .accept()
             .unwrap_or_else(|e| fail(format!("accept: {e}")));
+        let mut preauth = crate::preauth::ListenerAdmission::new();
+        let mut admission = preauth
+            .admit(peer)
+            .unwrap_or_else(|_| fail("pre-auth admission rejected".into()));
         let client_key = hex_decode(
             &option(args, "--client-key")
                 .unwrap_or_else(|| fail("--client-key is required".into())),
         )
         .unwrap_or_else(|e| fail(e));
-        let mut secure = server_handshake(&mut socket, identity(args), client_key);
+        let mut secure = server_handshake(
+            &mut socket,
+            identity(args),
+            client_key,
+            &mut preauth,
+            &mut admission,
+        );
+        preauth.release(admission);
         let mut runtime = SessionRuntime::new(
             SESSION,
             limits(streams, records, bytes, session_window, stream_window),
