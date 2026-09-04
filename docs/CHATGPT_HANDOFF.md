@@ -1,209 +1,272 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-04 21:00 Asia/Shanghai
-Repository HEAD reviewed: `ea1c05216b1b6e2ec198b907477af5056e4a956c`
-Previous reviewed coding/evidence HEAD: `bb80ab73c721125bfac55c21475a86672493cd94`
-Previous reviewer handoff commit: `dc259eee2d49d235497b43090d9801ebecb781a8`
+Checked at: 2026-09-04 22:44 Asia/Shanghai
+Repository HEAD reviewed: `062150ffe75e82f89abd8532dfb53ab35e4f0343`
+Latest reviewed implementation HEAD: `ea1c05216b1b6e2ec198b907477af5056e4a956c`
+Previous reviewer handoff commit: `062150ffe75e82f89abd8532dfb53ab35e4f0343`
 
 ## What changed
 
-The external agent consumed a substantial part of the RSEC-001 queue after the previous review. Thirteen commits are now ahead of `bb80ab7`; one is the previous reviewer handoff and the remaining coding/docs commits build and integrate process-owned pre-auth admission.
+No new implementation commit landed after the 21:00 review. `062150f` is reviewer/handoff-only and preserves the implementation tree at `ea1c052`.
 
-Accepted progress:
+Exact `062150f` GitHub Actions are green on both relevant refs:
 
-- `0a28a35` — adds `ProcessPreauthAdmission` / `ProcessPreauthLimits` with process-global state, memory, queue and one-second rate-window accounting plus deterministic boundary tests.
-- `7be9918` / `9231628` / `2f83f75` — adds the CLI `ListenerAdmission` composition layer, integrates ordinary TCP/UDP probe listener admission, adds source-lifetime input/response/work counters and idle/lifetime handling, and corrects lifetime-window tests.
-- `fbeaad0` — integrates the same admission path into periodic and multistream TCP responder handshakes.
-- `91258eb` — integrates one shared admission controller across failover-server UDP and TCP pre-auth paths, including the pending UDP negotiation ticket.
-- `cbef929` — reconciles listener-admission documentation/navigation.
-- `40773c1` / `ea1c052` — repairs cross-layer rollback so an outer process-budget rejection does not leave the inner `PreauthBudget` charged, then formats the result.
+- main run `33876203452` — `success`;
+- work/continue-20260904 run `33881852848` — `success`.
 
-Exact current HEAD `ea1c05216b1b6e2ec198b907477af5056e4a956c` has green GitHub Actions on both `main` and `work/continue-20260904`; main run `33874213735` and work-branch run `33874222896` both concluded `success`. This is exact-head CI evidence, not a security approval.
+The current D019 findings were re-checked against the actual ADR and current implementation rather than only the previous review prose. The gaps are real and concrete:
 
-The implementation direction is materially better and the ordinary/failover/periodic/multistream listener coverage is useful. However, independent comparison against the actual D019 candidate contract finds several concrete semantic gaps. RSEC-001 therefore remains HIGH and must not be reworded as “implementation complete, only external review missing” yet.
+1. `ProcessPreauthLimits` still has no explicit `response_send_deadline_ms = 100`; `ListenerAdmission::charge_response` only charges immediately before a caller send and returns no permit/deadline object.
+2. `ProcessPreauthAdmission::{enqueue,dequeue}` exists, but `ListenerAdmission` exposes no queue reservation lifecycle, so application-owned pending pre-auth work is not structurally charged before ownership.
+3. `source_key(peer)` currently contains address family/address/port but no carrier discriminator. `ProcessPreauthAdmission::release` deletes the source accounting row when the final live state disappears, erasing cumulative source input/work/response counters. The existing CLI regression explicitly expects release to reopen the source.
+4. A failed `charge_input`, `charge_response` or `enqueue` does not terminally poison/consume the reusable logical pre-auth state; the same state may be retried later after a one-second global window rollover.
+
+The D019 text itself creates a real design checkpoint for item 3: it says per-source counters are scoped to the source/state lifetime, but also says a counter is never reset by retry, reconnect, carrier change, identity change or error. Persisting source counters after terminal state release requires bounded retained source accounting; D019 currently defines no retention TTL/count/table ceiling for terminal source tombstones. Silently retaining every historical source forever would create a new unbounded resource, while silently inventing a TTL/count would introduce a new numeric security policy.
+
+Therefore RSEC-001C is not an ordinary implementation detail. It is an ADR clarification/amendment checkpoint unless a bounded interpretation can be proved from already-reviewed repository text without adding a new value.
 
 ## Review verdict
 
-**CONTINUE_WITH_REQUIRED_FIXES — A-D made strong progress, but D019 security closure is still blocked by concrete admission-contract gaps. Keep the rolling queue moving; repair these gaps before E/F security-evidence closure or any release/security promotion.**
+**CONTINUE_WITH_REQUIRED_FIXES — A/B/D/E are concrete dependency-ready local engineering work; C is isolated as a possible ADR checkpoint and must not block the independent deterministic repairs before it.**
 
-Do not spend VPS time on this security lane. Current release closure still reports no truthful dependency-ready live row, and these defects are deterministic local/process-accounting questions.
+The previous queue ordering was too serial: placing C before D could cause an ADR question to idle several hours of unrelated deterministic security work. The queue is reordered below so the agent should consume A -> B -> D -> E continuously, then address C.
 
-## Reviewer findings
-
-### RSEC-001A — HIGH — response-send deadline is not implemented
-
-D019 requires a **100 ms monotonic budget from response admission to completed bounded send attempt**. The current `ProcessPreauthLimits` exposes admission-window, idle-timeout and lifetime values but no response-send-deadline field/state. `ListenerAdmission::charge_response` charges bytes immediately before the caller writes/sends, but there is no response permit/deadline token and no check that the bounded send attempt completes within 100 ms.
-
-Existing larger experiment/setup socket deadlines are not equivalent to this D019 response deadline.
-
-**Required repair:** represent the existing 100 ms D019 value explicitly; bind it to response admission; prove complete-attempt-before-deadline and fail/abandon-after-deadline with an injectable clock or deterministic time input. Do not invent a different numeric value.
-
-### RSEC-001B — HIGH — pending pre-auth queue accounting exists as a primitive but is not integrated
-
-`ProcessPreauthAdmission::{enqueue,dequeue}` exists, but `ListenerAdmission` exposes no queue operation and the live responder paths do not charge queue entry ownership before storing pending work. In particular the failover UDP `PendingUdpNegotiation` becomes application-owned pending state without a queue charge/dequeue lifecycle.
-
-D019 explicitly requires per-source/global pending pre-auth queue ceilings and charging before enqueue. A dormant primitive is not runtime evidence.
-
-**Required repair:** expose a small fail-closed queue reservation/guard through `ListenerAdmission` (or equivalent), charge before the pending entry becomes owned, release/dequeue exactly once on authentication, rejection, timeout or cancellation, and demonstrate source/global queue saturation. Keep the existing 16 KiB per-state conservative reservation unless a concrete accounting bug requires another representation; do not invent new memory limits.
-
-### RSEC-001C — HIGH — source accounting resets on terminal release and does not encode the carrier dimension
-
-The D019 text says the source key is the received **carrier/source tuple** and that a counter is not reset by retry, reconnect, carrier change, identity change or error. The current CLI `source_key(peer)` contains IP family/address/port only; it has no carrier discriminator. More importantly, `ProcessPreauthAdmission::release` removes the `sources` entry when its last live state disappears, which discards accumulated source input/packet/work/response counters. A later retry/reconnect can therefore obtain fresh per-source accounting after the previous state is terminal.
-
-This is a contract mismatch even though process-global one-second counters and concurrency ceilings still provide useful bounds.
-
-**Required repair:** reconcile the implementation with the exact D019 counting-domain language. At minimum, make the carrier/source projection explicit and prove retry/reconnect/carrier transition cannot reset counters inside the D019 source accounting lifetime. Do not solve this by creating an unbounded forever-growing source map; if the literal ADR wording cannot be implemented without introducing a new bounded source-retention rule, stop this slice and record the ADR conflict for maintainer/reviewer decision rather than silently inventing a new numeric ceiling.
-
-### RSEC-001D — MEDIUM/HIGH — rejected operations are not terminal in the reusable state machine
-
-D019 says an exhausted/saturated operation fails closed, cancels pending work and must not become successful later merely because a rate window refilled. `ProcessPreauthAdmission::charge_input/charge_response/enqueue` return `Err` atomically but do not mark the state rejected/terminal. Many current CLI call sites immediately release the ticket or terminate the bounded process, which is useful integration behavior, but the reusable process-admission state machine itself still allows a caller to retry the same live state later.
-
-**Required repair:** make terminal-rejection semantics machine-enforced at the controller/ticket boundary, or make the consuming API structurally consume/close the ticket on any rejected charge so reuse is impossible. Add a regression where a global-window rejection cannot be retried successfully after window rollover using the same logical pre-auth state.
-
-### RSEC-001E — MEDIUM evidence drift — security review prose is ahead of the reviewed tree
-
-`docs/reviews/resource-abuse-evidence-2026-09-04.md` still declares `Reviewed tree: bb9e268...` while its prose now describes `ProcessPreauthAdmission` and all listener integrations that landed later. `docs/release-security-review-packet.md` likewise says process/source/global accounting is integrated. These are useful navigation updates but they are not an independent exact-tree review and currently overstate completeness because A-D above remain open.
-
-Do not delete the useful links. Correct the reviewed-tree/evidence wording only after the concrete gaps are fixed and the exact repair HEAD has green CI.
+Do not use VPS time for this lane. These are deterministic admission/accounting correctness questions. Do not describe the release/security gate as “only waiting for external review” while A/B/C/D remain open.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains the bounded research baseline only.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain required.
-- The new process admission implementation is real code with deterministic/process tests and exact-head CI. It is not yet faithful enough to D019 to close RSEC-001.
-- Existing inner `PreauthBudget` remains a useful stricter per-state anti-amplification/input-response bound. Do not weaken or delete it to simplify outer accounting.
-- Source/global process admission does not and must not claim control over kernel SYN backlog, provider NAT state or other resources outside the process.
-- No production/public listener or security-approved service claim is allowed.
-- No current VPS row is dependency-ready according to the corrected release closure map. Do not create traffic merely to use the rental window while this deterministic security lane is open.
-- Protected identity material, credentials, private endpoint material and raw private diagnostics remain unread/untracked/uncommitted.
+- Exact `062150f` CI success is repository CI evidence, not a security audit or release approval.
+- Existing `PreauthBudget` anti-amplification/state-local accounting remains useful and must not be weakened merely to simplify process accounting.
+- `ProcessPreauthAdmission` and listener integrations are real implementation progress, but they do not yet satisfy the full D019 contract.
+- Process accounting cannot claim to bound kernel SYN backlog, provider NAT state or other resources outside the process.
+- No current VPS row should be manufactured merely because the VPS rental clock is running; use VPS again only when release-closure reclassification produces a genuine dependency-ready live evidence question.
+- Protected identity/secrets/private endpoint material remain unread/untracked/uncommitted.
 
 ## Rolling Work Queue
 
-This is a multi-hour rolling queue. Every dependency-satisfied item below is pre-authorized to start immediately after the previous coherent slice is tested, committed and pushed. **Do not stop after one commit, one nominal hour or one reviewer interval.** Only a new BLOCKER/HIGH that invalidates the plan, an unresolved ADR/core-architecture conflict, action beyond authorization, production impact, missing credentials/third-party authority, repository breakage, runtime/tool-budget termination or real queue exhaustion is a stop condition.
+This is a rolling multi-hour queue. Every dependency-satisfied item is pre-authorized to continue immediately after the preceding coherent slice is tested, committed and pushed. Do not stop after one commit, one hour, or one reviewer interval. A new HIGH/BLOCKER that invalidates downstream work, a genuine ADR/core-architecture conflict, authorization boundary, production impact, missing credentials/third-party authority, repository breakage, runtime/tool-budget termination, or true queue exhaustion is a stop condition.
 
-### A — Close response-admission/send-deadline semantics
+### A — Implement typed 100 ms response-send ownership
 
-**Status:** `READY_LOCAL`; highest priority with B/C/D.
+**Status:** `READY_LOCAL`.
 
-Implement the existing D019 `response-send deadline = 100 ms` without changing wire bytes, response shape, Noise, Session or Carrier semantics.
+**Goal**
 
-Preferred shape: a typed response admission/permit carrying exact charged bytes/packet ownership and monotonic admission time, with deterministic completion/expiry. A caller must charge exact response bytes/packet before serialization/send; a send attempt completed after the deadline is not success evidence and the response ownership is terminally abandoned.
+Implement the exact D019 `Response-send deadline = 100 ms` as an explicit process-admission property without changing protocol bytes, response shape, Noise, Session or Carrier semantics.
 
-Tests: exact 99/100/101 ms boundaries as the ADR defines, no wall-clock sleeps, timeout does not emit auth/Delivery/PathValidated/ACK/readiness-equivalent evidence, cleanup is exactly once.
+**Preferred implementation shape**
 
-Run targeted tests + full gate + `git diff --check`, commit and push.
+- Add `response_send_deadline_ms: u64` to `ProcessPreauthLimits`; default exactly `100`.
+- Validate it as non-zero and no broader than the state lifetime.
+- Do not let `charge_response` be the final semantic operation. Have response admission create a typed one-shot ownership/permit containing at least state identity, charged bytes/packet ownership and monotonic admitted-at/deadline data.
+- Completing a bounded send attempt before/at the defined boundary consumes/completes that permit exactly once.
+- Expiry/abandonment consumes it exactly once and cannot later become success evidence.
+- A late completion is not successful pre-auth response evidence.
+- Cumulative response accounting remains charged even for scheduled/failed attempts as D019 requires; do not “refund” a response merely because the socket send failed or expired.
+
+`ListenerAdmission` should expose the smallest API needed to admit and complete/abandon a response; do not leak raw `ProcessPreauthAdmission` internals into every responder.
+
+**Tests**
+
+- deterministic injectable time: 99 ms / 100 ms / 101 ms boundary according to one explicit inclusive/exclusive interpretation documented from D019;
+- complete exactly once;
+- double completion/abandon rejected;
+- expiry cannot produce auth/Delivery/PathValidated/ACK/readiness-equivalent evidence;
+- response rate/anti-amplification accounting remains atomic across inner/outer layers;
+- no wall-clock sleeps.
+
+Run targeted tests, full local gate, `git diff --check`, commit and push.
 
 **Continue immediately to B:** yes.
 
-### B — Integrate pending queue ownership and cleanup
+### B — Integrate pending queue ownership with RAII/one-shot cleanup
 
 **Status:** `PREAUTHORIZED_AFTER_A`.
 
-Wire `ProcessPreauthAdmission` queue ceilings into actual pre-auth pending ownership. At minimum cover failover UDP `PendingUdpNegotiation`; audit whether any other listener owns application-level pre-auth queue entries.
+**Goal**
 
-Required: charge before storing; no queue entry on rejection; dequeue/release exactly once on authentication, malformed terminal rejection, idle/lifetime expiry, cancellation and process shutdown path; source/global queue max/max+1 deterministic tests; rejected queue operation produces no success evidence.
+Turn the dormant process queue primitive into actual runtime ownership accounting.
 
-Do not add a separate queue subsystem or new numeric limits.
+**Preferred implementation shape**
 
-**Continue immediately to C:** yes.
+- Add a small `QueueReservation` / guard-style API through `ListenerAdmission` (or an equivalent move-only one-shot ownership object).
+- Charge source/global queue capacity **before** application code stores a pending pre-auth entry.
+- The reservation must be structurally released exactly once when pending ownership ends: authentication/promotion, terminal malformed rejection, idle/lifetime expiry, cancellation, replacement, or shutdown cleanup.
+- At minimum integrate `failover-server` UDP `PendingUdpNegotiation`.
+- Audit other actual application-owned pre-auth queues; do not invent a new queue subsystem where none exists.
+- Keep the existing candidate numeric limits and 16 KiB conservative state reservation; do not introduce new values.
 
-### C — Reconcile carrier/source counting-domain persistence with D019
+**Tests**
 
-**Status:** `PREAUTHORIZED_AFTER_B`, but **stop only if the ADR truly requires an amendment/new numeric retention policy**.
+- source max/max+1;
+- global max/max+1;
+- rejected enqueue stores no pending object;
+- promotion/rejection/timeout/cancel/shutdown release exactly once;
+- no double dequeue under replacement/cancellation;
+- queue rejection produces no success/session/path evidence.
 
-Make source-key semantics explicit rather than accidental:
+Run targeted tests + full gate, commit and push.
 
-- carrier dimension must be represented or a documented reviewed reason must prove the current projection is intentionally stricter/equivalent;
-- retry/reconnect/carrier transition must not gain fresh per-source budget inside the D019 source accounting lifetime;
-- source cleanup must not erase counters in a way that violates the no-reset rule;
-- unknown/unusable identity must remain one bounded shared bucket when applicable;
-- source-accounting storage itself must remain bounded.
+**Continue immediately to D:** yes. C no longer blocks D.
 
-Add deterministic reconnect/retry and UDP/TCP carrier-transition tests. If literal D019 persistence and bounded source-table memory cannot both be met without a new policy value, record the exact conflict and stop this slice for an ADR/maintainer decision; do not improvise a magic retention count/time.
+### D — Make every rejected pre-auth operation terminal/non-revivable
 
-**Continue immediately to D if resolved without ADR conflict:** yes.
+**Status:** `PREAUTHORIZED_AFTER_B`.
 
-### D — Make rejection terminal and non-revivable
+**Goal**
 
-**Status:** `PREAUTHORIZED_AFTER_C`.
+Enforce D019’s “fails closed; do not retry” rule at the reusable state/ticket boundary rather than relying on each CLI caller to remember to exit.
 
-Strengthen the reusable controller/ticket contract so any exhausted/saturated/unmeasurable/timed-out charge cannot later succeed on the same logical pre-auth state merely because the one-second window rolls over or the caller retries.
+**Preferred implementation shape**
 
-Required regressions:
+Choose one structurally hard-to-misuse model:
 
-- global input-window rejection -> same state cannot succeed after rollover;
-- global response-window rejection -> same state cannot send after rollover;
+1. mark the process pre-auth state terminal/rejected on any exhausted/saturated/unmeasurable/deadline rejection and make every later operation fail; or
+2. make charge/queue/response APIs consume a ticket/ownership token on failure so the same logical state cannot be called again.
+
+Do not create a hidden path that can revive a rejected ticket after the global one-second window refreshes.
+
+**Required regressions**
+
+- global input-window rejection -> same state still rejected after rollover;
+- global work-window rejection -> same state still rejected after rollover;
+- global/source response rejection -> same state cannot later send;
 - queue rejection -> same rejected ownership cannot later enqueue;
-- inner-budget rejection and outer-budget rejection remain cross-layer atomic;
-- cleanup/release remains exactly once and cannot reopen an exhausted source domain contrary to C.
+- response deadline expiry -> same response/state cannot later succeed;
+- inner `PreauthBudget` failure and outer process-budget failure remain cross-layer atomic;
+- release/cleanup remains one-shot.
+
+Run targeted tests + full gate, commit and push.
 
 **Continue immediately to E:** yes.
 
-### E — Audit parser/work and memory reservation charge ordering
+### E — Audit and machine-check charge ordering across every real responder
 
 **Status:** `PREAUTHORIZED_AFTER_D`.
 
-Do a concrete call-site audit rather than a generic rewrite.
+**Goal**
 
-For each real responder pre-auth path, map:
+Make the “charge before protected work/ownership” rule auditable across current externally reachable responder code.
 
-- received bytes/packet charge point;
-- parser/work reservation before parse/work;
-- state memory reservation before owned allocation;
-- queue ownership charge before enqueue;
-- response charge + deadline before send;
-- terminal release.
+For each actual pre-auth responder path, map/check:
 
-The current `64` / `4096` work-unit reservations may remain if they are conservative bounded reservations that dominate the actual parser work and are documented/tested as such; do not pretend they are measured CPU cycles. If an input-controlled loop can execute more work than was reserved, fix that exact seam.
+1. source/carrier projection and state admission;
+2. input bytes/packet charge before parse;
+3. parser/work reservation before bounded parsing/work;
+4. state memory reservation before owned allocation;
+5. queue reservation before application pending ownership;
+6. exact response charge + response-send permit before serialization/send;
+7. terminal rejection/evidence barrier;
+8. exactly-once cleanup.
 
-Produce a machine-checkable/static inventory or deterministic test so a new externally reachable responder cannot silently omit admission.
+Current conservative work reservations such as 64/4096 units may remain if they demonstrably dominate the bounded parser work they protect; they are accounting units, not CPU-cycle claims. Fix only a real input-controlled work seam that can exceed reservation.
 
-**Continue immediately to F:** yes.
+Add a machine-checkable/static inventory or deterministic integration test so a new externally reachable responder cannot silently bypass `ListenerAdmission`.
 
-### F — D019 adversarial boundary and evidence-barrier closure
+Run full gate, commit and push.
 
-**Status:** `PREAUTHORIZED_AFTER_E`.
+**Continue immediately to C:** yes.
 
-Run/extend deterministic adversarial coverage for the complete D019 matrix:
+### C — Resolve D019 carrier/source persistence semantics without inventing an unbounded map
+
+**Status:** `ADR_CHECKPOINT_AFTER_E`.
+
+This is the one slice that may legitimately require a reviewer/maintainer decision.
+
+**Facts that must be preserved**
+
+- current `source_key(peer)` lacks a carrier discriminator;
+- current source counters are deleted when `usage.states == 0`;
+- current test behavior explicitly allows terminal release to reopen the same source;
+- D019 says source key is a received carrier/source tuple and says counters are never reset by retry/reconnect/carrier change/identity change/error;
+- D019 also describes several per-source counters as state-lifetime scoped;
+- keeping terminal source accounting forever is itself unbounded;
+- no terminal-source retention TTL/count/table ceiling is currently specified by D019.
+
+**First do the noncontroversial part**
+
+- replace ad-hoc `Vec<u8>` construction at the caller boundary with a typed bounded source projection including an explicit carrier discriminator (`TCP`, `UDP`, and shared unknown bucket where applicable);
+- add deterministic tests showing TCP/UDP cannot accidentally collide when they should be distinct and invalid/unknown projection goes to one bounded shared bucket;
+- do not log raw source identifiers.
+
+**Then resolve persistence**
+
+Do **not** silently choose one of these without reviewed justification:
+
+- retain all historical source rows forever;
+- invent a source tombstone TTL;
+- invent a max historical-source count/LRU;
+- reuse the one-second global rate window as source lifetime;
+- use `max_states_global` as an unrelated historical-source-table ceiling;
+- drop the port from the source key merely to make reconnect persistence easier.
+
+If existing reviewed text cannot prove a bounded interpretation, record a small ADR amendment request that states the exact conflict and presents bounded options. This is a real stop for **this slice only**. It must not erase the already completed A/B/D/E work.
+
+If a reviewed interpretation/amendment is available, implement it with tests for retry/reconnect and TCP<->UDP carrier transition, bounded source-accounting storage, and no budget reset contrary to that interpretation.
+
+**Continue immediately to F only after C is resolved:** yes.
+
+### F — Complete D019 adversarial boundary/evidence-barrier matrix
+
+**Status:** `PREAUTHORIZED_AFTER_C`.
+
+Cover the full deterministic matrix:
 
 - source/global concurrency max/max+1;
-- source lifetime bytes/packets/work;
+- source input bytes/packets/work lifetime semantics under the resolved C policy;
 - global input/work one-second windows;
 - per-packet work;
 - state/global memory;
 - source/global pending queue;
-- source/global response + inner 3x anti-amplification;
-- idle 1 s / lifetime 5 s / response-send 100 ms via injectable time;
+- source/global response plus inner 3x anti-amplification;
+- idle 1 s / lifetime 5 s / response-send 100 ms with injectable time;
 - overflow;
-- retry/reconnect/carrier transition persistence;
+- terminal rejection/non-revival;
+- retry/reconnect/carrier-transition behavior;
 - cancellation/timeout/double cleanup;
 - no Delivery/PathValidated/ACK/readiness/authz-equivalent evidence on pre-auth rejection;
 - secret-safe diagnostics.
 
-Do not use VPS/high-load tests to substitute for deterministic counter correctness.
+Do not substitute VPS/load tests for deterministic accounting correctness.
 
-Push after the full local repository gate.
+Full local gate, commit, push, then require exact repair HEAD CI green for security closure.
 
-**Continue immediately to G:** yes, but exact-head CI must be green before declaring RSEC-001 closed.
+**Continue immediately to G:** yes after exact-head CI success.
 
-### G — Fresh exact-tree security re-review and evidence correction
+### G — Fresh exact-tree security review and evidence correction
 
 **Status:** `PREAUTHORIZED_AFTER_F`.
 
-Wait only for exact repair HEAD CI required for the security conclusion. Independently re-read the exact code and tests; then update `docs/reviews/resource-abuse-evidence-2026-09-04.md`, `docs/release-security-review-packet.md`, `docs/status.md` and closure navigation so the reviewed tree and claims match reality.
+Re-read exact code/tests after A-F. Update only then:
 
-RSEC-001 may be reduced/closed as an implementation finding only when A-F are actually satisfied. Even then, independent external/two-person review remains a separate release gate. Never promote RC/production/freeze/release automatically.
+- `docs/reviews/resource-abuse-evidence-2026-09-04.md`;
+- `docs/release-security-review-packet.md`;
+- `docs/status.md`;
+- relevant closure/navigation records.
+
+The reviewed-tree field must name the actual reviewed implementation HEAD. RSEC-001 may close as an implementation finding only if A-F are actually satisfied. Independent external/two-person security review remains a separate release gate.
+
+Do not promote RC/production/freeze/release automatically.
 
 **Continue immediately to H if no new HIGH/BLOCKER:** yes.
 
-### H — Compatibility / freeze-boundary review
+### H — Compatibility and freeze-boundary review
 
 **Status:** `READY_LOCAL_AFTER_G`.
 
-Audit corpus-v1 content-addressed freeze vs global protocol non-freeze, current/current negotiation, unsupported/future rejection, downgrade/transcript binding into Noise, resume/version binding and replay boundary, and docs that might imply corpus freeze == protocol/release freeze.
+Audit:
 
-Only add a deterministic regression for a real gap. Do not reopen frozen corpus bytes without a correctness defect.
+- corpus-v1 content-addressed freeze vs global protocol non-freeze;
+- current/current negotiation;
+- unsupported/future rejection;
+- downgrade/transcript binding into Noise;
+- resume/version binding and replay boundary;
+- docs that could imply corpus freeze == protocol/release freeze.
+
+Add deterministic regression only for an actual gap. Do not reopen frozen corpus bytes without a correctness defect.
 
 **Continue immediately to I:** yes.
 
@@ -211,9 +274,17 @@ Only add a deterministic regression for a real gap. Do not reopen frozen corpus 
 
 **Status:** `READY_LOCAL_AFTER_H`.
 
-Verify x86_64 package/build identity; install -> readiness/smoke -> upgrade -> rollback; retained external state without reading protected identity material; shutdown/listener/temp cleanup; tracked evidence manifests using canonical Git-blob checks; exact-head CI references; stale links/hashes in the release packet.
+Verify bounded questions already claimed by repository evidence:
 
-Do not rerun VPS/package work merely for freshness if the bounded question is already answered. Fix only concrete defects.
+- x86_64 package/build identity;
+- install -> readiness/smoke -> upgrade -> rollback;
+- retained external state without reading protected identity material;
+- shutdown/listener/temp cleanup;
+- canonical Git-blob/checksum evidence manifests;
+- exact-head CI references;
+- stale links/hashes in release packet.
+
+Do not rerun VPS/package experiments for freshness if the bounded question is already answered. Fix concrete defects only.
 
 **Continue immediately to J:** yes.
 
@@ -221,45 +292,45 @@ Do not rerun VPS/package work merely for freshness if the bounded question is al
 
 **Status:** `READY_LOCAL_AFTER_I`.
 
-Re-evaluate every remaining `OPEN_READY` row against actual missing evidence after the security work:
+Re-evaluate each release-closure row:
 
-- already answered bounded question -> `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`;
-- executable specific missing assertion -> keep `OPEN_READY` with exact evidence/action/dependencies/scope;
-- blocked dependency/governance/environment/implementation -> classify truthfully.
+- bounded question already answered -> `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`;
+- specific executable missing assertion -> `OPEN_READY` with `evidence_needed`, `next_action`, `requires`, `execution_scope`;
+- environment/governance/implementation dependency -> truthful blocked class.
 
-Then reconsider the live matrix. Execute a VPS row **only** if a genuine dependency-ready row now exists and it answers a declared missing release question under standing authorization. Otherwise record `READY_LIVE: none` and do not manufacture traffic.
+Then reconsider the VPS. Execute a live row only when the closure map identifies a genuine dependency-ready missing release question under standing authorization. Otherwise record `READY_LIVE: none` and do not create traffic merely to consume rental time.
 
-No unchanged retry of repeated/periodic/HY2 closed current lines.
+Do not unchanged-retry closed repeated/periodic/HY2 lines.
 
 ## Completion gates
 
-The RSEC-001 implementation lane is complete only when all are true:
+RSEC-001 implementation closure requires all of:
 
-- D019 response-send deadline is explicit and enforced;
-- runtime pending pre-auth queue ownership is actually charged/released;
-- carrier/source counting-domain persistence is reconciled with the ADR without unbounded source-accounting state;
-- rejected state cannot revive after rollover/retry;
-- bytes/work/memory/queue/response charge ordering is audited across every externally reachable responder;
-- adversarial boundary/overflow/timeout/cleanup/evidence-barrier tests pass;
-- exact-head local gate and GitHub CI are green;
-- reviewer evidence prose names the exact reviewed tree and no longer gets ahead of implementation;
-- governance/release flags remain unchanged.
+- explicit 100 ms response-send ownership/deadline;
+- actual runtime pending-queue reservations and exactly-once release;
+- terminal/non-revivable rejection semantics;
+- auditable charge ordering across every external responder;
+- carrier/source projection and persistence reconciled with D019 under a bounded reviewed policy;
+- complete deterministic boundary/overflow/timeout/evidence-barrier tests;
+- full local gate + exact-head GitHub CI green;
+- exact-tree security evidence prose not ahead of implementation.
 
 The broader rolling queue remains active through H-J unless a real stop condition occurs.
 
 ## Do not expand into
 
 - public/production listener deployment;
-- new numeric D019 ceilings without an explicit ADR decision;
-- protocol/wire/Noise/Session/Carrier redesign unrelated to the concrete admission gaps;
+- new numeric D019 retention/source-table ceilings without explicit reviewed ADR amendment;
+- protocol/wire/Noise/Session/Carrier redesign unrelated to the concrete admission defects;
 - VPS load testing as a substitute for deterministic security accounting;
-- unchanged repeated/periodic/HY2 reruns;
-- NAT/migration-back/key-update/PMTUD live claims without a real executable seam;
-- IPv6 claims without an owned end-to-end environment;
-- 0-RTT, enabled FEC, striping/aggregation or exotic carriers without an observed-problem gate;
-- third-party targets, scanning or production network changes;
-- reading/committing protected identity or credentials.
+- reopening frozen corpus bytes without correctness evidence;
+- speculative FEC/0-RTT/striping/multipath/exotic carrier work;
+- third-party targets or scanning;
+- production route/firewall/DNS/proxy/tunnel/qdisc changes;
+- reading/copying/hashing/committing protected identity/secrets/private topology.
 
 ## Questions requiring maintainer decision
 
-None yet. Slice C must surface a maintainer/ADR decision only if the literal D019 no-reset source semantics cannot be implemented with bounded source-accounting storage without introducing a new policy value.
+**No immediate administrator action is required for A/B/D/E.**
+
+A decision may become necessary at C only if repository-reviewed text cannot already resolve terminal source-accounting retention while keeping the source table bounded. If that happens, the agent should record the exact ADR conflict and bounded options, then continue any independent READY review work that does not depend on C rather than idling the entire project.
