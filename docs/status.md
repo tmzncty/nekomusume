@@ -260,6 +260,7 @@ At the reviewed tree, every Era-4 ledger row has one closed classification in `d
 - `OPEN_READY`: B, C, D, E, F, L, M, T. Each carries a specific unresolved question, `evidence_needed`, `next_action`, dependency statement, and local execution scope; this is an opportunity classification, not authorization or a release claim.
 - `BLOCKED_DEPENDENCY`: N depends on implementation-blocked K; O depends on N. Privileged environment availability alone cannot make either dependency-ready, and no VPS row is currently ready for execution.
 - `BLOCKED_IMPLEMENTATION`: K (migration-back), R (PLPMTUD integration). NAT/source-endpoint change, live key update and live PMTUD remain implementation-blocked.
+- Security promotion also remains blocked by RSEC-001 in `docs/reviews/resource-abuse-evidence-2026-09-04.md`: per-budget-object anti-amplification exists, but process-global/per-source pre-auth concurrency, memory, CPU, rate-window, queue and lifecycle accounting required by `SECURITY.md`/D019 is not implemented.
 - `BLOCKED_ENVIRONMENT`: IPv6 (no real owned IPv6 path).
 - `BLOCKED_ORCHESTRATION_CURRENT_LINE`: periodic, repeated warm failover, and HY2; the exact `61a6490` HY2 follow-up consumed one outer invocation and stopped at local port-range preflight (exit 2), with no VPS deployment, samples, result, metrics, or runtime evidence.
 - `GOVERNANCE_GATE`: P, S, U, V, W. Release item 3 remains unchecked; natural loss remains unchecked; governance flags remain false/closed as previously recorded.
