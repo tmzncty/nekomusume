@@ -5,6 +5,7 @@
 //! that a future Noise session must compose.
 
 use snow::params::NoiseParams;
+use std::collections::BTreeMap;
 
 pub const SNOW_VERSION: &str = "0.10.0";
 pub const MAX_REPLAY_WINDOW: u64 = 64;
@@ -864,6 +865,269 @@ impl PreauthBudget {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessPreauthLimits {
+    pub max_states_per_source: usize,
+    pub max_states_global: usize,
+    pub max_memory_per_state: usize,
+    pub max_memory_global: usize,
+    pub max_queue_per_source: usize,
+    pub max_queue_global: usize,
+    pub max_input_bytes_per_window: usize,
+    pub max_input_packets_per_window: usize,
+    pub max_work_per_window: usize,
+    pub max_response_bytes_per_window: usize,
+    pub max_response_packets_per_window: usize,
+    pub admission_window_ms: u64,
+    pub max_lifetime_ms: u64,
+}
+impl Default for ProcessPreauthLimits {
+    fn default() -> Self {
+        Self {
+            max_states_per_source: 8,
+            max_states_global: 1024,
+            max_memory_per_state: 16 * 1024,
+            max_memory_global: 16 * 1024 * 1024,
+            max_queue_per_source: 4,
+            max_queue_global: 256,
+            max_input_bytes_per_window: 8 * 1024 * 1024,
+            max_input_packets_per_window: 8192,
+            max_work_per_window: 1_048_576,
+            max_response_bytes_per_window: 256 * 1024,
+            max_response_packets_per_window: 512,
+            admission_window_ms: 1000,
+            max_lifetime_ms: 5000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PreauthStateId(pub u64);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcessPreauthState {
+    source: Vec<u8>,
+    memory_bytes: usize,
+    queued: usize,
+    created_at_ms: u64,
+}
+
+/// Process-owned admission accounting for unauthenticated work. Source keys are
+/// opaque bounded caller projections; raw addresses or identities need not be
+/// retained. Charges are atomic and happen before the protected operation.
+#[derive(Debug)]
+pub struct ProcessPreauthAdmission {
+    limits: ProcessPreauthLimits,
+    next_id: u64,
+    states: BTreeMap<PreauthStateId, ProcessPreauthState>,
+    memory_bytes: usize,
+    queued: usize,
+    window_started_ms: u64,
+    input_bytes: usize,
+    input_packets: usize,
+    work_units: usize,
+    response_bytes: usize,
+    response_packets: usize,
+}
+impl ProcessPreauthAdmission {
+    pub fn new(limits: ProcessPreauthLimits, now_ms: u64) -> Result<Self, SessionRejected> {
+        if limits.max_states_per_source == 0
+            || limits.max_states_global == 0
+            || limits.max_states_per_source > limits.max_states_global
+            || limits.max_memory_per_state == 0
+            || limits.max_memory_global == 0
+            || limits.max_memory_per_state > limits.max_memory_global
+            || limits.max_queue_per_source == 0
+            || limits.max_queue_global == 0
+            || limits.max_queue_per_source > limits.max_queue_global
+            || limits.max_input_bytes_per_window == 0
+            || limits.max_input_packets_per_window == 0
+            || limits.max_work_per_window == 0
+            || limits.max_response_bytes_per_window == 0
+            || limits.max_response_packets_per_window == 0
+            || limits.admission_window_ms == 0
+            || limits.max_lifetime_ms == 0
+        {
+            return Err(SessionRejected);
+        }
+        Ok(Self {
+            limits,
+            next_id: 0,
+            states: BTreeMap::new(),
+            memory_bytes: 0,
+            queued: 0,
+            window_started_ms: now_ms,
+            input_bytes: 0,
+            input_packets: 0,
+            work_units: 0,
+            response_bytes: 0,
+            response_packets: 0,
+        })
+    }
+
+    fn refresh_window(&mut self, now_ms: u64) -> Result<(), SessionRejected> {
+        if now_ms < self.window_started_ms {
+            return Err(SessionRejected);
+        }
+        if now_ms - self.window_started_ms >= self.limits.admission_window_ms {
+            self.window_started_ms = now_ms;
+            self.input_bytes = 0;
+            self.input_packets = 0;
+            self.work_units = 0;
+            self.response_bytes = 0;
+            self.response_packets = 0;
+        }
+        Ok(())
+    }
+
+    fn live(&self, id: PreauthStateId, now_ms: u64) -> Result<&ProcessPreauthState, SessionRejected> {
+        let state = self.states.get(&id).ok_or(SessionRejected)?;
+        if now_ms < state.created_at_ms
+            || now_ms - state.created_at_ms >= self.limits.max_lifetime_ms
+        {
+            return Err(SessionRejected);
+        }
+        Ok(state)
+    }
+
+    pub fn admit_state(
+        &mut self,
+        source: &[u8],
+        memory_bytes: usize,
+        now_ms: u64,
+    ) -> Result<PreauthStateId, SessionRejected> {
+        self.refresh_window(now_ms)?;
+        if source.is_empty()
+            || source.len() > 256
+            || memory_bytes == 0
+            || memory_bytes > self.limits.max_memory_per_state
+            || self.states.len() >= self.limits.max_states_global
+            || self.states.values().filter(|state| state.source == source).count()
+                >= self.limits.max_states_per_source
+            || self.memory_bytes.checked_add(memory_bytes).ok_or(SessionRejected)?
+                > self.limits.max_memory_global
+        {
+            return Err(SessionRejected);
+        }
+        let id = PreauthStateId(self.next_id);
+        self.next_id = self.next_id.checked_add(1).ok_or(SessionRejected)?;
+        self.states.insert(
+            id,
+            ProcessPreauthState {
+                source: source.to_vec(),
+                memory_bytes,
+                queued: 0,
+                created_at_ms: now_ms,
+            },
+        );
+        self.memory_bytes += memory_bytes;
+        Ok(id)
+    }
+
+    pub fn charge_input(
+        &mut self,
+        id: PreauthStateId,
+        bytes: usize,
+        work_units: usize,
+        now_ms: u64,
+    ) -> Result<(), SessionRejected> {
+        self.refresh_window(now_ms)?;
+        self.live(id, now_ms)?;
+        let input_bytes = self.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
+        let input_packets = self.input_packets.checked_add(1).ok_or(SessionRejected)?;
+        let work = self.work_units.checked_add(work_units).ok_or(SessionRejected)?;
+        if input_bytes > self.limits.max_input_bytes_per_window
+            || input_packets > self.limits.max_input_packets_per_window
+            || work > self.limits.max_work_per_window
+        {
+            return Err(SessionRejected);
+        }
+        self.input_bytes = input_bytes;
+        self.input_packets = input_packets;
+        self.work_units = work;
+        Ok(())
+    }
+
+    pub fn enqueue(&mut self, id: PreauthStateId, now_ms: u64) -> Result<(), SessionRejected> {
+        self.refresh_window(now_ms)?;
+        let state = self.live(id, now_ms)?;
+        if state.queued >= self.limits.max_queue_per_source
+            || self.queued >= self.limits.max_queue_global
+        {
+            return Err(SessionRejected);
+        }
+        self.states.get_mut(&id).ok_or(SessionRejected)?.queued += 1;
+        self.queued += 1;
+        Ok(())
+    }
+
+    pub fn dequeue(&mut self, id: PreauthStateId) -> Result<(), SessionRejected> {
+        let state = self.states.get_mut(&id).ok_or(SessionRejected)?;
+        if state.queued == 0 {
+            return Err(SessionRejected);
+        }
+        state.queued -= 1;
+        self.queued -= 1;
+        Ok(())
+    }
+
+    pub fn charge_response(
+        &mut self,
+        id: PreauthStateId,
+        bytes: usize,
+        now_ms: u64,
+    ) -> Result<(), SessionRejected> {
+        self.refresh_window(now_ms)?;
+        self.live(id, now_ms)?;
+        let response_bytes = self.response_bytes.checked_add(bytes).ok_or(SessionRejected)?;
+        let response_packets = self.response_packets.checked_add(1).ok_or(SessionRejected)?;
+        if response_bytes > self.limits.max_response_bytes_per_window
+            || response_packets > self.limits.max_response_packets_per_window
+        {
+            return Err(SessionRejected);
+        }
+        self.response_bytes = response_bytes;
+        self.response_packets = response_packets;
+        Ok(())
+    }
+
+    pub fn release(&mut self, id: PreauthStateId) -> Result<(), SessionRejected> {
+        let state = self.states.remove(&id).ok_or(SessionRejected)?;
+        self.memory_bytes -= state.memory_bytes;
+        self.queued -= state.queued;
+        Ok(())
+    }
+
+    pub fn expire(&mut self, now_ms: u64) -> Result<usize, SessionRejected> {
+        if now_ms < self.window_started_ms {
+            return Err(SessionRejected);
+        }
+        let expired: Vec<_> = self
+            .states
+            .iter()
+            .filter_map(|(id, state)| {
+                (now_ms >= state.created_at_ms
+                    && now_ms - state.created_at_ms >= self.limits.max_lifetime_ms)
+                    .then_some(*id)
+            })
+            .collect();
+        for id in &expired {
+            self.release(*id)?;
+        }
+        Ok(expired.len())
+    }
+
+    pub fn live_states(&self) -> usize {
+        self.states.len()
+    }
+    pub fn memory_bytes(&self) -> usize {
+        self.memory_bytes
+    }
+    pub fn queued(&self) -> usize {
+        self.queued
+    }
+}
+
 #[cfg(test)]
 mod preauth_tests {
     use super::session_tests::pair;
@@ -890,6 +1154,66 @@ mod preauth_tests {
         b.charge_response(12).unwrap();
         assert_eq!(b.charge_response(1), Err(SessionRejected));
     }
+    fn process_limits() -> ProcessPreauthLimits {
+        ProcessPreauthLimits {
+            max_states_per_source: 1,
+            max_states_global: 2,
+            max_memory_per_state: 4,
+            max_memory_global: 6,
+            max_queue_per_source: 1,
+            max_queue_global: 1,
+            max_input_bytes_per_window: 4,
+            max_input_packets_per_window: 2,
+            max_work_per_window: 5,
+            max_response_bytes_per_window: 3,
+            max_response_packets_per_window: 1,
+            admission_window_ms: 10,
+            max_lifetime_ms: 20,
+        }
+    }
+
+    #[test]
+    fn process_admission_limits_are_atomic_and_source_scoped() {
+        let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let a = admission.admit_state(b"source-a", 4, 0).unwrap();
+        assert_eq!(
+            admission.admit_state(b"source-a", 1, 0),
+            Err(SessionRejected)
+        );
+        let b = admission.admit_state(b"source-b", 2, 0).unwrap();
+        assert_eq!(admission.live_states(), 2);
+        assert_eq!(admission.memory_bytes(), 6);
+        assert_eq!(
+            admission.admit_state(b"source-c", 1, 0),
+            Err(SessionRejected)
+        );
+        admission.release(b).unwrap();
+        assert_eq!(admission.memory_bytes(), 4);
+        assert_eq!(admission.live_states(), 1);
+        admission.release(a).unwrap();
+    }
+
+    #[test]
+    fn process_window_queue_and_lifetime_fail_closed() {
+        let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = admission.admit_state(b"source", 2, 0).unwrap();
+        admission.charge_input(id, 4, 5, 0).unwrap();
+        assert_eq!(admission.charge_input(id, 1, 0, 0), Err(SessionRejected));
+        assert_eq!(admission.charge_response(id, 3, 0), Ok(()));
+        assert_eq!(admission.charge_response(id, 1, 0), Err(SessionRejected));
+        admission.enqueue(id, 0).unwrap();
+        assert_eq!(admission.enqueue(id, 0), Err(SessionRejected));
+        assert_eq!((admission.queued(), admission.memory_bytes()), (1, 2));
+        admission.dequeue(id).unwrap();
+        // A new monotonic window resets rate counters but not live state.
+        admission.charge_input(id, 4, 5, 10).unwrap();
+        assert_eq!(admission.live_states(), 1);
+        assert_eq!(admission.charge_input(id, 1, 0, 9), Err(SessionRejected));
+        assert_eq!(admission.charge_input(id, 1, 0, 20), Err(SessionRejected));
+        assert_eq!(admission.expire(20), Ok(1));
+        assert_eq!((admission.live_states(), admission.memory_bytes(), admission.queued()), (0, 0, 0));
+    }
+
     #[test]
     fn synchronized_key_update_resets_nonce_and_rejects_old_phase() {
         let (mut a, mut b) = pair();
