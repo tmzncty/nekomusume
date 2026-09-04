@@ -972,6 +972,7 @@ struct ProcessPreauthState {
     queued: usize,
     created_at_ms: u64,
     last_progress_ms: u64,
+    rejected: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1050,6 +1051,12 @@ impl ProcessPreauthAdmission {
         })
     }
 
+    fn reject(&mut self, id: PreauthStateId) {
+        if let Some(state) = self.states.get_mut(&id) {
+            state.rejected = true;
+        }
+    }
+
     fn refresh_window(&mut self, now_ms: u64) -> Result<(), SessionRejected> {
         if now_ms < self.window_started_ms {
             return Err(SessionRejected);
@@ -1071,7 +1078,8 @@ impl ProcessPreauthAdmission {
         now_ms: u64,
     ) -> Result<&ProcessPreauthState, SessionRejected> {
         let state = self.states.get(&id).ok_or(SessionRejected)?;
-        if now_ms < state.created_at_ms
+        if state.rejected
+            || now_ms < state.created_at_ms
             || now_ms < state.last_progress_ms
             || now_ms - state.last_progress_ms >= self.limits.idle_timeout_ms
             || now_ms - state.created_at_ms >= self.limits.max_lifetime_ms
@@ -1113,6 +1121,7 @@ impl ProcessPreauthAdmission {
                 queued: 0,
                 created_at_ms: now_ms,
                 last_progress_ms: now_ms,
+                rejected: false,
             },
         );
         self.memory_bytes += memory_bytes;
@@ -1153,6 +1162,7 @@ impl ProcessPreauthAdmission {
             || input_packets > self.limits.max_input_packets_per_window
             || work > self.limits.max_work_per_window
         {
+            self.reject(id);
             return Err(SessionRejected);
         }
         let usage = self.sources.get_mut(&source).ok_or(SessionRejected)?;
@@ -1180,6 +1190,7 @@ impl ProcessPreauthAdmission {
         if source_queued >= self.limits.max_queue_per_source
             || self.queued >= self.limits.max_queue_global
         {
+            self.reject(id);
             return Err(SessionRejected);
         }
         self.states.get_mut(&id).ok_or(SessionRejected)?.queued += 1;
@@ -1233,6 +1244,7 @@ impl ProcessPreauthAdmission {
             || response_bytes > self.limits.max_response_bytes_per_window
             || response_packets > self.limits.max_response_packets_per_window
         {
+            self.reject(id);
             return Err(SessionRejected);
         }
         let deadline_ms = now_ms
@@ -1259,6 +1271,7 @@ impl ProcessPreauthAdmission {
     ) -> Result<(), SessionRejected> {
         self.live(permit.state_id, now_ms)?;
         if now_ms < permit.admitted_at_ms || now_ms > permit.deadline_ms {
+            self.reject(permit.state_id);
             return Err(SessionRejected);
         }
         Ok(())
@@ -1416,6 +1429,31 @@ mod preauth_tests {
     }
 
     #[test]
+    fn rejected_global_window_state_cannot_revive_after_rollover() {
+        let mut limits = process_limits();
+        limits.max_input_bytes_per_window = 1;
+        limits.max_input_packets_per_window = 1;
+        limits.max_work_per_window = 1;
+        let mut admission = ProcessPreauthAdmission::new(limits, 0).unwrap();
+        let id = admission.admit_state(b"source", 2, 0).unwrap();
+        admission.charge_input(id, 1, 1, 0).unwrap();
+        assert_eq!(admission.charge_input(id, 1, 1, 1), Err(SessionRejected));
+        assert_eq!(admission.charge_input(id, 1, 1, 10), Err(SessionRejected));
+        admission.release(id).unwrap();
+    }
+
+    #[test]
+    fn response_deadline_rejection_makes_state_terminal() {
+        let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = admission.admit_state(b"source", 2, 0).unwrap();
+        admission.charge_input(id, 1, 1, 0).unwrap();
+        let permit = admission.charge_response(id, 1, 0).unwrap();
+        assert_eq!(admission.complete_response(permit, 101), Err(SessionRejected));
+        assert_eq!(admission.charge_input(id, 1, 1, 10), Err(SessionRejected));
+        admission.release(id).unwrap();
+    }
+
+    #[test]
     fn process_window_queue_and_lifetime_fail_closed() {
         let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
         let id = admission.admit_state(b"source", 2, 0).unwrap();
@@ -1429,6 +1467,7 @@ mod preauth_tests {
         ));
         let queue = admission.enqueue(id, 0).unwrap();
         assert_eq!(admission.enqueue(id, 0), Err(SessionRejected));
+        assert_eq!(admission.charge_input(id, 1, 1, 10), Err(SessionRejected));
         assert_eq!((admission.queued(), admission.memory_bytes()), (1, 2));
         admission.dequeue(queue).unwrap();
         // A new monotonic window resets global rate counters, never the
