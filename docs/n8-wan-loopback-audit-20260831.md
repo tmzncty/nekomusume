@@ -8,7 +8,7 @@
 - `neko-server.identity` was never present in the worktree. The authoritative checkout's identity was read only once for a SHA-256 preservation record; its contents are not stored.
 - The `192.168.122.1` rows exercise a self-owned non-loopback host address from the same host. They are endpoint/runtime evidence, **not** independent public-WAN path evidence and not NAT traversal evidence.
 
-Raw evidence is under `artifacts/n8-20260831/`; `sha256sums.txt` covers the evidence files existing before the report.
+Raw evidence is under `artifacts/n8-20260831/`; `sha256sums.txt` covers the evidence files existing before the report. The manifest deliberately excludes itself and is checked by `scripts/check-evidence-manifests.py`; a checksum manifest cannot truthfully authenticate its own final bytes.
 
 ## Supported runtime matrix
 
