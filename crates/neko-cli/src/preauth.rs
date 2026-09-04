@@ -1,6 +1,6 @@
 use neko_crypto::{
-    PreauthBudget, PreauthLimits, PreauthResponsePermit, PreauthStateId, ProcessPreauthAdmission,
-    ProcessPreauthLimits,
+    PreauthBudget, PreauthLimits, PreauthQueuePermit, PreauthResponsePermit, PreauthStateId,
+    ProcessPreauthAdmission, ProcessPreauthLimits,
 };
 use std::net::SocketAddr;
 use std::time::Instant;
@@ -15,6 +15,10 @@ pub(crate) struct ListenerAdmission {
 pub(crate) struct AdmissionTicket {
     id: PreauthStateId,
     budget: PreauthBudget,
+}
+
+pub(crate) struct QueueReservation {
+    permit: Option<PreauthQueuePermit>,
 }
 
 impl ListenerAdmission {
@@ -94,6 +98,21 @@ impl ListenerAdmission {
         self.process
             .complete_response(permit, self.now_ms())
             .map_err(|_| ())
+    }
+
+    pub(crate) fn enqueue(&mut self, ticket: &mut AdmissionTicket) -> Result<QueueReservation, ()> {
+        let permit = self
+            .process
+            .enqueue(ticket.id, self.now_ms())
+            .map_err(|_| ())?;
+        Ok(QueueReservation {
+            permit: Some(permit),
+        })
+    }
+
+    pub(crate) fn dequeue(&mut self, reservation: &mut QueueReservation) -> Result<(), ()> {
+        let permit = reservation.permit.take().ok_or(())?;
+        self.process.dequeue(permit).map_err(|_| ())
     }
 
     pub(crate) fn release(&mut self, ticket: AdmissionTicket) {

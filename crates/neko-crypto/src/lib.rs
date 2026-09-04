@@ -948,6 +948,13 @@ pub struct PreauthResponsePermit {
     deadline_ms: u64,
 }
 
+/// One-shot ownership of a pending unauthenticated queue entry.
+#[derive(Debug, PartialEq, Eq)]
+#[must_use = "a pending pre-auth queue reservation must be completed or abandoned"]
+pub struct PreauthQueuePermit {
+    state_id: PreauthStateId,
+}
+
 impl PreauthResponsePermit {
     pub fn admitted_at_ms(&self) -> u64 {
         self.admitted_at_ms
@@ -1162,7 +1169,11 @@ impl ProcessPreauthAdmission {
         Ok(())
     }
 
-    pub fn enqueue(&mut self, id: PreauthStateId, now_ms: u64) -> Result<(), SessionRejected> {
+    pub fn enqueue(
+        &mut self,
+        id: PreauthStateId,
+        now_ms: u64,
+    ) -> Result<PreauthQueuePermit, SessionRejected> {
         self.refresh_window(now_ms)?;
         let source = self.live(id, now_ms)?.source.clone();
         let source_queued = self.sources.get(&source).ok_or(SessionRejected)?.queued;
@@ -1174,11 +1185,14 @@ impl ProcessPreauthAdmission {
         self.states.get_mut(&id).ok_or(SessionRejected)?.queued += 1;
         self.sources.get_mut(&source).ok_or(SessionRejected)?.queued += 1;
         self.queued += 1;
-        Ok(())
+        Ok(PreauthQueuePermit { state_id: id })
     }
 
-    pub fn dequeue(&mut self, id: PreauthStateId) -> Result<(), SessionRejected> {
-        let state = self.states.get_mut(&id).ok_or(SessionRejected)?;
+    pub fn dequeue(&mut self, permit: PreauthQueuePermit) -> Result<(), SessionRejected> {
+        let state = self
+            .states
+            .get_mut(&permit.state_id)
+            .ok_or(SessionRejected)?;
         if state.queued == 0 {
             return Err(SessionRejected);
         }
@@ -1397,10 +1411,10 @@ mod preauth_tests {
             admission.charge_response(id, 1, 0),
             Err(SessionRejected)
         ));
-        admission.enqueue(id, 0).unwrap();
+        let queue = admission.enqueue(id, 0).unwrap();
         assert_eq!(admission.enqueue(id, 0), Err(SessionRejected));
         assert_eq!((admission.queued(), admission.memory_bytes()), (1, 2));
-        admission.dequeue(id).unwrap();
+        admission.dequeue(queue).unwrap();
         // A new monotonic window resets global rate counters, never the
         // state-lifetime source counters. A distinct source can use the window.
         assert_eq!(admission.charge_input(id, 1, 0, 10), Err(SessionRejected));

@@ -911,6 +911,8 @@ struct PendingUdpNegotiation {
     selection: Vec<u8>,
     binding: Vec<u8>,
     admission: preauth::AdmissionTicket,
+    queue: preauth::QueueReservation,
+    created_at: Instant,
 }
 
 #[allow(clippy::collapsible_if)]
@@ -1013,6 +1015,18 @@ fn failover_server(args: &[String]) {
         ),
     );
     while started.elapsed() < duration {
+        preauth.expire();
+        if pending
+            .as_ref()
+            .is_some_and(|state| state.created_at.elapsed() >= Duration::from_secs(5))
+        {
+            if let Some(mut expired) = pending.take() {
+                preauth
+                    .dequeue(&mut expired.queue)
+                    .unwrap_or_else(|_| fail("pre-auth queue release failed"));
+                preauth.release(expired.admission);
+            }
+        }
         if secure.is_none() {
             if let Ok((n, peer)) = udp.recv_from(&mut buf) {
                 let datagram = &buf[..n];
@@ -1071,7 +1085,10 @@ fn failover_server(args: &[String]) {
                     );
                     handshake_cache = Some((datagram.to_vec(), resp));
                     secure = Some((ss, peer));
-                    let authenticated = pending.take().expect("pending state exists");
+                    let mut authenticated = pending.take().expect("pending state exists");
+                    preauth
+                        .dequeue(&mut authenticated.queue)
+                        .unwrap_or_else(|_| fail("pre-auth queue release failed"));
                     preauth.release(authenticated.admission);
                     println!(
                         "carrier_event name=udp_negotiated session=7001 generation=0 version=0"
@@ -1114,12 +1131,21 @@ fn failover_server(args: &[String]) {
                             drop(response_permit);
                             emit_diagnostic(args, "server", "udp_selection_dropped", 0, "");
                         }
+                        let queue = match preauth.enqueue(&mut admission) {
+                            Ok(queue) => queue,
+                            Err(_) => {
+                                preauth.release(admission);
+                                continue;
+                            }
+                        };
                         pending = Some(PendingUdpNegotiation {
                             peer,
                             hello: datagram.to_vec(),
                             selection: selection.clone(),
                             binding,
                             admission,
+                            queue,
+                            created_at: Instant::now(),
                         });
                     } else {
                         preauth.release(admission);
