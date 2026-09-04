@@ -1280,7 +1280,7 @@ impl ProcessPreauthAdmission {
         Ok(())
     }
 
-    pub fn expire(&mut self, now_ms: u64) -> Result<usize, SessionRejected> {
+    pub fn expire_states(&mut self, now_ms: u64) -> Result<Vec<PreauthStateId>, SessionRejected> {
         if now_ms < self.window_started_ms {
             return Err(SessionRejected);
         }
@@ -1298,7 +1298,11 @@ impl ProcessPreauthAdmission {
         for id in &expired {
             self.release(*id)?;
         }
-        Ok(expired.len())
+        Ok(expired)
+    }
+
+    pub fn expire(&mut self, now_ms: u64) -> Result<usize, SessionRejected> {
+        Ok(self.expire_states(now_ms)?.len())
     }
 
     pub fn live_states(&self) -> usize {
@@ -1383,6 +1387,18 @@ mod preauth_tests {
         assert_eq!(admission.memory_bytes(), 4);
         assert_eq!(admission.live_states(), 1);
         admission.release(a).unwrap();
+    }
+
+    #[test]
+    fn expiry_atomically_consumes_state_and_pending_queue() {
+        let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = admission.admit_state(b"source", 2, 0).unwrap();
+        let queue = admission.enqueue(id, 0).unwrap();
+        assert_eq!((admission.live_states(), admission.queued()), (1, 1));
+        assert_eq!(admission.expire_states(200).unwrap(), vec![id]);
+        assert_eq!((admission.live_states(), admission.queued()), (0, 0));
+        assert_eq!(admission.dequeue(queue), Err(SessionRejected));
+        assert_eq!(admission.release(id), Err(SessionRejected));
     }
 
     #[test]

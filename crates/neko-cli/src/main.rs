@@ -912,7 +912,6 @@ struct PendingUdpNegotiation {
     binding: Vec<u8>,
     admission: preauth::AdmissionTicket,
     queue: preauth::QueueReservation,
-    created_at: Instant,
 }
 
 #[allow(clippy::collapsible_if)]
@@ -1015,16 +1014,14 @@ fn failover_server(args: &[String]) {
         ),
     );
     while started.elapsed() < duration {
-        preauth.expire();
+        let expired_states = preauth.expire();
         if pending
             .as_ref()
-            .is_some_and(|state| state.created_at.elapsed() >= Duration::from_secs(5))
+            .is_some_and(|state| state.admission.was_expired(&expired_states))
         {
             if let Some(mut expired) = pending.take() {
-                preauth
-                    .dequeue(&mut expired.queue)
-                    .unwrap_or_else(|_| fail("pre-auth queue release failed"));
-                preauth.release(expired.admission);
+                // Process expiry atomically consumed both state and queue counts.
+                expired.queue.invalidate_after_process_expiry();
             }
         }
         if secure.is_none() {
@@ -1145,7 +1142,6 @@ fn failover_server(args: &[String]) {
                             binding,
                             admission,
                             queue,
-                            created_at: Instant::now(),
                         });
                     } else {
                         preauth.release(admission);

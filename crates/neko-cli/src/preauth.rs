@@ -21,6 +21,18 @@ pub(crate) struct QueueReservation {
     permit: Option<PreauthQueuePermit>,
 }
 
+impl AdmissionTicket {
+    pub(crate) fn was_expired(&self, expired: &[PreauthStateId]) -> bool {
+        expired.contains(&self.id)
+    }
+}
+
+impl QueueReservation {
+    pub(crate) fn invalidate_after_process_expiry(&mut self) {
+        self.permit = None;
+    }
+}
+
 impl ListenerAdmission {
     pub(crate) fn new() -> Self {
         Self {
@@ -38,12 +50,14 @@ impl ListenerAdmission {
             .unwrap_or(u64::MAX)
     }
 
-    pub(crate) fn expire(&mut self) {
-        let _ = self.process.expire(self.now_ms());
+    pub(crate) fn expire(&mut self) -> Vec<PreauthStateId> {
+        self.process
+            .expire_states(self.now_ms())
+            .unwrap_or_default()
     }
 
     pub(crate) fn admit(&mut self, peer: SocketAddr) -> Result<AdmissionTicket, ()> {
-        self.expire();
+        let _ = self.expire();
         let now = self.now_ms();
         let id = self
             .process
@@ -149,6 +163,23 @@ mod tests {
         assert_ne!(source_key(a), source_key(v6));
         assert_eq!(source_key(a).len(), 7);
         assert_eq!(source_key(v6).len(), 19);
+    }
+
+    #[test]
+    fn expired_ticket_invalidates_application_queue_owner() {
+        let mut admission = ListenerAdmission::new();
+        let peer: SocketAddr = "127.0.0.1:40080".parse().unwrap();
+        let mut ticket = admission.admit(peer).unwrap();
+        let mut queue = admission.enqueue(&mut ticket).unwrap();
+        let expired = admission.process.expire_states(5000).unwrap();
+        assert!(ticket.was_expired(&expired));
+        queue.invalidate_after_process_expiry();
+        assert!(admission.dequeue(&mut queue).is_err());
+        admission.release(ticket);
+        assert_eq!(
+            (admission.process.live_states(), admission.process.queued()),
+            (0, 0)
+        );
     }
 
     #[test]
