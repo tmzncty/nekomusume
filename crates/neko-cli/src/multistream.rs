@@ -85,10 +85,13 @@ fn server_handshake(
     let response = negotiation
         .server_accept_hello(&hello)
         .unwrap_or_else(|_| fail("handshake rejected".into()));
-    admission
+    let response_permit_1 = admission
         .charge_response(ticket, response.len() + 4)
         .unwrap_or_else(|_| fail("pre-auth response rejected".into()));
     frame_write(socket, &response).unwrap_or_else(|_| fail("handshake rejected".into()));
+    admission
+        .complete_response(response_permit_1)
+        .unwrap_or_else(|_| fail("pre-auth response deadline elapsed".into()));
     let binding = negotiation
         .authenticated_binding()
         .unwrap_or_else(|_| fail("handshake rejected".into()));
@@ -107,10 +110,13 @@ fn server_handshake(
     let (response, session) = hs
         .receive_first(&first, context())
         .unwrap_or_else(|_| fail("handshake rejected".into()));
-    admission
+    let response_permit_2 = admission
         .charge_response(ticket, response.len() + 4)
         .unwrap_or_else(|_| fail("pre-auth response rejected".into()));
     frame_write(socket, &response).unwrap_or_else(|_| fail("handshake rejected".into()));
+    admission
+        .complete_response(response_permit_2)
+        .unwrap_or_else(|_| fail("pre-auth response deadline elapsed".into()));
     negotiation
         .admit_data()
         .unwrap_or_else(|_| fail("handshake rejected".into()));

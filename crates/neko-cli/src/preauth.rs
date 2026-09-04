@@ -1,5 +1,6 @@
 use neko_crypto::{
-    PreauthBudget, PreauthLimits, PreauthStateId, ProcessPreauthAdmission, ProcessPreauthLimits,
+    PreauthBudget, PreauthLimits, PreauthResponsePermit, PreauthStateId, ProcessPreauthAdmission,
+    ProcessPreauthLimits,
 };
 use std::net::SocketAddr;
 use std::time::Instant;
@@ -77,14 +78,22 @@ impl ListenerAdmission {
         &mut self,
         ticket: &mut AdmissionTicket,
         bytes: usize,
-    ) -> Result<(), ()> {
+    ) -> Result<PreauthResponsePermit, ()> {
         let now = self.now_ms();
         ticket.budget.charge_response(bytes).map_err(|_| ())?;
-        if self.process.charge_response(ticket.id, bytes, now).is_err() {
-            let _ = ticket.budget.rollback_response(bytes);
-            return Err(());
+        match self.process.charge_response(ticket.id, bytes, now) {
+            Ok(permit) => Ok(permit),
+            Err(_) => {
+                let _ = ticket.budget.rollback_response(bytes);
+                Err(())
+            }
         }
-        Ok(())
+    }
+
+    pub(crate) fn complete_response(&mut self, permit: PreauthResponsePermit) -> Result<(), ()> {
+        self.process
+            .complete_response(permit, self.now_ms())
+            .map_err(|_| ())
     }
 
     pub(crate) fn release(&mut self, ticket: AdmissionTicket) {
@@ -130,7 +139,8 @@ mod tests {
         let mut ticket = admission.admit(peer).unwrap();
         assert!(admission.charge_response(&mut ticket, 1).is_err());
         admission.charge_input(&mut ticket, 64, 16).unwrap();
-        admission.charge_response(&mut ticket, 64).unwrap();
+        let permit = admission.charge_response(&mut ticket, 64).unwrap();
+        admission.complete_response(permit).unwrap();
         admission.release(ticket);
         assert!(admission.admit(peer).is_ok());
     }

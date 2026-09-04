@@ -169,10 +169,13 @@ fn handshake_server(
         .server_accept_hello(&hello)
         .unwrap_or_else(|_| fail("incompatible negotiation"));
     bound_setup(stream, deadline, "setup deadline elapsed");
-    admission
+    let response_permit_1 = admission
         .charge_response(ticket, selection.len() + 4)
         .unwrap_or_else(|_| fail("pre-auth response rejected"));
     write_frame(stream, &selection).unwrap_or_else(|_| fail("negotiation response failed"));
+    admission
+        .complete_response(response_permit_1)
+        .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
     let binding = negotiation.authenticated_binding().unwrap();
     let first = frame_or_fail(reader, stream, 1024, deadline, "bad handshake");
     admission
@@ -184,10 +187,13 @@ fn handshake_server(
             .receive_first(&first, context(0))
             .unwrap_or_else(|_| fail("unauthorized handshake"));
     bound_setup(stream, deadline, "setup deadline elapsed");
-    admission
+    let response_permit_2 = admission
         .charge_response(ticket, response.len() + 4)
         .unwrap_or_else(|_| fail("pre-auth response rejected"));
     write_frame(stream, &response).unwrap_or_else(|_| fail("handshake response failed"));
+    admission
+        .complete_response(response_permit_2)
+        .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
     negotiation
         .admit_data()
         .unwrap_or_else(|_| fail("data admission denied"));

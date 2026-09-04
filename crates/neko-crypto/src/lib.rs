@@ -905,6 +905,7 @@ pub struct ProcessPreauthLimits {
     pub admission_window_ms: u64,
     pub idle_timeout_ms: u64,
     pub max_lifetime_ms: u64,
+    pub response_send_deadline_ms: u64,
 }
 impl Default for ProcessPreauthLimits {
     fn default() -> Self {
@@ -929,12 +930,33 @@ impl Default for ProcessPreauthLimits {
             admission_window_ms: 1000,
             idle_timeout_ms: 1000,
             max_lifetime_ms: 5000,
+            response_send_deadline_ms: 100,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PreauthStateId(pub u64);
+
+/// One-shot ownership of a charged unauthenticated response send attempt.
+/// Dropping it abandons the response; charged accounting is intentionally retained.
+#[derive(Debug)]
+#[must_use = "a charged pre-auth response must be completed or explicitly abandoned"]
+pub struct PreauthResponsePermit {
+    state_id: PreauthStateId,
+    admitted_at_ms: u64,
+    deadline_ms: u64,
+}
+
+impl PreauthResponsePermit {
+    pub fn admitted_at_ms(&self) -> u64 {
+        self.admitted_at_ms
+    }
+
+    pub fn deadline_ms(&self) -> u64 {
+        self.deadline_ms
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProcessPreauthState {
@@ -1000,6 +1022,8 @@ impl ProcessPreauthAdmission {
             || limits.idle_timeout_ms == 0
             || limits.idle_timeout_ms > limits.max_lifetime_ms
             || limits.max_lifetime_ms == 0
+            || limits.response_send_deadline_ms == 0
+            || limits.response_send_deadline_ms > limits.max_lifetime_ms
         {
             return Err(SessionRejected);
         }
@@ -1170,7 +1194,7 @@ impl ProcessPreauthAdmission {
         id: PreauthStateId,
         bytes: usize,
         now_ms: u64,
-    ) -> Result<(), SessionRejected> {
+    ) -> Result<PreauthResponsePermit, SessionRejected> {
         self.refresh_window(now_ms)?;
         let source = self.live(id, now_ms)?.source.clone();
         let usage = self.sources.get(&source).ok_or(SessionRejected)?;
@@ -1197,11 +1221,32 @@ impl ProcessPreauthAdmission {
         {
             return Err(SessionRejected);
         }
+        let deadline_ms = now_ms
+            .checked_add(self.limits.response_send_deadline_ms)
+            .ok_or(SessionRejected)?;
         let usage = self.sources.get_mut(&source).ok_or(SessionRejected)?;
         usage.response_bytes = source_bytes;
         usage.response_packets = source_packets;
         self.response_bytes = response_bytes;
         self.response_packets = response_packets;
+        Ok(PreauthResponsePermit {
+            state_id: id,
+            admitted_at_ms: now_ms,
+            deadline_ms,
+        })
+    }
+
+    /// Completes one bounded send attempt. The D019 deadline is inclusive: an
+    /// attempt completed at exactly 100 ms is accepted; 101 ms is late.
+    pub fn complete_response(
+        &mut self,
+        permit: PreauthResponsePermit,
+        now_ms: u64,
+    ) -> Result<(), SessionRejected> {
+        self.live(permit.state_id, now_ms)?;
+        if now_ms < permit.admitted_at_ms || now_ms > permit.deadline_ms {
+            return Err(SessionRejected);
+        }
         Ok(())
     }
 
@@ -1299,8 +1344,9 @@ mod preauth_tests {
             max_response_bytes_per_window: 3,
             max_response_packets_per_window: 1,
             admission_window_ms: 10,
-            idle_timeout_ms: 20,
-            max_lifetime_ms: 20,
+            idle_timeout_ms: 200,
+            max_lifetime_ms: 200,
+            response_send_deadline_ms: 100,
         }
     }
 
@@ -1326,13 +1372,31 @@ mod preauth_tests {
     }
 
     #[test]
+    fn response_send_permit_has_deterministic_inclusive_deadline() {
+        for (elapsed, expected) in [(99, Ok(())), (100, Ok(())), (101, Err(SessionRejected))] {
+            let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+            let id = admission.admit_state(b"source", 2, 0).unwrap();
+            admission.charge_input(id, 1, 1, 0).unwrap();
+            let permit = admission.charge_response(id, 1, 0).unwrap();
+            assert_eq!(permit.admitted_at_ms(), 0);
+            assert_eq!(permit.deadline_ms(), 100);
+            assert_eq!(admission.complete_response(permit, elapsed), expected);
+            admission.release(id).unwrap();
+        }
+    }
+
+    #[test]
     fn process_window_queue_and_lifetime_fail_closed() {
         let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
         let id = admission.admit_state(b"source", 2, 0).unwrap();
         admission.charge_input(id, 4, 5, 0).unwrap();
         assert_eq!(admission.charge_input(id, 1, 0, 0), Err(SessionRejected));
-        assert_eq!(admission.charge_response(id, 3, 0), Ok(()));
-        assert_eq!(admission.charge_response(id, 1, 0), Err(SessionRejected));
+        let response = admission.charge_response(id, 3, 0).unwrap();
+        assert_eq!(admission.complete_response(response, 100), Ok(()));
+        assert!(matches!(
+            admission.charge_response(id, 1, 0),
+            Err(SessionRejected)
+        ));
         admission.enqueue(id, 0).unwrap();
         assert_eq!(admission.enqueue(id, 0), Err(SessionRejected));
         assert_eq!((admission.queued(), admission.memory_bytes()), (1, 2));
@@ -1344,8 +1408,8 @@ mod preauth_tests {
         admission.charge_input(other, 4, 5, 10).unwrap();
         assert_eq!(admission.live_states(), 2);
         assert_eq!(admission.charge_input(id, 1, 0, 9), Err(SessionRejected));
-        assert_eq!(admission.charge_input(id, 1, 0, 20), Err(SessionRejected));
-        assert_eq!(admission.expire(20), Ok(1));
+        assert_eq!(admission.charge_input(id, 1, 0, 200), Err(SessionRejected));
+        assert_eq!(admission.expire(200), Ok(1));
         assert_eq!(
             (
                 admission.live_states(),

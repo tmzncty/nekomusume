@@ -500,11 +500,14 @@ fn server(args: &[String]) {
                     let selection = negotiation
                         .server_accept_hello(&hello)
                         .unwrap_or_else(|_| fail("incompatible negotiation"));
-                    preauth
+                    let response_permit_1 = preauth
                         .charge_response(&mut admission, selection.len() + 4)
                         .unwrap_or_else(|_| fail("pre-auth response rejected"));
                     write_frame(&mut s, &selection)
                         .unwrap_or_else(|_| fail("negotiation response failed"));
+                    preauth
+                        .complete_response(response_permit_1)
+                        .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
                     let binding = negotiation
                         .authenticated_binding()
                         .unwrap_or_else(|_| fail("negotiation binding failed"));
@@ -521,11 +524,14 @@ fn server(args: &[String]) {
                     .unwrap_or_else(|_| fail("handshake setup failed"))
                     .receive_first(&first, context(0))
                     .unwrap_or_else(|_| fail("unauthorized handshake"));
-                    preauth
+                    let response_permit_2 = preauth
                         .charge_response(&mut admission, resp.len() + 4)
                         .unwrap_or_else(|_| fail("pre-auth response rejected"));
                     write_frame(&mut s, &resp)
                         .unwrap_or_else(|_| fail("handshake response failed"));
+                    preauth
+                        .complete_response(response_permit_2)
+                        .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
                     negotiation
                         .admit_data()
                         .unwrap_or_else(|_| fail("data admission denied"));
@@ -587,11 +593,14 @@ fn server(args: &[String]) {
                 let selection = negotiation
                     .server_accept_hello(&b[..n])
                     .unwrap_or_else(|_| fail("incompatible negotiation"));
-                preauth
+                let response_permit_3 = preauth
                     .charge_response(&mut admission, selection.len())
                     .unwrap_or_else(|_| fail("pre-auth response rejected"));
                 u.send_to(&selection, peer)
                     .unwrap_or_else(|_| fail("negotiation response failed"));
+                preauth
+                    .complete_response(response_permit_3)
+                    .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
                 let binding = negotiation
                     .authenticated_binding()
                     .unwrap_or_else(|_| fail("negotiation binding failed"));
@@ -613,11 +622,14 @@ fn server(args: &[String]) {
                 .unwrap_or_else(|_| fail("handshake setup failed"))
                 .receive_first(&b[..n], context(0))
                 .unwrap_or_else(|_| fail("unauthorized handshake"));
-                preauth
+                let response_permit_4 = preauth
                     .charge_response(&mut admission, resp.len())
                     .unwrap_or_else(|_| fail("pre-auth response rejected"));
                 u.send_to(&resp, peer)
                     .unwrap_or_else(|_| fail("handshake response failed"));
+                preauth
+                    .complete_response(response_permit_4)
+                    .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
                 negotiation
                     .admit_data()
                     .unwrap_or_else(|_| fail("data admission denied"));
@@ -1012,13 +1024,16 @@ fn failover_server(args: &[String]) {
                         preauth
                             .charge_input(&mut pending_state.admission, n, 64)
                             .unwrap_or_else(|_| fail("pre-auth admission rejected"));
-                        preauth
+                        let response_permit_5 = preauth
                             .charge_response(
                                 &mut pending_state.admission,
                                 pending_state.selection.len(),
                             )
                             .unwrap_or_else(|_| fail("pre-auth response rejected"));
                         udp.send_to(&pending_state.selection, peer).unwrap();
+                        preauth
+                            .complete_response(response_permit_5)
+                            .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
                         emit_diagnostic(args, "server", "udp_selection_retried", 0, "");
                         continue;
                     }
@@ -1034,12 +1049,16 @@ fn failover_server(args: &[String]) {
                     .unwrap()
                     .receive_first(datagram, context(1))
                     .unwrap_or_else(|_| fail("unauthorized UDP handshake"));
-                    preauth
+                    let response_permit = preauth
                         .charge_response(&mut pending_state.admission, resp.len())
                         .unwrap_or_else(|_| fail("pre-auth response rejected"));
                     if !args.iter().any(|a| a == "--drop-first-udp-noise-response") {
                         udp.send_to(&resp, peer).unwrap();
+                        preauth
+                            .complete_response(response_permit)
+                            .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
                     } else {
+                        drop(response_permit);
                         emit_diagnostic(args, "server", "udp_noise_response_dropped", 0, "");
                     }
                     guard = Some(
@@ -1078,12 +1097,22 @@ fn failover_server(args: &[String]) {
                             .to_vec();
                         diag.event(args, "server_recv");
                         emit_diagnostic(args, "server", "udp_hello_received", 0, "");
-                        if preauth
-                            .charge_response(&mut admission, selection.len())
-                            .is_err()
-                        {
-                            preauth.release(admission);
-                            continue;
+                        let response_permit =
+                            match preauth.charge_response(&mut admission, selection.len()) {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    preauth.release(admission);
+                                    continue;
+                                }
+                            };
+                        if !args.iter().any(|a| a == "--drop-first-udp-selection") {
+                            udp.send_to(&selection, peer).unwrap();
+                            preauth
+                                .complete_response(response_permit)
+                                .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
+                        } else {
+                            drop(response_permit);
+                            emit_diagnostic(args, "server", "udp_selection_dropped", 0, "");
                         }
                         pending = Some(PendingUdpNegotiation {
                             peer,
@@ -1092,11 +1121,6 @@ fn failover_server(args: &[String]) {
                             binding,
                             admission,
                         });
-                        if !args.iter().any(|a| a == "--drop-first-udp-selection") {
-                            udp.send_to(&selection, peer).unwrap();
-                        } else {
-                            emit_diagnostic(args, "server", "udp_selection_dropped", 0, "");
-                        }
                     } else {
                         preauth.release(admission);
                     }
@@ -1218,10 +1242,13 @@ fn failover_server(args: &[String]) {
                 .unwrap_or_else(|_| fail("incompatible negotiation"));
             bound_stream_to_deadline(&stream, experiment_deadline, None)
                 .unwrap_or_else(|_| fail("TCP negotiation deadline elapsed"));
-            preauth
+            let response_permit_8 = preauth
                 .charge_response(&mut admission, selection.len() + 4)
                 .unwrap_or_else(|_| fail("pre-auth response rejected"));
             write_frame(&mut stream, &selection).unwrap();
+            preauth
+                .complete_response(response_permit_8)
+                .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
             let binding = negotiation.authenticated_binding().unwrap();
             println!("carrier_event name=tcp_negotiated session=7001 generation=1 version=0");
             bound_stream_to_deadline(&stream, experiment_deadline, None)
@@ -1250,10 +1277,13 @@ fn failover_server(args: &[String]) {
             {
                 bound_stream_to_deadline(&stream, experiment_deadline, None)
                     .unwrap_or_else(|_| fail("TCP handshake deadline elapsed"));
-                preauth
+                let response_permit_9 = preauth
                     .charge_response(&mut admission, resp.len() + 4)
                     .unwrap_or_else(|_| fail("pre-auth response rejected"));
                 write_frame(&mut stream, &resp).unwrap();
+                preauth
+                    .complete_response(response_permit_9)
+                    .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
                 preauth.release(admission);
                 println!("carrier_event name=tcp_authenticated session=7001 generation=1");
                 println!("carrier_event name=tcp_resume_validated session=7001 generation=1");
