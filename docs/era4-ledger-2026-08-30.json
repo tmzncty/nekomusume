@@ -339,12 +339,10 @@
         "scripts/bench/run-netns.sh",
         "docs/bench/latest-netns.json"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
-      "evidence_needed": "Evidence for the unresolved controlled netns benchmark matrix question, limited to the declared bounded scope.",
-      "next_action": "Run the isolated netns benchmark matrix only if its privileged environment is available; otherwise retain the environment blocker.",
-      "execution_scope": "local",
-      "requires": "Dependencies M, K remain satisfied at the reviewed tree."
+      "classification": "BLOCKED_DEPENDENCY",
+      "classification_basis": "dependency K remains BLOCKED_IMPLEMENTATION; privileged netns availability cannot make the declared chain dependency-ready",
+      "evidence_needed": "Resolve or explicitly decouple the declared K dependency through reviewed scope semantics; do not implement migration-back merely to unlock a benchmark checkbox.",
+      "requires": "K must cease to be BLOCKED_IMPLEMENTATION or the ledger dependency must be explicitly reviewed and corrected."
     },
     {
       "id": "O",
@@ -361,12 +359,10 @@
         "docs/vps-experiment-2026-08-29.md",
         "docs/vps-failover-success-2026-08-30.md"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
-      "evidence_needed": "Evidence for the unresolved VPS bounded observation question, limited to the declared bounded scope.",
-      "next_action": "Audit current authorized VPS readiness and execute one smallest declared bounded observation only if all dependencies are live-ready.",
-      "execution_scope": "vps",
-      "requires": "Dependencies L, N remain satisfied at the reviewed tree."
+      "classification": "BLOCKED_DEPENDENCY",
+      "classification_basis": "dependency N is not dependency-ready, so no VPS observation may be selected from this row",
+      "evidence_needed": "A dependency-ready N row and an exact declared VPS question distinct from already-sufficient observations.",
+      "requires": "N must be dependency-ready and exact-head CI must be green."
     },
     {
       "id": "P",
@@ -530,10 +526,11 @@
   ],
   "closure": {
     "schema": "nekomusume.era4-release-evidence-closure.v1",
-    "classified_at_commit": "closure-taxonomy-repair-2026-09-04", 
+    "classified_at_commit": "closure-taxonomy-repair-2026-09-04",
     "handoff_sha256": "6de20f52b7d7faa7c43961ba64b2e00ac8076385a83219cd5462966daff066a4",
     "allowed_classifications": [
       "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "BLOCKED_DEPENDENCY",
       "BLOCKED_ENVIRONMENT",
       "BLOCKED_IMPLEMENTATION",
       "BLOCKED_ORCHESTRATION_CURRENT_LINE",
@@ -548,8 +545,6 @@
       "F",
       "L",
       "M",
-      "N",
-      "O",
       "T"
     ],
     "notes": {
@@ -561,7 +556,7 @@
       "nat_migration_key_update_pmtud": "BLOCKED_IMPLEMENTATION",
       "ipv6": "BLOCKED_ENVIRONMENT",
       "governance": "GOVERNANCE_GATE; release_candidate=false; production_ready=false; freeze=false; released=false",
-      "open_ready_definition": "Only rows with a specific unresolved question, evidence_needed, next_action, satisfied dependencies and no current blocker."
+      "open_ready_definition": "Only rows with a specific unresolved question, evidence_needed, next_action, satisfied dependencies and no current blocker; no direct dependency may be blocked or governance-gated."
     },
     "already_sufficient_rows": [
       "A",
@@ -569,6 +564,10 @@
       "H",
       "I",
       "J"
+    ],
+    "blocked_dependency_rows": [
+      "N",
+      "O"
     ]
   }
 }
