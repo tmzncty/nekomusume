@@ -893,7 +893,13 @@ fn runtime_limits(bytes: usize, count: usize) -> RuntimeLimits {
         ..RuntimeLimits::default()
     }
 }
-type PendingUdpNegotiation = (SocketAddr, Vec<u8>, Vec<u8>, Vec<u8>);
+struct PendingUdpNegotiation {
+    peer: SocketAddr,
+    hello: Vec<u8>,
+    selection: Vec<u8>,
+    binding: Vec<u8>,
+    admission: preauth::AdmissionTicket,
+}
 
 #[allow(clippy::collapsible_if)]
 fn failover_server(args: &[String]) {
@@ -952,6 +958,7 @@ fn failover_server(args: &[String]) {
     diag.event(args, "socket_bind");
     let started = Instant::now();
     let experiment_deadline = started + duration;
+    let mut preauth = preauth::ListenerAdmission::new();
     let mut buf = [0u8; 65536];
     // Explicitly opt-in, bounded application-level fault seam. Production and
     // ordinary controlled-stop runs never cease replies.
@@ -997,24 +1004,39 @@ fn failover_server(args: &[String]) {
         if secure.is_none() {
             if let Ok((n, peer)) = udp.recv_from(&mut buf) {
                 let datagram = &buf[..n];
-                if let Some((pending_peer, hello, selection, binding)) = pending.as_ref() {
-                    if peer != *pending_peer {
+                if let Some(pending_state) = pending.as_mut() {
+                    if peer != pending_state.peer {
                         continue;
                     }
-                    if datagram == hello.as_slice() {
-                        udp.send_to(selection, peer).unwrap();
+                    if datagram == pending_state.hello.as_slice() {
+                        preauth
+                            .charge_input(&mut pending_state.admission, n, 64)
+                            .unwrap_or_else(|_| fail("pre-auth admission rejected"));
+                        preauth
+                            .charge_response(
+                                &mut pending_state.admission,
+                                pending_state.selection.len(),
+                            )
+                            .unwrap_or_else(|_| fail("pre-auth response rejected"));
+                        udp.send_to(&pending_state.selection, peer).unwrap();
                         emit_diagnostic(args, "server", "udp_selection_retried", 0, "");
                         continue;
                     }
+                    preauth
+                        .charge_input(&mut pending_state.admission, n, 4096)
+                        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
                     let (resp, ss) = ResponderHandshake::new_with_prologue_binding(
                         &id,
                         policy.clone(),
                         DOMAIN,
-                        binding,
+                        &pending_state.binding,
                     )
                     .unwrap()
                     .receive_first(datagram, context(1))
                     .unwrap_or_else(|_| fail("unauthorized UDP handshake"));
+                    preauth
+                        .charge_response(&mut pending_state.admission, resp.len())
+                        .unwrap_or_else(|_| fail("pre-auth response rejected"));
                     if !args.iter().any(|a| a == "--drop-first-udp-noise-response") {
                         udp.send_to(&resp, peer).unwrap();
                     } else {
@@ -1024,18 +1046,27 @@ fn failover_server(args: &[String]) {
                         ResumeGuard::new_with_negotiation(
                             &client,
                             &failover_binding(7001, 0, 10_000),
-                            binding,
+                            &pending_state.binding,
                         )
                         .unwrap(),
                     );
                     handshake_cache = Some((datagram.to_vec(), resp));
                     secure = Some((ss, peer));
-                    pending = None;
+                    let authenticated = pending.take().expect("pending state exists");
+                    preauth.release(authenticated.admission);
                     println!(
                         "carrier_event name=udp_negotiated session=7001 generation=0 version=0"
                     );
                     println!("carrier_event name=udp_authenticated session=7001 generation=0");
                 } else {
+                    let mut admission = match preauth.admit(peer) {
+                        Ok(admission) => admission,
+                        Err(_) => continue,
+                    };
+                    if preauth.charge_input(&mut admission, n, 64).is_err() {
+                        preauth.release(admission);
+                        continue;
+                    }
                     let mut negotiation =
                         VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
                             .unwrap();
@@ -1047,12 +1078,27 @@ fn failover_server(args: &[String]) {
                             .to_vec();
                         diag.event(args, "server_recv");
                         emit_diagnostic(args, "server", "udp_hello_received", 0, "");
-                        pending = Some((peer, datagram.to_vec(), selection.clone(), binding));
+                        if preauth
+                            .charge_response(&mut admission, selection.len())
+                            .is_err()
+                        {
+                            preauth.release(admission);
+                            continue;
+                        }
+                        pending = Some(PendingUdpNegotiation {
+                            peer,
+                            hello: datagram.to_vec(),
+                            selection: selection.clone(),
+                            binding,
+                            admission,
+                        });
                         if !args.iter().any(|a| a == "--drop-first-udp-selection") {
                             udp.send_to(&selection, peer).unwrap();
                         } else {
                             emit_diagnostic(args, "server", "udp_selection_dropped", 0, "");
                         }
+                    } else {
+                        preauth.release(admission);
                     }
                 }
             }
@@ -1154,11 +1200,17 @@ fn failover_server(args: &[String]) {
                 }
             }
         }
-        if let Ok((mut stream, _)) = tcp.accept() {
+        if let Ok((mut stream, peer)) = tcp.accept() {
+            let mut admission = preauth
+                .admit(peer)
+                .unwrap_or_else(|_| fail("pre-auth admission rejected"));
             bound_stream_to_deadline(&stream, experiment_deadline, None)
                 .unwrap_or_else(|_| fail("TCP negotiation deadline elapsed"));
             let hello = read_frame(&mut stream, MAX_NEGOTIATION_FRAME)
                 .unwrap_or_else(|_| fail("bad negotiation"));
+            preauth
+                .charge_input(&mut admission, hello.len() + 4, 64)
+                .unwrap_or_else(|_| fail("pre-auth admission rejected"));
             let mut negotiation =
                 VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS).unwrap();
             let selection = negotiation
@@ -1166,12 +1218,18 @@ fn failover_server(args: &[String]) {
                 .unwrap_or_else(|_| fail("incompatible negotiation"));
             bound_stream_to_deadline(&stream, experiment_deadline, None)
                 .unwrap_or_else(|_| fail("TCP negotiation deadline elapsed"));
+            preauth
+                .charge_response(&mut admission, selection.len() + 4)
+                .unwrap_or_else(|_| fail("pre-auth response rejected"));
             write_frame(&mut stream, &selection).unwrap();
             let binding = negotiation.authenticated_binding().unwrap();
             println!("carrier_event name=tcp_negotiated session=7001 generation=1 version=0");
             bound_stream_to_deadline(&stream, experiment_deadline, None)
                 .unwrap_or_else(|_| fail("TCP handshake deadline elapsed"));
             let first = read_frame(&mut stream, 1024).unwrap_or_else(|_| fail("bad TCP handshake"));
+            preauth
+                .charge_input(&mut admission, first.len() + 4, 4096)
+                .unwrap_or_else(|_| fail("pre-auth admission rejected"));
             let (resp, mut ss, remote, resume_binding) =
                 ResponderHandshake::new_with_prologue_binding(
                     &id,
@@ -1192,7 +1250,11 @@ fn failover_server(args: &[String]) {
             {
                 bound_stream_to_deadline(&stream, experiment_deadline, None)
                     .unwrap_or_else(|_| fail("TCP handshake deadline elapsed"));
+                preauth
+                    .charge_response(&mut admission, resp.len() + 4)
+                    .unwrap_or_else(|_| fail("pre-auth response rejected"));
                 write_frame(&mut stream, &resp).unwrap();
+                preauth.release(admission);
                 println!("carrier_event name=tcp_authenticated session=7001 generation=1");
                 println!("carrier_event name=tcp_resume_validated session=7001 generation=1");
                 let readiness_sequence_deadline =
