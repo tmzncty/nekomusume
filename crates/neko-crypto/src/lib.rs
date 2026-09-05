@@ -1421,6 +1421,121 @@ mod preauth_tests {
     }
 
     #[test]
+    fn queue_expiry_boundaries_release_state_memory_and_ownership_once() {
+        let mut limits = process_limits();
+        limits.max_states_per_source = 2;
+        limits.max_states_global = 4;
+        limits.max_memory_global = 16;
+        limits.max_queue_per_source = 2;
+        limits.max_queue_global = 4;
+        limits.idle_timeout_ms = 1_000;
+        limits.max_lifetime_ms = 5_000;
+        let mut admission = ProcessPreauthAdmission::new(limits, 0).unwrap();
+
+        let idle = admission.admit_state(b"idle", 2, 0).unwrap();
+        let idle_queue = admission.enqueue(idle, 0).unwrap();
+        assert!(admission.expire_states(999).unwrap().is_empty());
+        assert_eq!(admission.expire_states(1_000).unwrap(), vec![idle]);
+        assert_eq!(admission.dequeue(idle_queue), Err(SessionRejected));
+        assert_eq!(
+            (
+                admission.live_states(),
+                admission.memory_bytes(),
+                admission.queued()
+            ),
+            (0, 0, 0)
+        );
+
+        let lifetime = admission.admit_state(b"lifetime", 2, 0).unwrap();
+        let lifetime_queue = admission.enqueue(lifetime, 0).unwrap();
+        admission
+            .states
+            .get_mut(&lifetime)
+            .unwrap()
+            .last_progress_ms = 4_999;
+        assert!(admission.expire_states(4_999).unwrap().is_empty());
+        assert_eq!(admission.expire_states(5_000).unwrap(), vec![lifetime]);
+        assert_eq!(admission.dequeue(lifetime_queue), Err(SessionRejected));
+        assert_eq!(admission.release(lifetime), Err(SessionRejected));
+        assert_eq!(
+            (
+                admission.live_states(),
+                admission.memory_bytes(),
+                admission.queued()
+            ),
+            (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn queue_promotion_and_cancellation_release_exactly_once() {
+        let mut limits = process_limits();
+        limits.max_states_global = 4;
+        limits.max_memory_global = 16;
+        limits.max_queue_global = 4;
+        let mut admission = ProcessPreauthAdmission::new(limits, 0).unwrap();
+        for source in [b"promote".as_slice(), b"cancel".as_slice()] {
+            let id = admission.admit_state(source, 2, 0).unwrap();
+            let queue = admission.enqueue(id, 0).unwrap();
+            admission.dequeue(queue).unwrap();
+            admission.release(id).unwrap();
+        }
+        assert_eq!(
+            (
+                admission.live_states(),
+                admission.memory_bytes(),
+                admission.queued()
+            ),
+            (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn queue_source_and_global_max_plus_one_fail_closed() {
+        let mut source_limits = process_limits();
+        source_limits.max_states_per_source = 2;
+        source_limits.max_states_global = 3;
+        source_limits.max_memory_global = 12;
+        source_limits.max_queue_per_source = 1;
+        source_limits.max_queue_global = 2;
+        let mut admission = ProcessPreauthAdmission::new(source_limits, 0).unwrap();
+        let first = admission.admit_state(b"same", 2, 0).unwrap();
+        let first_queue = admission.enqueue(first, 0).unwrap();
+        let second = admission.admit_state(b"same", 2, 0).unwrap();
+        assert_eq!(admission.enqueue(second, 0), Err(SessionRejected));
+        assert_eq!(admission.queued(), 1);
+        admission.dequeue(first_queue).unwrap();
+        admission.release(first).unwrap();
+        admission.release(second).unwrap();
+
+        let mut global_limits = process_limits();
+        global_limits.max_states_global = 3;
+        global_limits.max_memory_global = 12;
+        global_limits.max_queue_global = 2;
+        let mut admission = ProcessPreauthAdmission::new(global_limits, 0).unwrap();
+        let a = admission.admit_state(b"a", 2, 0).unwrap();
+        let b = admission.admit_state(b"b", 2, 0).unwrap();
+        let c = admission.admit_state(b"c", 2, 0).unwrap();
+        let qa = admission.enqueue(a, 0).unwrap();
+        let qb = admission.enqueue(b, 0).unwrap();
+        assert_eq!(admission.enqueue(c, 0), Err(SessionRejected));
+        assert_eq!(admission.queued(), 2);
+        admission.dequeue(qa).unwrap();
+        admission.dequeue(qb).unwrap();
+        admission.release(a).unwrap();
+        admission.release(b).unwrap();
+        admission.release(c).unwrap();
+        assert_eq!(
+            (
+                admission.live_states(),
+                admission.memory_bytes(),
+                admission.queued()
+            ),
+            (0, 0, 0)
+        );
+    }
+
+    #[test]
     fn response_send_permit_has_deterministic_inclusive_deadline() {
         for (elapsed, expected) in [(99, Ok(())), (100, Ok(())), (101, Err(SessionRejected))] {
             let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();

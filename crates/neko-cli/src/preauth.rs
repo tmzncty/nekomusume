@@ -334,6 +334,26 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_expiry_invalidates_pending_owner_without_stopping_controller() {
+        let mut admission = ListenerAdmission::new();
+        let first_peer: SocketAddr = "127.0.0.1:40080".parse().unwrap();
+        let next_peer: SocketAddr = "127.0.0.1:40081".parse().unwrap();
+        let mut ticket = admission.admit(first_peer).unwrap();
+        let mut queue = admission.enqueue(&mut ticket).unwrap();
+        let expired = admission.process.expire_states(1_000).unwrap();
+        assert!(ticket.was_expired(&expired));
+        queue.invalidate_after_process_expiry();
+        assert!(admission.dequeue(&mut queue).is_err());
+        admission.release(ticket);
+        let next = admission.admit(next_peer).unwrap();
+        admission.release(next);
+        assert_eq!(
+            (admission.process.live_states(), admission.process.queued()),
+            (0, 0)
+        );
+    }
+
+    #[test]
     fn framed_response_uses_one_absolute_deadline_across_partial_writes() {
         struct PartialWriter {
             bytes: Vec<u8>,
