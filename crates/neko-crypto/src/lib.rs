@@ -1262,6 +1262,12 @@ impl ProcessPreauthAdmission {
         })
     }
 
+    /// Permanently abandons a charged response attempt. Accounting remains
+    /// charged and the logical pre-auth state cannot be reused.
+    pub fn abandon_response(&mut self, permit: PreauthResponsePermit) {
+        self.reject(permit.state_id);
+    }
+
     /// Completes one bounded send attempt. The D019 deadline is inclusive: an
     /// attempt completed at exactly 100 ms is accepted; 101 ms is late.
     pub fn complete_response(
