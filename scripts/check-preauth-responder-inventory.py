@@ -32,11 +32,21 @@ for responder in data.get("responders", []):
         if position < 0:
             raise SystemExit(f"{rid}: missing/out-of-order anchor {anchor!r}")
         cursor = position + len(anchor)
+    if responder.get("pending_owner"):
+        if not responder.get("queue_reserve_anchor"):
+            raise SystemExit(f"{rid}: pending owner lacks queue reservation anchor")
+        if not responder.get("pending_store_anchor"):
+            raise SystemExit(f"{rid}: pending owner lacks pending-store anchor")
+        if not responder.get("pending_cancel_anchor"):
+            raise SystemExit(f"{rid}: pending owner lacks cancellation/expiry anchor")
     for key in (
         "admission_owner_anchor",
         "success_cleanup_anchor",
         "expiry_cleanup_anchor",
         "rejection_cleanup_anchor",
+        "queue_reserve_anchor",
+        "pending_store_anchor",
+        "pending_cancel_anchor",
     ):
         anchor = responder.get(key)
         if anchor and anchor not in text:
