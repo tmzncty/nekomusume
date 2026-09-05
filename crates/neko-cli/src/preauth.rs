@@ -34,20 +34,45 @@ impl QueueReservation {
     }
 }
 
-fn write_all_until<W: Write, N: FnMut() -> u64>(
+trait BoundedWrite {
+    fn write_with_budget(&mut self, bytes: &[u8], budget: Duration) -> io::Result<usize>;
+    fn flush_with_budget(&mut self, budget: Duration) -> io::Result<()>;
+}
+
+impl BoundedWrite for TcpStream {
+    fn write_with_budget(&mut self, bytes: &[u8], budget: Duration) -> io::Result<usize> {
+        self.set_write_timeout(Some(budget))?;
+        self.write(bytes)
+    }
+
+    fn flush_with_budget(&mut self, budget: Duration) -> io::Result<()> {
+        self.set_write_timeout(Some(budget))?;
+        self.flush()
+    }
+}
+
+fn remaining_budget(now_ms: u64, deadline_ms: u64) -> io::Result<Duration> {
+    let remaining_ms = deadline_ms
+        .checked_sub(now_ms)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "response deadline elapsed"))?;
+    if remaining_ms == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "response deadline elapsed",
+        ));
+    }
+    Ok(Duration::from_millis(remaining_ms))
+}
+
+fn write_all_until<W: BoundedWrite, N: FnMut() -> u64>(
     writer: &mut W,
     mut bytes: &[u8],
     now: &mut N,
     deadline_ms: u64,
 ) -> io::Result<()> {
     while !bytes.is_empty() {
-        if now() > deadline_ms {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "response deadline elapsed",
-            ));
-        }
-        match writer.write(bytes) {
+        let budget = remaining_budget(now(), deadline_ms)?;
+        match writer.write_with_budget(bytes, budget) {
             Ok(0) => {
                 return Err(io::Error::new(
                     io::ErrorKind::WriteZero,
@@ -62,7 +87,7 @@ fn write_all_until<W: Write, N: FnMut() -> u64>(
     Ok(())
 }
 
-fn write_frame_until<W: Write, N: FnMut() -> u64>(
+fn write_frame_until<W: BoundedWrite, N: FnMut() -> u64>(
     writer: &mut W,
     payload: &[u8],
     frame_len: u32,
@@ -71,13 +96,8 @@ fn write_frame_until<W: Write, N: FnMut() -> u64>(
 ) -> io::Result<()> {
     write_all_until(writer, &frame_len.to_be_bytes(), &mut now, deadline_ms)?;
     write_all_until(writer, payload, &mut now, deadline_ms)?;
-    if now() > deadline_ms {
-        return Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            "response deadline elapsed",
-        ));
-    }
-    writer.flush()
+    let budget = remaining_budget(now(), deadline_ms)?;
+    writer.flush_with_budget(budget)
 }
 
 impl ListenerAdmission {
@@ -156,9 +176,7 @@ impl ListenerAdmission {
     }
 
     fn remaining_response_budget(&self, permit: &PreauthResponsePermit) -> Result<Duration, ()> {
-        let now = self.now_ms();
-        let remaining_ms = permit.deadline_ms().checked_sub(now).ok_or(())?;
-        Ok(Duration::from_millis(remaining_ms.max(1)))
+        remaining_budget(self.now_ms(), permit.deadline_ms()).map_err(|_| ())
     }
 
     pub(crate) fn send_tcp_response(
@@ -167,14 +185,14 @@ impl ListenerAdmission {
         payload: &[u8],
         permit: PreauthResponsePermit,
     ) -> Result<(), ()> {
-        let budget = match self.remaining_response_budget(&permit) {
-            Ok(budget) => budget,
-            Err(()) => {
+        let previous_timeout = match stream.write_timeout() {
+            Ok(timeout) => timeout,
+            Err(_) => {
                 self.process.abandon_response(permit);
                 return Err(());
             }
         };
-        if stream.set_write_timeout(Some(budget)).is_err() {
+        if self.remaining_response_budget(&permit).is_err() {
             self.process.abandon_response(permit);
             return Err(());
         }
@@ -196,6 +214,10 @@ impl ListenerAdmission {
             self.process.abandon_response(permit);
             return Err(());
         }
+        if stream.set_write_timeout(previous_timeout).is_err() {
+            self.process.abandon_response(permit);
+            return Err(());
+        }
         self.process
             .complete_response(permit, self.now_ms())
             .map_err(|_| ())
@@ -208,6 +230,13 @@ impl ListenerAdmission {
         peer: SocketAddr,
         permit: PreauthResponsePermit,
     ) -> Result<(), ()> {
+        let previous_timeout = match socket.write_timeout() {
+            Ok(timeout) => timeout,
+            Err(_) => {
+                self.process.abandon_response(permit);
+                return Err(());
+            }
+        };
         let budget = match self.remaining_response_budget(&permit) {
             Ok(budget) => budget,
             Err(()) => {
@@ -219,7 +248,12 @@ impl ListenerAdmission {
             self.process.abandon_response(permit);
             return Err(());
         }
-        match socket.send_to(payload, peer) {
+        let sent = socket.send_to(payload, peer);
+        if socket.set_write_timeout(previous_timeout).is_err() {
+            self.process.abandon_response(permit);
+            return Err(());
+        }
+        match sent {
             Ok(sent) if sent == payload.len() => self
                 .process
                 .complete_response(permit, self.now_ms())
@@ -305,17 +339,17 @@ mod tests {
             bytes: Vec<u8>,
             chunk: usize,
         }
-        impl Write for PartialWriter {
-            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        impl BoundedWrite for PartialWriter {
+            fn write_with_budget(&mut self, bytes: &[u8], _budget: Duration) -> io::Result<usize> {
                 let count = bytes.len().min(self.chunk);
                 self.bytes.extend_from_slice(&bytes[..count]);
                 Ok(count)
             }
-            fn flush(&mut self) -> io::Result<()> {
+            fn flush_with_budget(&mut self, _budget: Duration) -> io::Result<()> {
                 Ok(())
             }
         }
-        let ticks = [0, 10, 20, 30, 100, 100];
+        let ticks = [0, 10, 20, 30, 99];
         let mut index = 0;
         let mut writer = PartialWriter {
             bytes: Vec::new(),
@@ -335,7 +369,7 @@ mod tests {
         .unwrap();
         assert_eq!(writer.bytes, [0, 0, 0, 4, b'a', b'b', b'c', b'd']);
 
-        let ticks = [0, 10, 20, 101];
+        let ticks = [0, 10, 20, 100];
         let mut index = 0;
         let mut writer = PartialWriter {
             bytes: Vec::new(),
@@ -358,6 +392,37 @@ mod tests {
             io::ErrorKind::TimedOut
         );
         assert_ne!(writer.bytes, [0, 0, 0, 4, b'a', b'b', b'c', b'd']);
+    }
+
+    #[test]
+    fn response_send_restores_socket_write_timeouts() {
+        let mut admission = ListenerAdmission::new();
+        let peer: SocketAddr = "127.0.0.1:40080".parse().unwrap();
+        let listener = std::net::TcpListener::bind(peer).unwrap();
+        let address = listener.local_addr().unwrap();
+        let client = std::thread::spawn(move || TcpStream::connect(address).unwrap());
+        let (mut server, remote) = listener.accept().unwrap();
+        let _client = client.join().unwrap();
+        let previous = Some(Duration::from_secs(2));
+        server.set_write_timeout(previous).unwrap();
+        let mut ticket = admission.admit(remote).unwrap();
+        admission.charge_input(&mut ticket, 64, 16).unwrap();
+        let permit = admission.charge_response(&mut ticket, 8).unwrap();
+        admission
+            .send_tcp_response(&mut server, b"test", permit)
+            .unwrap();
+        assert_eq!(server.write_timeout().unwrap(), previous);
+
+        let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
+        udp.set_write_timeout(previous).unwrap();
+        let mut ticket = admission.admit(receiver.local_addr().unwrap()).unwrap();
+        admission.charge_input(&mut ticket, 64, 16).unwrap();
+        let permit = admission.charge_response(&mut ticket, 4).unwrap();
+        admission
+            .send_udp_response(&udp, b"test", receiver.local_addr().unwrap(), permit)
+            .unwrap();
+        assert_eq!(udp.write_timeout().unwrap(), previous);
     }
 
     #[test]
