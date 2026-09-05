@@ -1,89 +1,71 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-05 04:58 Asia/Shanghai
-Repository HEAD reviewed: `5ffc277c9faef56b541d0e84f16951cc88264abc`
-Previous reviewed implementation HEAD: `b3490a2e4b5405f102c45e7463ddbbc7b8192e1c`
-Previous reviewer handoff commit: `d9fde3608abca79e009f0bfe198501b8aface02a`
+Checked at: 2026-09-05 08:00 Asia/Shanghai
+Repository HEAD reviewed: `f99c52c0d6c12a4a60e4d909e40230eca2131bed`
+Previous reviewed implementation HEAD: `5ffc277c9faef56b541d0e84f16951cc88264abc`
+Previous reviewer handoff commit: `f902c36cfacae2b487fc47b0db10fb855c32cd13`
 
 ## What changed
 
 One coding-agent commit landed after the previous reviewer handoff:
 
-- `5ffc277` — **test-fixture adjustment only; no production/runtime/wire/Noise/Session behavior change.** It reformats the prior terminal-state assertion, separates the already-rejected state from a fresh source used for response/queue checks, and moves part of the lifetime/window fixture forward in monotonic time.
+- `f99c52c` — **deterministic expiry-fixture repair only; no production/runtime/wire/Noise/Session behavior change.** It removes the premature manual release of the state whose lifetime is being tested, keeps a distinct live `other` state, advances that state at monotonic time 100, and checks expiry at absolute 210 so the original state created at 10 reaches the exact 200 ms inclusive lifetime boundary while the later state remains live.
 
-Both `main` and `work/continue-20260904` currently point at exact `5ffc277`.
+Both `main` and `work/continue-20260904` now point at exact `f99c52c`.
 
 ### Exact-head CI
 
-Exact `5ffc277` CI is still **red on stable checks and green on nightly decode fuzz smoke** on both refs:
+Exact `f99c52c` is independently green on both refs.
 
-- main run `33914456554` — stable checks failed; nightly decode fuzz smoke succeeded;
-- work-branch run `33914467976` — same exact tree and same overall outcome.
+- main Rust CI run `33928230290` — `stable checks` succeeded, including `bash scripts/check.sh`; `nightly decode fuzz smoke` succeeded, including the pinned 30-second / 8192-byte decode fuzz run.
+- work-branch Rust CI run `33928237749` — overall `success` on the same exact tree.
 
-The failure is now independently localized from the GitHub job log. Formatting is no longer the problem: `scripts/check.sh` reaches the Rust unit tests, and all shown workspace/integration tests pass except one deterministic `neko-crypto` fixture:
+This closes the previous CI-002 fixture/gate defect. It is repository CI evidence, not security approval.
 
-```text
-preauth_tests::process_window_queue_and_lifetime_fail_closed
-left:  Ok(0)
-right: Ok(1)
-crates/neko-crypto/src/lib.rs:1495
-```
-
-The fixture admits the final `other` state at monotonic time `20`, charges input at `20`, and uses test limits `idle_timeout_ms = 200` and `max_lifetime_ms = 200`; therefore `expire(200)` is only 180 ms after creation/progress and correctly returns zero expired states. The first inclusive expiry boundary for that state is `220`. This is a test-expectation/timeline defect, not evidence that `expire_states` itself failed its documented boundary.
-
-Do not weaken the production expiry rule to satisfy this fixture. Repair the fixture/timeline so it asserts the intended 200 ms inclusive boundary from the state’s actual creation/progress time, then rerun the exact gate.
+No new correctness/security blocker is introduced by `f99c52c`. The substantive D019 findings remain A1, B1 verification, D1, E and the isolated C ADR checkpoint.
 
 ## Review verdict
 
-**CONTINUE_WITH_REQUIRED_FIXES — `5ffc277` is a useful fixture cleanup attempt but exact-head stable CI remains red for one deterministic timestamp expectation. The previous A1 and D1 HIGH findings remain open because this commit is test-only. Fix the fixture immediately, then continue the existing multi-hour D019 queue without waiting for another reviewer interval.**
+**CONTINUE_WITH_REQUIRED_FIXES — Q0/CI-002 is closed and exact-head CI is green. Proceed directly into A1 actual response-I/O deadline enforcement, then B1v, D1, E and the isolated C checkpoint without waiting for another reviewer interval.**
 
-No administrator action is required. Do not spend VPS time on this deterministic security-accounting lane while A1/D1 remain open.
+No administrator action is required now. Do not spend VPS time on this deterministic security-accounting lane while A1/D1 remain open.
 
 ## Reviewer findings
 
-### CI-002 — REQUIRED GATE REPAIR — expiry fixture uses the wrong absolute boundary
+### CI-002 — CLOSED
 
-The prior rustfmt-only failure is gone. Exact `5ffc277` now compiles and runs the test suite, but the revised fixture expects one state to expire at absolute `200` even though that state was created/progressed at `20` under a 200 ms idle/lifetime limit.
-
-Required repair:
-
-- preserve the implementation semantics that expiry is measured from the state’s actual creation/last-progress timestamp;
-- change the fixture so its terminal assertion is made at the true inclusive boundary (`220` for the current test timeline), or restructure the fixture so creation/progress occurs at `0` if absolute `200` is the intended boundary;
-- retain a boundary assertion proving one millisecond before expiry remains live and exact-boundary expiry is terminal where practical;
-- run the targeted `neko-crypto` test, full `scripts/check.sh`, and `git diff --check`;
-- push normally and inspect exact-head CI.
-
-This should be folded into the next coherent A1/B1v/D1 work rather than turned into a standalone waiting cycle.
+`f99c52c` repairs the test timeline without weakening production expiry semantics. Exact-head stable CI and required fuzz smoke are green. Do not reopen this fixture unless a later semantic change invalidates the boundary.
 
 ### RSEC-001A1 — HIGH — 100 ms response permit still does not bound actual I/O
 
-`5ffc277` changes tests only. The production response path remains semantically equivalent to:
+The current production response shape remains effectively:
 
 ```text
 charge_response -> socket write/send -> complete_response(now)
 ```
 
-A blocking/partial socket write can therefore emit bytes before a post-I/O deadline check discovers that the 100 ms D019 permit expired.
+A blocking or partial socket write can therefore emit bytes before a post-I/O completion check notices that the exact D019 100 ms response permit expired.
 
-Required repair remains:
+Required repair:
 
-- preserve the exact D019 100 ms value and one-shot `PreauthResponsePermit` ownership;
-- derive remaining time from the same monotonic clock **before and during** the real I/O attempt;
-- TCP complete-frame response writes must use one absolute deadline across all partial writes; a per-call timeout that resets after partial progress is insufficient;
-- UDP sends must execute under the remaining permit budget as well;
-- partial/timeout/error attempts stay charged and emit no negotiation/authentication/readiness/Session success evidence;
-- completion/abandonment consumes response ownership exactly once;
-- deterministic injected-writer/sink coverage must prove inside-budget success, exact-boundary semantics and over-budget abandonment without wall-clock sleeps.
+- preserve the existing one-shot `PreauthResponsePermit` and exact 100 ms D019 value;
+- derive one absolute monotonic deadline from response admission;
+- TCP complete-frame writes must share that one absolute deadline across every partial write; never reset a fresh 100 ms timeout after partial progress;
+- UDP sends must execute under the same remaining permit budget;
+- partial/timeout/error attempts remain charged and cannot emit negotiation/authentication/readiness/Session success evidence;
+- completion or abandonment consumes response ownership exactly once;
+- deterministic injected writer/sink tests must prove inside-budget success, exact-boundary behavior and over-budget abandonment without wall-clock sleeps;
+- affected real responder call sites must use the bounded helper rather than retaining a post-send-only completion path.
 
-Do not substitute a seconds-long outer socket timeout or another post-send bookkeeping check.
+Do not substitute an outer seconds-long socket timeout or another post-send bookkeeping check.
 
-### RSEC-001B1 — implementation shape accepted; verification still incomplete
+### RSEC-001B1 — implementation direction accepted; verification still incomplete
 
-`ea5b257` remains accepted as the correct one-owner direction for process expiry and application pending ownership. The queue/state lifetime should not be redesigned unless deterministic tests falsify it.
+`ea5b257` remains the accepted one-owner direction for process expiry and application pending ownership. Do not redesign it merely because the queue is now green.
 
 Still required before B is evidence-complete:
 
-- idle expiry at the exact D019 1 s boundary while five-second lifetime has not elapsed;
+- idle expiry at exact D019 1 s boundary while five-second lifetime has not elapsed;
 - lifetime expiry;
 - successful authentication/promotion;
 - cancellation/replacement;
@@ -91,44 +73,36 @@ Still required before B is evidence-complete:
 - ordinary expiry leaves the bounded server loop alive;
 - no double dequeue/release and exact queue/memory accounting across every terminal path.
 
-### RSEC-001D1 — HIGH — terminal rejection is incomplete across inner and arithmetic failures
+### RSEC-001D1 — HIGH — terminal rejection remains incomplete across inner and arithmetic failures
 
-`5ffc277` does not change this finding.
+The process-level rejected state added by `b3490a2` is useful, but D019 requires every exhausted, saturated, unmeasurable, timed-out, malformed or over-limit operation on one logical pre-auth state to become terminal.
 
-The process-level rejected bit added by `b3490a2` is useful, but D019 requires every exhausted/saturated/unmeasurable/timed-out/malformed/over-limit operation on a logical pre-auth state to become terminal.
+Remaining concrete gaps to close:
 
-Concrete remaining gaps:
-
-1. `ListenerAdmission` can return immediately when the inner `PreauthBudget` rejects input/response before the outer process state is marked rejected.
-2. checked arithmetic/deadline construction still has `ok_or(SessionRejected)?`-style paths that can fail before the explicit `reject(id)` branch.
+1. `ListenerAdmission` can still return immediately when inner `PreauthBudget` rejects input/response before the outer process state is marked rejected.
+2. State-associated checked arithmetic/deadline construction can still fail before an explicit terminal reject path.
 
 Required repair:
 
-- make inner per-state rejection explicitly consume/mark the associated process state terminal;
-- route state-associated arithmetic/unmeasurable failures through the terminal-rejection path;
-- preserve cross-layer accounting atomicity while keeping the logical state non-revivable;
+- inner per-state rejection must explicitly consume/mark the associated process state terminal;
+- state-associated arithmetic/unmeasurable/deadline failures must route through the terminal-rejection path;
+- preserve cross-layer accounting atomicity while making the logical state non-revivable;
 - regress inner input rejection, inner response/anti-amplification rejection, global window rejection, queue rejection, response deadline rejection and arithmetic/deadline overflow;
-- prove the same logical state cannot become usable after a one-second window rollover.
+- prove the same logical state cannot become usable after one-second window rollover.
 
 ### RSEC-001C — isolated ADR checkpoint remains unchanged
 
-The source/carrier persistence conflict still must not block A1/B1v/D1/E:
+D019 states that counters are not reset by retry, reconnect, carrier change, identity change or error. The current source accounting row is removed after its final live state is released. Retaining terminal source rows forever would itself create an unbounded source-accounting map, while existing D019 text defines no terminal-source retention TTL, history ceiling or eviction policy.
 
-- D019 says counters are not reset by retry, reconnect, carrier change, identity change or error;
-- current source rows disappear when the final live state is released;
-- retaining terminal source rows forever would create an unbounded source-accounting map;
-- existing D019 text defines no terminal-source retention TTL/history ceiling/LRU policy.
-
-Do not invent a numeric retention policy. First make the carrier/source projection explicit and bounded. If reviewed text still provides no bounded terminal-retention interpretation after E, write the ADR amendment request and stop only C.
+Do not invent a numeric retention policy. First make the carrier/source projection explicit and bounded. After E, determine whether existing reviewed text provides a bounded interpretation. If not, write an ADR amendment request with exact conflict/options/trade-offs and stop **only C**; independent H/I work may remain available if it does not depend on the unresolved source-retention semantics.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains a bounded research-baseline flag only.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain required.
-- Exact `5ffc277` is test-only relative to `d9fde36`; it does not close A1, B1v, D1, E or C.
-- Exact `5ffc277` stable CI is red on one deterministic unit-test expectation; nightly decode fuzz smoke is green. Do not describe the tree as fully green.
-- The failing `expire(200)` expectation is inconsistent with the fixture’s state creation/progress at `20` and 200 ms limits; do not change production expiry semantics merely to make that assertion pass.
+- Exact `f99c52c` changes one deterministic test fixture only; it closes CI-002 but does not close A1, B1v, D1, E or C.
+- Exact `f99c52c` stable checks and nightly decode fuzz smoke are green on `main`; the same tree also has a green work-branch run.
 - A post-send deadline check is not bounded response I/O.
 - Process admission does not claim to bound kernel SYN backlog, provider NAT state or resources outside the process.
 - Existing inner `PreauthBudget` remains useful and must not be weakened to simplify outer accounting.
@@ -138,34 +112,28 @@ Do not invent a numeric retention policy. First make the carrier/source projecti
 
 ## Rolling Work Queue
 
-This is a rolling multi-hour queue. Finish a coherent slice -> run its targeted/full gates -> commit -> push -> immediately consume the next dependency-satisfied slice. Do not stop for a reviewer interval. Only a new HIGH/BLOCKER that invalidates downstream work, a genuine ADR/core-architecture conflict, authorization boundary, production impact, missing credential/third-party authority, repository breakage, runtime/tool-budget termination or real queue exhaustion is a stop condition.
-
-### Q0 — Repair the exact-head deterministic expiry fixture
-
-**Status:** `READY_LOCAL`; immediate first action, expected to be tiny.
-
-Correct `process_window_queue_and_lifetime_fail_closed` without weakening implementation semantics. The current final state is created/progressed at `20`; under 200 ms idle/lifetime limits it is not expired at `200` and reaches the inclusive boundary at `220`.
-
-Prefer explicit boundary coverage (`219` live, `220` expired) or an equivalent timeline that makes the intended origin obvious.
-
-Verification: targeted `neko-crypto` test + full `scripts/check.sh` + `git diff --check`. Push. Do **not** wait after this small gate repair.
-
-**Continue immediately to A1:** yes.
+This is a rolling multi-hour queue. Finish one coherent slice -> run required targeted/full gates -> commit -> push -> immediately consume the next dependency-satisfied slice. Do not stop for a reviewer interval. Only a new HIGH/BLOCKER that invalidates downstream work, a genuine ADR/core-architecture conflict, authorization boundary, production impact, missing credential/third-party authority, repository breakage, runtime/tool-budget termination or real queue exhaustion is a stop condition.
 
 ### A1 — Bind response permits to actual I/O
 
-**Status:** `READY_LOCAL_AFTER_Q0`; highest substantive priority.
+**Status:** `READY_LOCAL`; immediate substantive priority.
 
-Required behavior:
+Implement actual bounded I/O using one absolute 100 ms monotonic deadline from response admission.
 
-- all ordinary TCP/UDP probe, periodic TCP, multistream TCP, failover UDP selection/Noise and failover TCP negotiation/Noise pre-auth response paths use bounded I/O under the exact 100 ms permit;
-- TCP framing uses one total monotonic deadline across partial writes;
-- UDP response send is permit-bounded;
-- failed/partial/late send produces no success evidence and response accounting remains charged;
-- completion/abandonment is one-shot;
-- no new wire/protocol numeric value.
+Required coverage:
 
-Verification: deterministic injected sink/writer tests + affected CLI integration tests + full gate. Push and continue; exact CI may run while independent B1v/D1 preparation proceeds, but security closure later requires green exact-head CI.
+- ordinary TCP probe response;
+- ordinary UDP probe response;
+- periodic TCP pre-auth response;
+- multistream TCP pre-auth response;
+- failover UDP selection / Noise pre-auth response;
+- failover TCP negotiation / Noise pre-auth response.
+
+TCP framing must retain one deadline across partial writes. UDP send must execute under remaining budget. Failed/partial/late sends stay charged, consume the permit and emit no success evidence.
+
+Tests: deterministic injected writer/sink or equivalent controllable I/O abstraction proving inside-budget, exact-boundary, partial-write and over-budget cases without sleeps; affected CLI/integration coverage; full `scripts/check.sh`; `git diff --check`.
+
+Push normally and continue.
 
 **Continue immediately to B1v:** yes.
 
@@ -173,7 +141,18 @@ Verification: deterministic injected sink/writer tests + affected CLI integratio
 
 **Status:** `PREAUTHORIZED_AFTER_A1`.
 
-Do not redesign `ea5b257` unless a deterministic test falsifies it. Complete the missing matrix: idle exact-boundary expiry, lifetime expiry, promotion, cancellation/replacement, source/global queue max/max+1, ordinary server-loop continuation and exactly-once state/queue/memory cleanup.
+Do not redesign the accepted `ea5b257` ownership shape unless tests falsify it. Complete the deterministic matrix:
+
+- exact idle boundary;
+- exact lifetime boundary;
+- promotion/authentication;
+- cancellation/replacement;
+- source queue max/max+1;
+- global queue max/max+1 across distinct sources;
+- ordinary expiry keeps bounded responder/server loop alive;
+- queue/state/memory release exactly once on every terminal path.
+
+Run targeted/full gate, push, continue.
 
 **Continue immediately to D1:** yes.
 
@@ -189,10 +168,11 @@ Required regressions:
 - inner response/anti-amplification rejection -> same ticket cannot later send;
 - global input/work rejection -> no revival after window rollover;
 - source/global response rejection -> no later response;
-- queue saturation rejection -> no later enqueue on the rejected state;
+- queue saturation rejection -> no later enqueue on rejected state;
 - response deadline failure -> no later success;
-- checked-add/deadline overflow -> terminal rejection;
-- cleanup remains one-shot and bounded.
+- checked-add/deadline/clock-unmeasurable failure -> terminal rejection;
+- cleanup remains one-shot and bounded;
+- cross-layer rollback preserves truthful counters while never reviving the logical state.
 
 Run targeted/full gate, push, continue.
 
@@ -202,38 +182,76 @@ Run targeted/full gate, push, continue.
 
 **Status:** `PREAUTHORIZED_AFTER_D1`.
 
-For every externally reachable pre-auth responder, machine-check or maintain a static inventory of:
+For every externally reachable pre-auth responder, maintain a machine-checkable/static inventory of:
 
 1. typed carrier/source projection + state admission;
 2. input byte/packet charge before parse;
-3. parser/work reservation before work;
+3. parser/work reservation before protected work;
 4. state memory reservation before owned allocation;
 5. queue reservation before pending ownership;
 6. response charge + actual bounded response I/O before send;
 7. terminal rejection/evidence barrier;
 8. exactly-once cleanup.
 
-Current conservative 64/4096 work reservations may remain only if they dominate bounded parser work; they are accounting units, not measured CPU cycles. Fix concrete uncovered seams only. Add a guard so a newly externally reachable responder cannot silently bypass admission.
+Current conservative 64/4096 work reservations may remain only if they dominate bounded parser work; they are accounting units, not measured CPU cycles. Fix concrete uncovered seams only. Add a guard/test so a new externally reachable responder cannot silently bypass admission.
 
-**Continue immediately to C:** yes.
+Run full gate, push, continue.
 
-### C — Resolve carrier/source projection and bounded persistence semantics
+**Continue immediately to C1:** yes.
 
-**Status:** `ADR_CHECKPOINT_AFTER_E`.
+### C1 — Make carrier/source projection explicit and bounded
 
-First implement the noncontroversial typed projection: explicit bounded carrier discriminator (`TCP`, `UDP`, one bounded unknown bucket where applicable), deterministic non-collision tests and no raw source logging.
+**Status:** `PREAUTHORIZED_AFTER_E`.
 
-Then evaluate terminal source persistence. Do not retain all sources forever and do not invent TTL/LRU/history limits. If reviewed text still lacks a bounded interpretation of the D019 no-reset rule, write a compact ADR amendment request with exact conflict/options/trade-offs and stop **only C** for policy review.
+Implement only the noncontroversial projection portion before policy resolution:
 
-**Continue immediately to F only after C is resolved:** yes.
+- explicit bounded carrier discriminator at least distinguishing current TCP and UDP pre-auth sources;
+- one bounded unknown/unusable-source bucket where a live call site genuinely needs it;
+- deterministic non-collision tests across family/address/port/carrier projection;
+- no raw source logging or sensitive topology disclosure;
+- no new retention duration/history ceiling.
+
+Run targeted/full gate, push, continue to C2.
+
+### C2 — Resolve terminal-source persistence semantics or produce ADR amendment request
+
+**Status:** `ADR_CHECKPOINT_AFTER_C1`.
+
+Re-read D019 and adjacent reviewed decisions after the implementation inventory is concrete.
+
+Do not retain all terminal sources forever. Do not invent TTL/LRU/history counts. If existing reviewed text still cannot reconcile the no-reset rule with bounded source-accounting storage, write a compact ADR amendment request containing:
+
+- exact conflicting clauses;
+- attack/resource reason both requirements matter;
+- feasible policy shapes without choosing numeric values by convenience;
+- which later tests/evidence depend on the decision.
+
+Stop **only this policy-dependent lane** if a maintainer/reviewer choice is genuinely required. Do not falsely mark D019 complete.
+
+**Continue to F only when C2 is resolved by reviewed policy:** yes.
 
 ### F — Complete the full D019 adversarial/evidence-barrier matrix
 
-**Status:** `PREAUTHORIZED_AFTER_C`.
+**Status:** `PREAUTHORIZED_AFTER_C2`.
 
-Cover source/global concurrency, source-lifetime input/packet/work under resolved C semantics, global one-second windows, per-packet work, state/global memory, source/global queue, source/global response + inner 3x anti-amplification, idle/lifetime/response deadlines with injectable time, overflow, terminal non-revival, retry/reconnect/carrier transition, cancellation/timeout/double cleanup, no Session/Path/Delivery/readiness/authz-equivalent evidence on rejection, and secret-safe diagnostics.
+Cover:
 
-Do not substitute VPS/load tests for deterministic accounting correctness. Full local gate, commit, push; exact repair-head CI must be green before security closure.
+- source/global concurrency max/max+1;
+- source-lifetime input bytes/packets/work under resolved C semantics;
+- global one-second input/work/response windows;
+- per-packet work ceiling;
+- state/global memory;
+- source/global pending queue;
+- source/global response + inner 3x anti-amplification;
+- idle 1 s / lifetime 5 s / response-send 100 ms through deterministic time/I/O controls;
+- checked arithmetic/clock overflow;
+- terminal non-revival;
+- retry/reconnect/carrier transition persistence;
+- cancellation/timeout/double cleanup;
+- no Session/Path/Delivery/readiness/authz-equivalent evidence on rejection;
+- secret-safe bounded diagnostics.
+
+Do not substitute VPS/load tests for deterministic accounting correctness. Full gate, commit, push; exact repair-head CI must be green before security closure.
 
 **Continue immediately to G after exact-head CI green:** yes.
 
@@ -241,31 +259,40 @@ Do not substitute VPS/load tests for deterministic accounting correctness. Full 
 
 **Status:** `PREAUTHORIZED_AFTER_F`.
 
-Re-read the exact implementation/tests, then correct `docs/reviews/resource-abuse-evidence-2026-09-04.md`, `docs/release-security-review-packet.md`, `docs/status.md` and closure/navigation records to name the actual reviewed implementation head.
+Independently re-read the exact implementation and tests. Then correct:
 
-RSEC-001 closes as an implementation finding only when Q0/A1/B1v/D1/E/C/F are actually satisfied. Independent external/two-person security review remains a separate release gate. Do not promote RC/production/freeze/release automatically.
+- `docs/reviews/resource-abuse-evidence-2026-09-04.md`;
+- `docs/release-security-review-packet.md`;
+- `docs/status.md`;
+- release closure/navigation records.
+
+RSEC-001 may close as an implementation finding only when A1/B1v/D1/E/C1/C2/F are actually satisfied and exact-head CI is green. Independent external/two-person security review remains a separate release gate. Never promote RC/production/freeze/release automatically.
 
 **Continue immediately to H if no new HIGH/BLOCKER:** yes.
 
 ### H — Compatibility / freeze-boundary review
 
-**Status:** `READY_LOCAL_AFTER_G`.
+**Status:** `READY_LOCAL_AFTER_G`; also safe fallback research/review if C2 is externally waiting and no D019-dependent mutation is attempted.
 
-Audit corpus-v1 content-addressed freeze vs global protocol non-freeze, current/current negotiation, unsupported/future rejection, downgrade/transcript binding into Noise, resume/version binding and replay boundary, plus stale wording that implies corpus freeze == protocol/release freeze. Add a regression only for a real defect; do not reopen frozen corpus bytes without correctness evidence.
+Audit corpus-v1 content-addressed freeze vs global protocol non-freeze, current/current negotiation, unsupported/future rejection, downgrade/transcript binding into Noise, resume/version binding, replay boundary and stale wording implying corpus freeze == protocol/release freeze.
+
+Add a regression only for a concrete defect. Do not reopen frozen corpus bytes without correctness evidence.
 
 **Continue immediately to I:** yes.
 
 ### I — Package/operator and evidence-provenance integrity review
 
-**Status:** `READY_LOCAL_AFTER_H`.
+**Status:** `READY_LOCAL_AFTER_H`; safe independent fallback if C2 is externally waiting.
 
-Verify existing bounded evidence for x86_64 package/build identity, install/readiness/smoke/upgrade/rollback, retained external state without reading protected identity material, shutdown/listener/temp cleanup, canonical Git-blob/checksum manifests, exact-head CI references and stale release-packet links/hashes. Do not rerun already-sufficient VPS/package work merely for freshness.
+Verify existing bounded evidence for x86_64 package/build identity, install/readiness/smoke/upgrade/rollback, retained external state without reading protected identity material, shutdown/listener/temp cleanup, canonical Git-blob/checksum manifests, exact-head CI references and stale release-packet links/hashes.
+
+Do not rerun already-sufficient VPS/package work merely for freshness. Fix only concrete defects.
 
 **Continue immediately to J:** yes.
 
 ### J — Reclassify release opportunities and reconsider VPS
 
-**Status:** `READY_LOCAL_AFTER_I`.
+**Status:** `READY_LOCAL_AFTER_I`, but final live classification must remain truthful to unresolved C2/F/G dependencies if any.
 
 Re-evaluate every release-closure row:
 
@@ -306,6 +333,6 @@ The broader rolling queue remains active through H-J unless a real stop conditio
 
 ## Questions requiring maintainer decision
 
-No immediate administrator action is required for Q0/A1/B1v/D1/E.
+No immediate administrator action is required for A1/B1v/D1/E/C1.
 
-A maintainer/reviewer decision is required only if C reaches the already-identified source-retention ADR conflict and no existing reviewed text provides a bounded policy. At that point present the exact policy options/trade-offs; do not invent a numeric retention rule autonomously.
+A maintainer/reviewer decision is required only if C2 reaches the already-identified source-retention ADR conflict and no existing reviewed text provides a bounded policy. At that point present exact policy options/trade-offs; do not invent a numeric retention rule autonomously.
