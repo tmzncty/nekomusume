@@ -1,122 +1,151 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-05 12:00 Asia/Shanghai
-Repository HEAD reviewed: `b775f1e241ba58785f80708ba41ef51856a5e259`
-Previous checked implementation HEAD: `61d69bdd58b071f7d9c3e1ec99602cebbf032787`
-Previous reviewer handoff commit: `9fe35727255245d43b51638fa3bc1d91d1ddbe5f`
+Checked at: 2026-09-05 12:59 Asia/Shanghai
+Repository HEAD reviewed: `f98161b05d71783d45e03c04e34ccd5127259cf2`
+Previous checked implementation HEAD: `b775f1e241ba58785f80708ba41ef51856a5e259`
+Previous reviewer handoff commit: `7da4d205a991d8b865748643d6a95a20bb5404b2`
 
 ## What changed
 
 One coding-agent commit landed after the previous reviewer handoff:
 
-- `b775f1e` — **narrow D019 response-I/O deadline repair; no wire/Noise/Session/Carrier/release semantic change.** It replaces the previous single socket timeout with a `BoundedWrite` path that recomputes the remaining time from the same absolute response-permit deadline before every potentially blocking TCP partial write and flush; zero remaining budget now fails closed instead of gaining an extra millisecond; successful TCP/UDP pre-auth response helpers preserve and restore the preexisting socket write timeout. It adds deterministic partial-write boundary coverage and socket-level timeout-restoration regressions.
+- `f98161b` — **deterministic D019 queue-ownership verification only; no wire/Noise/Session/Carrier/release semantic change.** It adds exact idle/lifetime expiry tests, stale queue-owner invalidation, source/global queue max+1 coverage, exactly-once queue/state/memory cleanup checks, and a controller-survival check showing ordinary unauthenticated expiry does not make the admission controller unusable.
 
-Both `main` and `work/continue-20260904` point at exact `b775f1e241ba58785f80708ba41ef51856a5e259` at review time.
+Both `main` and `work/continue-20260904` point at exact `f98161b05d71783d45e03c04e34ccd5127259cf2` at review time.
 
 ### Exact-head CI
 
-Exact `b775f1e` is independently green on both refs:
+Exact `f98161b` is independently green on both refs:
 
-- main Rust CI run `33941126349` — `success`;
-- work-branch Rust CI run `33941131928` — `success`.
+- main Rust CI run `33943764474` — `success`;
+- work-branch Rust CI run `33943769792` — `success`.
 
 This is repository CI evidence, not a security approval.
 
 ## Review verdict
 
-**CONTINUE_WITH_REQUIRED_FIXES — A1r is accepted as closed at exact green `b775f1e`; continue immediately through B1v -> D1 -> E -> C1/C2 -> F/G/H/I/J without another reviewer wait. RSEC-001 as a whole remains open because queue ownership verification, terminal rejection, charge-order inventory and the source-retention policy conflict are not yet closed.**
+**CONTINUE_WITH_REQUIRED_FIXES — B1v is accepted as closed at exact green `f98161b`; continue immediately through D1 -> E -> C1 -> C2 -> F/G/H/I/J without another reviewer wait. RSEC-001 remains HIGH/open because terminal rejection is still not structural across all inner/outer failure classes, responder charge-order coverage is not yet machine-closed, and the D019 terminal-source persistence policy conflict remains unresolved.**
 
-No administrator action is required now. Do not spend VPS time on this deterministic security-accounting lane while D1/C2 remain unresolved.
+No administrator action is required at this review point. Do not spend VPS time on this deterministic security-accounting lane while D1/C2 remain unresolved.
 
 ## Reviewer findings
 
 ### RSEC-001A1 — CLOSED at `b775f1e`
 
-The three concrete defects from the previous review are now addressed within the stated D019 process-side boundary:
+Keep the accepted absolute response-I/O deadline contract intact:
 
-1. **One absolute deadline across partial TCP writes.** `write_all_until` recomputes `remaining_budget(now, deadline)` before every `write_with_budget`; the `TcpStream` implementation applies that remaining duration to the blocking syscall. Partial progress therefore does not refresh a new 100 ms window.
-2. **Zero budget fails closed.** `remaining_budget` rejects `remaining_ms == 0`; the previous `max(1)` extension is gone.
-3. **Reusable socket timeout state is restored on success.** TCP and UDP helpers read the prior timeout, apply the bounded pre-auth timeout, restore the prior value, then complete the response permit. The new regression exercises a preexisting two-second timeout for both transports.
+- one absolute 100 ms deadline is carried across partial TCP writes/flush;
+- zero remaining budget fails closed rather than gaining an extra millisecond;
+- UDP/TCP send helpers restore the preexisting write timeout on successful bounded completion;
+- exact-head tests and CI are green.
 
-The deterministic partial-writer test now has an inside-budget completion at 99 ms and a refusal when a later blocking operation would begin at the 100 ms boundary. Exact-head CI is green.
+Evidence boundary: process-side bounded send-attempt semantics only. This is not proof of remote receipt within 100 ms or provider/kernel delivery latency.
 
-Evidence boundary: this proves the process-side bounded send-attempt contract used by current responder call sites. It does **not** prove remote receipt by 100 ms or provider/kernel delivery latency, and no such claim should be added.
+Do not reopen this into a generic async-I/O redesign absent a concrete defect.
 
-Do not reopen this into a generic asynchronous I/O framework unless a concrete failing responder or platform behavior appears.
+### RSEC-001B1 — CLOSED at `f98161b`
 
-### RSEC-001B1 — implementation direction accepted; verification remains READY
+The accepted one-owner queue/process-expiry direction now has sufficient deterministic closure for the current bounded implementation:
 
-The existing one-owner queue/expiry direction remains valid. Finish the lifecycle/boundary matrix before calling queue ownership evidence-complete. No redesign is justified by `b775f1e`.
+- idle expiry is exact at 1,000 ms while lifetime is still below 5,000 ms;
+- lifetime expiry is exact at 5,000 ms;
+- process expiry consumes state, queue and reserved memory once;
+- stale queue permits cannot dequeue after process expiry;
+- source queue max/max+1 and global queue max/max+1 across distinct sources fail closed;
+- normal dequeue + state release returns counters to zero;
+- the `ListenerAdmission` integration invalidates application-level queue ownership after process expiry and remains able to admit a later peer rather than turning ordinary unauthenticated expiry into controller failure;
+- the real failover responder already uses the same expired-state list to discard its `PendingUdpNegotiation` owner, and successful authentication dequeues then releases the pending ownership.
 
-### RSEC-001D1 — HIGH — terminal rejection still incomplete across inner + outer accounting
+The low-level promotion/cancellation test names two terminal paths through the same one-shot dequeue/release primitive; do not expand this into a new queue subsystem unless a concrete responder path demonstrates a missing owner transition.
 
-Current `ListenerAdmission::charge_input` still performs `ticket.budget.charge_input(...)` and returns immediately on an inner `PreauthBudget` rejection before mechanically terminalizing the process/logical state. `charge_response` has the same shape for inner response/anti-amplification rejection. This means D019's “rejected work cannot later become successful merely because a window refilled or the caller retried” contract is still not structurally enforced across every rejection layer.
+Evidence boundary: this closes current deterministic queue ownership/accounting semantics. It is not a public-load/capacity claim and does not close D019 as a whole.
 
-State-associated checked arithmetic/deadline/clock failures must also terminate the same logical pre-auth ownership rather than merely returning an error when a reusable ticket remains live.
+### RSEC-001D1 — HIGH — every rejection class is still not terminal across both accounting layers
 
-Do not weaken the inner `PreauthBudget`; compose terminal rejection across both layers.
+Current exact `f98161b` still has two important structural gaps.
 
-### RSEC-001C — ADR checkpoint remains isolated
+1. `ListenerAdmission::charge_input` and `charge_response` call the inner `PreauthBudget` first and return immediately when that inner limit/anti-amplification check rejects. Those errors never reach `ProcessPreauthAdmission::reject`, so the same logical ticket may still be live at the outer layer.
+2. Several state-associated outer failures return through `?` before `reject(id)` is reached: backwards/unmeasurable window time in `refresh_window`, `live` deadline/clock rejection, checked-add overflow while computing source/global byte/packet/work counters, and response-deadline construction overflow. A caller retaining the logical ticket can therefore receive an error without a mechanically terminal state in those classes.
 
-The current source projection still lacks an explicit carrier discriminator and terminal source usage can disappear after the last live state. D019 simultaneously says source counters are state-lifetime scoped and must not reset through retry/reconnect/carrier change/identity change/error. Keeping terminal sources forever would create an unbounded source-accounting map, while the reviewed ADR defines no tombstone retention TTL/history ceiling/eviction rule.
+The existing outer limit branches for input/response/queue ceilings correctly call `reject(id)`, and response I/O failure correctly routes through `abandon_response`. Preserve those improvements; do not regress them while making rejection uniform.
 
-Do not invent a numeric retention policy. Complete the concrete responder/charge-order inventory first, make the carrier/source projection explicit, then re-read the reviewed policy. If bounded storage and no-reset semantics still conflict, produce the compact ADR amendment request and stop only that policy-dependent lane. H/I remain independent fallback work.
+**Required repair:** make terminalization structural at the logical ticket/controller boundary rather than relying on each call site to remember it.
+
+Preferred bounded shape:
+
+- expose one small process `reject_state(id)`/equivalent primitive that is idempotent when the state still exists;
+- give `ListenerAdmission` one `terminalize(ticket)` or failure helper so an inner `PreauthBudget` rejection also poisons the outer process state before returning;
+- refactor state-associated `ProcessPreauthAdmission` operations so any error after a state id has been selected either marks that id rejected before return or consumes/releases the logical state in a clearly one-shot API;
+- do not turn `admit_state` failure into a retained tombstone because no logical state exists yet;
+- preserve cross-layer accounting truth: rollback may undo a just-applied inner charge after an outer rejection, but rollback must never make the logical state reusable;
+- deliberate experimental response suppression is not automatically the same as budget rejection; do not break an explicitly controlled fault seam merely because an unused response permit is dropped. Only actual rejection/timeout/I/O failure must be terminal under D019.
+
+Required deterministic regressions include:
+
+- inner per-state input limit failure -> later input/queue/response on same logical ticket all fail;
+- inner response/3x anti-amplification failure -> later input or window rollover cannot revive response ability on that ticket;
+- global input/work rejection -> same logical state remains dead after one-second rollover;
+- source/global response rejection -> same logical state cannot respond later;
+- source/global queue rejection -> same logical ownership cannot enqueue later;
+- backwards time / expired-live-state / checked arithmetic or response-deadline construction failure cannot leave a reusable state when the failure is associated with an existing id;
+- response I/O/deadline failure remains terminal;
+- cleanup/release after rejection is bounded and exactly once;
+- no Session/PathValidated/Delivery/ACK/readiness/authz-equivalent success evidence follows any pre-auth rejection.
+
+### RSEC-001C — ADR checkpoint remains isolated, not yet an administrator blocker
+
+Current `source_key(peer)` still projects only family/address/port. D019 says the source key is the received carrier/source tuple, so TCP and UDP must be distinguishable in the explicit projection rather than relying on separate caller context.
+
+A separate policy tension still exists in D019:
+
+- per-source byte/packet/work/response counters are described as state-lifetime accounting; and
+- counters also must not reset through retry, reconnect, carrier change, identity change or error.
+
+Current `release` removes a source usage entry after its last live state, so reconnect can regain fresh source budget. Retaining every terminal source forever would make the source map unbounded, while the reviewed ADR provides no terminal-source retention TTL, history ceiling, LRU size or eviction policy.
+
+Do not invent convenience numbers. Finish D1/E first, make the carrier/source projection explicit in C1, then re-read the policy against the concrete inventory. If bounded storage and no-reset semantics still cannot both be satisfied, C2 should produce the compact ADR amendment request and stop only that policy-dependent lane.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains a bounded research-baseline flag only.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain required.
-- Exact `b775f1e` is real implementation with deterministic/socket-level tests and exact-head green CI. It closes the narrow A1r finding only; it does not close D019/RSEC-001 globally.
-- Existing inner `PreauthBudget` remains a useful stricter per-state anti-amplification/input-response bound and must not be removed to simplify outer accounting.
+- Exact `f98161b` adds deterministic queue-ownership verification and exact-head green CI. It does not add new WAN/VPS behavior evidence, close RSEC-001 globally, or constitute a security audit.
+- Existing inner `PreauthBudget` remains the stricter per-state input/anti-amplification bound and must not be weakened or removed to simplify the outer controller.
 - Process admission does not claim control over kernel SYN backlog, provider NAT state or resources outside the process.
-- No VPS/load run substitutes for deterministic D019 counter, ownership, timeout and evidence-barrier correctness.
-- Standing VPS authorization remains valid for genuinely dependency-ready self-owned TCP/UDP work, but the current correctness/security lane has precedence.
+- `ROADMAP.md` / `IMPLEMENTATION_PLAN.md` continue to report no truthful `READY_LIVE` row in the current release-evidence matrix. Do not manufacture traffic merely because the rented VPS is available.
+- Standing VPS authorization remains valid for a future genuinely dependency-ready self-owned TCP/UDP evidence row; correctness/security gates still take precedence.
+- Historical negative and bounded positive WAN/HY2/failover/periodic evidence remains immutable at its exact commit boundary.
 - Protected identity material, credentials, private endpoint material and raw private diagnostics remain unread/untracked/uncommitted.
 
 ## Rolling Work Queue
 
 This is a rolling multi-hour queue. Finish one coherent slice -> targeted/full gates -> commit -> push -> immediately consume the next dependency-satisfied slice. Do not stop for a reviewer interval. Only a new HIGH/BLOCKER that invalidates downstream work, a genuine ADR/core-architecture conflict, action beyond authorization, production impact, missing credentials/third-party authority, repository breakage, runtime/tool-budget termination or real queue exhaustion is a stop condition.
 
-### B1v — Finish queue-expiry ownership verification
-
-**Status:** `READY_LOCAL`; immediate next slice.
-
-Do not redesign the accepted queue/state ownership shape. Close the deterministic matrix:
-
-- exact idle expiry at 1,000 ms while five-second lifetime has not elapsed;
-- exact lifetime expiry at 5,000 ms;
-- successful authentication/promotion removes queue ownership exactly once;
-- cancellation/replacement removes queue ownership exactly once;
-- source queue max/max+1;
-- global queue max/max+1 across distinct source projections;
-- ordinary expiry keeps the bounded responder/server loop alive rather than turning normal unauthenticated timeout into process failure;
-- queue/state/memory counters return to the expected values exactly once on every terminal path;
-- stale application-level pending ownership cannot successfully dequeue or continue after process expiry.
-
-Use injectable/deterministic time; no wall-clock soak. Run targeted tests, full repository gate and `git diff --check`, commit, push.
-
-**Continue immediately to D1:** yes.
-
 ### D1 — Make every rejection class terminal across inner + outer accounting
 
-**Status:** `PREAUTHORIZED_AFTER_B1v`; security priority.
+**Status:** `READY_LOCAL`; immediate security-priority slice.
 
-Make terminal rejection structural at the logical ticket/controller boundary without changing D019 numeric ceilings, wire bytes, Noise, Session or Carrier semantics.
+Implement the structural terminalization described in RSEC-001D1 without changing D019 numeric ceilings, wire bytes, Noise, Session or Carrier semantics.
+
+Likely areas:
+
+- `crates/neko-cli/src/preauth.rs`;
+- `crates/neko-crypto/src/lib.rs`;
+- existing pre-auth tests only as needed.
 
 Required behavior/tests:
 
-- inner per-state input rejection -> process/logical ticket terminal; no later input/queue/response operation on the same logical state;
-- inner response / anti-amplification rejection -> terminal; no later send after additional input or window rollover;
-- global input/work rejection -> no revival after one-second window rollover;
-- source/global response rejection -> no later response;
-- source/global queue rejection -> no later enqueue on that rejected logical ownership;
-- response-deadline/I/O failure -> no later success;
-- state-associated checked-add / deadline-construction / backwards-or-unmeasurable-clock failure -> terminal;
-- cross-layer rollback remains truthful: a failed outer charge may roll back an inner accounting charge where appropriate, but rollback must never resurrect the logical state;
-- cleanup/release is one-shot and bounded; rejection cannot reopen a source domain contrary to the later C policy.
+- inner input rejection terminalizes the outer logical state;
+- inner response / anti-amplification rejection terminalizes it;
+- outer source/global input/work/response/queue rejection remains terminal;
+- state-associated clock/deadline/overflow failures cannot leave a reusable logical state;
+- response I/O/deadline failure remains terminal;
+- cross-layer rollback remains accounting-correct but never revives admission;
+- exactly-once cleanup remains valid;
+- deliberate controlled fault-injection paths remain explicit and are not silently reclassified as budget failures.
 
-Prefer a small `reject/terminalize` primitive or an API shape that consumes/poisons the ticket on error over scattered caller discipline. Run targeted/full gate, commit, push.
+Run targeted tests, full `scripts/check.sh`, relevant fuzz only if production network-input/parser semantics change, and `git diff --check`; commit and push.
 
 **Continue immediately to E:** yes.
 
@@ -128,16 +157,16 @@ Create or maintain a machine-checkable/static inventory for every externally rea
 
 For each path prove/order:
 
-1. typed carrier/source projection + state admission;
+1. explicit typed carrier/source projection + state admission;
 2. input byte/packet charge before parse;
 3. parser/work reservation before protected work;
-4. state memory reservation before owned allocation;
-5. queue reservation before application-level pending ownership;
+4. state-memory reservation before owned allocation;
+5. queue reservation before application-level pending ownership where such ownership exists;
 6. response charge + bounded actual I/O before send;
 7. terminal rejection/evidence barrier;
 8. exactly-once cleanup.
 
-The current conservative `64` / `4096` work reservations may remain only if they dominate the bounded parser work they protect; describe them as accounting units, never CPU-cycle measurements. Fix concrete uncovered seams only. Add a guard/test so a newly externally reachable responder cannot silently omit the admission path.
+The current conservative `64` / `4096` work reservations may remain only if they dominate the bounded parser work they protect; document them as accounting units, never CPU-cycle measurements. Fix only concrete uncovered seams. Add a guard/test so a newly externally reachable responder cannot silently omit admission.
 
 Run full gate, commit, push.
 
@@ -149,7 +178,7 @@ Run full gate, commit, push.
 
 Implement only the noncontroversial source-key portion:
 
-- explicit bounded carrier discriminator at least distinguishing current TCP and UDP pre-auth source domains;
+- explicit bounded carrier discriminator at least distinguishing current TCP and UDP pre-auth domains;
 - family/address/port remain represented without textual/raw logging;
 - deterministic non-collision tests across carrier/family/address/port combinations;
 - one bounded unknown/unusable-source bucket only if a current real call site actually needs it;
@@ -163,7 +192,7 @@ Run targeted/full gate, commit, push.
 
 **Status:** `ADR_CHECKPOINT_AFTER_C1`.
 
-Re-read D019 and adjacent reviewed decisions against the now-concrete inventory.
+Re-read D019 and adjacent reviewed decisions against the now-concrete responder inventory.
 
 Do **not** retain arbitrary terminal sources forever. Do **not** invent TTL/LRU/history counts. If the reviewed text still cannot simultaneously satisfy:
 
@@ -219,7 +248,7 @@ Independently re-read the exact implementation and tests, then reconcile:
 - `docs/status.md`;
 - release closure/navigation records.
 
-RSEC-001 may close as an implementation finding only when B1v/D1/E/C1/C2/F are actually satisfied and exact-head CI is green. Independent external/two-person security review remains a separate release gate. Never promote RC/production/freeze/release automatically.
+RSEC-001 may close as an implementation finding only when D1/E/C1/C2/F are actually satisfied and exact-head CI is green. Independent external/two-person security review remains a separate release gate. Never promote RC/production/freeze/release automatically.
 
 **Continue immediately to H if no new HIGH/BLOCKER:** yes.
 
@@ -262,10 +291,10 @@ No unchanged retry of already-sufficient repeated/periodic/HY2 lines.
 
 The current D019/RSEC-001 implementation lane is complete only when all are true:
 
-- A1r remains green at exact code and no regression reopens its absolute I/O deadline/socket-state contract;
-- pending pre-auth queue ownership/expiry is proven through the B1v lifecycle matrix;
+- A1r absolute response-I/O deadline remains green and bounded;
+- B1v queue ownership/expiry verification remains green;
 - every rejection class terminalizes the logical pre-auth state across inner and outer accounting;
-- every real responder has machine-checkable charge ordering and evidence barrier coverage;
+- every real responder has machine-checkable charge ordering and evidence-barrier coverage;
 - carrier/source projection is explicit and bounded;
 - terminal-source persistence semantics are resolved by reviewed policy without unbounded source-accounting state or invented convenience limits;
 - the complete deterministic adversarial/overflow/timeout/cleanup matrix passes;
