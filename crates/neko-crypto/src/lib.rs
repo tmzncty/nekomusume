@@ -1057,6 +1057,11 @@ impl ProcessPreauthAdmission {
         }
     }
 
+    /// Idempotently marks an existing logical pre-auth state terminal.
+    pub fn reject_state(&mut self, id: PreauthStateId) {
+        self.reject(id);
+    }
+
     fn refresh_window(&mut self, now_ms: u64) -> Result<(), SessionRejected> {
         if now_ms < self.window_started_ms {
             return Err(SessionRejected);
@@ -1136,6 +1141,20 @@ impl ProcessPreauthAdmission {
         work_units: usize,
         now_ms: u64,
     ) -> Result<(), SessionRejected> {
+        let result = self.charge_input_checked(id, bytes, work_units, now_ms);
+        if result.is_err() {
+            self.reject(id);
+        }
+        result
+    }
+
+    fn charge_input_checked(
+        &mut self,
+        id: PreauthStateId,
+        bytes: usize,
+        work_units: usize,
+        now_ms: u64,
+    ) -> Result<(), SessionRejected> {
         self.refresh_window(now_ms)?;
         let source = self.live(id, now_ms)?.source.clone();
         let usage = self.sources.get(&source).ok_or(SessionRejected)?;
@@ -1184,6 +1203,18 @@ impl ProcessPreauthAdmission {
         id: PreauthStateId,
         now_ms: u64,
     ) -> Result<PreauthQueuePermit, SessionRejected> {
+        let result = self.enqueue_checked(id, now_ms);
+        if result.is_err() {
+            self.reject(id);
+        }
+        result
+    }
+
+    fn enqueue_checked(
+        &mut self,
+        id: PreauthStateId,
+        now_ms: u64,
+    ) -> Result<PreauthQueuePermit, SessionRejected> {
         self.refresh_window(now_ms)?;
         let source = self.live(id, now_ms)?.source.clone();
         let source_queued = self.sources.get(&source).ok_or(SessionRejected)?.queued;
@@ -1215,6 +1246,19 @@ impl ProcessPreauthAdmission {
     }
 
     pub fn charge_response(
+        &mut self,
+        id: PreauthStateId,
+        bytes: usize,
+        now_ms: u64,
+    ) -> Result<PreauthResponsePermit, SessionRejected> {
+        let result = self.charge_response_checked(id, bytes, now_ms);
+        if result.is_err() {
+            self.reject(id);
+        }
+        result
+    }
+
+    fn charge_response_checked(
         &mut self,
         id: PreauthStateId,
         bytes: usize,
@@ -1275,9 +1319,21 @@ impl ProcessPreauthAdmission {
         permit: PreauthResponsePermit,
         now_ms: u64,
     ) -> Result<(), SessionRejected> {
+        let id = permit.state_id;
+        let result = self.complete_response_checked(permit, now_ms);
+        if result.is_err() {
+            self.reject(id);
+        }
+        result
+    }
+
+    fn complete_response_checked(
+        &self,
+        permit: PreauthResponsePermit,
+        now_ms: u64,
+    ) -> Result<(), SessionRejected> {
         self.live(permit.state_id, now_ms)?;
         if now_ms < permit.admitted_at_ms || now_ms > permit.deadline_ms {
-            self.reject(permit.state_id);
             return Err(SessionRejected);
         }
         Ok(())
@@ -1532,6 +1588,39 @@ mod preauth_tests {
                 admission.queued()
             ),
             (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn state_associated_clock_and_deadline_failures_are_terminal() {
+        let mut admission = ProcessPreauthAdmission::new(process_limits(), 10).unwrap();
+        let backwards = admission.admit_state(b"backwards", 2, 10).unwrap();
+        assert_eq!(
+            admission.charge_input(backwards, 1, 1, 9),
+            Err(SessionRejected)
+        );
+        assert_eq!(
+            admission.charge_input(backwards, 1, 1, 20),
+            Err(SessionRejected)
+        );
+
+        let mut limits = process_limits();
+        limits.idle_timeout_ms = u64::MAX;
+        limits.max_lifetime_ms = u64::MAX;
+        let mut admission = ProcessPreauthAdmission::new(limits, u64::MAX - 50).unwrap();
+        let overflow = admission
+            .admit_state(b"overflow", 2, u64::MAX - 50)
+            .unwrap();
+        admission
+            .charge_input(overflow, 1, 1, u64::MAX - 50)
+            .unwrap();
+        assert!(matches!(
+            admission.charge_response(overflow, 1, u64::MAX - 50),
+            Err(SessionRejected)
+        ));
+        assert_eq!(
+            admission.enqueue(overflow, u64::MAX - 40),
+            Err(SessionRejected)
         );
     }
 

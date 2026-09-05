@@ -147,7 +147,10 @@ impl ListenerAdmission {
         work_units: usize,
     ) -> Result<(), ()> {
         let now = self.now_ms();
-        ticket.budget.charge_input(bytes).map_err(|_| ())?;
+        if ticket.budget.charge_input(bytes).is_err() {
+            self.process.reject_state(ticket.id);
+            return Err(());
+        }
         if self
             .process
             .charge_input(ticket.id, bytes, work_units, now)
@@ -165,7 +168,10 @@ impl ListenerAdmission {
         bytes: usize,
     ) -> Result<PreauthResponsePermit, ()> {
         let now = self.now_ms();
-        ticket.budget.charge_response(bytes).map_err(|_| ())?;
+        if ticket.budget.charge_response(bytes).is_err() {
+            self.process.reject_state(ticket.id);
+            return Err(());
+        }
         match self.process.charge_response(ticket.id, bytes, now) {
             Ok(permit) => Ok(permit),
             Err(_) => {
@@ -446,11 +452,34 @@ mod tests {
     }
 
     #[test]
+    fn inner_budget_rejection_terminalizes_outer_ticket() {
+        let mut admission = ListenerAdmission::new();
+        let peer: SocketAddr = "127.0.0.1:40080".parse().unwrap();
+        let mut input = admission.admit(peer).unwrap();
+        assert!(admission.charge_input(&mut input, usize::MAX, 1).is_err());
+        assert!(admission.charge_input(&mut input, 1, 1).is_err());
+        assert!(admission.enqueue(&mut input).is_err());
+        assert!(admission.charge_response(&mut input, 1).is_err());
+        admission.release(input);
+
+        let mut response = admission.admit(peer).unwrap();
+        admission.charge_input(&mut response, 1, 1).unwrap();
+        assert!(admission.charge_response(&mut response, 4).is_err());
+        assert!(admission.charge_input(&mut response, 1, 1).is_err());
+        assert!(admission.enqueue(&mut response).is_err());
+        admission.release(response);
+    }
+
+    #[test]
     fn response_requires_charged_input_and_release_reopens_source() {
         let mut admission = ListenerAdmission::new();
         let peer: SocketAddr = "127.0.0.1:40080".parse().unwrap();
+        let mut rejected = admission.admit(peer).unwrap();
+        assert!(admission.charge_response(&mut rejected, 1).is_err());
+        assert!(admission.charge_input(&mut rejected, 64, 16).is_err());
+        admission.release(rejected);
+
         let mut ticket = admission.admit(peer).unwrap();
-        assert!(admission.charge_response(&mut ticket, 1).is_err());
         admission.charge_input(&mut ticket, 64, 16).unwrap();
         let permit = admission.charge_response(&mut ticket, 64).unwrap();
         admission
