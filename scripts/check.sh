@@ -17,6 +17,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 bash scripts/check-governance-status.sh
 python3 scripts/check-era4-closure.py
 python3 scripts/check-evidence-manifests.py
+python3 scripts/check-preauth-responder-inventory.py
 bash scripts/check-status-evidence.sh
 bash scripts/check-status-evidence-test.sh
 bash scripts/check-status-coverage.sh

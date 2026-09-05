@@ -1,0 +1,161 @@
+{
+  "schema": "nekomusume.preauth-responder-inventory.v1",
+  "accounting_note": "work_units are conservative accounting units, not measured CPU cycles",
+  "central_controller": {
+    "file": "crates/neko-cli/src/preauth.rs",
+    "state_memory_bytes": 16384,
+    "reservation_anchor": "admit_state(&source_key(peer), RESERVED_STATE_BYTES, now)",
+    "terminalization_anchor": "self.process.reject_state(ticket.id)",
+    "tcp_bounded_send_anchor": ".send_tcp_response(",
+    "udp_bounded_send_anchor": ".send_udp_response("
+  },
+  "responders": [
+    {
+      "id": "ordinary_tcp_probe",
+      "file": "crates/neko-cli/src/main.rs",
+      "begin": "let mut admission = preauth\n                        .admit(peer)",
+      "end": "lifecycle.stopped();",
+      "carrier": "tcp",
+      "pending_owner": false,
+      "ordered": [
+        ".admit(peer)",
+        "read_frame(&mut s, MAX_NEGOTIATION_FRAME)",
+        ".charge_input(&mut admission, hello.len() + 4, 64)",
+        ".server_accept_hello(&hello)",
+        ".charge_response(&mut admission, selection.len() + 4)",
+        ".send_tcp_response(&mut s, &selection",
+        ".charge_input(&mut admission, first.len() + 4, 4096)",
+        ".receive_first(&first, context(0))",
+        ".charge_response(&mut admission, resp.len() + 4)",
+        ".send_tcp_response(&mut s, &resp",
+        ".admit_data()",
+        "preauth.release(admission)"
+      ]
+    },
+    {
+      "id": "ordinary_udp_probe",
+      "file": "crates/neko-cli/src/main.rs",
+      "begin": "let u = UdpSocket::bind(bind)",
+      "end": "let application_deadline = Instant::now() + d;",
+      "carrier": "udp",
+      "pending_owner": false,
+      "ordered": [
+        ".recv_from(&mut b)",
+        ".admit(peer)",
+        ".charge_input(&mut admission, n, 64)",
+        ".server_accept_hello(&b[..n])",
+        ".charge_response(&mut admission, selection.len())",
+        ".send_udp_response(&u, &selection",
+        ".charge_input(&mut admission, n, 4096)",
+        ".receive_first(&b[..n], context(0))",
+        ".charge_response(&mut admission, resp.len())",
+        ".send_udp_response(&u, &resp",
+        ".admit_data()",
+        "preauth.release(admission)"
+      ]
+    },
+    {
+      "id": "periodic_tcp",
+      "file": "crates/neko-cli/src/periodic.rs",
+      "begin": "fn handshake_server(",
+      "end": "fn handshake_client(",
+      "carrier": "tcp",
+      "pending_owner": false,
+      "ordered": [
+        ".charge_input(ticket, hello.len() + 4, 64)",
+        ".server_accept_hello(&hello)",
+        ".charge_response(ticket, selection.len() + 4)",
+        ".send_tcp_response(stream, &selection",
+        ".charge_input(ticket, first.len() + 4, 4096)",
+        ".receive_first(&first, context(0))",
+        ".charge_response(ticket, response.len() + 4)",
+        ".send_tcp_response(stream, &response",
+        ".admit_data()"
+      ],
+      "admission_owner_anchor": ".admit(peer)",
+      "success_cleanup_anchor": "preauth.release(admission)"
+    },
+    {
+      "id": "multistream_tcp",
+      "file": "crates/neko-cli/src/multistream.rs",
+      "begin": "fn server_handshake(",
+      "end": "fn client_handshake(",
+      "carrier": "tcp",
+      "pending_owner": false,
+      "ordered": [
+        ".charge_input(ticket, hello.len() + 4, 64)",
+        ".server_accept_hello(&hello)",
+        ".charge_response(ticket, response.len() + 4)",
+        ".send_tcp_response(socket, &response",
+        ".charge_input(ticket, first.len() + 4, 4096)",
+        ".receive_first(&first, context())",
+        ".charge_response(ticket, response.len() + 4)",
+        ".send_tcp_response(socket, &response",
+        ".admit_data()"
+      ],
+      "admission_owner_anchor": ".admit(peer)",
+      "success_cleanup_anchor": "preauth.release(admission)"
+    },
+    {
+      "id": "failover_udp_pending",
+      "file": "crates/neko-cli/src/main.rs",
+      "begin": "if let Some(pending_state) = pending.as_mut() {",
+      "end": "if let Some((ref mut ss, peer)) = secure",
+      "carrier": "udp",
+      "pending_owner": true,
+      "ordered": [
+        ".charge_input(&mut pending_state.admission, n, 64)",
+        ".charge_response(",
+        ".send_udp_response(",
+        ".charge_input(&mut pending_state.admission, n, 4096)",
+        ".receive_first(datagram, context(1))",
+        ".charge_response(&mut pending_state.admission, resp.len())",
+        ".send_udp_response(&udp, &resp",
+        "pending.take()",
+        ".dequeue(&mut authenticated.queue)",
+        "preauth.release(authenticated.admission)",
+        "udp_authenticated"
+      ],
+      "expiry_cleanup_anchor": "expired.queue.invalidate_after_process_expiry()"
+    },
+    {
+      "id": "failover_udp_new",
+      "file": "crates/neko-cli/src/main.rs",
+      "begin": "let mut admission = match preauth.admit(peer)",
+      "end": "if let Some((ref mut ss, peer)) = secure",
+      "carrier": "udp",
+      "pending_owner": true,
+      "ordered": [
+        "preauth.charge_input(&mut admission, n, 64)",
+        ".server_accept_hello(datagram)",
+        "preauth.charge_response(&mut admission, selection.len())",
+        ".send_udp_response(&udp, &selection",
+        "preauth.enqueue(&mut admission)",
+        "pending = Some(PendingUdpNegotiation"
+      ],
+      "rejection_cleanup_anchor": "preauth.release(admission)"
+    },
+    {
+      "id": "failover_tcp",
+      "file": "crates/neko-cli/src/main.rs",
+      "begin": "if let Ok((mut stream, peer)) = tcp.accept() {",
+      "end": "let readiness_sequence_deadline =",
+      "carrier": "tcp",
+      "pending_owner": false,
+      "ordered": [
+        ".admit(peer)",
+        "read_frame(&mut stream, MAX_NEGOTIATION_FRAME)",
+        ".charge_input(&mut admission, hello.len() + 4, 64)",
+        ".server_accept_hello(&hello)",
+        ".charge_response(&mut admission, selection.len() + 4)",
+        ".send_tcp_response(&mut stream, &selection",
+        ".charge_input(&mut admission, first.len() + 4, 4096)",
+        ".receive_first_with_resume(&first, context(2))",
+        ".charge_response(&mut admission, resp.len() + 4)",
+        ".send_tcp_response(&mut stream, &resp",
+        "preauth.release(admission)",
+        "tcp_authenticated"
+      ]
+    }
+  ]
+}
