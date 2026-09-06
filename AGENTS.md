@@ -68,6 +68,66 @@ Standing authorization 只解决“管理员已经允许哪些自有 VPS 实验�
 
 当一个 WAN 节点失败或 blocked 时，必须继续检查所有不依赖该节点的 READY 工作。不得把单个 WAN failure、缺少 previous release、缺少 native ARM host 或外部 review 自动升级为整个项目停止条件。
 
+### 3.1 自主提案与双向评审
+
+Agent 不是被动等待 reviewer 写出具体 API 的工单执行器。在不改变第 1 节架构边界、不引入新的安全数值政策、不进行 destructive migration、且动作仍处于 standing authorization 范围内时，Agent **有权并且应当主动提出最小实现方案并继续施工**。
+
+以下情况尤其不得反复只报告“现有 API 不支持”然后等待：
+
+- 现有 API 粒度不足，但语义目标已经由规范/ADR 明确；
+- 可以通过 typed ownership、state machine、permit/reservation、helper abstraction 或调用顺序调整解决；
+- reviewer 只规定了 invariant / evidence boundary，没有规定具体函数签名；
+- 同一 dependency-ready slice 在一个执行周期内没有推进，而仓库、CI、授权并不存在真实外部 blocker。
+
+遇到这类问题时，Agent 应在自己的实现过程中完成一个短 proposal cycle：
+
+1. 提出 1–3 个可行实现形状；
+2. 对每个形状写清它保护的 invariant、额外状态/API、主要失败模式和最小 negative tests；
+3. 优先选择“**最小新状态、最小新 API、最少 policy invention、最容易 fail closed 验证**”的方案；
+4. 直接实现、测试、commit、push；
+5. 让后续 reviewer 对已经落地的设计挑错和收敛，而不是把正常本地设计选择提前升级成管理员审批。
+
+若 reviewer 后续发现更安全的形状，应通过 GitHub handoff 要求修正；这属于正常的 `Agent propose/implement -> reviewer challenge/refine -> Agent repair/continue` 双向循环。
+
+只有下列情况才需要停止提案并升级：
+
+- 需要改变 Session / Carrier / ACK / crypto / wire 核心语义；
+- 需要新增或改变安全容量、TTL、LRU/history size、流量/并发等 policy 数值；
+- 需要 destructive/canonical-meaning migration；
+- 多个方案的取舍明显依赖维护者价值判断而非工程正确性；
+- 动作超出 standing authorization、涉及 production 或第三方权限。
+
+### 3.2 停滞不是“没有新事实”
+
+“没有新 commit”不能永久解释为“继续等待”。如果同一个 HIGH/open 或 `READY_LOCAL` 工作连续多个 reviewer/agent 周期停在队首，且 exact-head CI、仓库完整性和外部权限没有真实 blocker，应把这种状态视为 **implementation stagnation**：
+
+- coding agent 应主动重新读相关 API/ADR 并提出实现方案；
+- reviewer 应主动判断 handoff 是否过于抽象，并补充 API ownership、state transition、ordering 与 negative-test contract；
+- 不得双方都因为“GitHub 没变化”而无限静默。
+
+### 3.3 可见产出与闭环优先
+
+项目不能长期只优化 checker、harness、evidence schema 和 review 文档。Correctness/security blocker 必须修，但应尽量组成**完整可交付闭环**，而不是无限拆分审计基础设施。
+
+每个 24–48 小时窗口至少应主动检查一次：是否形成了以下任一真实推进？
+
+- 新的可运行 runtime path 或协议能力；
+- 新的可执行工具/命令；
+- 新的真实实验结论或明确 negative evidence；
+- package/operator 能力；
+- 一个真正 milestone/security/release gate 被关闭；
+- 一个此前 `BLOCKED_IMPLEMENTATION` 的能力变成可本地验证或可进入 VPS evidence。
+
+如果连续只有 docs/checker/harness/parser hardening，而没有上述产出，必须判断这些工作是否仍是直接 blocker。若不是，应收口并切回更接近 milestone/output 的工程 lane。
+
+优先把工作组织成类似以下闭环：
+
+- staged pre-auth accounting -> 所有真实 TCP responder 迁移 -> adversarial tests -> exact-tree security closure；
+- 缺失 runtime seam -> 本地验证 -> 一次 changed-hypothesis VPS run -> evidence/status reconciliation；
+- package/operator defect -> clean install/upgrade/rollback smoke -> evidence closure。
+
+不要为了 review cadence 把一个闭环拆成十几个只改 checker/docs 的小票。
+
 ## 4. 本地验证门禁
 
 正常代码改动完成后至少运行：
