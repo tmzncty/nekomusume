@@ -40,6 +40,107 @@ impl FramedReader {
         Ok(())
     }
 
+    /// Reads one frame while charging its fixed header and declared body as
+    /// stages of a single logical input record. The body is allocated only
+    /// after both callbacks have accepted the conservative reservation.
+    pub(crate) fn read_until_staged<R, B, E, C>(
+        &mut self,
+        reader: &mut R,
+        deadline: Instant,
+        mut begin: B,
+        mut extend: E,
+        mut complete: C,
+    ) -> io::Result<FrameRead>
+    where
+        R: Read,
+        B: FnMut(usize, usize) -> io::Result<()>,
+        E: FnMut(usize, usize) -> io::Result<()>,
+        C: FnMut() -> io::Result<()>,
+    {
+        self.read_until_staged_with_clock(
+            reader,
+            deadline,
+            &mut begin,
+            &mut extend,
+            &mut complete,
+            Instant::now,
+        )
+    }
+
+    fn read_until_staged_with_clock<R, B, E, C, N>(
+        &mut self,
+        reader: &mut R,
+        deadline: Instant,
+        begin: &mut B,
+        extend: &mut E,
+        complete: &mut C,
+        mut now: N,
+    ) -> io::Result<FrameRead>
+    where
+        R: Read,
+        B: FnMut(usize, usize) -> io::Result<()>,
+        E: FnMut(usize, usize) -> io::Result<()>,
+        C: FnMut() -> io::Result<()>,
+        N: FnMut() -> Instant,
+    {
+        loop {
+            if now() >= deadline {
+                return Ok(if self.is_partial() {
+                    FrameRead::Truncated
+                } else {
+                    FrameRead::Deadline
+                });
+            }
+            let result = if self.header_len < self.header.len() {
+                reader.read(&mut self.header[self.header_len..])
+            } else {
+                reader.read(&mut self.payload[self.payload_len..])
+            };
+            match result {
+                Ok(0) => {
+                    return Ok(if self.is_partial() {
+                        FrameRead::Truncated
+                    } else {
+                        FrameRead::CleanEof
+                    });
+                }
+                Ok(n) if self.header_len < self.header.len() => {
+                    self.header_len += n;
+                    if self.header_len == self.header.len() {
+                        begin(4, 64)?;
+                        let len = u32::from_be_bytes(self.header) as usize;
+                        if len > self.max_frame_len {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "frame too large",
+                            ));
+                        }
+                        extend(len, 4096)?;
+                        self.payload = vec![0; len];
+                        self.payload_len = 0;
+                        if len == 0 {
+                            complete()?;
+                            return Ok(FrameRead::Complete(self.take_frame()));
+                        }
+                    }
+                }
+                Ok(n) => {
+                    self.payload_len += n;
+                    if self.payload_len == self.payload.len() {
+                        complete()?;
+                        return Ok(FrameRead::Complete(self.take_frame()));
+                    }
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     pub(crate) fn read_until<R: Read>(
         &mut self,
         reader: &mut R,
