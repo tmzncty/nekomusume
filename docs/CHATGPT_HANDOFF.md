@@ -1,30 +1,25 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-07 00:01 Asia/Shanghai
-Repository main HEAD reviewed: `08731095299bc6446dfd314bf8c0b81aba61606f`
-Previous reviewer handoff commit: `08731095299bc6446dfd314bf8c0b81aba61606f`
+Checked at: 2026-09-07 00:58 Asia/Shanghai
+Repository main HEAD reviewed: `b20fa0ef4d7d8e1d23fe1c15547a79fcb952d669`
+Previous reviewer handoff commit: `b20fa0ef4d7d8e1d23fe1c15547a79fcb952d669`
 Previous checked implementation HEAD: `d271a99a2ab26abbcb146c411ba0fde697395abe`
-Current execution branch provisioned by reviewer: `work/e1a-staged-accounting-20260907` at exact `08731095299bc6446dfd314bf8c0b81aba61606f`
+Current execution branch provisioned/aligned by reviewer: `work/e1a-staged-accounting-20260907` at exact `b20fa0ef4d7d8e1d23fe1c15547a79fcb952d669`
 Historical partial-E2 branch retained: `work/continue-20260904` at `d271a99a2ab26abbcb146c411ba0fde697395abe`
 
 ## What changed
 
-No coding-agent implementation has landed since `d271a99`. This is now more than an ordinary one-interval delay: E1A has remained the explicit HIGH/READY front-of-queue item across multiple reviewer cycles even after:
+No coding-agent implementation has landed since `d271a99`. Since the previous review, exact `b20fa0e` Rust CI completed `success` (run `34044390515`). The clean E1A execution branch was then fast-forwarded non-destructively from `0873109` to exact `b20fa0e`, so the active coding branch now contains the current handoff and autonomous-proposal contract rather than an older reviewer snapshot.
 
-- the staged one-logical-record contract was specified;
-- autonomous proposal authority was added to `AGENTS.md`;
-- the stale `work/continue-20260904` branch was removed as an E1A prerequisite;
-- exact `0873109` Rust CI completed `success` (run `34035002744`).
+This branch movement is coordination only: it adds no runtime/accounting implementation, WAN evidence or performance result. E1A therefore remains a real `STALLED_IMPLEMENTATION` condition rather than a CI, environment, VPS, credential, standing-authorization or core-architecture blocker.
 
-The repository has no current CI, environment, VPS, credential, standing-authorization or core-architecture blocker for E1A. Current code still has the reviewed defect: `FramedReader` interprets the four-byte attacker-controlled length and allocates the payload before the responder's later `charge_input`, while the current inner/process input APIs couple every byte/work charge with one packet/record increment.
+Current code still has the reviewed defect: `FramedReader` interprets the four-byte attacker-controlled length and allocates the payload before the responder's later `charge_input`, while the current inner/process input APIs couple every byte/work charge with one packet/record increment. The agent has explicit authority in `AGENTS.md` and below to extend that API minimally and choose the exact local typed-permit/state-machine shape without prior reviewer approval.
 
-To remove the final coordination excuse, the reviewer has pre-provisioned a clean execution branch, `work/e1a-staged-accounting-20260907`, directly from current green `main`. The coding agent may use that branch immediately. It does not need to merge the historical `d271a99` branch before E1A; only the still-useful E2 inventory semantics should be reapplied/cherry-picked later after the runtime accounting shape is known.
-
-The absence of implementation after several cycles should now be treated as **executor/coordination stagnation, not a design ambiguity**. Do not spend another cycle merely reporting that the existing API is insufficient: extending that API minimally is the task.
+The historical `work/continue-20260904` / `d271a99` partial-E2 work remains retained history only. It is not an E1A prerequisite and must not be used as a reason to delay runtime repair.
 
 ## Review verdict
 
-**STALLED_IMPLEMENTATION / EXECUTE E1A NOW.** The implementation contract is sufficiently specified and the agent has authority to choose the exact local API shape. Start from `work/e1a-staged-accounting-20260907`, implement the coherent staged-accounting closure, run gates, commit, push, and continue to E2 without reviewer acknowledgement.
+**STALLED_IMPLEMENTATION / EXECUTE E1A NOW.** The implementation contract, green base and active execution branch are all available. Implement the coherent staged-accounting closure, run gates, commit, push, and continue to E2 without reviewer acknowledgement. Do not spend another execution cycle only restating that the old API is insufficient.
 
 This does not justify bypassing the HIGH correctness finding. It also does not justify growing more checker/review infrastructure before the runtime defect is repaired.
 
@@ -36,9 +31,9 @@ No administrator decision is required at this review point.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain required.
 - A1 absolute response-I/O deadline, B1 queue ownership/expiry and D1 terminal rejection remain accepted closed subfindings unless a concrete regression appears.
-- Exact `0873109` has green CI but is reviewer documentation only; it adds no runtime, WAN or performance evidence.
+- Exact `b20fa0e` has green CI but is reviewer documentation/coordination only; it adds no runtime, WAN or performance evidence.
+- `work/e1a-staged-accounting-20260907` now points to exact `b20fa0e` and contains no coding change yet; branch alignment is not implementation evidence.
 - `d271a99` remains partial E2 inventory/checker hardening only; it is retained history, not an E1A prerequisite.
-- The newly provisioned execution branch contains no coding change yet; branch existence is coordination only, not implementation evidence.
 - Existing 16 KiB per-state memory reservation is not staged input/work accounting.
 - Existing `PreauthBudget::charge_input` and process `charge_input` couple packet ownership to each call; a staged single-record primitive or equivalent structural state machine is therefore required.
 - No WAN/VPS run is useful as a substitute for this deterministic accounting repair.
@@ -55,7 +50,7 @@ This remains a multi-hour rolling queue. The coding agent owns ordinary local de
 
 **Goal / why now:** close the real HIGH pre-auth charge-order defect before more release/security evidence work. One TCP frame must be one D019 input record even though header/body accounting is staged.
 
-**Execution base:** `work/e1a-staged-accounting-20260907` from exact green `0873109`.
+**Execution base:** `work/e1a-staged-accounting-20260907` from exact green `b20fa0e`.
 
 **Preferred local shape, not mandatory API spelling:** compose one inner and one process-level logical-record reservation through `ListenerAdmission`:
 
@@ -173,7 +168,7 @@ Under standing authorization, run the minimum bounded self-owned client/VPS scen
 
 ## 24–48 hour output check
 
-Recent repository motion is still dominated by security/reviewer infrastructure. E1A remains a genuine correctness blocker, but the design contract and a clean execution branch now exist. The next meaningful coding checkpoint must contain runtime/accounting implementation and tests, not another explanation of the blocker.
+Recent repository motion is still dominated by security/reviewer infrastructure. E1A remains a genuine correctness blocker, but the design contract and a clean, current execution branch now exist. The next meaningful coding checkpoint must contain runtime/accounting implementation and tests, not another explanation of the blocker.
 
 After the D019 lane closes (or C2 alone becomes a genuine policy wait), the queue explicitly returns to one runtime seam and one bounded real-network evidence question so the project produces a new executable path, real evidence conclusion, package/operator capability or genuine milestone/security gate closure rather than continuing audit-infrastructure self-reproduction.
 
