@@ -807,6 +807,11 @@ impl Default for PreauthLimits {
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreauthInputRecord {
+    active: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PreauthBudget {
     limits: PreauthLimits,
     input_bytes: usize,
@@ -815,6 +820,47 @@ pub struct PreauthBudget {
     response_packets: u8,
 }
 impl PreauthBudget {
+    pub fn begin_input_record(
+        &mut self,
+        bytes: usize,
+    ) -> Result<PreauthInputRecord, SessionRejected> {
+        let new_bytes = self.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
+        let new_packets = self.input_packets.checked_add(1).ok_or(SessionRejected)?;
+        if new_bytes > self.limits.max_input_bytes || new_packets > self.limits.max_input_packets {
+            return Err(SessionRejected);
+        }
+        self.input_bytes = new_bytes;
+        self.input_packets = new_packets;
+        Ok(PreauthInputRecord { active: true })
+    }
+
+    pub fn extend_input_record(
+        &mut self,
+        permit: &mut PreauthInputRecord,
+        bytes: usize,
+    ) -> Result<(), SessionRejected> {
+        if !permit.active {
+            return Err(SessionRejected);
+        }
+        let new_bytes = self.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
+        if new_bytes > self.limits.max_input_bytes {
+            return Err(SessionRejected);
+        }
+        self.input_bytes = new_bytes;
+        Ok(())
+    }
+
+    pub fn complete_input_record(
+        &mut self,
+        permit: &mut PreauthInputRecord,
+    ) -> Result<(), SessionRejected> {
+        if !permit.active {
+            return Err(SessionRejected);
+        }
+        permit.active = false;
+        Ok(())
+    }
+
     pub fn new(limits: PreauthLimits) -> Result<Self, SessionRejected> {
         if limits.max_input_bytes == 0
             || limits.max_input_packets == 0
@@ -937,6 +983,16 @@ impl Default for ProcessPreauthLimits {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PreauthStateId(pub u64);
+
+/// One-shot ownership of a staged logical input record. Header and body
+/// extensions share one packet ownership and one cumulative work ceiling.
+#[derive(Debug)]
+pub struct PreauthInputRecordPermit {
+    state_id: PreauthStateId,
+    source: Vec<u8>,
+    work_units: usize,
+    active: bool,
+}
 
 /// One-shot ownership of a charged unauthenticated response send attempt.
 /// Dropping it abandons the response; charged accounting is intentionally retained.
@@ -1132,6 +1188,146 @@ impl ProcessPreauthAdmission {
         self.memory_bytes += memory_bytes;
         self.sources.entry(source.to_vec()).or_default().states += 1;
         Ok(id)
+    }
+
+    pub fn begin_input_record(
+        &mut self,
+        id: PreauthStateId,
+        bytes: usize,
+        work_units: usize,
+        now_ms: u64,
+    ) -> Result<PreauthInputRecordPermit, SessionRejected> {
+        let result = self.begin_input_record_checked(id, bytes, work_units, now_ms);
+        if result.is_err() {
+            self.reject(id);
+        }
+        result
+    }
+
+    fn begin_input_record_checked(
+        &mut self,
+        id: PreauthStateId,
+        bytes: usize,
+        work_units: usize,
+        now_ms: u64,
+    ) -> Result<PreauthInputRecordPermit, SessionRejected> {
+        self.refresh_window(now_ms)?;
+        if work_units > self.limits.max_work_per_packet {
+            return Err(SessionRejected);
+        }
+        let source = self.live(id, now_ms)?.source.clone();
+        let usage = self.sources.get(&source).ok_or(SessionRejected)?;
+        let sb = usage
+            .input_bytes
+            .checked_add(bytes)
+            .ok_or(SessionRejected)?;
+        let sp = usage.input_packets.checked_add(1).ok_or(SessionRejected)?;
+        let sw = usage
+            .work_units
+            .checked_add(work_units)
+            .ok_or(SessionRejected)?;
+        let ib = self.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
+        let ip = self.input_packets.checked_add(1).ok_or(SessionRejected)?;
+        let iw = self
+            .work_units
+            .checked_add(work_units)
+            .ok_or(SessionRejected)?;
+        if sb > self.limits.max_input_bytes_per_source
+            || sp > self.limits.max_input_packets_per_source
+            || sw > self.limits.max_work_per_source
+            || ib > self.limits.max_input_bytes_per_window
+            || ip > self.limits.max_input_packets_per_window
+            || iw > self.limits.max_work_per_window
+        {
+            return Err(SessionRejected);
+        }
+        let u = self.sources.get_mut(&source).ok_or(SessionRejected)?;
+        u.input_bytes = sb;
+        u.input_packets = sp;
+        u.work_units = sw;
+        self.input_bytes = ib;
+        self.input_packets = ip;
+        self.work_units = iw;
+        self.states
+            .get_mut(&id)
+            .ok_or(SessionRejected)?
+            .last_progress_ms = now_ms;
+        Ok(PreauthInputRecordPermit {
+            state_id: id,
+            source,
+            work_units,
+            active: true,
+        })
+    }
+
+    pub fn extend_input_record(
+        &mut self,
+        permit: &mut PreauthInputRecordPermit,
+        bytes: usize,
+        work_units: usize,
+        now_ms: u64,
+    ) -> Result<(), SessionRejected> {
+        if !permit.active
+            || work_units
+                > self
+                    .limits
+                    .max_work_per_packet
+                    .saturating_sub(permit.work_units)
+        {
+            self.reject(permit.state_id);
+            return Err(SessionRejected);
+        }
+        self.refresh_window(now_ms)?;
+        self.live(permit.state_id, now_ms)?;
+        let usage = self.sources.get(&permit.source).ok_or(SessionRejected)?;
+        let sb = usage
+            .input_bytes
+            .checked_add(bytes)
+            .ok_or(SessionRejected)?;
+        let sw = usage
+            .work_units
+            .checked_add(work_units)
+            .ok_or(SessionRejected)?;
+        let ib = self.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
+        let iw = self
+            .work_units
+            .checked_add(work_units)
+            .ok_or(SessionRejected)?;
+        if sb > self.limits.max_input_bytes_per_source
+            || sw > self.limits.max_work_per_source
+            || ib > self.limits.max_input_bytes_per_window
+            || iw > self.limits.max_work_per_window
+        {
+            self.reject(permit.state_id);
+            return Err(SessionRejected);
+        }
+        let u = self
+            .sources
+            .get_mut(&permit.source)
+            .ok_or(SessionRejected)?;
+        u.input_bytes = sb;
+        u.work_units = sw;
+        self.input_bytes = ib;
+        self.work_units = iw;
+        permit.work_units += work_units;
+        self.states
+            .get_mut(&permit.state_id)
+            .ok_or(SessionRejected)?
+            .last_progress_ms = now_ms;
+        Ok(())
+    }
+
+    pub fn complete_input_record(
+        &mut self,
+        permit: &mut PreauthInputRecordPermit,
+        now_ms: u64,
+    ) -> Result<(), SessionRejected> {
+        if !permit.active {
+            return Err(SessionRejected);
+        }
+        self.live(permit.state_id, now_ms)?;
+        permit.active = false;
+        Ok(())
     }
 
     pub fn charge_input(

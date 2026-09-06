@@ -1,6 +1,6 @@
 use neko_crypto::{
-    PreauthBudget, PreauthLimits, PreauthQueuePermit, PreauthResponsePermit, PreauthStateId,
-    ProcessPreauthAdmission, ProcessPreauthLimits,
+    PreauthBudget, PreauthInputRecord, PreauthInputRecordPermit, PreauthLimits, PreauthQueuePermit,
+    PreauthResponsePermit, PreauthStateId, ProcessPreauthAdmission, ProcessPreauthLimits,
 };
 use std::io::{self, Write};
 use std::net::{SocketAddr, TcpStream, UdpSocket};
@@ -16,6 +16,11 @@ pub(crate) struct ListenerAdmission {
 pub(crate) struct AdmissionTicket {
     id: PreauthStateId,
     budget: PreauthBudget,
+}
+
+pub(crate) struct TcpInputReservation {
+    inner: PreauthInputRecord,
+    outer: PreauthInputRecordPermit,
 }
 
 pub(crate) struct QueueReservation {
@@ -138,6 +143,84 @@ impl ListenerAdmission {
             }
         };
         Ok(AdmissionTicket { id, budget })
+    }
+
+    pub(crate) fn begin_tcp_input_record(
+        &mut self,
+        ticket: &mut AdmissionTicket,
+        header_bytes: usize,
+        header_work: usize,
+    ) -> Result<TcpInputReservation, ()> {
+        let inner = match ticket.budget.begin_input_record(header_bytes) {
+            Ok(permit) => permit,
+            Err(_) => {
+                self.process.reject_state(ticket.id);
+                return Err(());
+            }
+        };
+        let outer = match self.process.begin_input_record(
+            ticket.id,
+            header_bytes,
+            header_work,
+            self.now_ms(),
+        ) {
+            Ok(permit) => permit,
+            Err(_) => {
+                self.process.reject_state(ticket.id);
+                return Err(());
+            }
+        };
+        Ok(TcpInputReservation { inner, outer })
+    }
+
+    pub(crate) fn extend_tcp_input_record(
+        &mut self,
+        ticket: &mut AdmissionTicket,
+        reservation: &mut TcpInputReservation,
+        body_bytes: usize,
+        body_work: usize,
+    ) -> Result<(), ()> {
+        if ticket
+            .budget
+            .extend_input_record(&mut reservation.inner, body_bytes)
+            .is_err()
+        {
+            self.process.reject_state(ticket.id);
+            return Err(());
+        }
+        if self
+            .process
+            .extend_input_record(&mut reservation.outer, body_bytes, body_work, self.now_ms())
+            .is_err()
+        {
+            self.process.reject_state(ticket.id);
+            return Err(());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn complete_tcp_input_record(
+        &mut self,
+        ticket: &mut AdmissionTicket,
+        reservation: &mut TcpInputReservation,
+    ) -> Result<(), ()> {
+        if ticket
+            .budget
+            .complete_input_record(&mut reservation.inner)
+            .is_err()
+        {
+            self.process.reject_state(ticket.id);
+            return Err(());
+        }
+        if self
+            .process
+            .complete_input_record(&mut reservation.outer, self.now_ms())
+            .is_err()
+        {
+            self.process.reject_state(ticket.id);
+            return Err(());
+        }
+        Ok(())
     }
 
     pub(crate) fn charge_input(
