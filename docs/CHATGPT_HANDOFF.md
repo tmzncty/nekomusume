@@ -1,29 +1,35 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-07 00:58 Asia/Shanghai
-Repository main HEAD reviewed: `b20fa0ef4d7d8e1d23fe1c15547a79fcb952d669`
-Previous reviewer handoff commit: `b20fa0ef4d7d8e1d23fe1c15547a79fcb952d669`
+Checked at: 2026-09-07 05:02 Asia/Shanghai
+Repository main HEAD reviewed: `a2d5c4d10bc881ff0e9a3bec34e97f9950e1a635`
+Previous reviewer handoff commit: `a2d5c4d10bc881ff0e9a3bec34e97f9950e1a635`
 Previous checked implementation HEAD: `d271a99a2ab26abbcb146c411ba0fde697395abe`
-Current execution branch provisioned/aligned by reviewer: `work/e1a-staged-accounting-20260907` at exact `b20fa0ef4d7d8e1d23fe1c15547a79fcb952d669`
+Current execution branch: `work/e1a-staged-accounting-20260907` at exact `a2d5c4d10bc881ff0e9a3bec34e97f9950e1a635`
 Historical partial-E2 branch retained: `work/continue-20260904` at `d271a99a2ab26abbcb146c411ba0fde697395abe`
 
 ## What changed
 
-No coding-agent implementation has landed since `d271a99`. Since the previous review, exact `b20fa0e` Rust CI completed `success` (run `34044390515`). The clean E1A execution branch was then fast-forwarded non-destructively from `0873109` to exact `b20fa0e`, so the active coding branch now contains the current handoff and autonomous-proposal contract rather than an older reviewer snapshot.
+No coding-agent implementation has landed since `d271a99`. The active E1A branch has remained exactly aligned with reviewer-only `main` through multiple execution opportunities after all known coordination excuses were removed:
 
-This branch movement is coordination only: it adds no runtime/accounting implementation, WAN evidence or performance result. E1A therefore remains a real `STALLED_IMPLEMENTATION` condition rather than a CI, environment, VPS, credential, standing-authorization or core-architecture blocker.
+- the staged one-logical-record accounting contract is explicit;
+- autonomous proposal/implementation authority is durable in `AGENTS.md`;
+- the historical partial-E2 branch is explicitly not an E1A prerequisite;
+- a clean execution branch exists at current `main`;
+- exact `a2d5c4d` Rust CI is green on both `main` (run `34047295194`) and `work/e1a-staged-accounting-20260907` (run `34053519427`).
 
-Current code still has the reviewed defect: `FramedReader` interprets the four-byte attacker-controlled length and allocates the payload before the responder's later `charge_input`, while the current inner/process input APIs couple every byte/work charge with one packet/record increment. The agent has explicit authority in `AGENTS.md` and below to extend that API minimally and choose the exact local typed-permit/state-machine shape without prior reviewer approval.
+Current code still has the reviewed HIGH defect. `FramedReader` reads the four-byte length, interprets attacker-controlled length and allocates the body before the responder's later input/work charge, while the existing inner/process `charge_input` APIs couple every byte/work charge with one packet/record increment. No runtime/accounting change has landed on either active branch.
 
-The historical `work/continue-20260904` / `d271a99` partial-E2 work remains retained history only. It is not an E1A prerequisite and must not be used as a reason to delay runtime repair.
+This condition is now classified as **external executor inactivity / coordination failure**, not `STALLED_IMPLEMENTATION` caused by an underspecified repository contract. There is no current CI, repository, VPS, credential, standing-authorization, environment or core-architecture blocker for E1A.
+
+The reviewer must not respond to continued inactivity by inventing more checker layers, provisioning more equivalent branches, or rewriting the same design contract every hour. The next meaningful repository event must be a coding checkpoint or a genuinely new technical blocker discovered by code/test work.
 
 ## Review verdict
 
-**STALLED_IMPLEMENTATION / EXECUTE E1A NOW.** The implementation contract, green base and active execution branch are all available. Implement the coherent staged-accounting closure, run gates, commit, push, and continue to E2 without reviewer acknowledgement. Do not spend another execution cycle only restating that the old API is insufficient.
+**BLOCKED_EXTERNAL_EXECUTOR_INACTIVITY — repository work is ready; execute E1A.**
 
-This does not justify bypassing the HIGH correctness finding. It also does not justify growing more checker/review infrastructure before the runtime defect is repaired.
+The external coding agent should use `work/e1a-staged-accounting-20260907`, briefly compare acceptable local API shapes under the proposal protocol, choose the smallest fail-closed design, implement/test/commit/push, and continue immediately through dependency-ready slices. If its local checkout cannot use that named branch for a tooling reason, it may create/use another ordinary work branch from exact current `main`; branch naming is not a design gate. It must not wait for reviewer approval of ordinary local API shape.
 
-No administrator decision is required at this review point.
+No administrator design decision is required. No VPS work is useful until the deterministic HIGH defect is repaired.
 
 ## Evidence boundaries
 
@@ -31,54 +37,53 @@ No administrator decision is required at this review point.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain required.
 - A1 absolute response-I/O deadline, B1 queue ownership/expiry and D1 terminal rejection remain accepted closed subfindings unless a concrete regression appears.
-- Exact `b20fa0e` has green CI but is reviewer documentation/coordination only; it adds no runtime, WAN or performance evidence.
-- `work/e1a-staged-accounting-20260907` now points to exact `b20fa0e` and contains no coding change yet; branch alignment is not implementation evidence.
-- `d271a99` remains partial E2 inventory/checker hardening only; it is retained history, not an E1A prerequisite.
+- Exact `a2d5c4d` has green CI on `main` and the active E1A work branch, but it is reviewer documentation/coordination only; it adds no runtime, WAN or performance evidence.
+- `d271a99` remains partial E2 inventory/checker hardening only; retain its useful semantics for later E2, but it is not an E1A prerequisite.
 - Existing 16 KiB per-state memory reservation is not staged input/work accounting.
-- Existing `PreauthBudget::charge_input` and process `charge_input` couple packet ownership to each call; a staged single-record primitive or equivalent structural state machine is therefore required.
-- No WAN/VPS run is useful as a substitute for this deterministic accounting repair.
+- Existing inner/process input APIs couple packet ownership to each charge call; a staged single-record primitive or equivalent structural state machine is required.
 - Historical WAN/HY2/failover/periodic positive and negative evidence remains immutable at its exact commit boundary.
+- Standing VPS authorization remains valid for future dependency-ready self-owned work; deterministic D019 accounting correctness must not be replaced by WAN/load testing.
 - Protected identity, credentials, private endpoints and raw private diagnostics remain unread/untracked/uncommitted.
 
 ## Rolling Work Queue
 
-This remains a multi-hour rolling queue. The coding agent owns ordinary local design choices and should use the proposal protocol in `AGENTS.md`: briefly compare plausible local shapes, pick the smallest fail-closed one, implement it, and let the reviewer challenge the landed design. A proposal is not a stop point.
+This queue remains pre-authorized multi-hour work. The coding agent owns ordinary local design choices. Finish one coherent closure package -> targeted/full gates -> commit -> push -> immediately consume the next dependency-satisfied package. One commit, one nominal hour, one reviewer interval, or one proposal note is never a stop condition.
 
 ### E1A — Staged one-record TCP accounting + four-responder migration
 
-**Status:** `READY_LOCAL / STALLED_IMPLEMENTATION`; immediate highest priority.
+**Status:** `READY_LOCAL`; immediate HIGH correctness repair. Executor inactivity is external to the repository, not a technical dependency.
 
-**Goal / why now:** close the real HIGH pre-auth charge-order defect before more release/security evidence work. One TCP frame must be one D019 input record even though header/body accounting is staged.
+**Goal / why now:** one TCP frame must be exactly one D019 input record even though its header/body bytes and work are charged in stages. Charge must precede attacker-controlled interpretation/allocation.
 
-**Execution base:** `work/e1a-staged-accounting-20260907` from exact green `b20fa0e`.
+**Execution base:** `work/e1a-staged-accounting-20260907` from exact green `a2d5c4d` (or an ordinary new work branch from exact current `main` if local tooling cannot use that branch name).
 
-**Preferred local shape, not mandatory API spelling:** compose one inner and one process-level logical-record reservation through `ListenerAdmission`:
+**Design authority:** the agent should compare 1–3 minimal local shapes and implement one without waiting. Preferred family is a typed logical-record reservation composed through `ListenerAdmission`, for example:
 
 ```text
 begin_input_record(header_bytes, header_work)
-  -> one record/packet ownership
+  -> exactly one record/packet ownership
 extend_input_record(reservation, body_bytes, body_work)
-  -> bytes/work only, no second packet
+  -> bytes/work only; no second packet
 complete_input_record(reservation)
 ```
 
-Equivalent typed-permit/state-machine designs are acceptable if these are structural invariants, not caller convention:
+Equivalent typed-permit/state-machine APIs are acceptable if structural invariants hold:
 
-- exactly one record/packet charge per TCP frame;
+- exactly one packet/record charge per TCP frame;
 - cumulative bytes/work across header + body;
-- cumulative per-record work cannot exceed existing `max_work_per_packet`;
+- cumulative per-record work cannot exceed the existing `max_work_per_packet`;
 - inner and process/source/global accounting cannot diverge;
-- any failed extension/expiry/overflow makes the logical state terminal;
-- no refund of conservative attacker-caused body reservation after truncation/timeout/EOF;
-- no new numeric policy, wire format or Session/Carrier/crypto semantic change.
+- failed extension/expiry/overflow terminalizes the logical state;
+- attacker-caused body reservation is not refunded after truncation/timeout/EOF;
+- no new numeric policy, wire format or Session/Carrier/ACK/crypto semantic change.
 
-**Required receive order:** admit source/state -> bounded raw 4-byte header read -> begin/charge header + one record before interpreting length -> decode/check length -> extend/reserve declared body bytes/work before allocation/read -> allocate/read body -> complete exactly once -> only then negotiation/Noise parse.
+**Required receive order:** admit -> bounded raw 4-byte header read -> begin/charge header + one record before interpreting length -> decode/check length -> extend/reserve declared body bytes/work before allocation/read -> allocate/read body -> complete exactly once -> only then negotiation/Noise parse.
 
-**Migrate in the same closure package:** ordinary TCP probe, periodic TCP responder, multistream TCP responder, failover TCP responder. No real TCP pre-auth responder may retain `read complete frame -> charge_input` semantics.
+**Migrate in this same closure package:** ordinary TCP probe, periodic TCP responder, multistream TCP responder, failover TCP responder. Do not leave one path with complete-frame-read -> later-charge semantics.
 
-**Minimum tests:** fragmented header/body; zero body; normal frame exactly one packet; extension does not add packet; cumulative work exact/max+1; oversize before body allocation; truncated/EOF/timeout after reservation remains charged + terminal; inner/outer exhaustion cannot leave reusable ticket; overflow/backwards clock/expired state fail closed; no double extend/complete; anti-amplification sees one input packet; rejection cannot reach auth/readiness/Session/PathValidated/Delivery/ACK/authz-equivalent success evidence.
+**Minimum tests:** fragmented header/body; zero body; one frame == one packet; extension adds no packet; cumulative work exact/max+1; oversize before body allocation; truncated/EOF/timeout after reservation remains charged and terminal; inner/outer exhaustion does not leave a reusable ticket; overflow/backwards clock/expired state fail closed; double extend/complete rejected; anti-amplification observes one input packet; rejection cannot reach auth/readiness/Session/PathValidated/Delivery/ACK/authz-equivalent success evidence.
 
-**Gate:** targeted tests + `scripts/check.sh` + `git diff --check`; run fuzz smoke because untrusted length/framing behavior is materially touched unless the environment genuinely lacks the required toolchain, in which case record `NOT_RUN_ENVIRONMENT` truthfully. Commit and push real code/tests.
+**Gate:** targeted tests + `scripts/check.sh` + `git diff --check`; run fuzz smoke because untrusted framing/length behavior changes, or truthfully record `NOT_RUN_ENVIRONMENT` if the toolchain is unavailable. Commit and push real implementation/tests.
 
 **Continue immediately to E2:** yes.
 
@@ -86,11 +91,11 @@ Equivalent typed-permit/state-machine designs are acceptable if these are struct
 
 **Status:** `PREAUTHORIZED_AFTER_E1A`.
 
-Rebuild/strengthen the existing inventory against the repaired call sites. Reapply/cherry-pick only the semantically valid parts of `d271a99`.
+Rebuild/strengthen the responder inventory against the repaired runtime. Reapply/cherry-pick only semantically valid parts of historical `d271a99`.
 
-Required: every TCP responder anchors staged charge before negotiation/Noise parse; every UDP responder anchors bounded raw receive -> charge -> protocol parse; pending ownership proves reserve-before-store and exactly-once cancel/dequeue/expiry invalidation; rejection/timeout/malformed/I/O paths cannot reach success-evidence anchors; expected externally reachable responder set remains explicit.
+Required: every TCP responder anchors the staged charged-frame primitive before negotiation/Noise parse; every UDP responder anchors bounded raw receive -> charge -> protocol parse; pending ownership proves queue-reserve-before-store and exactly-once cancel/dequeue/expiry invalidation; rejection/timeout/malformed/I/O paths cannot reach success-evidence anchors; expected externally reachable responder set remains explicit.
 
-Do not preserve stale string anchors or create checker-only closure around wrong runtime code.
+Do not preserve stale string anchors or make checker-only closure around wrong runtime code.
 
 **Gate:** semantic inventory/checker + full repository gate; commit/push.
 
@@ -108,15 +113,17 @@ Add an explicit bounded carrier discriminator so current TCP and UDP pre-auth so
 
 **Status:** `ADR_CHECKPOINT_AFTER_C1`.
 
-Re-read D019 against exact implementation. If literal no-reset-on-retry/reconnect/carrier-change semantics cannot coexist with bounded source-accounting memory without a new retention policy, write a compact ADR amendment request. Do not invent convenience numbers.
+Re-read D019 against exact implementation. If literal no-reset-on-retry/reconnect/carrier-change semantics cannot coexist with bounded source-accounting memory without a new retention policy, write a compact ADR amendment request with exact conflicting clauses, attacker/resource rationale, feasible policy shapes without convenience numbers, and required tests/evidence.
 
-Only this policy-dependent lane should wait if a maintainer/reviewer decision is genuinely required; continue H -> I -> J independently.
+Do not invent numeric policy. Stop only this policy-dependent lane if a real maintainer/reviewer choice is needed; continue H -> I -> J independently.
 
 ### F — Full D019 adversarial/evidence-barrier matrix
 
 **Status:** `PREAUTHORIZED_AFTER_C2_RESOLVED`.
 
-Close source/global concurrency, staged bytes/packets/work, one-second windows, cumulative per-record work, memory, queue, response + inner 3x anti-amplification, idle/lifetime/100 ms deadline, arithmetic/backwards-clock failure, terminal non-revival, resolved retry/reconnect/carrier-transition semantics, cancellation/double cleanup and no-success-evidence-on-rejection.
+Close source/global concurrency; staged bytes/packets/work; one-second windows; cumulative per-record work; state/global memory; queue; source/global response + inner 3x anti-amplification; idle/lifetime/100 ms response deadline; arithmetic/backwards-clock failure; terminal non-revival; resolved retry/reconnect/carrier-transition semantics; cancellation/double cleanup; and no success evidence on rejection.
+
+Do not substitute VPS/load tests for deterministic accounting correctness.
 
 **Gate:** full local gate; push; exact-head CI green before G.
 
@@ -148,9 +155,11 @@ Verify existing package lifecycle/build identity, install-readiness-upgrade-roll
 
 **Status:** `READY_LOCAL_AFTER_I`.
 
-Re-evaluate every remaining release/evidence row: already answered bounded question -> `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`; executable missing assertion -> `OPEN_READY` with exact action/dependencies/scope; otherwise exact implementation/environment/governance/review blocker.
+Re-evaluate every remaining release/evidence row: answered bounded question -> `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`; executable missing assertion -> `OPEN_READY` with exact action/dependencies/scope; otherwise record the exact implementation/environment/governance/review blocker.
 
 Then end the audit-only loop. If no new HIGH/BLOCKER remains, select one concrete highest-value `BLOCKED_IMPLEMENTATION` runtime seam that can progress to local validation and then a truthful changed-hypothesis VPS question. Candidate families remain NAT/source endpoint change, migration-back, live key update or live PMTUD only when existing architecture supports a bounded path.
+
+**Continue immediately to K:** yes once one candidate is selected without a maintainer-level design decision.
 
 ### K — One runtime-seam closure package
 
@@ -168,9 +177,9 @@ Under standing authorization, run the minimum bounded self-owned client/VPS scen
 
 ## 24–48 hour output check
 
-Recent repository motion is still dominated by security/reviewer infrastructure. E1A remains a genuine correctness blocker, but the design contract and a clean, current execution branch now exist. The next meaningful coding checkpoint must contain runtime/accounting implementation and tests, not another explanation of the blocker.
+Repository motion remains dominated by reviewer/security infrastructure rather than executable progress. E1A is still a genuine correctness blocker, but the repository contract, proposal authority, clean green execution branch and tests/gates required to start are already sufficient. Further reviewer-only commits do not increase project capability.
 
-After the D019 lane closes (or C2 alone becomes a genuine policy wait), the queue explicitly returns to one runtime seam and one bounded real-network evidence question so the project produces a new executable path, real evidence conclusion, package/operator capability or genuine milestone/security gate closure rather than continuing audit-infrastructure self-reproduction.
+The next meaningful checkpoint must contain runtime/accounting implementation and tests. Once D019 closes (or only C2 becomes a genuine policy wait), the queue deliberately returns to a concrete runtime seam and one bounded real-network evidence question so the project produces executable capability, a real evidence conclusion, package/operator capability or genuine milestone/security closure.
 
 ## Completion gates
 
@@ -191,6 +200,7 @@ D019/RSEC-001 implementation closure requires all of:
 
 ## Do not expand into
 
+- more reviewer-only branch provisioning or repeated rewording of E1A while the external executor is inactive;
 - protocol/wire/Noise/Session/Carrier redesign for E1A;
 - new numeric D019/security/source-retention limits without reviewed ADR work;
 - public or production listener deployment;
@@ -204,4 +214,4 @@ D019/RSEC-001 implementation closure requires all of:
 
 None at this review point.
 
-If E1A still has no coding checkpoint after the clean execution branch and explicit local design authority above, classify the condition as external executor inactivity/coordination failure rather than inventing more repository design work. C2 may later become a genuine policy decision; if so, isolate only that lane and continue independent H/I/J work.
+The current blocker is external executor inactivity, not a repository design decision. Do not ask the maintainer to choose an E1A API. If later C2 genuinely requires a new retention policy value or core semantic choice, isolate that policy lane and surface the exact decision while continuing independent work.
