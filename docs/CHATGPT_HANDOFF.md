@@ -1,35 +1,74 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-07 05:02 Asia/Shanghai
-Repository main HEAD reviewed: `a2d5c4d10bc881ff0e9a3bec34e97f9950e1a635`
-Previous reviewer handoff commit: `a2d5c4d10bc881ff0e9a3bec34e97f9950e1a635`
+Checked at: 2026-09-07 15:57 Asia/Shanghai
+Repository main HEAD reviewed: `f8898d3b0725cae032b36b2d5fe8e3a3a177941a`
 Previous checked implementation HEAD: `d271a99a2ab26abbcb146c411ba0fde697395abe`
-Current execution branch: `work/e1a-staged-accounting-20260907` at exact `a2d5c4d10bc881ff0e9a3bec34e97f9950e1a635`
+Current execution branch: `work/e1a-staged-accounting-20260907` at exact `a6b0c3327c34a068fd66bc7dc44d63b959b9536b`
 Historical partial-E2 branch retained: `work/continue-20260904` at `d271a99a2ab26abbcb146c411ba0fde697395abe`
 
 ## What changed
 
-No coding-agent implementation has landed since `d271a99`. The active E1A branch has remained exactly aligned with reviewer-only `main` through multiple execution opportunities after all known coordination excuses were removed:
+The external coding agent finally resumed real implementation on the dedicated E1A branch. Three implementation commits are now ahead of current reviewer-only `main`:
 
-- the staged one-logical-record accounting contract is explicit;
-- autonomous proposal/implementation authority is durable in `AGENTS.md`;
-- the historical partial-E2 branch is explicitly not an E1A prerequisite;
-- a clean execution branch exists at current `main`;
-- exact `a2d5c4d` Rust CI is green on both `main` (run `34047295194`) and `work/e1a-staged-accounting-20260907` (run `34053519427`).
+- `ccacec1` — adds staged one-logical-record accounting primitives to inner `PreauthBudget`, process/source/global admission, and the CLI `ListenerAdmission` composition layer;
+- `6974ff6` — adds a staged framed-reader contract that charges the fixed four-byte header before interpreting attacker-controlled length and reserves declared body bytes/work before allocation;
+- `a6b0c33` — migrates **periodic TCP** and **multistream TCP** pre-auth negotiation/Noise reads to the staged helper and updates their inventory anchors.
 
-Current code still has the reviewed HIGH defect. `FramedReader` reads the four-byte length, interprets attacker-controlled length and allocates the body before the responder's later input/work charge, while the existing inner/process `charge_input` APIs couple every byte/work charge with one packet/record increment. No runtime/accounting change has landed on either active branch.
+Exact `a6b0c3327c34a068fd66bc7dc44d63b959b9536b` Rust CI run `34094391386` concluded `success`. This is exact-head repository CI evidence, not E1A/security closure.
 
-This condition is now classified as **external executor inactivity / coordination failure**, not `STALLED_IMPLEMENTATION` caused by an underspecified repository contract. There is no current CI, repository, VPS, credential, standing-authorization, environment or core-architecture blocker for E1A.
+This is meaningful runtime/accounting progress and resolves the previous executor-inactivity condition. The proposal protocol worked: the agent introduced the needed permit/state-machine shape without a maintainer design decision or core Session/Carrier/ACK/crypto/wire change.
 
-The reviewer must not respond to continued inactivity by inventing more checker layers, provisioning more equivalent branches, or rewriting the same design contract every hour. The next meaningful repository event must be a coding checkpoint or a genuinely new technical blocker discovered by code/test work.
+However, E1A is still incomplete and currently has two concrete HIGH contract gaps plus one accounting-fidelity gap. Do not advance to E2 closure until these are repaired and covered by deterministic tests.
 
 ## Review verdict
 
-**BLOCKED_EXTERNAL_EXECUTOR_INACTIVITY — repository work is ready; execute E1A.**
+**CONTINUE_WITH_REQUIRED_FIXES — accept the staged accounting direction and exact-head green CI, but keep E1A open. Finish all four responder migrations and make incomplete/malformed staged records terminal before E2.**
 
-The external coding agent should use `work/e1a-staged-accounting-20260907`, briefly compare acceptable local API shapes under the proposal protocol, choose the smallest fail-closed design, implement/test/commit/push, and continue immediately through dependency-ready slices. If its local checkout cannot use that named branch for a tooling reason, it may create/use another ordinary work branch from exact current `main`; branch naming is not a design gate. It must not wait for reviewer approval of ordinary local API shape.
+No administrator action is required. Do not spend VPS time on this deterministic security lane yet. The agent should continue on `work/e1a-staged-accounting-20260907`, test/commit/push coherent repairs, then consume E2/C1 immediately when E1A is actually closed.
 
-No administrator design decision is required. No VPS work is useful until the deterministic HIGH defect is repaired.
+## Reviewer findings
+
+### RSEC-001E1A-1 — HIGH — incomplete/malformed staged record can drop its reservation without terminalizing the logical pre-auth state
+
+`read_staged_frame` keeps its `TcpInputReservation` only as a local `Option`. `FrameStage::Header` begins the logical record and `FrameStage::Body` extends/reserves it, but the helper only consumes the reservation on `FrameStage::Complete`.
+
+After a successful begin/extend, these paths return an error without an explicit abandon/reject transition for the staged reservation:
+
+- declared length exceeds `max_frame_len` after the header was already charged;
+- EOF/truncation after header or body reservation;
+- deadline/timeout after a partial reserved record;
+- ordinary I/O error after the record began.
+
+The local reservation then drops silently. Current fail-fast CLI callers may terminate their process, but the reusable helper/ticket contract itself does not make D019's malformed/timed-out operation terminal. E1A requires structural fail-closed behavior, not reliance on every caller exiting forever.
+
+**Required repair:** give staged input ownership an explicit one-shot terminal path. Acceptable shapes include an active reservation guard plus `abandon_tcp_input_record`, or a helper-owned state machine that calls `reject_state` on every post-begin non-complete outcome. Charged bytes/packet/work must remain charged; do not refund attacker-caused reservation on truncation/timeout/oversize. Double complete/abandon must fail harmlessly and must not reopen the ticket.
+
+Minimum regressions: oversize-after-header, truncated body after reservation, deadline after reservation, I/O error after reservation, and same logical ticket cannot subsequently begin/charge/respond/enqueue.
+
+### RSEC-001E1A-2 — HIGH — only two of the required four TCP responder surfaces are migrated
+
+`a6b0c33` correctly migrates periodic and multistream TCP handshakes. The execution-branch `main.rs` still contains the known complete-frame-read -> later-charge order in two real responder families:
+
+- ordinary TCP probe/server: `read_frame(&mut s, ...)` precedes `preauth.charge_input(...)` for negotiation and first Noise message;
+- failover TCP responder: `read_frame(&mut stream, ...)` precedes `preauth.charge_input(...)` for negotiation and first Noise message.
+
+The original E1A closure package explicitly required ordinary TCP + periodic TCP + multistream TCP + failover TCP in the same semantic migration. Green CI does not make a half-migration complete.
+
+**Required repair:** migrate ordinary TCP and failover TCP to the same shared staged helper. Preserve their existing setup/experiment deadlines, negotiation binding, Noise semantics, response deadline, readiness/resume behavior and evidence boundaries. Do not redesign post-auth data framing.
+
+### RSEC-001E1A-3 — MEDIUM — staged cross-layer admission can leave inner/outer counters divergent on a later layer failure
+
+`ListenerAdmission::begin_tcp_input_record` charges the inner `PreauthBudget` before the process/source/global layer. `extend_tcp_input_record` similarly mutates the inner staged byte counter before the outer extension. If the outer operation rejects, the logical state is rejected, so this is conservative rather than an admission bypass; however, inner and outer accounting can still disagree for the terminal state.
+
+Previous D019 work deliberately repaired analogous cross-layer charge rollback/atomicity. The staged path should not quietly weaken that invariant.
+
+**Required repair:** either make staged cross-layer admission atomic before protected work begins, or add a narrowly scoped rollback for cross-layer setup failure where no attacker-protected work/allocation/read has yet occurred. Do **not** refund successfully reserved attacker-caused body budget on later EOF/timeout/truncation. Add a deterministic outer-reject-after-inner-success regression proving the chosen invariant.
+
+### RSEC-001E1A-4 — MEDIUM evidence gap — exact-head CI is green but the new staged lifecycle lacks the required adversarial tests
+
+The branch adds the primitives/helper and two migrations, but the required E1A matrix is not yet demonstrated: one frame == one packet, extension adds no packet, cumulative per-record work exact/max+1, oversize/truncation/timeout remains charged and terminal, double extend/complete rejection, cross-layer exhaustion, and anti-amplification packet ownership.
+
+Do not treat existing framed fragmentation tests or exact-head CI as equivalent to these staged-accounting boundary tests.
 
 ## Evidence boundaries
 
@@ -37,171 +76,146 @@ No administrator design decision is required. No VPS work is useful until the de
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain required.
 - A1 absolute response-I/O deadline, B1 queue ownership/expiry and D1 terminal rejection remain accepted closed subfindings unless a concrete regression appears.
-- Exact `a2d5c4d` has green CI on `main` and the active E1A work branch, but it is reviewer documentation/coordination only; it adds no runtime, WAN or performance evidence.
-- `d271a99` remains partial E2 inventory/checker hardening only; retain its useful semantics for later E2, but it is not an E1A prerequisite.
-- Existing 16 KiB per-state memory reservation is not staged input/work accounting.
-- Existing inner/process input APIs couple packet ownership to each charge call; a staged single-record primitive or equivalent structural state machine is required.
+- `ccacec1`/`6974ff6`/`a6b0c33` are real implementation changes with exact-head green CI. They are local deterministic implementation evidence only; no WAN/VPS/performance evidence changed.
+- Header charge now precedes attacker-controlled length interpretation in the staged helper, and body reservation precedes allocation there. This is accepted directionally, not full E1A closure.
+- Periodic and multistream TCP use the staged helper; ordinary and failover TCP do not yet.
+- Existing 16 KiB per-state reservation remains a memory ceiling, not a substitute for input/work accounting.
 - Historical WAN/HY2/failover/periodic positive and negative evidence remains immutable at its exact commit boundary.
-- Standing VPS authorization remains valid for future dependency-ready self-owned work; deterministic D019 accounting correctness must not be replaced by WAN/load testing.
+- Standing VPS authorization remains valid for future dependency-ready self-owned work; deterministic D019 correctness must not be substituted with load/WAN evidence.
 - Protected identity, credentials, private endpoints and raw private diagnostics remain unread/untracked/uncommitted.
 
 ## Rolling Work Queue
 
-This queue remains pre-authorized multi-hour work. The coding agent owns ordinary local design choices. Finish one coherent closure package -> targeted/full gates -> commit -> push -> immediately consume the next dependency-satisfied package. One commit, one nominal hour, one reviewer interval, or one proposal note is never a stop condition.
+This is a multi-hour pre-authorized queue. The coding agent owns ordinary local design choices and may propose/choose the smallest fail-closed API shape inside current architecture. Finish a coherent closure package -> targeted/full gates -> commit -> push -> immediately continue. One commit, nominal hour, reviewer interval or proposal note is not a stop condition.
 
-### E1A — Staged one-record TCP accounting + four-responder migration
+### A — Finish E1A staged-record terminal ownership
 
-**Status:** `READY_LOCAL`; immediate HIGH correctness repair. Executor inactivity is external to the repository, not a technical dependency.
+**Status:** `READY_LOCAL`; highest priority correctness repair.
 
-**Goal / why now:** one TCP frame must be exactly one D019 input record even though its header/body bytes and work are charged in stages. Charge must precede attacker-controlled interpretation/allocation.
+**Goal / why now:** a begun staged record must end exactly once as completed or terminally abandoned; malformed/truncated/timed-out input must not leave a reusable logical ticket.
 
-**Execution base:** `work/e1a-staged-accounting-20260907` from exact green `a2d5c4d` (or an ordinary new work branch from exact current `main` if local tooling cannot use that branch name).
+**Files/concepts:** `crates/neko-cli/src/preauth.rs`, `crates/neko-cli/src/framed.rs`, staged permit types in `crates/neko-crypto/src/lib.rs`.
 
-**Design authority:** the agent should compare 1–3 minimal local shapes and implement one without waiting. Preferred family is a typed logical-record reservation composed through `ListenerAdmission`, for example:
+**Protected invariants:** no refund of attacker-caused reserved input; one TCP frame remains one packet; rejection cannot become auth/readiness/Session/PathValidated/Delivery/ACK evidence; no new policy values or wire change.
 
-```text
-begin_input_record(header_bytes, header_work)
-  -> exactly one record/packet ownership
-extend_input_record(reservation, body_bytes, body_work)
-  -> bytes/work only; no second packet
-complete_input_record(reservation)
-```
+**Behavior:** add explicit abandonment/guard semantics for every post-begin non-complete result; make complete/abandon one-shot; preserve charged budgets on truncation/timeout/oversize/I/O failure.
 
-Equivalent typed-permit/state-machine APIs are acceptable if structural invariants hold:
+**Validation:** deterministic oversize/truncated/deadline/I/O-error + non-revival + double-terminal tests; targeted tests, `scripts/check.sh`, `git diff --check`, fuzz-smoke because untrusted framing behavior changed (or truthful `NOT_RUN_ENVIRONMENT`).
 
-- exactly one packet/record charge per TCP frame;
-- cumulative bytes/work across header + body;
-- cumulative per-record work cannot exceed the existing `max_work_per_packet`;
-- inner and process/source/global accounting cannot diverge;
-- failed extension/expiry/overflow terminalizes the logical state;
-- attacker-caused body reservation is not refunded after truncation/timeout/EOF;
-- no new numeric policy, wire format or Session/Carrier/ACK/crypto semantic change.
+**Commit/push:** coherent runtime + tests; push exact head.
 
-**Required receive order:** admit -> bounded raw 4-byte header read -> begin/charge header + one record before interpreting length -> decode/check length -> extend/reserve declared body bytes/work before allocation/read -> allocate/read body -> complete exactly once -> only then negotiation/Noise parse.
+**Continue immediately to B:** yes.
 
-**Migrate in this same closure package:** ordinary TCP probe, periodic TCP responder, multistream TCP responder, failover TCP responder. Do not leave one path with complete-frame-read -> later-charge semantics.
+### B — Complete all four TCP responder migrations
 
-**Minimum tests:** fragmented header/body; zero body; one frame == one packet; extension adds no packet; cumulative work exact/max+1; oversize before body allocation; truncated/EOF/timeout after reservation remains charged and terminal; inner/outer exhaustion does not leave a reusable ticket; overflow/backwards clock/expired state fail closed; double extend/complete rejected; anti-amplification observes one input packet; rejection cannot reach auth/readiness/Session/PathValidated/Delivery/ACK/authz-equivalent success evidence.
+**Status:** `PREAUTHORIZED_AFTER_A`.
 
-**Gate:** targeted tests + `scripts/check.sh` + `git diff --check`; run fuzz smoke because untrusted framing/length behavior changes, or truthfully record `NOT_RUN_ENVIRONMENT` if the toolchain is unavailable. Commit and push real implementation/tests.
+**Goal:** remove the remaining ordinary/failover complete-frame-read -> later-charge seams.
 
-**Continue immediately to E2:** yes.
+**Files/concepts:** ordinary TCP server/probe and failover TCP responder in `crates/neko-cli/src/main.rs`; shared staged helper; inventory anchors.
 
-### E2 — Semantic responder inventory/evidence-barrier closure
+**Protected invariants:** existing negotiation/Noise/Session/resume/readiness semantics and deadlines unchanged; only pre-auth input accounting/receive ordering changes.
 
-**Status:** `PREAUTHORIZED_AFTER_E1A`.
+**Behavior:** migrate negotiation + first Noise record on ordinary TCP and failover TCP; do not modify post-auth data path merely for symmetry.
 
-Rebuild/strengthen the responder inventory against the repaired runtime. Reapply/cherry-pick only semantically valid parts of historical `d271a99`.
+**Validation:** process/loopback tests for both responder families plus full gate/fuzz-smoke.
 
-Required: every TCP responder anchors the staged charged-frame primitive before negotiation/Noise parse; every UDP responder anchors bounded raw receive -> charge -> protocol parse; pending ownership proves queue-reserve-before-store and exactly-once cancel/dequeue/expiry invalidation; rejection/timeout/malformed/I/O paths cannot reach success-evidence anchors; expected externally reachable responder set remains explicit.
+**Commit/push:** exact coherent migration with tests.
 
-Do not preserve stale string anchors or make checker-only closure around wrong runtime code.
+**Continue immediately to C:** yes.
 
-**Gate:** semantic inventory/checker + full repository gate; commit/push.
+### C — Restore staged cross-layer accounting fidelity and finish E1A adversarial matrix
 
-**Continue immediately to C1:** yes.
+**Status:** `PREAUTHORIZED_AFTER_B`.
 
-### C1 — Explicit bounded carrier/source projection
+Resolve the inner/outer partial-charge case without weakening conservative attacker-budget retention. Add the missing matrix: one record==one packet, extension no extra packet, cumulative work exact/max+1, source/global/window exhaustion, cross-layer failure, zero body, fragmentation, overflow/backwards/expiry, anti-amplification and no-success-evidence on rejection.
 
-**Status:** `PREAUTHORIZED_AFTER_E2`.
+If a narrower API shape than the reviewer suggestion better preserves atomicity, the agent may propose and implement it under the proposal protocol without waiting.
 
-Add an explicit bounded carrier discriminator so current TCP and UDP pre-auth source domains cannot accidentally alias. Preserve family/address/port representation without textual/raw logging; add deterministic cross-carrier/family/address/port non-collision tests. Do not invent source-retention TTL/LRU/history limits.
+**Gate:** targeted tests + full repository gate + fuzz smoke; commit/push.
 
-**Continue immediately to C2:** yes.
+**Continue immediately to D:** yes.
 
-### C2 — Terminal-source persistence policy checkpoint
+### D — E2 semantic responder inventory/evidence-barrier closure
 
-**Status:** `ADR_CHECKPOINT_AFTER_C1`.
+**Status:** `PREAUTHORIZED_AFTER_C`.
 
-Re-read D019 against exact implementation. If literal no-reset-on-retry/reconnect/carrier-change semantics cannot coexist with bounded source-accounting memory without a new retention policy, write a compact ADR amendment request with exact conflicting clauses, attacker/resource rationale, feasible policy shapes without convenience numbers, and required tests/evidence.
+Reconcile the inventory against the repaired runtime. Reuse semantically valid parts of historical `d271a99`, but do not preserve stale anchors.
 
-Do not invent numeric policy. Stop only this policy-dependent lane if a real maintainer/reviewer choice is needed; continue H -> I -> J independently.
+Required: every TCP responder anchors staged charge before negotiation/Noise parse; every UDP responder anchors bounded raw receive -> charge -> parse; pending ownership proves queue-reserve-before-store and exactly-once terminal cleanup; rejection/malformed/timeout/I/O paths cannot reach success-evidence anchors; externally reachable responder set remains explicit.
 
-### F — Full D019 adversarial/evidence-barrier matrix
+**Gate:** semantic checker + full repository gate; commit/push.
 
-**Status:** `PREAUTHORIZED_AFTER_C2_RESOLVED`.
+**Continue immediately to E:** yes.
 
-Close source/global concurrency; staged bytes/packets/work; one-second windows; cumulative per-record work; state/global memory; queue; source/global response + inner 3x anti-amplification; idle/lifetime/100 ms response deadline; arithmetic/backwards-clock failure; terminal non-revival; resolved retry/reconnect/carrier-transition semantics; cancellation/double cleanup; and no success evidence on rejection.
+### E — C1 explicit carrier/source projection
 
-Do not substitute VPS/load tests for deterministic accounting correctness.
+**Status:** `PREAUTHORIZED_AFTER_D`.
 
-**Gate:** full local gate; push; exact-head CI green before G.
+Add an explicit bounded carrier discriminator so current TCP and UDP pre-auth source domains cannot accidentally alias. Preserve family/address/port representation without textual/raw logging and add deterministic non-collision tests. Do not invent terminal-source retention TTL/LRU/history limits.
 
-### G — Fresh exact-tree D019/security evidence closure
+**Continue immediately to F:** yes.
 
-**Status:** `PREAUTHORIZED_AFTER_F`.
+### F — C2 terminal-source persistence policy checkpoint
 
-Independently re-read exact implementation/tests and reconcile the resource-abuse review, release-security packet, `docs/status.md` and closure navigation. RSEC-001 may close as an implementation finding only if E1A/E2/C1/C2/F are actually satisfied. Independent external/two-person security review remains separate. Never promote RC/production/freeze/release automatically.
+**Status:** `ADR_CHECKPOINT_AFTER_E`.
+
+Re-read D019 against exact implementation. If literal no-reset-on-retry/reconnect/carrier-change semantics cannot coexist with bounded source-accounting memory without a new retention policy, write a compact ADR amendment request containing exact conflicting clauses, attacker/resource rationale, feasible policy shapes without convenience numbers, and required tests/evidence.
+
+Do not invent numeric policy. If this becomes genuine external wait, stop only this lane and continue H/I/J-equivalent independent work.
+
+### G — Full D019 adversarial matrix + exact-tree security closure
+
+**Status:** `PREAUTHORIZED_AFTER_F_RESOLVED`.
+
+Close all remaining concurrency, staged input/work, one-second windows, memory, queue, response/3x anti-amplification, idle/lifetime/100 ms deadline, terminal non-revival, resolved retry/reconnect/carrier transition, cleanup and evidence-barrier cases. Full gate, push, wait only for exact-head green CI required for the security conclusion, then reconcile resource-abuse review, release-security packet and `docs/status.md` without promoting RC/production/freeze/release.
 
 **Continue immediately to H if no new HIGH/BLOCKER:** yes.
 
-### H — Compatibility/freeze-boundary review
+### H — Compatibility/freeze + package/operator/provenance closure
 
-**Status:** `READY_LOCAL_AFTER_G`; safe fallback during a genuine C2 policy wait.
+**Status:** `READY_LOCAL_AFTER_G`; also safe fallback during genuine F policy wait.
 
-Audit corpus-v1 freeze vs global protocol non-freeze, current/current negotiation, unsupported/future rejection, downgrade/transcript/resume/replay boundaries and stale wording. Add regression only for a concrete defect.
+Audit corpus-v1 freeze vs protocol non-freeze, negotiation/downgrade/transcript/resume/replay boundaries, then verify existing package install/readiness/upgrade/rollback, cleanup and evidence manifests without reading protected identity material. Fix only concrete defects; do not rerun sufficient VPS/package evidence for freshness.
 
 **Continue immediately to I:** yes.
 
-### I — Package/operator/evidence-provenance review
+### I — Reclassify release opportunities and return to runtime/milestone output
 
-**Status:** `READY_LOCAL_AFTER_H`; safe fallback during C2 wait.
+**Status:** `READY_LOCAL_AFTER_H`.
 
-Verify existing package lifecycle/build identity, install-readiness-upgrade-rollback evidence, cleanup, canonical evidence manifests and exact-head references without reading protected identity material. Do not rerun already-sufficient VPS/package work merely for freshness.
+Re-evaluate every release/evidence row: answered bounded question -> `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`; executable missing assertion -> `OPEN_READY` with exact evidence/action/dependencies/scope; otherwise exact blocker.
 
-**Continue immediately to J:** yes.
+Then deliberately end the audit-only loop. If no new HIGH/BLOCKER remains, select one highest-value `BLOCKED_IMPLEMENTATION` runtime seam that can become locally executable without maintainer-level design: NAT/source endpoint change, migration-back, live key update or live PMTUD only where current architecture supports a bounded path. Treat implementation + local validation + instrumentation as one closure package.
 
-### J — Reclassify release opportunities and deliberately return to milestone-output work
-
-**Status:** `READY_LOCAL_AFTER_I`.
-
-Re-evaluate every remaining release/evidence row: answered bounded question -> `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`; executable missing assertion -> `OPEN_READY` with exact action/dependencies/scope; otherwise record the exact implementation/environment/governance/review blocker.
-
-Then end the audit-only loop. If no new HIGH/BLOCKER remains, select one concrete highest-value `BLOCKED_IMPLEMENTATION` runtime seam that can progress to local validation and then a truthful changed-hypothesis VPS question. Candidate families remain NAT/source endpoint change, migration-back, live key update or live PMTUD only when existing architecture supports a bounded path.
-
-**Continue immediately to K:** yes once one candidate is selected without a maintainer-level design decision.
-
-### K — One runtime-seam closure package
-
-**Status:** `PREAUTHORIZED_AFTER_J_WHEN_ONE_CANDIDATE_IS_SELECTED`.
-
-Treat implementation + local verification + evidence instrumentation for the selected seam as one coherent package. The agent may propose/select the smallest design inside existing architecture without reviewer pre-approval. Do not open several speculative seams at once.
-
-**Continue immediately to L if local gate and exact-head CI make a truthful live row READY:** yes.
-
-### L — One changed-hypothesis VPS evidence row + reconciliation
-
-**Status:** `PREAUTHORIZED_AFTER_K_AND_EXACT_HEAD_GREEN`; only if a declared missing question is genuinely `READY_LIVE`.
-
-Under standing authorization, run the minimum bounded self-owned client/VPS scenario needed to answer that one question; retain positive or negative evidence with exact code/binary/parameters/resource/cleanup provenance; reconcile release matrix/status. Do not repeat an unchanged failed scenario or promote one run to production/performance evidence.
+If exact-head green makes one declared missing question genuinely `READY_LIVE`, continue immediately to one changed-hypothesis bounded self-owned VPS row under standing authorization, retain positive or negative evidence with provenance/cleanup, then reconcile matrix/status. Do not repeat unchanged failures.
 
 ## 24–48 hour output check
 
-Repository motion remains dominated by reviewer/security infrastructure rather than executable progress. E1A is still a genuine correctness blocker, but the repository contract, proposal authority, clean green execution branch and tests/gates required to start are already sufficient. Further reviewer-only commits do not increase project capability.
+This review finally contains real runtime/accounting progress rather than reviewer-only churn: staged accounting exists and two real responder families have migrated. Keep that momentum. The next checkpoint should close the two concrete HIGH E1A gaps rather than create more planning/checker-only commits.
 
-The next meaningful checkpoint must contain runtime/accounting implementation and tests. Once D019 closes (or only C2 becomes a genuine policy wait), the queue deliberately returns to a concrete runtime seam and one bounded real-network evidence question so the project produces executable capability, a real evidence conclusion, package/operator capability or genuine milestone/security closure.
+After D019/security closure (or a genuine isolated policy wait), the queue deliberately returns to one concrete runtime seam and, when truthful, one bounded VPS evidence question so the project produces a new runnable capability or real evidence conclusion.
 
 ## Completion gates
 
-D019/RSEC-001 implementation closure requires all of:
+E1A closes only when all are true:
 
-- one TCP frame remains one D019 packet/record under staged accounting;
-- header charge precedes attacker-controlled length interpretation;
-- body bytes/work reserved before allocation/body read;
-- cumulative per-record work enforced across stages;
-- incomplete reserved body remains charged and terminal;
-- all real TCP responders use the shared staged contract;
-- semantic responder inventory/evidence barriers machine checked;
-- carrier/source projection explicit and bounded;
-- terminal-source persistence resolved by reviewed policy rather than invented limits;
-- complete deterministic adversarial matrix and exact-head CI green;
-- security/release prose does not outrun exact implementation;
-- governance flags unchanged.
+- every begun staged record completes or terminally abandons exactly once;
+- malformed/oversize/truncated/timeout/I/O failure after begin cannot reuse the logical ticket;
+- one frame remains one packet under staged accounting;
+- header charge precedes length interpretation and body reservation precedes allocation/read;
+- cumulative per-record work is bounded across stages;
+- cross-layer staged accounting has a reviewed atomic/conservative failure invariant;
+- ordinary, periodic, multistream and failover TCP all use the shared staged path for pre-auth negotiation/first Noise input;
+- required deterministic adversarial tests exist and fuzz/full gates pass;
+- exact-head CI is green.
+
+Broader RSEC-001/D019 closure additionally requires E2/C1/C2/full adversarial/evidence review, with governance flags unchanged.
 
 ## Do not expand into
 
-- more reviewer-only branch provisioning or repeated rewording of E1A while the external executor is inactive;
-- protocol/wire/Noise/Session/Carrier redesign for E1A;
+- new reviewer-only branch provisioning or checker layers before current E1A code is repaired;
+- protocol/wire/Noise/Session/Carrier redesign for staged accounting;
 - new numeric D019/security/source-retention limits without reviewed ADR work;
 - public or production listener deployment;
 - VPS/load tests as a substitute for deterministic security accounting;
@@ -214,4 +228,4 @@ D019/RSEC-001 implementation closure requires all of:
 
 None at this review point.
 
-The current blocker is external executor inactivity, not a repository design decision. Do not ask the maintainer to choose an E1A API. If later C2 genuinely requires a new retention policy value or core semantic choice, isolate that policy lane and surface the exact decision while continuing independent work.
+The current E1A defects are ordinary local correctness/design work within existing authorization and architecture. The external agent should repair them autonomously. A maintainer decision is needed only if the later terminal-source persistence checkpoint genuinely requires a new security policy value or core semantic choice.
