@@ -1,264 +1,273 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-07 17:58 Asia/Shanghai
-Repository main HEAD reviewed: `65acf6901d3de38b2354623145a55c6cbdb20542`
-Previous checked implementation HEAD: `a6b0c3327c34a068fd66bc7dc44d63b959b9536b`
-Current execution branch: `work/e1a-staged-accounting-20260907` at exact `14fe30d72b447a0b6fe94664734d184ff2995f36`
+Checked at: 2026-09-07 23:00 Asia/Shanghai
+Repository main HEAD reviewed: `5c99c45010fabd68d9270fddc414ac37af25aa41`
+Previous checked implementation HEAD: `f066af59a04a2e0fb83b10cfe6bdb2b530be10e4`
+Current execution branch: `work/e1a-staged-accounting-20260907` at exact `b041a64e0ecce69d5549847864936f36cbda4b75`
 Historical partial-E2 branch retained: `work/continue-20260904` at `d271a99a2ab26abbcb146c411ba0fde697395abe`
 
 ## What changed
 
-The coding agent consumed the previous two HIGH E1A findings instead of stopping after one slice. The active branch now contains current reviewer `main` plus two new implementation/test commits:
+The coding agent resumed and consumed the stalled E2 front with two coherent checkpoints after `f066af5`:
 
-- `70d1e99` — ordinary non-force merge of current reviewer `main` into the execution branch; no implementation claim by itself.
-- `3b684d5` — **real E1A runtime closure progress**: adds explicit staged-input abandonment, migrates ordinary TCP and failover TCP negotiation/first-Noise input to the shared staged helper, and updates their responder-inventory anchors.
-- `14fe30d` — adds one-shot terminal ownership tests for inner staged input permits and process staged permits.
+- `7e337d4` — restores current carrier-aware pending-UDP inventory ownership fields and the existing reserve-before-store checker rule;
+- `b041a64` — moves the existing-pending failover UDP datagram charge to one conservative `charge_input(..., n, 4096)` **before** duplicate-vs-Noise classification, and removes the old branch-specific duplicate/non-duplicate charges.
 
-The full branch is now six commits ahead of current reviewer `main`, because it also retains the previously accepted `ccacec1` / `6974ff6` / `a6b0c33` staged accounting, staged framed-reader, periodic and multistream migrations. All four required TCP responder families now use the staged receive path for pre-auth negotiation / first Noise input:
+Exact `b041a64e0ecce69d5549847864936f36cbda4b75` GitHub Actions run `34131611274` is green: both `stable checks` (`scripts/check.sh`) and `nightly decode fuzz smoke` completed successfully. This is exact-head repository CI evidence, not a security/release/WAN claim.
 
-1. ordinary TCP server/probe;
-2. periodic TCP;
-3. multistream TCP;
-4. failover TCP.
+The runtime E2 defect identified in the previous handoff is repaired in the intended minimal form: after peer match, one received pending UDP datagram is charged exactly once with the existing conservative work ceiling before `datagram == pending_state.hello.as_slice()` and before `receive_first`. Duplicate selection retry and Noise paths no longer apply a second input charge.
 
-Exact `14fe30d72b447a0b6fe94664734d184ff2995f36` GitHub Actions run `34106119750` is green. Both jobs succeeded:
+The existing inventory checker also again requires reserve/store/cancel fields for entries marked `pending_owner=true` and mechanically checks queue reservation before pending storage. One small guard-fidelity gap remains: the `failover_udp_pending` ordered sequence does not name the duplicate-classification anchor itself, so the checker can prove the conservative charge precedes response/Noise anchors but does not mechanically prove it remains before the duplicate comparison. This is a narrow drift-guard issue, not a runtime correctness blocker and not grounds for another pre-auth audit project.
 
-- `stable checks`: `bash scripts/check.sh` success;
-- `nightly decode fuzz smoke`: pinned cargo-fuzz build + 30-second decode fuzz success.
-
-This is exact-head local/CI/fuzz evidence. It is not WAN evidence, a security approval, RC, freeze, release or production readiness.
+Branch coordination remains ordinary: `b041a64` is based on the implementation lineage from `f066af5` and is behind the two latest reviewer-only `main` handoffs. Before the next coding package, normally integrate current `origin/main` without force-push or history loss.
 
 ## Review verdict
 
-**CONTINUE_WITH_NARROW_E1A_CLOSURE — accept the four-responder staged migration and helper-level terminal-abandon direction. Do not reopen those solved seams. One small staged-primitive terminality/test package remains before E1A can close; then continue directly through E2/C1 rather than returning to checker-only churn.**
+**ACCEPT_E2_RUNTIME_WITH_ONE_NARROW_GUARD_FIX — the pending-UDP single-charge runtime repair is accepted. Close the remaining inventory anchor gap in-place, then leave the pre-auth audit loop. Continue immediately through compatibility/package/reclassification, select one real runtime capability seam, and use the rented VPS when that seam becomes truthfully READY_LIVE.**
 
-No administrator action is required. Do not spend VPS time yet: the remaining E1A issue is deterministic local accounting semantics. The active agent should continue on `work/e1a-staged-accounting-20260907`, consume the narrow closure package below, push, and immediately proceed to E2/C1 if green.
+E1A remains CLOSED. C1 remains CLOSED. C2 remains an intentionally isolated release/security policy checkpoint and must not freeze independent engineering. No administrator action is required to continue the queue.
 
 ## Reviewer findings
 
-### RSEC-001E1A-1 — CLOSED directionally at `3b684d5` / `14fe30d`
+### RSEC-001E2-RUNTIME — CLOSED at exact `b041a64`
 
-The previous HIGH finding about silent reservation drop is resolved for the real CLI staged helper:
+Accepted bounded semantics:
 
-- a post-begin non-complete `read_until_staged` result now calls `TcpInputReservation::abandon`;
-- inner permit ownership becomes inactive;
-- process staged ownership is abandoned/rejected when live;
-- the logical process state is explicitly rejected regardless;
-- oversize/truncation/deadline/I/O error therefore cannot return a reusable CLI ticket;
-- charged attacker-caused input is not refunded.
+- source/peer match occurs before charging an already-admitted pending source, so unrelated peers do not consume that source's budget;
+- one matched pending UDP datagram is charged exactly once before duplicate/Noise classification;
+- the existing `4096` work reservation is conservative D019 accounting, not a CPU-cycle claim and not a new policy value;
+- duplicate selection retry has no second input charge and remains subject to existing response/anti-amplification accounting;
+- non-duplicate Noise parsing has no second input charge;
+- authentication still takes pending ownership, dequeues/releases, and only then emits authenticated success evidence;
+- process expiry still invalidates the application queue owner;
+- exact-head stable checks and decode fuzz are green.
 
-`14fe30d` additionally proves complete/abandon are one-shot in the inner budget and proves a normal process abandon terminalizes the state and prevents later input.
+This is deterministic/runtime implementation evidence only. It adds no WAN, reliability-rate, public-reachability, performance, security-approval or production evidence.
 
-Keep this behavior. Do not redesign it into generic RAII machinery unless a concrete test exposes another leak.
+### RSEC-001E2-GUARD — LOW/MEDIUM — add the duplicate-classification anchor, then close
 
-### RSEC-001E1A-2 — CLOSED at `3b684d5`
+`7e337d4` restored the useful historical pending-owner reserve/store/cancel schema and `b041a64` restored the checker logic. The remaining `failover_udp_pending` `ordered` list currently has:
 
-All four required TCP responder families now use the shared staged helper for negotiation and first Noise input. Ordinary/failover preserve their existing experiment/setup deadlines, negotiation binding, Noise/resume/readiness boundaries and post-auth framing. Periodic/multistream remain migrated from the prior slice.
+```text
+charge_input(..., n, 4096)
+-> charge_response / send duplicate response
+-> receive_first(...)
+```
 
-Do not reopen post-auth data framing merely for symmetry.
+but omits the actual classification anchor:
 
-### RSEC-001E1A-3 — MEDIUM/HIGH — new staged process primitives still do not terminalize *every* returned error structurally
+```text
+if datagram == pending_state.hello.as_slice()
+```
 
-The real CLI helper is fail-closed because `ListenerAdmission::{begin,extend}_tcp_input_record` explicitly rejects the process state on an outer failure and `read_staged_frame` abandons the reservation on every non-complete result. However, the reusable `ProcessPreauthAdmission` staged API itself is weaker than the already-accepted D1 contract:
+**Required narrow repair:** add the smallest unique current duplicate-comparison snippet to the `failover_udp_pending` `ordered` sequence immediately after the single conservative charge and before the duplicate response anchors. The existing checker already enforces list order, so no new framework, schema version or test harness is needed.
 
-- `extend_input_record` rejects the state for explicit per-record/work/limit failures, but `refresh_window(now_ms)?`, `live(...) ?`, source lookups and checked arithmetic can return `Err(SessionRejected)` before `reject(state_id)` runs;
-- a backwards-time or checked-arithmetic failure can therefore return an error while leaving the permit logically active and, for some error classes, leave the state otherwise reusable by a direct caller;
-- `complete_input_record` similarly returns live/clock errors without structurally consuming the permit/rejecting the state;
-- inner `PreauthBudget::extend_input_record` also leaves its permit active on an error when used directly, although the current CLI composition subsequently abandons it.
+Do not reopen runtime accounting unless this small guard change exposes a real mismatch. Run the existing inventory checker / `scripts/check.sh` / `git diff --check`, commit and push if a tracked change is needed, then consider E2 closed and continue immediately.
 
-This does **not** currently create an externally reachable responder bypass because the CLI composition terminalizes the ticket, so do not escalate it into a redesign. It is nevertheless a contract regression in the reusable admission primitive and should be fixed before E1A is declared closed.
+### RSEC-001E1A — CLOSED at `164731d` / exact implementation lineage
 
-**Required repair:** use the same pattern already used by `charge_input`/`charge_response`: a checked internal implementation plus a public terminalizing wrapper, or an equivalent one-shot state transition. On any staged begin/extend/complete failure associated with an existing logical record, make later reuse of that record/state impossible. Abandon should remain safe when the state is already rejected/expired; it need not resurrect `live()` merely to mark permit ownership terminal.
+Retain the accepted four-responder staged TCP semantics. Do not reopen staged TCP work absent a concrete regression.
 
-Minimum deterministic regressions:
+### RSEC-001C1 — CLOSED at `f7e2cf1`
 
-- staged extend with backwards monotonic time -> error -> same permit/state cannot later extend/complete successfully;
-- staged extend arithmetic/limit failure -> same permit/state cannot later succeed;
-- staged complete clock/liveness failure -> permit cannot later become complete;
-- direct inner staged extension failure cannot be retried as the same logical record if the API remains public in its current form.
+Carrier-aware source projection remains accepted. TCP/UDP source domains are explicit and bounded and family/address/port remain represented without text logging.
 
-Keep this a small primitive-semantics patch; no new numeric policy, wire bytes, Session/Carrier/ACK/Noise behavior or runtime dependency.
+### RSEC-001C2 — POLICY CHECKPOINT / RELEASE BLOCKER at `f066af5`
 
-### RSEC-001E1A-4 — MEDIUM evidence gap — helper failure ordering needs explicit staged tests, but no new checker framework
+The source-retention amendment request remains truthful and unresolved. Preserve bounded cleanup and do not invent TTL/LRU/history/epoch/eviction numbers. Literal terminal-source no-reset compliance remains unclaimed.
 
-Current exact-head CI/fuzz is green and the primitive one-shot tests are useful. The staged framed reader still lacks direct deterministic tests showing the event/order contract on its failure paths. Existing `framed.rs` tests mainly exercise the legacy non-staged reader.
-
-Add a small staged-reader test matrix using the existing scripted reader/clock rather than creating another harness:
-
-- successful fragmented header/body emits `Header -> Body -> Complete` exactly once;
-- oversize length emits `Header` before the length rejection and does not allocate/read the body;
-- truncated/deadline after accepted length emits `Header -> Body` and no `Complete`;
-- zero-length body still produces one logical record and exactly one `Complete`;
-- callback rejection returns before body allocation/read where applicable.
-
-At the admission layer, add one regression where inner staged admission succeeds but the outer layer rejects (for example via an existing work/window limit): prove the process ticket is terminal and no response/enqueue/input success can follow. Exact equality of inner/outer terminal counters is **not** required for E1A if the implementation deliberately uses an `all-or-terminal` invariant; conservative partial charge is acceptable only because the ticket is terminal and cannot produce protocol evidence. Do not spend another day engineering rollback bookkeeping solely to make dead-state counters aesthetically equal.
-
-This closes the previous cross-layer-fidelity concern as a safety question once the all-or-terminal regression exists.
+This is a **specific release/security policy blocker only**. It does not block compatibility review, package/provenance review, release-opportunity recomputation, new runtime integration, or a bounded self-owned VPS experiment whose own question is dependency-ready.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains a bounded research-baseline flag only.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain required.
-- A1 response-I/O deadline, B1 queue ownership/expiry and D1 ordinary terminal rejection remain accepted closed subfindings unless a concrete regression appears.
-- `ccacec1` / `6974ff6` / `a6b0c33` / `3b684d5` / `14fe30d` are real staged-accounting/runtime/test progress. They remain deterministic/local evidence only.
-- All four TCP responder families now stage pre-auth accounting before attacker-controlled length/body work. This is accepted implementation progress, not security approval.
-- Exact `14fe30d` has green stable checks and green nightly decode fuzz smoke.
-- Existing 16 KiB per-state reservation remains a memory ceiling, not a substitute for input/work accounting.
-- Historical WAN/HY2/failover/periodic positive and negative evidence remains immutable at its exact commit boundary.
-- Standing VPS authorization remains valid for future dependency-ready self-owned work; no new per-run permission is needed when the release matrix truthfully becomes `READY_LIVE`.
+- A1 response-I/O deadline, B1 queue ownership/expiry, D1 terminal rejection, E1A staged TCP accounting, E2 pending-UDP runtime ordering, and C1 carrier projection are accepted bounded implementation findings.
+- C2 is unresolved policy text, not approved D019 compliance.
+- Exact `b041a64` is green under stable checks and nightly decode fuzz smoke.
+- No new WAN/VPS evidence landed in this review interval.
+- Historical positive and negative WAN/HY2/failover/periodic evidence remains immutable at its exact commit boundaries.
+- Standing VPS authorization remains valid; C2 is not a generic WAN authorization blocker.
 - Protected identity material, SSH private keys, credentials, private endpoint material and raw private diagnostics remain unread/untracked/uncommitted.
 
 ## Rolling Work Queue
 
-This is a multi-hour pre-authorized queue. The coding agent owns ordinary local design choices and should propose/choose the smallest fail-closed shape inside current architecture. Finish a coherent closure package -> targeted/full gates -> commit -> push -> immediately continue. One commit, nominal hour, reviewer interval or proposal note is never a stop condition.
+This is a multi-hour pre-authorized queue. The coding agent owns ordinary local design choices. Finish one coherent package -> targeted/full gates -> commit -> push -> immediately continue to the next dependency-satisfied package. One commit, nominal hour, reviewer interval, CI pending state or proposal note is not a stop condition.
 
-### A — Final E1A primitive terminality + staged-reader adversarial closure
+### Q0 — Reconcile current reviewer main into the implementation branch
 
-**Status:** `READY_LOCAL`; immediate narrow correctness package.
+**Status:** `READY_LOCAL`; coordination only.
 
-**Goal / why now:** close the only remaining E1A semantic gap without reopening solved runtime migrations.
+Fetch current `origin/main` and normally merge/reconcile it into `work/e1a-staged-accounting-20260907`, preserving all implementation commits. Do not force-push. `docs/CHATGPT_HANDOFF.md` remains reviewer-owned/read-only to the coding agent.
 
-**Files/concepts:** staged permit methods in `crates/neko-crypto/src/lib.rs`; small staged-reader tests in `crates/neko-cli/src/framed.rs`; only minimal composition tests in `crates/neko-cli/src/preauth.rs` if needed.
+If already reconciled when work resumes, skip Q0.
 
-**Protected invariants:** one frame == one input packet; bytes/work may stage but packet ownership does not; every staged-operation failure is terminal/non-revivable; attacker-caused reserved input is not refunded after accepted reservation; no success evidence after rejection; no new policy values/wire/runtime architecture.
+**Continue immediately to A0:** yes.
 
-**Behavior:** terminalize all staged primitive error returns; add the direct staged-reader event/failure matrix and one all-or-terminal cross-layer regression. Do not add a new checker/harness framework.
+### A0 — Close the final E2 inventory ordering guard
 
-**Validation:** targeted tests, `scripts/check.sh`, `git diff --check`; CI already carries the required decode fuzz job, and rerun exact-head CI after push. Run local fuzz smoke if available, otherwise rely only on the exact-head CI fuzz result after push and report the local limitation truthfully.
+**Status:** `READY_LOCAL`; deliberately narrow and should not grow.
 
-**Commit/push:** one coherent implementation+tests package is preferred. Push exact head.
+**Goal / why now:** make the existing machine guard reflect the runtime property already implemented at `b041a64`: the single conservative charge precedes both duplicate classification and Noise parsing.
 
-**Continue immediately to B:** yes, if targeted/full gates are green; do not wait for reviewer merely because exact-head CI is pending unless B depends on the final security conclusion.
+**Files:** `docs/preauth-responder-inventory.v1.json` only unless the existing checker reveals a genuine mismatch.
 
-### B — E2 semantic responder inventory/evidence-barrier closure
+**Behavior:** add `if datagram == pending_state.hello.as_slice()` (or the smallest unique exact current equivalent) to the `failover_udp_pending` `ordered` sequence immediately after `.charge_input(&mut pending_state.admission, n, 4096)` and before duplicate response anchors. Do not add a new checker framework, runtime API, numeric budget or schema version.
 
-**Status:** `PREAUTHORIZED_AFTER_A`.
+**Protected invariants:** one datagram == one input packet; charge before classification; queue reserve before store; existing exactly-once cleanup; no success evidence after rejection.
 
-Reconcile `docs/preauth-responder-inventory.v1.json` and its checker against the now-repaired runtime. Reuse only semantically valid parts of historical `d271a99`; do not preserve stale anchors.
+**Validation:** `python3 scripts/check-preauth-responder-inventory.py`, `./scripts/check.sh`, `git diff --check`. No new fuzz campaign is required for a manifest-only guard adjustment.
 
-Required assertions:
+**Commit/push:** one small guard commit if needed.
 
-- every TCP responder anchors the shared staged receive before negotiation/Noise parse;
-- every UDP responder anchors bounded raw receive -> accounting -> parse;
-- pending UDP ownership proves queue-reserve-before-store and exactly-once terminal dequeue/cancel/expiry invalidation;
-- malformed/rejection/timeout/I/O paths cannot reach auth/readiness/Session/Delivery/PathValidated/ACK/authz-equivalent success anchors;
-- externally reachable responder set remains explicit.
+**Continue immediately to B:** yes. Do not wait for reviewer.
 
-Fix real uncovered call-site seams; do not invent checker layers when the existing semantic inventory can express the rule.
+### B — Compatibility / freeze-boundary closure package
 
-**Gate:** semantic checker + full repository gate; commit/push.
+**Status:** `READY_LOCAL_AFTER_A0`; independent of C2.
+
+**Goal / why now:** stop spending the project on pre-auth audit infrastructure and verify that the already-implemented compatibility boundary still matches the provisional spec and corpus freeze.
+
+Audit current/current negotiation, unsupported/future rejection, exact negotiation transcript binding into Noise, resume/version binding, replay boundary, corpus-v1 content-addressed freeze vs global protocol non-freeze, and docs that might accidentally imply corpus freeze == protocol/release freeze.
+
+**Protected invariants:** do not change frozen corpus bytes without a concrete correctness defect; do not broaden release/freeze claims; Session remains carrier-agnostic.
+
+**Implementation:** add a regression or fix only for a concrete mismatch. If no mismatch exists, record the audit result in the smallest existing evidence/status surface only if repository convention requires it; otherwise do not manufacture a commit.
+
+**Gate:** relevant tests; full `scripts/check.sh` for code changes; `git diff --check`.
 
 **Continue immediately to C:** yes.
 
-### C — C1 explicit carrier/source projection
+### C — Package/operator + evidence-provenance integrity closure
 
-**Status:** `PREAUTHORIZED_AFTER_B`.
+**Status:** `READY_LOCAL_AFTER_B`; independent of C2.
 
-Add an explicit bounded carrier discriminator so current TCP and UDP pre-auth source domains cannot accidentally alias. Preserve family/address/port representation without textual/raw logging. Add deterministic non-collision tests across carrier/family/address/port. Do not add terminal-source TTL/LRU/history limits.
+Verify the existing x86_64 package/build identity, dedicated experimental-path install/readiness/smoke/upgrade/rollback contract, shutdown/listener/temp cleanup, canonical Git-blob/checksum manifests, exact-head CI references and stale release-packet hashes/links. Do not read protected identity material.
 
-**Gate:** targeted/full tests; commit/push.
+Do not rerun already-sufficient VPS/package work merely for freshness. If the bounded package/operator question is already answered, classify it as sufficient and continue without manufacturing traffic.
 
 **Continue immediately to D:** yes.
 
-### D — C2 terminal-source persistence policy checkpoint
+### D — Recompute release opportunities from exact current code/evidence
 
-**Status:** `ADR_CHECKPOINT_AFTER_C`.
+**Status:** `READY_LOCAL_AFTER_C`.
 
-Re-read D019 against the exact implementation. If literal no-reset-on-retry/reconnect/carrier-change semantics cannot coexist with bounded source-accounting memory without a new retention policy, write a compact ADR amendment request with exact conflicting clauses, attacker/resource rationale, feasible policy shapes **without convenience numbers**, and required tests/evidence.
+Re-evaluate every remaining release/evidence row rather than preserving 2026-09-03/04 labels by inertia:
 
-Do not invent TTL/LRU/history numeric policy. If this becomes a genuine maintainer/reviewer policy wait, stop only this lane and continue F/G/H independent work below.
+- bounded question already answered -> `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`;
+- specific executable missing assertion with satisfied dependencies -> `OPEN_READY` with exact `evidence_needed`, `next_action`, `requires`, `execution_scope`;
+- missing implementation/environment/governance/review dependency -> exact blocker;
+- C2 remains only its specific source-retention release/security blocker;
+- standing-authorized self-owned TCP/UDP work must not be labelled `need WAN authorization`.
 
-### E — Full D019 adversarial matrix + exact-tree security evidence closure
+Explicitly recompute whether any `READY_LIVE` row now exists. Do not preserve `READY_LIVE: none` simply because an older document said so.
 
-**Status:** `PREAUTHORIZED_AFTER_D_RESOLVED`.
+**Continue immediately to E:** yes.
 
-Complete the remaining source/global concurrency, input/work one-second windows, memory, queue, response/3x amplification, idle/lifetime/100 ms deadline, terminal non-revival, resolved retry/reconnect/carrier transition, cleanup and no-success-evidence matrix. Do not duplicate the E1A staged tests just added.
+### E — Select and implement one high-value previously blocked runtime capability
 
-Push the exact repair head, require green exact-head stable+fuzz CI for the security conclusion, then reconcile:
+**Status:** `PREAUTHORIZED_AFTER_D`.
 
-- `docs/reviews/resource-abuse-evidence-2026-09-04.md`;
-- `docs/release-security-review-packet.md`;
-- `docs/status.md`;
-- release closure/navigation.
+Compare 1–3 exact-current candidates among:
 
-RSEC-001 may close as an implementation finding only if the exact tree supports it. Independent/two-person release review remains a separate gate. Never promote RC/production/freeze/release automatically.
+- NAT/source-endpoint change;
+- migration-back;
+- live key update;
+- live PMTUD.
 
-**Continue immediately to F if no new HIGH/BLOCKER:** yes.
+Choose the one with the smallest new state/API, strongest already-implemented primitives, clearest deterministic test boundary and highest real-VPS evidence value. The agent owns this ordinary engineering choice and should not wait for reviewer approval unless the selected shape changes core Session/Carrier/ACK/crypto/wire semantics or invents new security policy.
 
-### F — Compatibility/freeze-boundary closure
+Prefer a visible-output closure:
 
-**Status:** `READY_LOCAL_AFTER_E`; also safe fallback during genuine D policy wait.
+1. actual runtime integration, not fixture-only wrapping;
+2. bounded loopback/process validation;
+3. structured diagnostics sufficient for a real-socket result;
+4. failure paths that do not fabricate Session/Delivery/PathValidated/ACK evidence;
+5. no new wire/crypto/security policy unless already approved.
 
-Audit corpus-v1 content freeze vs global protocol non-freeze, current/current negotiation, unsupported/future rejection, downgrade/transcript binding into Noise, resume/version binding and replay boundaries. Add a regression only for a concrete defect; do not reopen frozen corpus bytes absent correctness evidence.
+If one candidate genuinely needs maintainer-level architecture choice, select another dependency-safe candidate instead of stopping the project.
 
-**Continue immediately to G:** yes.
+**Gate:** targeted tests + `scripts/check.sh` + `git diff --check`; fuzz only if untrusted parser/wire semantics change; commit/push.
 
-### G — Package/operator + evidence provenance integrity
+**Continue immediately to F when a declared question becomes truthfully READY_LIVE:** yes.
 
-**Status:** `READY_LOCAL_AFTER_F`; safe fallback during genuine D policy wait.
+### F — One bounded self-owned VPS evidence run
 
-Verify existing x86_64 package/build identity, dedicated-path install/readiness/smoke/upgrade/rollback, shutdown/listener/temp cleanup, canonical Git-blob/checksum manifests and exact-head CI references. Do not read protected identity material. Do not rerun already-sufficient VPS/package evidence merely for freshness; fix concrete defects only.
+**Status:** `PREAUTHORIZED_AFTER_E_WHEN_READY_LIVE_EXISTS`.
+
+Use `docs/standing-vps-lab-authorization.md` and local secret endpoint configuration. Execute one self-owned client<->VPS row that directly answers the newly runnable capability or the recomputed highest-value READY_LIVE question. Use the smallest profile that answers the question; standing ceilings are limits, not targets.
+
+Record experiment ID, exact git/binary identity, actual parameters/timestamps, client/server structured result, relevant CPU/RSS/FD/socket observations, bounded capture metadata only if needed, and explicit cleanup verification.
+
+Positive or negative is valid. Do not unchanged-retry historical HY2/repeated-failover/periodic failures. HY2 is not automatic and requires a genuinely changed diagnostic hypothesis plus a declared missing comparison question.
+
+**Continue immediately to G after cleanup:** yes.
+
+### G — Reconcile new runtime/VPS evidence and close the bounded question
+
+**Status:** `PREAUTHORIZED_AFTER_F`.
+
+Update the relevant release matrix/status/evidence artifact at the same semantic boundary. State exactly what the run proves and does not prove. One bounded pass is not a reliability rate, public reachability, production readiness or performance superiority result.
+
+If the run exposes a concrete defect, put that fix first. If it answers the bounded question, classify it sufficient rather than scheduling freshness reruns.
 
 **Continue immediately to H:** yes.
 
-### H — Reclassify release opportunities and deliberately return to runtime output
+### H — Second runtime/VPS opportunity or independent release work
 
-**Status:** `READY_LOCAL_AFTER_G`.
+**Status:** `PREAUTHORIZED_AFTER_G`.
 
-Re-evaluate every release/evidence row:
+Recompute priorities again. If another distinct VPS-only question is now READY and materially valuable during the rental window, take the next smallest one. Otherwise continue independent release/security/package/provenance work that does not depend on C2.
 
-- bounded question already answered -> `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`;
-- executable specific missing assertion -> `OPEN_READY` with exact `evidence_needed`, `next_action`, `requires`, `execution_scope`;
-- otherwise exact implementation/environment/governance/review blocker.
+Do not let C2 or the existence of an independent-review gate turn the repository back into idle review-only mode.
 
-Then deliberately end the audit-only loop. If no new HIGH/BLOCKER remains, choose one highest-value `BLOCKED_IMPLEMENTATION` runtime seam that can become locally executable without maintainer-level design: NAT/source-endpoint change, migration-back, live key update or live PMTUD only where current architecture supports a bounded honest path. Treat runtime implementation + local validation + instrumentation as one closure package.
+**Continue immediately to I:** yes when safe.
 
-If that produces a genuine `READY_LIVE` missing question, continue to I rather than waiting for a reviewer interval.
+### I — Independent D019/security debt while C2 waits
 
-### I — One changed-hypothesis bounded VPS evidence closure when truthful
+**Status:** `READY_LOCAL_FALLBACK`; must not displace a READY runtime/VPS path.
 
-**Status:** `PREAUTHORIZED_AFTER_H_WHEN_READY_LIVE_EXISTS`.
+Cover only genuinely missing D019 boundaries independent of terminal-source retention: concurrency ceilings, global one-second windows, memory/queue/response/anti-amplification, idle/lifetime/100 ms deadline, cancellation/double cleanup and no-success-evidence barriers. Reuse existing tests; add only distinct missing boundaries.
 
-Under `docs/standing-vps-lab-authorization.md`, execute one self-owned VPS row only when a declared missing release question is dependency-ready. Use the smallest profile that answers the question, preserve exact commit/binary/parameters/events/resource observations and cleanup, and retain positive **or negative** evidence. Do not repeat an unchanged historical failure.
-
-After the run, reconcile the release matrix/status in the same evidence boundary. Do not turn one bounded sample into a performance/reliability/production claim.
+Do not claim full D019/RSEC-001 closure until C2 has an approved policy resolution. Do not invent retention numbers.
 
 ## 24–48 hour output check
 
-This review contains real progress: the coding agent closed the prior two HIGH runtime seams, migrated all four TCP responder families, added terminal staged ownership and produced green exact-head stable+fuzz CI. The next package should finish E1A primitive semantics/tests, then move forward through E2/C1 rather than generate more reviewer-only scaffolding.
+The project is now producing real implementation progress again: staged TCP accounting and all four responder migrations landed; terminal ownership and cross-layer behavior were repaired; carrier-aware source projection landed; the terminal-source policy conflict was isolated honestly; and the pending-UDP runtime charge-order defect is now repaired at `b041a64` with green stable/fuzz CI.
 
-After D019 is closed or isolated behind a genuine policy checkpoint, the queue intentionally returns to one real runtime seam and one truthful VPS evidence question so the project produces a new runnable capability or real-network conclusion within the rental window.
+The next coordination goal is therefore **not another day of pre-auth checker work**. A0 is the final narrow guard correction. After it, B/C/D must rapidly move the queue outward, and E/F should convert one historical `BLOCKED_IMPLEMENTATION` capability into actual runtime + real-VPS evidence if the exact dependencies support it.
 
 ## Completion gates
 
-E1A closes when all are true:
+The current local pre-auth responder package is complete when:
 
-- every real TCP pre-auth responder uses the shared staged path for negotiation/first Noise input — **satisfied at `3b684d5`**;
-- post-begin non-complete helper outcomes terminalize the CLI logical ticket without refund — **satisfied directionally at `3b684d5`**;
-- staged primitive errors are structurally non-revivable for direct callers — **open**;
-- one frame remains one packet and cumulative per-record work is bounded across stages — implementation exists; direct adversarial evidence still to finish;
-- header accounting precedes attacker length interpretation and body reservation precedes allocation/read — **satisfied in staged helper**;
-- cross-layer failure follows a reviewed `all-or-terminal` or atomic invariant and cannot produce success evidence — one direct regression still required;
-- staged-reader oversize/truncation/deadline/callback ordering tests exist — **open**;
-- full gate/fuzz/exact-head CI are green — exact `14fe30d` green now; rerun after final closure patch.
+- accepted E1A staged semantics remain green;
+- all seven inventoried responder surfaces retain accounting-before-protected-work order;
+- existing-pending UDP charges exactly once before the duplicate comparison and Noise parsing;
+- the inventory mechanically orders the single charge before that duplicate comparison;
+- queue reservation is before pending ownership store;
+- rejection/expiry/auth-success cleanup remains exactly-once and cannot emit forbidden success evidence;
+- exact-head repository gate is green.
 
-Broader RSEC-001/D019 closure additionally requires E2/C1/C2/full adversarial/evidence review, with governance flags unchanged.
+After A0, treat that local responder package as closed unless a new concrete regression appears.
+
+Full D019/RSEC-001 release-security closure additionally requires an approved terminal-source retention/no-reset policy, the remaining independent adversarial matrix, exact-tree security/evidence review and repository-required independent release review. The broader project must not wait for that policy decision before independent runtime/VPS research proceeds.
 
 ## Do not expand into
 
-- another staged-accounting checker/harness framework before A is closed;
-- protocol/wire/Noise/Session/Carrier redesign for this local accounting seam;
-- new numeric D019/source-retention limits without reviewed ADR work;
-- public/production listener deployment;
-- VPS/load testing as a substitute for deterministic security accounting;
-- unchanged HY2/repeated-failover retries;
-- speculative FEC/0-RTT/striping/multipath/exotic carriers;
-- reading, hashing, copying, modifying or committing protected identity/SSH-key/credential/private-endpoint material;
-- RC/freeze/release/production promotion.
+- new terminal-source TTL/LRU/history/epoch/eviction numbers without explicit reviewed policy;
+- another staged-UDP accounting subsystem or another pre-auth checker framework;
+- public or production listener deployment;
+- protocol/wire/Noise/Session/Carrier redesign unrelated to an observed blocker;
+- repeated unchanged HY2/repeated-failover/periodic historical failures;
+- VPS load testing as a substitute for deterministic correctness;
+- speculative FEC/0-RTT/striping/multipath/exotic-carrier work without an observed-problem gate;
+- reading, hashing, copying, modifying, uploading or committing protected identity/SSH-secret material;
+- release/RC/freeze/production promotion.
 
 ## Questions requiring maintainer decision
 
-None at this review point.
+**No maintainer decision is required to continue the current queue.**
 
-The current E1A remainder is ordinary local correctness/test work. The later terminal-source persistence checkpoint may require a real policy decision, but only after C1 and the exact responder semantics are complete.
+D019 terminal-source retention remains a future release/security policy decision recorded in `docs/adr/m1-g0-preauth-source-retention-amendment-request.md`. Until that review occurs, preserve bounded cleanup, state the limitation honestly, and do not claim literal terminal-source no-reset compliance. Continue all independent engineering and bounded self-owned VPS work whose own dependencies are satisfied.
