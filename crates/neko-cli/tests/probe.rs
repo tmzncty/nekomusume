@@ -1668,6 +1668,70 @@ fn periodic_session_delayed_confirmations_are_counted_on_one_session() {
 }
 
 #[test]
+fn periodic_session_synchronized_key_update_crosses_authenticated_socket() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("periodic-key-update-server");
+    let cp = tmp("periodic-key-update-client");
+    let ck = key(bin, &cp);
+    let sk = key(bin, &sp);
+    let port = periodic_test_port();
+    let server = start_periodic_server(bin, port, &sp, &ck, &["--key-update-after", "1"]);
+    let out = Command::new(bin)
+        .args([
+            "periodic-client",
+            "--port",
+            &port.to_string(),
+            "--addr",
+            &format!("127.0.0.1:{port}"),
+            "--identity",
+            cp.to_str().unwrap(),
+            "--server-key",
+            &sk,
+            "--duration",
+            "5",
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--interval-ms",
+            "100",
+            "--ack-timeout-ms",
+            "500",
+            "--key-update-after",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        client_log.contains("periodic_client_key_update seq=1 key_phase=1"),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains("attempted=3 confirmed=3 missing=0"),
+        "{client_log}"
+    );
+    let (status, server_log) = finish_server(server);
+    assert!(status.success(), "{server_log}");
+    assert!(
+        server_log.contains("periodic_server_key_update seq=1 key_phase=1"),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("received=3 confirmed=3"),
+        "{server_log}"
+    );
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+}
+
+#[test]
 fn periodic_session_accounts_missing_ack_and_fails_closed() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");

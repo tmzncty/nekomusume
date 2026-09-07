@@ -21,6 +21,7 @@ struct Config {
     interval: Duration,
     setup_timeout: Duration,
     ack_timeout: Duration,
+    key_update_after: Option<usize>,
 }
 
 fn value(args: &[String], key: &str, default: &str) -> Result<String, &'static str> {
@@ -45,6 +46,14 @@ fn config(args: &[String]) -> Result<Config, &'static str> {
     let setup_timeout_default = DEFAULT_SETUP_TIMEOUT_MS.to_string();
     let setup_timeout = parse_u64("--setup-timeout-ms", &setup_timeout_default)?;
     let ack_timeout = parse_u64("--ack-timeout-ms", "1000")?;
+    let key_update_after = match value(args, "--key-update-after", "")? {
+        value if value.is_empty() => None,
+        value => Some(
+            value
+                .parse::<usize>()
+                .map_err(|_| "invalid key-update-after")?,
+        ),
+    };
     if !(40080..=MAX_PORT as u64).contains(&port) {
         return Err("port outside 40080-40100");
     }
@@ -72,6 +81,11 @@ fn config(args: &[String]) -> Result<Config, &'static str> {
     if total > MAX_TOTAL_BYTES as u64 {
         return Err("application bytes exceed 1048576");
     }
+    if let Some(boundary) = key_update_after
+        && (boundary == 0 || boundary >= count as usize)
+    {
+        return Err("key-update-after must be between 1 and count-1");
+    }
     Ok(Config {
         port: port as u16,
         bytes: bytes as usize,
@@ -80,6 +94,7 @@ fn config(args: &[String]) -> Result<Config, &'static str> {
         interval: Duration::from_millis(interval),
         setup_timeout: Duration::from_millis(setup_timeout),
         ack_timeout: Duration::from_millis(ack_timeout),
+        key_update_after,
     })
 }
 
@@ -332,7 +347,10 @@ pub(super) fn server(args: &[String]) {
     );
     preauth.release(admission);
     framed.set_max_frame_len(PROCESS_FRAME_MAX + 128).unwrap();
-    println!("periodic_server_authenticated session=7201 stream=1");
+    println!(
+        "periodic_server_authenticated session=7201 stream=1 key_update_after={:?}",
+        cfg.key_update_after
+    );
     let mut runtime = SessionRuntime::new(SESSION, limits(cfg), 0).unwrap();
     runtime.open_stream(STREAM, 0).unwrap();
     let deadline = start + cfg.duration;
@@ -416,6 +434,12 @@ pub(super) fn server(args: &[String]) {
                             .unwrap_or_else(|_| fail("duplicate acknowledgement send failed"));
                     }
                     confirmed += 1;
+                    if cfg.key_update_after == Some(received) {
+                        secure
+                            .update_key_phase()
+                            .unwrap_or_else(|_| fail("scheduled key update failed"));
+                        println!("periodic_server_key_update seq={} key_phase=1", received);
+                    }
                 }
                 println!(
                     "periodic_server_interval seq={} received=true confirmed={} duplicate={}",
@@ -476,7 +500,10 @@ pub(super) fn client(args: &[String]) {
         &server_key,
     );
     framed.set_max_frame_len(PROCESS_FRAME_MAX + 128).unwrap();
-    println!("periodic_client_authenticated session=7201 stream=1 reconnect=unsupported");
+    println!(
+        "periodic_client_authenticated session=7201 stream=1 reconnect=unsupported key_update_after={:?}",
+        cfg.key_update_after
+    );
     let mut runtime = SessionRuntime::new(SESSION, limits(cfg), 0).unwrap();
     runtime.open_stream(STREAM, 0).unwrap();
     let deadline = start + cfg.duration;
@@ -546,6 +573,12 @@ pub(super) fn client(args: &[String]) {
                         confirmed += 1;
                         latencies.push(sent_at.elapsed().as_millis());
                         ok = true;
+                        if cfg.key_update_after == Some(seq) {
+                            secure
+                                .update_key_phase()
+                                .unwrap_or_else(|_| fail("scheduled key update failed"));
+                            println!("periodic_client_key_update seq={} key_phase=1", seq);
+                        }
                         break;
                     }
                     if let ProcessMessage::DeliveryAck {
@@ -623,6 +656,38 @@ mod tests {
         assert!(config(&args(&["periodic-client", "--duration", "601"])).is_err());
         assert!(config(&args(&["periodic-client", "--interval-ms", "99"])).is_err());
         assert!(config(&args(&["periodic-client", "--count", "601"])).is_err());
+        assert!(
+            config(&args(&[
+                "periodic-client",
+                "--count",
+                "3",
+                "--key-update-after",
+                "0"
+            ]))
+            .is_err()
+        );
+        assert!(
+            config(&args(&[
+                "periodic-client",
+                "--count",
+                "3",
+                "--key-update-after",
+                "3"
+            ]))
+            .is_err()
+        );
+        assert_eq!(
+            config(&args(&[
+                "periodic-client",
+                "--count",
+                "3",
+                "--key-update-after",
+                "1"
+            ]))
+            .unwrap()
+            .key_update_after,
+            Some(1)
+        );
         assert!(
             config(&args(&[
                 "periodic-client",
