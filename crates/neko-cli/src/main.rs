@@ -492,11 +492,19 @@ fn server(args: &[String]) {
                     let mut negotiation =
                         VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
                             .unwrap_or_else(|_| fail("negotiation setup failed"));
-                    let hello = read_frame(&mut s, MAX_NEGOTIATION_FRAME)
-                        .unwrap_or_else(|_| fail("malformed negotiation"));
-                    preauth
-                        .charge_input(&mut admission, hello.len() + 4, 64)
-                        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
+                    let mut reader = framed::FramedReader::new(MAX_NEGOTIATION_FRAME);
+                    let deadline = start + d;
+                    let hello = preauth::read_staged_frame(
+                        &mut reader,
+                        &mut s,
+                        MAX_NEGOTIATION_FRAME,
+                        deadline,
+                        &mut preauth,
+                        &mut admission,
+                        64,
+                        64,
+                    )
+                    .unwrap_or_else(|_| fail("malformed negotiation"));
                     let selection = negotiation
                         .server_accept_hello(&hello)
                         .unwrap_or_else(|_| fail("incompatible negotiation"));
@@ -509,10 +517,20 @@ fn server(args: &[String]) {
                     let binding = negotiation
                         .authenticated_binding()
                         .unwrap_or_else(|_| fail("negotiation binding failed"));
-                    let first = read_frame(&mut s, 1024).unwrap_or_else(|_| fail("bad handshake"));
-                    preauth
-                        .charge_input(&mut admission, first.len() + 4, 4096)
-                        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
+                    reader
+                        .set_max_frame_len(1024)
+                        .unwrap_or_else(|_| fail("partial frame crossed protocol stage"));
+                    let first = preauth::read_staged_frame(
+                        &mut reader,
+                        &mut s,
+                        1024,
+                        deadline,
+                        &mut preauth,
+                        &mut admission,
+                        64,
+                        4096,
+                    )
+                    .unwrap_or_else(|_| fail("bad handshake"));
                     let (resp, mut ss) = ResponderHandshake::new_with_prologue_binding(
                         &id,
                         policy.clone(),
@@ -1246,11 +1264,18 @@ fn failover_server(args: &[String]) {
                 .unwrap_or_else(|_| fail("pre-auth admission rejected"));
             bound_stream_to_deadline(&stream, experiment_deadline, None)
                 .unwrap_or_else(|_| fail("TCP negotiation deadline elapsed"));
-            let hello = read_frame(&mut stream, MAX_NEGOTIATION_FRAME)
-                .unwrap_or_else(|_| fail("bad negotiation"));
-            preauth
-                .charge_input(&mut admission, hello.len() + 4, 64)
-                .unwrap_or_else(|_| fail("pre-auth admission rejected"));
+            let mut reader = framed::FramedReader::new(MAX_NEGOTIATION_FRAME);
+            let hello = preauth::read_staged_frame(
+                &mut reader,
+                &mut stream,
+                MAX_NEGOTIATION_FRAME,
+                experiment_deadline,
+                &mut preauth,
+                &mut admission,
+                64,
+                64,
+            )
+            .unwrap_or_else(|_| fail("bad negotiation"));
             let mut negotiation =
                 VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS).unwrap();
             let selection = negotiation
@@ -1268,10 +1293,20 @@ fn failover_server(args: &[String]) {
             println!("carrier_event name=tcp_negotiated session=7001 generation=1 version=0");
             bound_stream_to_deadline(&stream, experiment_deadline, None)
                 .unwrap_or_else(|_| fail("TCP handshake deadline elapsed"));
-            let first = read_frame(&mut stream, 1024).unwrap_or_else(|_| fail("bad TCP handshake"));
-            preauth
-                .charge_input(&mut admission, first.len() + 4, 4096)
-                .unwrap_or_else(|_| fail("pre-auth admission rejected"));
+            reader
+                .set_max_frame_len(1024)
+                .unwrap_or_else(|_| fail("partial frame crossed protocol stage"));
+            let first = preauth::read_staged_frame(
+                &mut reader,
+                &mut stream,
+                1024,
+                experiment_deadline,
+                &mut preauth,
+                &mut admission,
+                64,
+                4096,
+            )
+            .unwrap_or_else(|_| fail("bad TCP handshake"));
             let (resp, mut ss, remote, resume_binding) =
                 ResponderHandshake::new_with_prologue_binding(
                     &id,

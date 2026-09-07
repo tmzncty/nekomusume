@@ -861,6 +861,17 @@ impl PreauthBudget {
         Ok(())
     }
 
+    pub fn abandon_input_record(
+        &mut self,
+        permit: &mut PreauthInputRecord,
+    ) -> Result<(), SessionRejected> {
+        if !permit.active {
+            return Err(SessionRejected);
+        }
+        permit.active = false;
+        Ok(())
+    }
+
     pub fn new(limits: PreauthLimits) -> Result<Self, SessionRejected> {
         if limits.max_input_bytes == 0
             || limits.max_input_packets == 0
@@ -1327,6 +1338,20 @@ impl ProcessPreauthAdmission {
         }
         self.live(permit.state_id, now_ms)?;
         permit.active = false;
+        Ok(())
+    }
+
+    pub fn abandon_input_record(
+        &mut self,
+        permit: &mut PreauthInputRecordPermit,
+        now_ms: u64,
+    ) -> Result<(), SessionRejected> {
+        if !permit.active {
+            return Err(SessionRejected);
+        }
+        self.live(permit.state_id, now_ms)?;
+        permit.active = false;
+        self.reject(permit.state_id);
         Ok(())
     }
 

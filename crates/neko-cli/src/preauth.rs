@@ -24,6 +24,16 @@ pub(crate) struct TcpInputReservation {
     outer: PreauthInputRecordPermit,
 }
 
+impl TcpInputReservation {
+    fn abandon(&mut self, admission: &mut ListenerAdmission, ticket: &mut AdmissionTicket) {
+        let _ = ticket.budget.abandon_input_record(&mut self.inner);
+        let _ = admission
+            .process
+            .abandon_input_record(&mut self.outer, admission.now_ms());
+        admission.process.reject_state(ticket.id);
+    }
+}
+
 pub(crate) struct QueueReservation {
     permit: Option<PreauthQueuePermit>,
 }
@@ -156,17 +166,22 @@ pub(crate) fn read_staged_frame(
             }
         }
         Ok(())
-    })?;
+    });
+    let complete = matches!(result, Ok(FrameRead::Complete(_)));
+    if !complete && let Some(r) = reservation.as_mut() {
+        r.abandon(admission, ticket);
+    }
     match result {
-        FrameRead::Complete(frame) => Ok(frame),
-        FrameRead::Deadline => Err(io::Error::new(
+        Ok(FrameRead::Complete(frame)) => Ok(frame),
+        Ok(FrameRead::Deadline) => Err(io::Error::new(
             io::ErrorKind::TimedOut,
             "frame deadline elapsed",
         )),
-        FrameRead::CleanEof | FrameRead::Truncated => Err(io::Error::new(
+        Ok(FrameRead::CleanEof | FrameRead::Truncated) => Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             "truncated frame",
         )),
+        Err(error) => Err(error),
     }
 }
 
