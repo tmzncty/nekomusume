@@ -101,12 +101,11 @@
       "begin": "if let Some(pending_state) = pending.as_mut() {",
       "end": "if let Some((ref mut ss, peer)) = secure",
       "carrier": "udp",
-      "pending_owner": true,
+      "pending_owner": false,
       "ordered": [
-        ".charge_input(&mut pending_state.admission, n, 64)",
+        ".charge_input(&mut pending_state.admission, n, 4096)",
         ".charge_response(",
         ".send_udp_response(",
-        ".charge_input(&mut pending_state.admission, n, 4096)",
         ".receive_first(datagram, context(1))",
         ".charge_response(&mut pending_state.admission, resp.len())",
         ".send_udp_response(&udp, &resp",
@@ -115,7 +114,10 @@
         "preauth.release(authenticated.admission)",
         "udp_authenticated"
       ],
-      "expiry_cleanup_anchor": "expired.queue.invalidate_after_process_expiry()"
+      "expiry_cleanup_anchor": "expired.queue.invalidate_after_process_expiry()",
+      "pending_reserve_anchor": "preauth.enqueue(&mut admission)",
+      "pending_store_anchor": "pending = Some(PendingUdpNegotiation",
+      "pending_cancel_anchor": "pending.take()"
     },
     {
       "id": "failover_udp_new",
@@ -132,7 +134,10 @@
         "preauth.enqueue(&mut admission)",
         "pending = Some(PendingUdpNegotiation"
       ],
-      "rejection_cleanup_anchor": "preauth.release(admission)"
+      "rejection_cleanup_anchor": "preauth.release(admission)",
+      "pending_reserve_anchor": "preauth.enqueue(&mut admission)",
+      "pending_store_anchor": "pending = Some(PendingUdpNegotiation",
+      "pending_cancel_anchor": "preauth.release(admission)"
     },
     {
       "id": "failover_tcp",
