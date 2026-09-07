@@ -104,6 +104,7 @@
       "pending_owner": false,
       "ordered": [
         ".charge_input(&mut pending_state.admission, n, 4096)",
+        "if datagram == pending_state.hello.as_slice()",
         ".charge_response(",
         ".send_udp_response(",
         ".receive_first(datagram, context(1))",
