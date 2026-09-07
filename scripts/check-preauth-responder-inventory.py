@@ -59,7 +59,7 @@ admits = 0
 for path in source:
     text = path.read_text(encoding="utf-8")
     if path.name != "preauth.rs":
-        admits += text.count(".admit(peer)")
+        admits += text.count(".admit(peer)") + text.count(".admit_carrier(")
 if admits != 6:
     raise SystemExit(f"preauth responder inventory: admission surface count changed: {admits} != 6")
 

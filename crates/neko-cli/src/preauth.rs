@@ -9,6 +9,12 @@ use std::time::{Duration, Instant};
 
 const RESERVED_STATE_BYTES: usize = 16 * 1024;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CarrierKind {
+    Tcp,
+    Udp,
+}
+
 pub(crate) struct ListenerAdmission {
     started: Instant,
     process: ProcessPreauthAdmission,
@@ -208,12 +214,21 @@ impl ListenerAdmission {
             .unwrap_or_default()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn admit(&mut self, peer: SocketAddr) -> Result<AdmissionTicket, ()> {
+        self.admit_carrier(CarrierKind::Tcp, peer)
+    }
+
+    pub(crate) fn admit_carrier(
+        &mut self,
+        carrier: CarrierKind,
+        peer: SocketAddr,
+    ) -> Result<AdmissionTicket, ()> {
         let _ = self.expire();
         let now = self.now_ms();
         let id = self
             .process
-            .admit_state(&source_key(peer), RESERVED_STATE_BYTES, now)
+            .admit_state(&source_key(carrier, peer), RESERVED_STATE_BYTES, now)
             .map_err(|_| ())?;
         let budget = match PreauthBudget::new(PreauthLimits::default()) {
             Ok(budget) => budget,
@@ -454,8 +469,12 @@ impl ListenerAdmission {
     }
 }
 
-fn source_key(peer: SocketAddr) -> Vec<u8> {
-    let mut key = Vec::with_capacity(19);
+fn source_key(carrier: CarrierKind, peer: SocketAddr) -> Vec<u8> {
+    let mut key = Vec::with_capacity(20);
+    key.push(match carrier {
+        CarrierKind::Tcp => 1,
+        CarrierKind::Udp => 2,
+    });
     match peer.ip() {
         std::net::IpAddr::V4(ip) => {
             key.push(4);
@@ -479,17 +498,27 @@ mod tests {
         let a: SocketAddr = "127.0.0.1:40080".parse().unwrap();
         let b: SocketAddr = "127.0.0.1:40081".parse().unwrap();
         let v6: SocketAddr = "[::1]:40080".parse().unwrap();
-        assert_ne!(source_key(a), source_key(b));
-        assert_ne!(source_key(a), source_key(v6));
-        assert_eq!(source_key(a).len(), 7);
-        assert_eq!(source_key(v6).len(), 19);
+        assert_ne!(
+            source_key(CarrierKind::Tcp, a),
+            source_key(CarrierKind::Tcp, b)
+        );
+        assert_ne!(
+            source_key(CarrierKind::Tcp, a),
+            source_key(CarrierKind::Tcp, v6)
+        );
+        assert_ne!(
+            source_key(CarrierKind::Tcp, a),
+            source_key(CarrierKind::Udp, a)
+        );
+        assert_eq!(source_key(CarrierKind::Tcp, a).len(), 8);
+        assert_eq!(source_key(CarrierKind::Udp, v6).len(), 20);
     }
 
     #[test]
     fn expired_ticket_invalidates_application_queue_owner() {
         let mut admission = ListenerAdmission::new();
         let peer: SocketAddr = "127.0.0.1:40080".parse().unwrap();
-        let mut ticket = admission.admit(peer).unwrap();
+        let mut ticket = admission.admit_carrier(CarrierKind::Tcp, peer).unwrap();
         let mut queue = admission.enqueue(&mut ticket).unwrap();
         let expired = admission.process.expire_states(5000).unwrap();
         assert!(ticket.was_expired(&expired));
@@ -618,14 +647,14 @@ mod tests {
     fn inner_budget_rejection_terminalizes_outer_ticket() {
         let mut admission = ListenerAdmission::new();
         let peer: SocketAddr = "127.0.0.1:40080".parse().unwrap();
-        let mut input = admission.admit(peer).unwrap();
+        let mut input = admission.admit_carrier(CarrierKind::Tcp, peer).unwrap();
         assert!(admission.charge_input(&mut input, usize::MAX, 1).is_err());
         assert!(admission.charge_input(&mut input, 1, 1).is_err());
         assert!(admission.enqueue(&mut input).is_err());
         assert!(admission.charge_response(&mut input, 1).is_err());
         admission.release(input);
 
-        let mut response = admission.admit(peer).unwrap();
+        let mut response = admission.admit_carrier(CarrierKind::Tcp, peer).unwrap();
         admission.charge_input(&mut response, 1, 1).unwrap();
         assert!(admission.charge_response(&mut response, 4).is_err());
         assert!(admission.charge_input(&mut response, 1, 1).is_err());
@@ -637,7 +666,7 @@ mod tests {
     fn staged_outer_rejection_terminalizes_inner_and_ticket() {
         let mut admission = ListenerAdmission::new();
         let peer: SocketAddr = "127.0.0.1:40081".parse().unwrap();
-        let mut ticket = admission.admit(peer).unwrap();
+        let mut ticket = admission.admit_carrier(CarrierKind::Tcp, peer).unwrap();
         assert!(
             admission
                 .begin_tcp_input_record(&mut ticket, 8192, 4097)
@@ -658,7 +687,7 @@ mod tests {
         assert!(admission.charge_input(&mut rejected, 64, 16).is_err());
         admission.release(rejected);
 
-        let mut ticket = admission.admit(peer).unwrap();
+        let mut ticket = admission.admit_carrier(CarrierKind::Tcp, peer).unwrap();
         admission.charge_input(&mut ticket, 64, 16).unwrap();
         let permit = admission.charge_response(&mut ticket, 64).unwrap();
         admission

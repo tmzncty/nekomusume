@@ -4,7 +4,7 @@
   "central_controller": {
     "file": "crates/neko-cli/src/preauth.rs",
     "state_memory_bytes": 16384,
-    "reservation_anchor": "admit_state(&source_key(peer), RESERVED_STATE_BYTES, now)",
+    "reservation_anchor": "admit_state(&source_key(carrier, peer), RESERVED_STATE_BYTES, now)",
     "terminalization_anchor": "self.process.reject_state(ticket.id)",
     "tcp_bounded_send_anchor": ".send_tcp_response(",
     "udp_bounded_send_anchor": ".send_udp_response("
@@ -13,12 +13,12 @@
     {
       "id": "ordinary_tcp_probe",
       "file": "crates/neko-cli/src/main.rs",
-      "begin": "let mut admission = preauth\n                        .admit(peer)",
+      "begin": "let mut admission = preauth\n                        .admit_carrier(preauth::CarrierKind::Tcp, peer)",
       "end": "lifecycle.stopped();",
       "carrier": "tcp",
       "pending_owner": false,
       "ordered": [
-        ".admit(peer)",
+        ".admit_carrier(preauth::CarrierKind::Tcp, peer)",
         "let hello = preauth::read_staged_frame(",
         ".server_accept_hello(&hello)",
         ".charge_response(&mut admission, selection.len() + 4)",
@@ -40,7 +40,7 @@
       "pending_owner": false,
       "ordered": [
         ".recv_from(&mut b)",
-        ".admit(peer)",
+        ".admit_carrier(preauth::CarrierKind::Udp, peer)",
         ".charge_input(&mut admission, n, 64)",
         ".server_accept_hello(&b[..n])",
         ".charge_response(&mut admission, selection.len())",
@@ -71,7 +71,7 @@
         ".send_tcp_response(stream, &response",
         ".admit_data()"
       ],
-      "admission_owner_anchor": ".admit(peer)",
+      "admission_owner_anchor": ".admit_carrier(crate::preauth::CarrierKind::Tcp, peer)",
       "success_cleanup_anchor": "preauth.release(admission)"
     },
     {
@@ -92,7 +92,7 @@
         ".send_tcp_response(socket, &response",
         ".admit_data()"
       ],
-      "admission_owner_anchor": ".admit(peer)",
+      "admission_owner_anchor": ".admit_carrier(crate::preauth::CarrierKind::Tcp, peer)",
       "success_cleanup_anchor": "preauth.release(admission)"
     },
     {
@@ -120,7 +120,7 @@
     {
       "id": "failover_udp_new",
       "file": "crates/neko-cli/src/main.rs",
-      "begin": "let mut admission = match preauth.admit(peer)",
+      "begin": "let mut admission = match preauth.admit_carrier(preauth::CarrierKind::Udp, peer)",
       "end": "if let Some((ref mut ss, peer)) = secure",
       "carrier": "udp",
       "pending_owner": true,
@@ -142,7 +142,7 @@
       "carrier": "tcp",
       "pending_owner": false,
       "ordered": [
-        ".admit(peer)",
+        ".admit_carrier(preauth::CarrierKind::Tcp, peer)",
         "let hello = preauth::read_staged_frame(",
         ".server_accept_hello(&hello)",
         ".charge_response(&mut admission, selection.len() + 4)",

@@ -280,7 +280,7 @@ pub(super) fn server(args: &[String]) {
         match listener.accept() {
             Ok((stream, peer)) => {
                 let ticket = preauth
-                    .admit(peer)
+                    .admit_carrier(crate::preauth::CarrierKind::Tcp, peer)
                     .unwrap_or_else(|_| fail("pre-auth admission rejected"));
                 accepted = Some((stream, ticket));
                 break;

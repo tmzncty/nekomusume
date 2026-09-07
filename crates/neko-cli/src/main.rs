@@ -487,7 +487,7 @@ fn server(args: &[String]) {
             match l.accept() {
                 Ok((mut s, peer)) => {
                     let mut admission = preauth
-                        .admit(peer)
+                        .admit_carrier(preauth::CarrierKind::Tcp, peer)
                         .unwrap_or_else(|_| fail("pre-auth admission rejected"));
                     let mut negotiation =
                         VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
@@ -596,7 +596,7 @@ fn server(args: &[String]) {
         while start.elapsed() < d && !shutdown.load(Ordering::Acquire) {
             if let Ok((n, peer)) = u.recv_from(&mut b) {
                 let mut admission = preauth
-                    .admit(peer)
+                    .admit_carrier(preauth::CarrierKind::Udp, peer)
                     .unwrap_or_else(|_| fail("pre-auth admission rejected"));
                 preauth
                     .charge_input(&mut admission, n, 64)
@@ -1105,7 +1105,8 @@ fn failover_server(args: &[String]) {
                     );
                     println!("carrier_event name=udp_authenticated session=7001 generation=0");
                 } else {
-                    let mut admission = match preauth.admit(peer) {
+                    let mut admission = match preauth.admit_carrier(preauth::CarrierKind::Udp, peer)
+                    {
                         Ok(admission) => admission,
                         Err(_) => continue,
                     };
@@ -1260,7 +1261,7 @@ fn failover_server(args: &[String]) {
         }
         if let Ok((mut stream, peer)) = tcp.accept() {
             let mut admission = preauth
-                .admit(peer)
+                .admit_carrier(preauth::CarrierKind::Tcp, peer)
                 .unwrap_or_else(|_| fail("pre-auth admission rejected"));
             bound_stream_to_deadline(&stream, experiment_deadline, None)
                 .unwrap_or_else(|_| fail("TCP negotiation deadline elapsed"));

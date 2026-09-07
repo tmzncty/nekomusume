@@ -279,7 +279,7 @@ pub fn run(args: &[String]) {
             .unwrap_or_else(|e| fail(format!("accept: {e}")));
         let mut preauth = crate::preauth::ListenerAdmission::new();
         let mut admission = preauth
-            .admit(peer)
+            .admit_carrier(crate::preauth::CarrierKind::Tcp, peer)
             .unwrap_or_else(|_| fail("pre-auth admission rejected".into()));
         let client_key = hex_decode(
             &option(args, "--client-key")
