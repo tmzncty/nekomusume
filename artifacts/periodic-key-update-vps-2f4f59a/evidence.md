@@ -10,6 +10,7 @@
 - Fixed schedule: `--key-update-after 1`
 - Release binary: 1,208,216 bytes
 - Release binary SHA-256: `6be15273b2ce4b3e241d800d15d8eefd334d6d37615bae733c5bff4a64a89a43`
+- Start/end timestamps and elapsed wall-clock duration: **not retained** for this completed run; no values are reconstructed or inferred.
 
 ## Observed result
 
