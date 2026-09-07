@@ -1041,10 +1041,14 @@ fn failover_server(args: &[String]) {
                     if peer != pending_state.peer {
                         continue;
                     }
+                    // Charge this received datagram exactly once before any
+                    // duplicate/Noise classification. The conservative work
+                    // ceiling covers both paths; the packet is not charged
+                    // again below.
+                    preauth
+                        .charge_input(&mut pending_state.admission, n, 4096)
+                        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
                     if datagram == pending_state.hello.as_slice() {
-                        preauth
-                            .charge_input(&mut pending_state.admission, n, 64)
-                            .unwrap_or_else(|_| fail("pre-auth admission rejected"));
                         let response_permit_5 = preauth
                             .charge_response(
                                 &mut pending_state.admission,
@@ -1062,9 +1066,6 @@ fn failover_server(args: &[String]) {
                         emit_diagnostic(args, "server", "udp_selection_retried", 0, "");
                         continue;
                     }
-                    preauth
-                        .charge_input(&mut pending_state.admission, n, 4096)
-                        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
                     let (resp, ss) = ResponderHandshake::new_with_prologue_binding(
                         &id,
                         policy.clone(),

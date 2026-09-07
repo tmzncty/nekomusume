@@ -41,6 +41,18 @@ for responder in data.get("responders", []):
         anchor = responder.get(key)
         if anchor and anchor not in text:
             raise SystemExit(f"{rid}: missing {key} {anchor!r}")
+    reserve = responder.get("pending_reserve_anchor")
+    store = responder.get("pending_store_anchor")
+    cancel = responder.get("pending_cancel_anchor")
+    if responder.get("pending_owner"):
+        if not all((reserve, store, cancel)):
+            raise SystemExit(f"{rid}: pending owner lacks reserve/store/cancel anchors")
+        reserve_at = region.find(reserve)
+        store_at = region.find(store)
+        if reserve_at < 0 or store_at < 0 or reserve_at > store_at:
+            raise SystemExit(f"{rid}: pending owner store precedes queue reservation")
+        if cancel not in region and cancel not in text:
+            raise SystemExit(f"{rid}: pending owner lacks terminal cancellation anchor {cancel!r}")
 
 expected = {
     "ordinary_tcp_probe",
