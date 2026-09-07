@@ -634,6 +634,22 @@ mod tests {
     }
 
     #[test]
+    fn staged_outer_rejection_terminalizes_inner_and_ticket() {
+        let mut admission = ListenerAdmission::new();
+        let peer: SocketAddr = "127.0.0.1:40081".parse().unwrap();
+        let mut ticket = admission.admit(peer).unwrap();
+        assert!(
+            admission
+                .begin_tcp_input_record(&mut ticket, 8192, 4097)
+                .is_err()
+        );
+        assert!(admission.charge_input(&mut ticket, 1, 1).is_err());
+        assert!(admission.charge_response(&mut ticket, 1).is_err());
+        assert!(admission.enqueue(&mut ticket).is_err());
+        admission.release(ticket);
+    }
+
+    #[test]
     fn response_requires_charged_input_and_release_reopens_source() {
         let mut admission = ListenerAdmission::new();
         let peer: SocketAddr = "127.0.0.1:40080".parse().unwrap();

@@ -842,12 +842,18 @@ impl PreauthBudget {
         if !permit.active {
             return Err(SessionRejected);
         }
-        let new_bytes = self.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
-        if new_bytes > self.limits.max_input_bytes {
-            return Err(SessionRejected);
+        let result = (|| {
+            let new_bytes = self.input_bytes.checked_add(bytes).ok_or(SessionRejected)?;
+            if new_bytes > self.limits.max_input_bytes {
+                return Err(SessionRejected);
+            }
+            self.input_bytes = new_bytes;
+            Ok(())
+        })();
+        if result.is_err() {
+            permit.active = false;
         }
-        self.input_bytes = new_bytes;
-        Ok(())
+        result
     }
 
     pub fn complete_input_record(
@@ -1278,14 +1284,31 @@ impl ProcessPreauthAdmission {
         work_units: usize,
         now_ms: u64,
     ) -> Result<(), SessionRejected> {
-        if !permit.active
-            || work_units
-                > self
-                    .limits
-                    .max_work_per_packet
-                    .saturating_sub(permit.work_units)
-        {
+        if !permit.active {
             self.reject(permit.state_id);
+            return Err(SessionRejected);
+        }
+        let result = self.extend_input_record_checked(permit, bytes, work_units, now_ms);
+        if result.is_err() {
+            permit.active = false;
+            self.reject(permit.state_id);
+        }
+        result
+    }
+
+    fn extend_input_record_checked(
+        &mut self,
+        permit: &mut PreauthInputRecordPermit,
+        bytes: usize,
+        work_units: usize,
+        now_ms: u64,
+    ) -> Result<(), SessionRejected> {
+        if work_units
+            > self
+                .limits
+                .max_work_per_packet
+                .saturating_sub(permit.work_units)
+        {
             return Err(SessionRejected);
         }
         self.refresh_window(now_ms)?;
@@ -1309,7 +1332,6 @@ impl ProcessPreauthAdmission {
             || ib > self.limits.max_input_bytes_per_window
             || iw > self.limits.max_work_per_window
         {
-            self.reject(permit.state_id);
             return Err(SessionRejected);
         }
         let u = self
@@ -1336,7 +1358,12 @@ impl ProcessPreauthAdmission {
         if !permit.active {
             return Err(SessionRejected);
         }
-        self.live(permit.state_id, now_ms)?;
+        let live = self.live(permit.state_id, now_ms).is_ok();
+        if !live {
+            permit.active = false;
+            self.reject(permit.state_id);
+            return Err(SessionRejected);
+        }
         permit.active = false;
         Ok(())
     }
@@ -1349,7 +1376,11 @@ impl ProcessPreauthAdmission {
         if !permit.active {
             return Err(SessionRejected);
         }
-        self.live(permit.state_id, now_ms)?;
+        if self.live(permit.state_id, now_ms).is_err() {
+            permit.active = false;
+            self.reject(permit.state_id);
+            return Err(SessionRejected);
+        }
         permit.active = false;
         self.reject(permit.state_id);
         Ok(())
@@ -1667,6 +1698,42 @@ mod preauth_tests {
         );
         assert!(admission.begin_input_record(id, 1, 1, 0).is_err());
         assert_eq!(admission.charge_input(id, 1, 1, 0), Err(SessionRejected));
+    }
+
+    #[test]
+    fn staged_extension_failures_terminalize_permit_and_state() {
+        let mut admission = ProcessPreauthAdmission::new(process_limits(), 10).unwrap();
+        let backwards = admission.admit_state(b"backwards", 2, 10).unwrap();
+        let mut permit = admission.begin_input_record(backwards, 1, 1, 10).unwrap();
+        assert_eq!(
+            admission.extend_input_record(&mut permit, 1, 1, 9),
+            Err(SessionRejected)
+        );
+        assert!(!permit.active);
+        assert!(admission.complete_input_record(&mut permit, 10).is_err());
+        assert!(admission.begin_input_record(backwards, 1, 1, 10).is_err());
+
+        let mut limits = process_limits();
+        limits.max_work_per_packet = 2;
+        let mut admission = ProcessPreauthAdmission::new(limits, 0).unwrap();
+        let limited = admission.admit_state(b"limited", 2, 0).unwrap();
+        let mut permit = admission.begin_input_record(limited, 1, 2, 0).unwrap();
+        assert!(admission.extend_input_record(&mut permit, 1, 1, 0).is_err());
+        assert!(!permit.active);
+        assert!(admission.complete_input_record(&mut permit, 0).is_err());
+    }
+
+    #[test]
+    fn direct_inner_staged_extension_failure_is_not_retryable() {
+        let mut budget = PreauthBudget::new(PreauthLimits {
+            max_input_bytes: 4,
+            ..PreauthLimits::default()
+        })
+        .unwrap();
+        let mut permit = budget.begin_input_record(4).unwrap();
+        assert!(budget.extend_input_record(&mut permit, 1).is_err());
+        assert!(budget.extend_input_record(&mut permit, 0).is_err());
+        assert!(budget.complete_input_record(&mut permit).is_err());
     }
 
     #[test]

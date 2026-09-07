@@ -348,6 +348,149 @@ mod tests {
     }
 
     #[test]
+    fn staged_reader_reports_ordered_success_and_failure_stages() {
+        let base = Instant::now();
+        let mut input = ScriptedRead(VecDeque::from([
+            Step::Bytes(vec![0]),
+            Step::Bytes(vec![0, 0, 3]),
+            Step::Bytes(b"abc".to_vec()),
+        ]));
+        let mut framed = FramedReader::new(8);
+        let mut stages = Vec::new();
+        assert_eq!(
+            framed
+                .read_until_staged_with_clock(
+                    &mut input,
+                    base + Duration::from_secs(1),
+                    &mut |stage| {
+                        stages.push(stage);
+                        Ok(())
+                    },
+                    times(base, &[0, 1, 2]),
+                )
+                .unwrap(),
+            FrameRead::Complete(b"abc".to_vec())
+        );
+        assert_eq!(
+            stages,
+            vec![
+                FrameStage::Header { bytes: 4, work: 64 },
+                FrameStage::Body {
+                    bytes: 3,
+                    work: 4096
+                },
+                FrameStage::Complete,
+            ]
+        );
+
+        let mut input = ScriptedRead(VecDeque::from([
+            Step::Bytes(3u32.to_be_bytes().to_vec()),
+            Step::Bytes(vec![1]),
+            Step::Eof,
+        ]));
+        let mut framed = FramedReader::new(8);
+        let mut stages = Vec::new();
+        assert_eq!(
+            framed
+                .read_until_staged_with_clock(
+                    &mut input,
+                    base + Duration::from_secs(1),
+                    &mut |stage| {
+                        stages.push(stage);
+                        Ok(())
+                    },
+                    times(base, &[0, 1, 2]),
+                )
+                .unwrap(),
+            FrameRead::Truncated
+        );
+        assert_eq!(
+            stages,
+            vec![
+                FrameStage::Header { bytes: 4, work: 64 },
+                FrameStage::Body {
+                    bytes: 3,
+                    work: 4096
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn staged_reader_rejects_oversize_after_header_before_body_read() {
+        let base = Instant::now();
+        let mut input = ScriptedRead(VecDeque::from([Step::Bytes(9u32.to_be_bytes().to_vec())]));
+        let mut framed = FramedReader::new(8);
+        let mut stages = Vec::new();
+        let error = framed
+            .read_until_staged_with_clock(
+                &mut input,
+                base + Duration::from_secs(1),
+                &mut |stage| {
+                    stages.push(stage);
+                    Ok(())
+                },
+                times(base, &[0]),
+            )
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(stages, vec![FrameStage::Header { bytes: 4, work: 64 }]);
+        assert!(framed.payload.is_empty());
+    }
+
+    #[test]
+    fn staged_reader_zero_body_completes_once_and_callback_rejection_stops_read() {
+        let base = Instant::now();
+        let mut input = ScriptedRead(VecDeque::from([Step::Bytes(0u32.to_be_bytes().to_vec())]));
+        let mut framed = FramedReader::new(8);
+        let mut stages = Vec::new();
+        assert_eq!(
+            framed
+                .read_until_staged_with_clock(
+                    &mut input,
+                    base + Duration::from_secs(1),
+                    &mut |stage| {
+                        stages.push(stage);
+                        Ok(())
+                    },
+                    times(base, &[0]),
+                )
+                .unwrap(),
+            FrameRead::Complete(Vec::new())
+        );
+        assert_eq!(
+            stages,
+            vec![
+                FrameStage::Header { bytes: 4, work: 64 },
+                FrameStage::Body {
+                    bytes: 0,
+                    work: 4096
+                },
+                FrameStage::Complete,
+            ]
+        );
+
+        let mut input = ScriptedRead(VecDeque::from([Step::Bytes(3u32.to_be_bytes().to_vec())]));
+        let mut framed = FramedReader::new(8);
+        let mut calls = 0;
+        assert!(
+            framed
+                .read_until_staged_with_clock(
+                    &mut input,
+                    base + Duration::from_secs(1),
+                    &mut |_| {
+                        calls += 1;
+                        Err(io::Error::new(io::ErrorKind::PermissionDenied, "reject"))
+                    },
+                    times(base, &[0]),
+                )
+                .is_err()
+        );
+        assert_eq!(calls, 1);
+        assert!(framed.payload.is_empty());
+    }
+
+    #[test]
     fn partial_frame_at_deadline_is_terminally_truncated() {
         let base = Instant::now();
         let mut input = ScriptedRead(VecDeque::from([
