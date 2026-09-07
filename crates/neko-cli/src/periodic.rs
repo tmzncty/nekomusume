@@ -155,16 +155,17 @@ fn handshake_server(
     bound_setup(stream, deadline, "setup deadline elapsed");
     let mut negotiation =
         VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS).unwrap();
-    let hello = frame_or_fail(
+    let hello = crate::preauth::read_staged_frame(
         reader,
         stream,
         MAX_NEGOTIATION_FRAME,
         deadline,
-        "malformed negotiation",
-    );
-    admission
-        .charge_input(ticket, hello.len() + 4, 64)
-        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
+        admission,
+        ticket,
+        64,
+        64,
+    )
+    .unwrap_or_else(|_| fail("malformed negotiation"));
     let selection = negotiation
         .server_accept_hello(&hello)
         .unwrap_or_else(|_| fail("incompatible negotiation"));
@@ -176,10 +177,10 @@ fn handshake_server(
         .send_tcp_response(stream, &selection, response_permit_1)
         .unwrap_or_else(|_| fail("negotiation response deadline elapsed"));
     let binding = negotiation.authenticated_binding().unwrap();
-    let first = frame_or_fail(reader, stream, 1024, deadline, "bad handshake");
-    admission
-        .charge_input(ticket, first.len() + 4, 4096)
-        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
+    let first = crate::preauth::read_staged_frame(
+        reader, stream, 1024, deadline, admission, ticket, 64, 4096,
+    )
+    .unwrap_or_else(|_| fail("bad handshake"));
     let (response, secure) =
         ResponderHandshake::new_with_prologue_binding(id, policy, DOMAIN, binding.as_bytes())
             .unwrap()

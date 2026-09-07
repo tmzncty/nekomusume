@@ -9,6 +9,13 @@ pub(crate) enum FrameRead {
     Truncated,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrameStage {
+    Header { bytes: usize, work: usize },
+    Body { bytes: usize, work: usize },
+    Complete,
+}
+
 #[derive(Debug)]
 pub(crate) struct FramedReader {
     header: [u8; 4],
@@ -40,47 +47,30 @@ impl FramedReader {
         Ok(())
     }
 
-    /// Reads one frame while charging its fixed header and declared body as
-    /// stages of a single logical input record. The body is allocated only
-    /// after both callbacks have accepted the conservative reservation.
-    pub(crate) fn read_until_staged<R, B, E, C>(
+    /// Reads one frame while charging its fixed header and declared body as stages of a single logical input record.
+    pub(crate) fn read_until_staged<R, F>(
         &mut self,
         reader: &mut R,
         deadline: Instant,
-        mut begin: B,
-        mut extend: E,
-        mut complete: C,
+        mut stage: F,
     ) -> io::Result<FrameRead>
     where
         R: Read,
-        B: FnMut(usize, usize) -> io::Result<()>,
-        E: FnMut(usize, usize) -> io::Result<()>,
-        C: FnMut() -> io::Result<()>,
+        F: FnMut(FrameStage) -> io::Result<()>,
     {
-        self.read_until_staged_with_clock(
-            reader,
-            deadline,
-            &mut begin,
-            &mut extend,
-            &mut complete,
-            Instant::now,
-        )
+        self.read_until_staged_with_clock(reader, deadline, &mut stage, Instant::now)
     }
 
-    fn read_until_staged_with_clock<R, B, E, C, N>(
+    fn read_until_staged_with_clock<R, F, N>(
         &mut self,
         reader: &mut R,
         deadline: Instant,
-        begin: &mut B,
-        extend: &mut E,
-        complete: &mut C,
+        stage: &mut F,
         mut now: N,
     ) -> io::Result<FrameRead>
     where
         R: Read,
-        B: FnMut(usize, usize) -> io::Result<()>,
-        E: FnMut(usize, usize) -> io::Result<()>,
-        C: FnMut() -> io::Result<()>,
+        F: FnMut(FrameStage) -> io::Result<()>,
         N: FnMut() -> Instant,
     {
         loop {
@@ -107,7 +97,7 @@ impl FramedReader {
                 Ok(n) if self.header_len < self.header.len() => {
                     self.header_len += n;
                     if self.header_len == self.header.len() {
-                        begin(4, 64)?;
+                        stage(FrameStage::Header { bytes: 4, work: 64 })?;
                         let len = u32::from_be_bytes(self.header) as usize;
                         if len > self.max_frame_len {
                             return Err(io::Error::new(
@@ -115,11 +105,14 @@ impl FramedReader {
                                 "frame too large",
                             ));
                         }
-                        extend(len, 4096)?;
+                        stage(FrameStage::Body {
+                            bytes: len,
+                            work: 4096,
+                        })?;
                         self.payload = vec![0; len];
                         self.payload_len = 0;
                         if len == 0 {
-                            complete()?;
+                            stage(FrameStage::Complete)?;
                             return Ok(FrameRead::Complete(self.take_frame()));
                         }
                     }
@@ -127,7 +120,7 @@ impl FramedReader {
                 Ok(n) => {
                     self.payload_len += n;
                     if self.payload_len == self.payload.len() {
-                        complete()?;
+                        stage(FrameStage::Complete)?;
                         return Ok(FrameRead::Complete(self.take_frame()));
                     }
                 }

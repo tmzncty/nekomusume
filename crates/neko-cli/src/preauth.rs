@@ -1,3 +1,4 @@
+use crate::framed::{FrameRead, FrameStage, FramedReader};
 use neko_crypto::{
     PreauthBudget, PreauthInputRecord, PreauthInputRecordPermit, PreauthLimits, PreauthQueuePermit,
     PreauthResponsePermit, PreauthStateId, ProcessPreauthAdmission, ProcessPreauthLimits,
@@ -103,6 +104,70 @@ fn write_frame_until<W: BoundedWrite, N: FnMut() -> u64>(
     write_all_until(writer, payload, &mut now, deadline_ms)?;
     let budget = remaining_budget(now(), deadline_ms)?;
     writer.flush_with_budget(budget)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn read_staged_frame(
+    reader: &mut FramedReader,
+    stream: &mut TcpStream,
+    max_frame_len: usize,
+    deadline: Instant,
+    admission: &mut ListenerAdmission,
+    ticket: &mut AdmissionTicket,
+    header_work: usize,
+    body_work: usize,
+) -> io::Result<Vec<u8>> {
+    reader.set_max_frame_len(max_frame_len)?;
+    let mut reservation: Option<TcpInputReservation> = None;
+    let result = reader.read_until_staged(stream, deadline, |stage| {
+        let rejected = || {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "pre-auth admission rejected",
+            )
+        };
+        match stage {
+            FrameStage::Header { bytes, work } => {
+                let work = header_work
+                    .checked_add(work.saturating_sub(64))
+                    .ok_or_else(rejected)?;
+                reservation = Some(
+                    admission
+                        .begin_tcp_input_record(ticket, bytes, work)
+                        .map_err(|_| rejected())?,
+                );
+            }
+            FrameStage::Body { bytes, work } => {
+                let r = reservation.as_mut().ok_or_else(rejected)?;
+                admission
+                    .extend_tcp_input_record(
+                        ticket,
+                        r,
+                        bytes,
+                        body_work.saturating_sub(header_work).min(work),
+                    )
+                    .map_err(|_| rejected())?;
+            }
+            FrameStage::Complete => {
+                let r = reservation.as_mut().ok_or_else(rejected)?;
+                admission
+                    .complete_tcp_input_record(ticket, r)
+                    .map_err(|_| rejected())?;
+            }
+        }
+        Ok(())
+    })?;
+    match result {
+        FrameRead::Complete(frame) => Ok(frame),
+        FrameRead::Deadline => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "frame deadline elapsed",
+        )),
+        FrameRead::CleanEof | FrameRead::Truncated => Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "truncated frame",
+        )),
+    }
 }
 
 impl ListenerAdmission {

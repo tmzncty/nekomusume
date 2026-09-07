@@ -9,6 +9,7 @@ use neko_session::{
 use neko_wire::{NEGOTIATION_VERSION, NegotiationRole, VersionNegotiator};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::time::{Duration, Instant};
 
 const MAX_STREAMS: usize = 16;
 const MAX_RECORDS: usize = 64;
@@ -78,10 +79,19 @@ fn server_handshake(
 ) -> SecureSession {
     let mut negotiation = VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
         .unwrap_or_else(|_| fail("handshake setup failed".into()));
-    let hello = frame_read(socket).unwrap_or_else(|_| fail("handshake rejected".into()));
-    admission
-        .charge_input(ticket, hello.len() + 4, 64)
-        .unwrap_or_else(|_| fail("pre-auth admission rejected".into()));
+    let mut reader = crate::framed::FramedReader::new(MAX_FRAME);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let hello = crate::preauth::read_staged_frame(
+        &mut reader,
+        socket,
+        MAX_FRAME,
+        deadline,
+        admission,
+        ticket,
+        64,
+        64,
+    )
+    .unwrap_or_else(|_| fail("handshake rejected".into()));
     let response = negotiation
         .server_accept_hello(&hello)
         .unwrap_or_else(|_| fail("handshake rejected".into()));
@@ -102,10 +112,17 @@ fn server_handshake(
     }]);
     let hs = ResponderHandshake::new_with_prologue_binding(&id, policy, DOMAIN, binding.as_bytes())
         .unwrap_or_else(|_| fail("handshake setup failed".into()));
-    let first = frame_read(socket).unwrap_or_else(|_| fail("handshake rejected".into()));
-    admission
-        .charge_input(ticket, first.len() + 4, 4096)
-        .unwrap_or_else(|_| fail("pre-auth admission rejected".into()));
+    let first = crate::preauth::read_staged_frame(
+        &mut reader,
+        socket,
+        1024,
+        deadline,
+        admission,
+        ticket,
+        4096,
+        4096,
+    )
+    .unwrap_or_else(|_| fail("handshake rejected".into()));
     let (response, session) = hs
         .receive_first(&first, context())
         .unwrap_or_else(|_| fail("handshake rejected".into()));
