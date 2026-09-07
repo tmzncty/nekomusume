@@ -1625,6 +1625,51 @@ mod preauth_tests {
         assert_eq!(b.charge_response(1), Err(SessionRejected));
     }
     #[test]
+    fn staged_input_record_terminal_paths_are_one_shot() {
+        let mut budget = PreauthBudget::new(PreauthLimits::default()).unwrap();
+        let mut permit = budget.begin_input_record(4).unwrap();
+        budget.extend_input_record(&mut permit, 8).unwrap();
+        assert_eq!(budget.complete_input_record(&mut permit), Ok(()));
+        assert_eq!(
+            budget.complete_input_record(&mut permit),
+            Err(SessionRejected)
+        );
+        assert_eq!(
+            budget.abandon_input_record(&mut permit),
+            Err(SessionRejected)
+        );
+
+        let mut abandoned = budget.begin_input_record(1).unwrap();
+        assert_eq!(budget.abandon_input_record(&mut abandoned), Ok(()));
+        assert_eq!(
+            budget.abandon_input_record(&mut abandoned),
+            Err(SessionRejected)
+        );
+        assert_eq!(
+            budget.complete_input_record(&mut abandoned),
+            Err(SessionRejected)
+        );
+    }
+
+    #[test]
+    fn staged_process_abandon_is_terminal_and_keeps_budget_consumed() {
+        let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = admission.admit_state(b"staged", 2, 0).unwrap();
+        let mut permit = admission.begin_input_record(id, 4, 3, 0).unwrap();
+        assert_eq!(admission.abandon_input_record(&mut permit, 0), Ok(()));
+        assert_eq!(
+            admission.abandon_input_record(&mut permit, 0),
+            Err(SessionRejected)
+        );
+        assert_eq!(
+            admission.complete_input_record(&mut permit, 0),
+            Err(SessionRejected)
+        );
+        assert!(admission.begin_input_record(id, 1, 1, 0).is_err());
+        assert_eq!(admission.charge_input(id, 1, 1, 0), Err(SessionRejected));
+    }
+
+    #[test]
     fn rejected_charge_is_atomic() {
         let mut b = PreauthBudget::new(PreauthLimits {
             max_input_bytes: 4,
