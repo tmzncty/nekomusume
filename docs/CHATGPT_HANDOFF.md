@@ -1,174 +1,171 @@
-# ChatGPT reviewer handoff — reconcile lifecycle evidence provenance before further release claims
+# ChatGPT reviewer handoff — accept provenance repairs and close the package-validation gap
 
 ## Reviewed state
 
-- Previous reviewer handoff: exact `ff1e8f8803715adc2015e9e45a9414e3a15a50c7` (`docs(handoff): repair lifecycle emission before VPS retry`).
-- Current default `main` reviewed here: exact `dc90c5f265a93f113560ba3c97ab436638bdc307` (`docs: review exact-current release subgates`).
-- New developer-owned commits since the previous handoff:
-  - `7cebe6b34008fcd6aae096ca7cd3a579f9aa6f3b` — emit signal-driven `DRAINING` and lock TCP/UDP lifecycle ordering;
-  - `e84770e487180e253cd98af52c4f303a081c01bc` — initially retain the changed-hypothesis installed-package lifecycle run as a TCP-readiness orchestration negative;
-  - `c4ee406e73156345bdc5648a2ea68f5295bf5016` — rewrite that same experiment record as a complete TCP+UDP lifecycle success;
-  - `dc90c5f265a93f113560ba3c97ab436638bdc307` — add developer-prepared release item-4 factual review support.
-- Exact-head Rust CI is green for implementation exact `7cebe6b` (`34279192488`), evidence/doc exact `c4ee406` (`34279747083`), and current `dc90c5f` (`34283071038`). Green CI validates repository gates; it does not resolve contradictory experiment provenance by itself.
-- No work branch is ahead of `main`. `work/e1a-staged-accounting-20260907` remains stale at `f4404257520e9a014ac4e785b0ab9a97f8aaf794`; `work/continue-20260904` remains older at `d271a99a2ab26abbcb146c411ba0fde697395abe`. Do not coordination-merge either.
+- Previous reviewer handoff: exact `899faafc50e5b53c2d049ba4f8eb908d7a482c29` (`docs(handoff): reconcile lifecycle evidence provenance`).
+- Current default `main` reviewed here: exact `968503bf8e0349c86242d5222d40e2e6ddf742fb` (`docs: reconcile package closure facts`).
+- `main` is exactly four commits ahead of the previous reviewer handoff:
+  - `7fce5b86759ed7c3d77f73dc533811e6226ca48b` — record one genuine distinct-package A(old) -> B(current-at-run) -> A(old) VPS rehearsal;
+  - `e743c64a4f62498dd98f03d64797acb44cb18fdc` — reconcile the exact-`7cebe6b` lifecycle evidence provenance and add a retained sanitized result anchor;
+  - `38ea31057f91eba60baa5a4c4e1b76515d6e65fa` — repair the release item-4 exact-tree provenance to a real reachable tree;
+  - `968503bf8e0349c86242d5222d40e2e6ddf742fb` — reconcile package/release/status facts after those repairs.
+- Exact-head Rust CI is green for `7fce5b8` (`34284166309`), `e743c64` (`34284519680`), `38ea310` (`34284862193`) and current `968503b` (`34286660635`).
+- No work branch is ahead of `main`. `work/e1a-staged-accounting-20260907` remains stale at `f4404257520e9a014ac4e785b0ab9a97f8aaf794`; `work/continue-20260904` remains stale at `d271a99a2ab26abbcb146c411ba0fde697395abe`. Do not coordination-merge either.
 
 ## Review verdict
 
-### ACCEPT — `7cebe6b` closes the local lifecycle-observability defect
+### ACCEPT — exact-`7cebe6b` lifecycle provenance conflict is reconciled
 
-The implementation repair is small and correctly scoped. Signal shutdown now transitions `READY -> DRAINING`, emits the actual lifecycle state, then transitions to and emits `STOPPED`. Both the UDP in-data shutdown path and the shared post-listener shutdown path reuse the helper. The process regression now requires ordered `READY < DRAINING < STOPPED`, exactly one `DRAINING`, exactly one `STOPPED`, and retains the existing same-address TCP/UDP rebind proof.
+`e743c64` gives the missing chronology instead of hiding the contradictory history. It states that there was exactly one materially changed VPS invocation, that the command exit status was `0`, that exact `e84770e` incorrectly reported an incomplete/nonzero prefix, and that exact `c4ee406` corrected the outcome without explaining the provenance. It also retains the sanitized command result as `docs/package-operator-lifecycle-7cebe6b-20260909.result.txt`.
 
-Keep the boundary: this is local implementation/process-test evidence. It changes no Session/Carrier/ACK/crypto/wire semantics and does not by itself prove installed-package VPS lifecycle behavior, daemon/service-manager behavior, production readiness, security approval, RC, or release.
+The retained result has 26 newline-terminated records and the documented SHA-256 `4b293249846c7c7db3322ad864fb9797e5e36387f6bebaa0b7cdb2e518834bd9`. It records opaque endpoint labels, package/binary identity, successful bounded TCP and UDP 32-byte exchanges, ordered phase progression through readiness/signal-stop/rebind/authenticated exchange, and cleanup verification.
 
-### HIGH / EVIDENCE_PROVENANCE_CONFLICT — the exact-`7cebe6b` VPS lifecycle result is internally contradictory
+Therefore the exact-`7cebe6b` installed-package lifecycle run may now be accepted as **bounded self-owned VPS operator evidence** for the recorded TCP/UDP lifecycle question. Preserve the exact-`14be1c8` orchestration negative and the exact-`e84770e` historical reporting error in Git history; do not rewrite history and do not rerun this answered scenario unchanged.
 
-The repository currently contains two consecutive, mutually incompatible descriptions of the **same experiment id / exact tested tree**:
+This still does not establish daemon/service-manager hardening, sustained WAN reliability, public reachability, performance, security approval, RC, release or production readiness.
 
-1. exact `e84770e` says the changed-hypothesis run wrote only `start`, `package_smoke`, `installed_hash`, and `tcp-preclean`, then exited nonzero before `tcp-ready`; it classifies the run as `BLOCKED_ORCHESTRATION_CURRENT_LINE_PACKAGE_LIFECYCLE` and explicitly says no remote READY/SIGTERM/DRAINING/STOPPED/rebind/authenticated-exchange claim can be made;
-2. exact `c4ee406`, two minutes later, rewrites the same evidence document and same experiment as a complete TCP and UDP success with a full phase record through cleanup.
+### ACCEPT — release item-4 exact-tree provenance is repaired
 
-Git history preserves both descriptions, but the current tree provides no provenance explanation for why the first retained negative was wrong, whether a second invocation occurred, or what inspectable source justifies replacing the prefix/nonzero account with a complete success account. Standing evidence rules require negative results to remain valid and prohibit pass-chasing/overwriting without a truthful changed-hypothesis/new-run boundary.
+`38ea310` removes the GitHub-unreachable `bb008d0...` attestation and moves the developer-prepared factual review onto a real reachable tree. Current packet/review text indexes exact `38ea310`, whose Rust CI is green. The wording correctly remains “developer-prepared factual review support”, not independent security review or approval.
 
-Therefore **do not currently treat the exact-`7cebe6b` VPS lifecycle success as accepted operator evidence**. The local `7cebe6b` implementation/tests remain accepted. The VPS lifecycle row is temporarily `EVIDENCE_PROVENANCE_CONFLICT` until reconciled from already-existing evidence. Do not rerun the experiment merely to obtain a cleaner answer.
+The prior HIGH `EXACT_TREE_PROVENANCE` finding is closed. A green gate remains repository/test evidence only; it is not an independent security decision.
 
-This is an evidence/governance defect, not evidence of a runtime lifecycle failure.
+### ACCEPT WITH MEDIUM FOLLOW-UP — distinct-version A/B/A is useful bounded operator evidence, but its retained provenance is thinner than the lifecycle run
 
-### HIGH / EXACT_TREE_PROVENANCE — the new item-4 factual review targets a GitHub-unreachable SHA
+`7fce5b8` records a genuinely different package/binary rehearsal using exact old `91a735c0252e7df5da611da4a70e71a60dbdd44d`, exact current-at-run `dc90c5f265a93f113560ba3c97ab436638bdc307`, then old A again. Archive and binary hashes differ between A and B; each A1/B/A2 stage records one authenticated TCP 32-byte exchange, the selected release returns to A, an external temporary state marker survives with mode `0600`, and final listener/process/path cleanup is recorded. The scope wording correctly refuses arbitrary state-schema compatibility, production upgrade policy, release or security conclusions.
 
-`docs/reviews/release-item4-subgates-20260909.md` claims to be a factual review of exact `bb008d0302c17dcf34dac7c5b18259fd34ec495f` and claims `scripts/check.sh` / `git diff --check` passed on that exact tree. GitHub cannot resolve that commit, it is not current `main`, and it is not an ancestor between `c4ee406` and `dc90c5f`.
+This is a real visible/operator result and should not be discarded. However, unlike the repaired lifecycle result, the current tree contains only the narrative/phase summary: it does not retain a sanitized command/result anchor with start/end timestamps, command exit status, record count and content hash. Standing evidence policy asks each WAN experiment to remain associateable with actual timing/results/cleanup. Because this rehearsal is now referenced by the release packet, tighten its provenance from already-existing material before treating it as strong release-review support.
 
-A local/unpushed or mistyped SHA cannot serve as the repository's exact-tree review provenance. The developer-prepared review remains useful as an outline, but its exact-tree claims are not accepted until rewritten against a real reachable commit and rerun/verified on that tree. Do not call this independent review or security approval.
+Classify this as `MEDIUM / EVIDENCE_PROVENANCE_INCOMPLETE`, not a runtime failure and not a reason to rerun the VPS scenario.
+
+If the original sanitized result/log still exists locally, retain only the smallest non-secret anchor needed: start/end UTC timestamps, exit status, record/line count, SHA-256, opaque endpoint labels, package/binary identities, A1/B/A2 result phases and cleanup. If it no longer exists, do not fabricate it; instead qualify the release-facing claim as a developer-recorded bounded observation whose raw/sanitized execution anchor was not retained. **No VPS rerun is authorized merely to improve this documentation.**
+
+### MEDIUM / RELEASE_TOOLING_GAP — package smoke has no dedicated adversarial regression in the repository gate
+
+The current `scripts/release/smoke-package.sh` checks member names for absolute/traversal paths, extracts with no owner/permission inheritance, verifies file modes and `SHA256SUMS`, and runs secret-free capabilities on a native target. This is useful. But `scripts/check.sh` does not run a dedicated package-smoke regression suite, and the current pre-extraction check does not explicitly prove fail-closed handling for non-regular archive members (symlink/hardlink/device/FIFO) or unexpected package layout.
+
+Do **not** call this an exploit finding: the repository-owned builder itself stages ordinary directories/files, and publication signing is still absent. It is a concrete release-tool correctness/negative-test gap now that package evidence is being promoted into the release-review packet.
+
+The coding agent may choose the smallest robust shape under the proposal protocol. Prefer explicit member-type/layout validation before extraction plus synthetic negative tests wired into `scripts/check.sh`. A small typed helper is acceptable if shell parsing would be fragile. Protect these invariants: exactly one expected package root, regular files/directories only unless an explicit reviewed need appears, no absolute/traversal/link escape, expected executable/docs/checksum layout and modes, checksum verification, and secret-free native capabilities. Do not add a generic package framework or signing/key policy in this slice.
 
 ### ACCEPTED CONTINUING BOUNDARIES
 
-- RSEC non-policy engineering controls may remain bounded-reviewed, while full D019 remains `SOURCE_RETENTION_POLICY_BLOCKED`; do not invent TTL/LRU/history capacity or weaken no-reset semantics.
-- HY2 exact `13da094` remains frozen `BLOCKED_HARNESS_CURRENT_LINE_HY2` at typed `unknown / client_started`; no complete pair or performance result; no same-class retry.
-- repeated warm failover exact `f17b648` remains frozen at `startup_setup`; no same-class retry without a material setup hypothesis.
-- IPv6 remains environment-blocked when no owned IPv6 path exists.
-- live PMTUD still requires its separately accepted authenticated wire/security design gate before live integration; do not infer READY implementation from stale roadmap wording.
+- RSEC non-policy engineering controls remain bounded-reviewed; full D019 remains `SOURCE_RETENTION_POLICY_BLOCKED`. Do not invent TTL/LRU/history capacity/external authority or silently weaken no-reset semantics.
+- HY2 exact `13da094` remains frozen `BLOCKED_HARNESS_CURRENT_LINE_HY2` at typed `unknown / client_started`; no complete pair or performance conclusion and no unchanged retry.
+- repeated warm failover exact `f17b648` remains frozen at primary `startup_setup`; no unchanged retry.
+- the periodic current line remains an orchestration negative; do not reopen it without a concrete material hypothesis.
+- IPv6 remains environment-blocked if no owned IPv6 path exists.
+- live PMTUD still requires its separately accepted authenticated wire/security design gate before live integration; stale `BLOCKED_IMPLEMENTATION` wording is not permission to change wire semantics.
 - release flags remain `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`.
 
 ## Design / proposal protocol
 
-The coding agent should resolve the two HIGH provenance defects without waiting for administrator approval. This is repository/evidence engineering, not a core architecture or security-policy decision.
+No administrator approval is needed for the provenance and package-smoke work below. They do not change Session/Carrier/ACK/crypto/wire semantics, introduce security numeric policy, perform destructive migration, or exceed standing authorization.
 
-For the lifecycle evidence conflict, use the smallest truthful shape:
+For package-smoke hardening, the coding agent should propose 1–3 minimal implementation shapes if necessary, then choose the one with the smallest new state/API and clearest fail-closed tests. Reviewer will challenge the implemented design afterward; do not wait for a pre-approved function signature.
 
-- first determine whether there was **one invocation with a misread/incompletely copied local phase log**, or **more than one invocation**;
-- inspect already-existing local phase/result material from the run if still available; do not fabricate missing facts and do not run the VPS scenario again just to repair documentation;
-- if a complete sanitized phase record genuinely exists, record a non-secret provenance anchor such as the local retained log/result SHA-256, line/record count, command exit status, and a short chronology explaining exactly why `e84770e` described an incomplete prefix and why `c4ee406` corrected it;
-- if there were two invocations, identify them as separate attempts and verify that the second was actually permitted by a material changed hypothesis; if it was an unchanged pass-chasing retry, preserve that governance defect rather than hiding it;
-- if existing evidence cannot establish the complete success account, downgrade current docs back to the strongest supported boundary (`EVIDENCE_PROVENANCE_CONFLICT` or the retained negative) and keep local lifecycle tests as the only accepted closure.
-
-Do not create a general evidence database/framework for this repair.
-
-For the item-4 review SHA defect, use an actually pushed/reachable tree. A review document may say “facts reviewed on exact `<reachable commit>`; review text committed afterward” to avoid impossible self-reference.
+Do not expand this into SBOM/signing/key-custody work. Signing keys, publication trust policy and credentials are a separate maintainer/security-policy stage.
 
 ## Rolling queue
 
-The queue is deliberately short until the evidence conflict is resolved. Do not spend VPS rental time on another same-class lifecycle run while repository truth is contradictory.
+The queue is intentionally shorter than 6–10 hours because several WAN lines are already answered/frozen and there is no honest reason to manufacture live work. Complete A–C continuously without waiting for an hourly boundary.
 
-### A. HIGH / READY_LOCAL — reconcile exact-`7cebe6b` lifecycle experiment provenance
+### A. MEDIUM / READY_LOCAL — anchor or qualify distinct-version rehearsal provenance
 
-**Goal:** make one truthful, inspectable account of the changed-hypothesis installed-package lifecycle run without rewriting history or rerunning for a pass.
+**Goal:** make the exact `91a735c -> dc90c5f -> 91a735c` package rehearsal inspectable enough for release-review use without running it again.
 
-**Why now:** current main simultaneously inherits a retained negative and a later success rewrite for the same experiment/tested tree. Release/operator claims cannot build on contradictory provenance.
+**Why now:** it is already cited by `IMPLEMENTATION_PLAN.md`, `docs/status.md`, release engineering and the release-security packet, but its retained execution provenance is thinner than the now-correct lifecycle evidence.
 
-**Files:** primarily `docs/package-operator-lifecycle-7cebe6b-20260909.md`, plus minimal `IMPLEMENTATION_PLAN.md`, `docs/release-engineering.md`, `docs/release-security-review-packet.md`, `docs/status.md` if their current success claims must be downgraded or qualified. Prefer a small explicit erratum/chronology rather than deleting history.
+**Files:** primarily `docs/package-operator-distinct-version-91a735c-dc90c5f-20260909.md`; optionally one small sanitized result file and only the release/status docs whose claim boundary actually changes.
 
 **Protected invariants:**
 
-- no new VPS invocation for this repair;
-- no raw endpoint/topology/secret material;
-- exact `e84770e` negative remains historical fact about what that commit claimed;
-- do not silently relabel one invocation as two or vice versa;
-- no runtime failure claim follows from an evidence conflict;
-- local exact-`7cebe6b` lifecycle implementation/tests stay accepted.
+- no new VPS invocation;
+- no endpoint IP/private topology/secret/plaintext payload material;
+- do not invent start/end/exit/hash facts;
+- preserve A/B binary/archive identity and the bounded one-exchange-per-stage scope;
+- do not promote a state marker into arbitrary schema-migration compatibility.
 
-**Tests/gates:** governance/evidence checks, `scripts/check.sh`, `git diff --check`, commit/push, exact-head CI green.
+**Tests/gates:** evidence/governance checks, `scripts/check.sh`, `git diff --check`, commit/push, exact-head CI green.
 
-**Commit/push:** yes. Continue immediately to B.
+**Commit/push:** yes only for real provenance/qualification delta. Continue immediately to B.
 
-### B. HIGH / READY_LOCAL — repair release item-4 exact-tree provenance
+### B. MEDIUM / READY_LOCAL — make package smoke fail closed on archive shape and add negative regression
 
-**Goal:** remove the unreachable `bb008d0...` as an exact-tree attestation and prepare the factual review against a real GitHub-reachable tree after A.
+**Goal:** turn the release package smoke contract into a directly regression-tested gate instead of relying only on successful package observations.
 
-**Files:** `docs/reviews/release-item4-subgates-20260909.md`, `docs/release-security-review-packet.md`, minimum status/release docs if needed.
+**Why now:** package/operator evidence is now one of the strongest recent visible outputs and is indexed by item 4; validating the installer input shape is a direct release-engineering correctness task, not audit-infrastructure expansion.
 
-**Behavior:**
+**Files:** `scripts/release/smoke-package.sh` and a minimal release-smoke regression/helper if needed; wire the test into `scripts/check.sh`. Update `docs/release-engineering.md` only for factual behavior changes.
 
-1. choose the real pushed tree containing the reconciled A evidence and the accepted `7cebe6b` implementation;
-2. run `scripts/check.sh` and `git diff --check` on that exact tree;
-3. record that reachable SHA explicitly;
-4. keep wording “developer-prepared factual support”, not independent review/security approval;
-5. do not assert successful VPS lifecycle evidence unless A actually supports it;
-6. preserve D019/HY2/repeated-failover/PMTUD/release boundaries.
+**Behavior/invariants:**
 
-**Commit/push:** yes. Continue immediately to C after exact-head CI green.
+1. validate archive member names and member types before extraction;
+2. reject absolute/traversal paths, symlinks, hardlinks and special-file members unless a future explicit package contract allows them;
+3. require one expected package root and expected bounded layout rather than silently accepting arbitrary siblings/content;
+4. retain exact `0755` executable / `0644` documentation+checksum policy and `SHA256SUMS` verification;
+5. retain native-target `capabilities --json` + `secret_free=true` execution and cross-target execution skip;
+6. add synthetic negative tests proving that a sibling valid file cannot rescue a bad link/type/path/layout/checksum/mode;
+7. no network activity, no identities, no release signing, no runtime protocol changes.
 
-### C. READY_LOCAL / REVIEW CLOSURE — reviewer-facing exact-current release subgate packet
+**Proposal freedom:** shell-only validation or a tiny typed helper are both acceptable. Choose the least fragile implementation and keep the public CLI/package layout unchanged.
 
-**Goal:** leave a concise, internally consistent packet that a later independent reviewer can inspect without reconstructing contradictory history.
+**Tests/gates:** focused package-smoke test first, then `scripts/check.sh`, `git diff --check`, commit/push, exact-head CI green.
 
-**Review scope:** package provenance and rollback boundary; lifecycle local tests versus VPS evidence; canonical corpus scope; negotiation/Noise/trust/parser facts; HY2 methodology/current negative; RSEC engineering controls versus D019 policy; remaining item-3/item-4 release evidence.
+**Commit/push:** yes. Continue immediately to C.
 
-**Do not grow:** no generic checker/parser/harness infrastructure unless a concrete false pass is first demonstrated.
+### C. READY_LOCAL / FACTUAL CLOSURE — reconcile package/release claims after A–B
 
-**Commit/push:** only for real factual delta. Continue immediately to D if dependency-ready.
+**Goal:** leave `docs/status.md`, `IMPLEMENTATION_PLAN.md`, `docs/release-engineering.md`, `docs/release-security-review-packet.md` and `docs/reviews/release-item4-subgates-20260909.md` internally consistent with the actual provenance/tooling state.
 
-### D. CONDITIONAL OUTPUT / VPS — genuine distinct-version package rehearsal if a real prior package is safely available
+**Rules:**
 
-**Goal:** exercise `A(old) -> B(current) -> A(old)` only with genuinely different binary/package hashes, immutable experimental release directories, external temporary identity/state, bounded authenticated workload, and cleanup.
+- keep lifecycle exact `7cebe6b` as bounded operator evidence anchored by its retained result;
+- keep or qualify the distinct A/B/A claim exactly according to A;
+- describe B as package-validation/tooling evidence, not signing/provenance-service/security approval;
+- D019/HY2/repeated/periodic/IPv6/PMTUD boundaries remain unchanged;
+- item 4 remains developer-prepared factual support until a genuinely independent review occurs;
+- do not close release item 3, item 4 or RC from these local changes.
 
-**Why this has value:** historical N5 established distinct-version rollback on older trees; current runtime/package has materially changed since then. A real old/current/old rehearsal would add operator evidence not reconstructable from loopback.
+**Commit/push:** only if A/B create factual doc deltas. Continue immediately to D.
 
-**Gate:** use only an already-known-good historical commit/package that repository tooling can build or retrieve safely. Skip if unavailable or if state compatibility would require inventing a migration policy. Never install the same tree twice and call it upgrade.
+### D. CONDITIONAL REVIEW SUPPORT — challenge one concrete item-4 claim, do not grow generic audit infrastructure
 
-**Standing boundary:** self-owned VPS only, dedicated experimental path, <=10 minutes, tiny traffic, no production service/path/state, opaque endpoint labels, cleanup required.
+**Goal:** after A–C are green, re-read the exact-current item-4 packet and current code/tests and identify at most one concrete correctness/security/release claim whose evidence is still materially weaker than its wording.
 
-**Negative rule:** preserve failures; no unchanged retry/pass-chasing.
+**Action:** if a concrete defect is found and it can be fixed inside existing architecture/policy, propose/implement the smallest repair + negative test and continue. If no concrete defect is found, **skip this slice**; do not create new checker/parser/harness scaffolding just to appear busy.
 
-**Commit/push:** only if a real rehearsal executes. Continue to E.
+**Forbidden:** claiming independent security approval, choosing D019 retention policy, creating signing/key custody policy, or altering core wire/session/crypto semantics.
 
-### E. CONDITIONAL VPS / RELEASE SUPPORT — native current-tree package/build gate only if it answers a new question
+### E. CONDITIONAL VPS / OUTPUT SELECTION — only a genuinely new real-network question
 
-**Goal:** after release-relevant lifecycle/package changes, optionally run one native x86_64 VPS-side current-tree package/check or package smoke if the toolchain already exists and the result would add provenance not already present.
+After A–D, re-read exact current status and standing authorization. Choose a VPS task only when there is a concrete unresolved question plus a material hypothesis/config/code/path distinction that makes new evidence valuable and non-duplicative.
 
-**Skip if:** this would only duplicate the local/CI/package-VPS facts already recorded, require installing a large new toolchain solely for the check, or interfere with a higher-value WAN/operator question.
+Do **not** select unchanged HY2, repeated warm failover, periodic orchestration, the already-answered package lifecycle or distinct A/B/A rehearsal, IPv6 without environment, live PMTUD before its design gate, or a generic “another soak” merely because the VPS rental is active. A native x86_64 package run should also be skipped if it only duplicates already-recorded provenance.
 
-**Boundary:** this is build/operator provenance, not performance/security/release approval.
+If no such VPS question exists, leave the live queue empty rather than consuming rental time with low-value repetition.
 
-### F. NEXT OUTPUT SELECTION — choose a genuinely dependency-ready real-network/operator question
-
-After A–E, re-read exact current state. Prefer one standing-authorized VPS-only question whose hypothesis is concrete and whose evidence cannot be recreated later.
-
-**Do not select:** unchanged HY2, unchanged repeated warm failover, another package-lifecycle retry without a new material hypothesis, IPv6 without environment, live PMTUD before wire/security design acceptance, natural-loss “simulation” mislabeled as natural, FEC/0-RTT/striping/multipath/exotic carriers without an observed-problem gate, new security numeric policy, third-party targets, or production mutation.
-
-If no real READY output exists, keep the queue short instead of manufacturing audit work.
-
-### G. POLICY-BLOCKED PARALLEL LANE — D019 source retention
+### F. POLICY-BLOCKED PARALLEL LANE — D019 source retention
 
 **Status:** `SOURCE_RETENTION_POLICY_BLOCKED`.
 
-Current bounded engineering controls remain useful, but terminal source-retention semantics require a maintainer/security-policy decision. Do not invent TTL/LRU/history capacity or silently weaken D019. This does not block A–F.
+Current bounded engineering controls remain useful, but terminal source-retention semantics require a maintainer/security-policy decision. Do not invent TTL/LRU/history capacity, external retention authority or weakened no-reset semantics. This does not block A–E.
 
 ## VPS / evidence priority
 
-- Do **not** rerun the exact-`7cebe6b` lifecycle scenario to cure the documentation contradiction. First reconcile already-existing evidence.
-- If A proves the complete success account, freeze that question as answered; do not rerun it unchanged.
-- If A cannot prove success, keep the truthful negative/conflict and require a genuinely new material hypothesis before any future lifecycle attempt.
-- A real distinct-version package rehearsal is currently the highest-value conditional VPS opportunity after provenance is clean.
-- HY2 and repeated-warm-failover same-class attempts remain frozen.
-- VPS/load evidence never substitutes for deterministic security accounting or D019 policy.
+- No same-class lifecycle or distinct-package rerun is needed to repair provenance.
+- The distinct A/B/A result is already a new VPS-only operator output from the last cycle; preserve it rather than immediately repeating package work.
+- Frozen HY2/repeated/periodic negatives remain valid. A future run needs a specific changed hypothesis.
+- VPS/load observations never substitute for deterministic security accounting, independent review or D019 policy.
 
 ## Visible-output check
 
-The last 24–48 hours did produce real output: current package reproducibility/install smoke, signal lifecycle implementation with ordered process tests, and multiple bounded real-VPS/operator attempts. The problem this hour is not lack of output but **evidence truth becoming internally inconsistent**. A/B are direct blockers to trustworthy release/operator claims; after they close, return to outward operator evidence rather than growing audit infrastructure.
+The last 24–48 hours clearly produced real output: current-package reproducibility/install smoke, ordered signal lifecycle implementation and real installed-package lifecycle evidence, plus a genuine distinct-binary A(old) -> B(current) -> A(old) VPS rehearsal. This is not an audit-only period. A–C are direct release/package truth and correctness work; after them, do not invent more audit machinery if no concrete finding exists.
 
 ## Stagnation check
 
-This is **not** `STALLED_IMPLEMENTATION`: `7cebe6b` is a real implementation/test commit, subsequent evidence/review commits landed, and exact-head CI is green. The queue is being corrected because two new provenance defects were discovered, not because coding stopped.
+This is **not** `STALLED_IMPLEMENTATION`: four new developer-owned commits landed since the last reviewer handoff, all reviewed exact heads are green, both previous HIGH provenance defects were actively repaired, and a new VPS operator result was produced.
 
 ## Maintainer/admin boundary
 
-No administrator action is required for A–F when performed within existing architecture and standing authorization. Do not rewrite published Git history autonomously. D019 remains the known maintainer/security-policy checkpoint. Live PMTUD remains a separate wire/security design-stage boundary. If lifecycle evidence reconciliation proves that an unchanged second VPS invocation was intentionally used to chase a PASS in conflict with standing evidence policy, preserve that fact and stop that subline; do not ask the administrator merely to retroactively bless it.
+No administrator action is required for A–E when kept within the constraints above. Do not rewrite published Git history autonomously. D019 remains the known maintainer/security-policy checkpoint. Signing key custody/publication trust, any new security numeric policy, core wire/session/crypto changes, production/service-manager mutation outside the standing experimental boundary, or destructive migration still require explicit maintainer action.
