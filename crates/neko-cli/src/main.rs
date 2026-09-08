@@ -2792,13 +2792,12 @@ fn endpoint_rebind_server(args: &[String]) {
         .unwrap_or_else(|_| fail("endpoint candidate authentication failed"));
     if !matches!(
         ProcessMessage::decode(&candidate_plain),
-        Ok(ProcessMessage::ReadinessResponse {
+        Ok(ProcessMessage::ReadinessRequest {
             session: SessionId(7001),
             target_path: 1,
             path_generation: 1,
             delivery_epoch: 1,
-            challenge_id: 0,
-            admitted: false
+            challenge_id: 1
         })
     ) {
         fail("endpoint candidate tuple mismatch")
@@ -2876,6 +2875,19 @@ fn endpoint_rebind_server(args: &[String]) {
     state
         .validate_and_promote(candidate, 7001, 1, challenge_id)
         .unwrap_or_else(|_| fail("endpoint promotion rejected"));
+    let sync = ProcessMessage::ReadinessResponse {
+        session: SessionId(7001),
+        target_path: 1,
+        path_generation: 1,
+        delivery_epoch: 1,
+        challenge_id: 1,
+        admitted: true,
+    }
+    .encode()
+    .unwrap();
+    socket
+        .send_to(&secure.seal_unreliable(&sync).unwrap(), endpoint_b)
+        .unwrap();
     emit_diagnostic(
         args,
         "server",
@@ -2889,6 +2901,13 @@ fn endpoint_rebind_server(args: &[String]) {
         "endpoint_promoted",
         1,
         ",\"path\":1,\"generation\":1,\"source_endpoint_changed\":true",
+    );
+    emit_diagnostic(
+        args,
+        "server",
+        "endpoint_promotion_sync_sent",
+        1,
+        ",\"path\":1,\"generation\":1",
     );
 
     let (mut n, mut post_source) = socket
@@ -3061,13 +3080,12 @@ fn endpoint_rebind_client(args: &[String]) {
     if endpoint_a.local_addr().unwrap() == endpoint_b.local_addr().unwrap() {
         fail("source endpoint did not change")
     }
-    let candidate = ProcessMessage::ReadinessResponse {
+    let candidate = ProcessMessage::ReadinessRequest {
         session: SessionId(7001),
         target_path: 1,
         path_generation: 1,
         delivery_epoch: 1,
-        challenge_id: 0,
-        admitted: false,
+        challenge_id: 1,
     }
     .encode()
     .unwrap();
@@ -3137,9 +3155,37 @@ fn endpoint_rebind_client(args: &[String]) {
         ",\"path\":1,\"generation\":1",
     );
     if args.iter().any(|a| a == "--test-wrong-rebind-challenge") {
-        let _ = endpoint_b.recv_from(&mut buf);
         fail("test wrong endpoint challenge completed without rejection")
     }
+    let (n, source) = endpoint_b
+        .recv_from(&mut buf)
+        .unwrap_or_else(|_| fail("endpoint promotion sync timeout"));
+    if source != target {
+        fail("endpoint promotion sync from wrong peer")
+    }
+    let plain = secure
+        .open_unreliable(&buf[..n])
+        .unwrap_or_else(|_| fail("endpoint promotion sync authentication failed"));
+    if !matches!(
+        ProcessMessage::decode(&plain),
+        Ok(ProcessMessage::ReadinessResponse {
+            session: SessionId(7001),
+            target_path: 1,
+            path_generation: 1,
+            delivery_epoch: 1,
+            challenge_id: 1,
+            admitted: true,
+        })
+    ) {
+        fail("endpoint promotion sync malformed")
+    }
+    emit_diagnostic(
+        args,
+        "client",
+        "endpoint_promotion_sync_received",
+        1,
+        ",\"path\":1,\"generation\":1",
+    );
     if args.iter().any(|a| a == "--test-stale-old-endpoint") {
         let stale = ProcessMessage::ReadinessResponse {
             session: SessionId(7001),

@@ -2261,6 +2261,14 @@ fn endpoint_rebind_real_sockets_promote_new_source_and_reject_stale_old_source()
         "{server_log}"
     );
     assert!(
+        server_log.contains("\"event\":\"endpoint_promotion_sync_sent\""),
+        "{server_log}"
+    );
+    assert!(
+        client_log.contains("\"event\":\"endpoint_promotion_sync_received\""),
+        "{client_log}"
+    );
+    assert!(
         server_log.contains("\"event\":\"endpoint_stale_source_rejected\""),
         "{server_log}"
     );
@@ -2349,6 +2357,10 @@ fn endpoint_rebind_wrong_challenge_fails_after_candidate_without_success() {
     );
     assert!(
         server_log.contains("endpoint_rebind_failed"),
+        "{server_log}"
+    );
+    assert!(
+        !server_log.contains("endpoint_promotion_sync_sent"),
         "{server_log}"
     );
     assert!(!server_log.contains("endpoint_promoted"), "{server_log}");

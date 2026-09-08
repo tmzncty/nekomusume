@@ -2288,8 +2288,11 @@ impl EndpointRebindState {
         if candidate.source_tag == self.active_source_tag {
             return Err(EndpointRebindError::SameSource);
         }
-        if candidate.generation.0 != self.active_generation.0.saturating_add(1) {
+        if candidate.generation.0 < self.active_generation.0 {
             return Err(EndpointRebindError::OldGeneration);
+        }
+        if candidate.generation.0 != self.active_generation.0.saturating_add(1) {
+            return Err(EndpointRebindError::TupleMismatch);
         }
         if candidate.path != self.active_path {
             return Err(EndpointRebindError::TupleMismatch);
@@ -4206,7 +4209,7 @@ mod concurrent_manager_tests {
                 generation: PathGeneration(5),
                 ..candidate
             }),
-            Err(EndpointRebindError::OldGeneration)
+            Err(EndpointRebindError::TupleMismatch)
         );
         assert_eq!(state.observe_candidate(candidate), Ok(()));
         assert_eq!(state.arm_challenge(17), Ok(()));
