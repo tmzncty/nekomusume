@@ -49,6 +49,8 @@ For rollback, stop the explicitly managed process, atomically point `current` to
 
 Exact `f19ad28` was rebuilt twice with identical archive identity and exercised through isolated authenticated TCP/UDP package smokes plus a same-tree immutable-directory symlink switch/rollback. See [`package-operator-current-tree-f19ad28-20260909.md`](package-operator-current-tree-f19ad28-20260909.md). This supplements rather than replaces the historical distinct-version N5 A→B→A evidence.
 
+Exact `a9928c8` was then installed in a dedicated temporary path on the self-owned VPS and exercised once over authenticated TCP and once over authenticated UDP, with installed-binary hash verification and verified remote cleanup. See [`package-operator-vps-a9928c8-20260909.md`](package-operator-vps-a9928c8-20260909.md). This remains bounded self-owned VPS evidence, not public reachability, release, or production evidence.
+
 ## Honest remaining K
 
 - native aarch64 cross-build and execution evidence;
