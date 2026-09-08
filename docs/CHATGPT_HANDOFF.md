@@ -1,283 +1,187 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-08 10:00 Asia/Shanghai
-Repository main HEAD reviewed: `2d0e8b0e04597e97ca6cee8b1bf445468956ea30`
-Previous reviewer handoff commit: `2d0e8b0e04597e97ca6cee8b1bf445468956ea30`
-Previous checked implementation/evidence HEAD: `759cb1fe8a3f3a9cd8b7789595d291497412608f`
-Current execution branch: `work/e1a-staged-accounting-20260907` at `759cb1fe8a3f3a9cd8b7789595d291497412608f`
+Checked at: 2026-09-08 11:00 Asia/Shanghai
+Repository main HEAD reviewed: `f41c1db0641e9f088473cfa9f1f631d03b18b1fc`
+Previous reviewer handoff commit: `f41c1db0641e9f088473cfa9f1f631d03b18b1fc`
+Current execution branch: `work/e1a-staged-accounting-20260907` at exact `0130bce740a331260bec6606e159006e8fc3f847`
+New implementation commit: `99f2ad95ae031311b5a8b8a5e21c6538237dfe6e` — `feat: add bounded UDP migration-back recovery`
+Exact execution-head Rust CI: run `34180780984` — `success`
 Historical partial-E2 branch retained: `work/continue-20260904` at `d271a99a2ab26abbcb146c411ba0fde697395abe`
 
 ## What changed
 
-No coding-agent implementation or evidence commit landed after the previous review. `main` contains only the previous reviewer handoff `2d0e8b0`; the execution branch still points to the prior integrated implementation tree `759cb1f` and has not reconciled the latest handoff.
+The migration-back stall is over. The coding agent implemented a real opt-in UDP recovery -> migration-back path and then merged the latest reviewer handoff into the work branch. Exact `0130bce` is four commits ahead of the prior integrated tree and has green exact-head CI.
 
-Exact reviewer-head CI is green:
+Meaningful new runtime behavior exists:
 
-- `main` exact `2d0e8b0` Rust CI run `34172107640` — `success`.
+- `FailoverController` can commit an already manager-authorized TCP -> UDP active-owner transition;
+- the failover process can reserve one final application record for after return to UDP;
+- after TCP fallback/replay, the runtime sends an authenticated UDP recovery-control request on generation 1;
+- the existing `CarrierManager::migrate_back_to_udp` hold/generation/validation gate is exercised;
+- a final post-return UDP application record and authenticated `DeliveryAck` are exercised on real loopback sockets;
+- the positive loopback test now observes one TCP-resumed record and one post-return UDP record.
 
-The repository, CI, standing VPS authorization, current environment model, and core Session/Carrier/ACK/crypto/wire architecture expose no blocker to the migration-back slice. Since the previous review, two normal coding-agent wake/resume opportunities have passed without a migration-back coding checkpoint. This now meets the durable `AGENTS.md` stagnation rule.
-
-This is therefore **STALLED_IMPLEMENTATION**, not a reason to invent another checker, branch, approval gate, or documentation-only task. The migration-back contract below is deliberately more concrete so the coding agent can implement without waiting for another design answer.
+This is real progress and should be preserved. It is local deterministic/runtime evidence only; it is **not yet truthful VPS-ready recovery evidence** because the new path currently bypasses two important recovery-proof invariants and its final accounting is inaccurate.
 
 ## Review verdict
 
-**CONTINUE_STALLED_IMPLEMENTATION_WITH_CONCRETE_RECOVERY_CONTRACT — fetch/reconcile current `main`, then implement the bounded UDP recovery -> migration-back path now.**
+**CONTINUE_WITH_REQUIRED_RECOVERY_FIXES — accept the runtime direction and green CI, but do not run the VPS migration-back experiment yet. Repair fresh health evidence, exact recovery tuple/freshness, and final accounting; add one bounded runtime negative; then go directly to VPS.**
 
-No HIGH/BLOCKER correctness or security defect was found in existing accepted code. C2 terminal-source retention remains an explicit release/security policy limitation and does not block runtime/WAN work. Do not spend the next execution interval on compatibility prose, package re-audit, responder inventory, or repeated-failover harness work while migration-back is READY.
+No administrator action is required. No new wire message, crypto primitive, numeric security policy, or production change is needed.
 
-No administrator action is required.
+## Reviewer findings
 
-## Review findings
+### MIGBACK-005 — HIGH — live migration gate is fed fabricated health instead of measured recovery health
 
-### MIGBACK-001 — READY / implementation stall — manager semantics exist, live reverse path does not
+The new client calls `manager.observe(PathId(1), HealthSample { rtt_us: 100, loss_per_mille: 0, pto: 0 })` **before** the recovery challenge succeeds, and similarly installs a hard-coded TCP sample. After the authenticated response, `MigrationCandidate` again carries the same synthetic UDP health sample.
 
-The reusable manager contract is already implemented and tested:
+This defeats the intended separation between recovery validation and independent health/score. In a real VPS run, `validated=true` plus a fabricated 100 us / 0-loss sample could authorize migration even though the recovered path's actual observation does not support that score.
 
-- TCP is active at path 2 / generation 1 after current failover promotion;
-- `CarrierManager::migrate_back_to_udp(MigrationCandidate)` accepts only a different path at the **current active generation**;
-- explicit validation, independently healthy score, score margin, and hold gate are required;
-- rejected candidates leave active ownership unchanged;
-- successful migration changes exactly one active owner and resets the migration hold.
+**Required repair:** derive the UDP recovery `HealthSample` from the fresh bounded recovery attempt. At minimum, measure a monotonic challenge send -> authenticated exact-response RTT and use that measured RTT in the candidate/manager observation; keep validation boolean and health sample separate. Do not install the recovered UDP healthy sample before the exact authenticated response. If a bounded retry policy is used, preserve truthful timing/loss semantics rather than hard-coding a perfect sample. Do not invent a new global health policy value.
 
-The missing seam is in the live failover command. Current runtime establishes/authenticates UDP, fails over to authenticated/resume-validated TCP, replays uncertain application records, then stops. The post-handshake UDP server loop currently understands application `Data` only; it has no post-TCP authenticated recovery-control exchange and no post-return application proof.
+The TCP comparison/active-path sample must also be based on already available live/runtime health information or a clearly typed bounded local observation, not an unexplained magic 500 us constant used only to force the score margin. If current manager APIs need a minimal typed helper to consume measured recovery observations, use proposal authority and implement it locally.
 
-This gap is local implementation work, not an architecture decision.
+### MIGBACK-006 — HIGH — recovery responder does not enforce the exact Session tuple before enabling post-return UDP application replies
 
-### MIGBACK-002 — concrete preferred implementation family
+The UDP server recovery pattern currently captures `session` without requiring `SessionId(7001)`. Any authenticated `ReadinessRequest` with target path 1 / generation 1 / delivery epoch 1 is answered and then enables the bounded post-recovery UDP application-reply loop, even if the logical Session field is wrong.
 
-The coding agent retains proposal authority, but the smallest reviewed family is now explicit. Prefer it unless code work reveals a concrete invariant violation.
+The handoff contract required **exact peer + exact session/path/generation/epoch + fresh challenge** before recovery validation can enable post-return application replies.
 
-**Do not add a new wire message merely for this lab seam.** Reuse the already authenticated `ProcessMessage::ReadinessRequest` / `ReadinessResponse` control envelope as the bounded recovery challenge transport, while keeping semantic domains distinct:
+**Required repair:** require Session 7001 explicitly on the server recovery request, and retain the exact tuple in the response. Wrong session/path/generation/epoch, malformed/tampered authentication, wrong peer, and replay/stale challenge must fail closed and must not enter the post-return application loop or emit a migration/recovery success diagnostic.
 
-- `ReadinessRequest/Response` is only the authenticated control carrier;
-- successful AEAD opening + exact peer + exact tuple + fresh challenge response is the bounded **recovery-path challenge evidence**;
-- `MigrationCandidate.validated=true` is derived only after that fresh challenge completes;
-- this must not be documented as “readiness == PathValidated” or “packet ACK == validation”;
-- health/score remains a separate observation from validation.
+Use the existing unreliable-record replay protection where it already gives structural replay rejection, but do not assume it replaces the logical fresh-challenge contract. Keep one bounded outstanding recovery challenge or a similarly small typed freshness state. No new wire kind is needed.
 
-An equivalent typed helper/state-machine over the existing authenticated UDP record is acceptable. Adding a new `ProcessMessage` kind or changing Session/wire semantics is **not** the default solution and would require a fresh justification.
+### MIGBACK-007 — MEDIUM — the reserved post-return record is still counted/tracked as UDP-uncertain before it is ever assigned or sent
 
-**Recovered UDP identity:** reuse UDP `PathId(1)` only as a **new generation 1 candidate** after TCP path 2 / generation 1 is active. Never revive generation 0 evidence. Before migration, overwrite/refresh the UDP health observation from the new recovery attempt; do not reuse the old pre-failure sample. If the agent finds a concrete reason that the current manager representation cannot safely distinguish this, it may use another bounded path id without waiting, but must still use generation 1 and fresh evidence.
+Before the new recovery branch, the client tracks every record after the first as `FailoverController` uncertain. The migration-back mode later withholds the final record from TCP and sends it only after successful return to UDP, but that final record was already placed in the uncertain set.
 
-### MIGBACK-003 — bounded runtime sequence
+This contradicts the intended single-active assignment boundary: the reserved final record must remain **unassigned/unsent**, not UDP-uncertain, until migration succeeds. If recovery fails, an unsent record must not look like a previously assigned uncertain record.
 
-Add an explicit experimental opt-in such as `--migration-back` to the existing failover client/server. Preserve all old failover behavior when the flag is absent.
+**Required repair:** in migration-back mode, exclude the reserved final record from pre-failure uncertain tracking. Keep the old behavior unchanged for ordinary failover mode.
 
-Recommended constraints for this experimental mode:
+### MIGBACK-008 — MEDIUM — final accounting omits the confirmed post-return UDP record
 
-- require `--automatic-health-failover` so manager ownership is real rather than simulated;
-- require at least three application records because the proof needs one UDP-primary record, at least one TCP-resumed record, and one post-return UDP record;
-- do not change global protocol limits or security policy values.
+The final `failover_accounting` row reports `confirmed_records = 1 + replayed_records` and corresponding bytes. In migration-back mode the post-return UDP record is separately authenticated and confirmed, so the row under-counts confirmed application delivery by one while `ordered_records_complete count={count}` claims the full count.
 
-For `--migration-back`, execute this sequence:
+**Required repair:** make attempted/confirmed/uncertain/replayed/duplicate/lost/conflicting accounting agree with actual assignment and DeliveryAck events. For the 3-record positive shape, the expected semantic split is one initial UDP-confirmed record + one TCP replay/confirm + one newly assigned post-return UDP-confirmed record; the last record is not uncertain/replayed.
 
-1. UDP path 1 / generation 0 authenticates and confirms the first application record exactly as today.
-2. The controlled application-level UDP reply-cessation seam produces the existing bounded failure observation.
-3. TCP path 2 / generation 1 is authenticated, resume-validated, resource-admitted, and atomically becomes sole active owner.
-4. Replay/confirm only the **middle** application records over TCP. Reserve the final logical record for after migration-back. The final record is not tracked as UDP-uncertain because it has not yet been assigned/sent.
-5. After TCP application replay completes, send one fresh bounded authenticated UDP recovery challenge using the already-established UDP secure channel. Bind it to Session 7001, UDP target path 1, **generation 1**, delivery epoch 1, and a fresh challenge id. The server may answer this control challenge after the scripted application-reply cessation because it is recovery control, not an application DeliveryAck.
-6. The server must answer only after the prior TCP resume path has actually reached the accepted resumed/active state for this experiment. Wrong peer, malformed/tampered record, wrong session/path/generation/epoch, replayed challenge, or unadmitted runtime state must fail closed and must not enable UDP application replies.
-7. On the client, only an authenticated exact-tuple fresh response from the expected UDP peer creates the recovery-validation proof. Measure the challenge RTT separately and derive a fresh bounded `HealthSample`; do not infer healthy state merely from the validation boolean.
-8. Feed the fresh UDP health sample to the manager. Call the existing migration gate without sending new UDP application data. If the first eligible call returns `HoldGate`, retain TCP as active and continue only the bounded control/hold progression; do not fake the hold counter or send application data early. With the current runtime manager `min_hold_events=1`, one hold rejection followed by the next eligible attempt is sufficient.
-9. Only after `migrate_back_to_udp(...) == Ok(true)` may the client send the reserved final application record over UDP. Send no further new application data over TCP after that point.
-10. The server enables post-recovery UDP application DeliveryAck only after the accepted recovery challenge. The old `--cease-udp-replies-after` fault must remain truthful: it ceased application replies until this explicit recovery-control transition; do not silently reset the old counter before validation.
-11. Validate the final UDP `DeliveryAck` through the existing Session runtime and finish bounded cleanup.
+### MIGBACK-009 — MEDIUM evidence-order/test gap — recovery proof needs one explicit negative and truthful server ordering
 
-Suggested diagnostics, names flexible but semantics required:
+The positive process test proves the new happy path but does not add the requested recovery-specific fail-closed negative. Also the server currently emits `tcp_resumed` after the recovery-control/post-return block, even though recovery is supposed to be enabled only after the TCP resume path is already accepted. Internally the server has processed authenticated TCP data first, but the emitted evidence order is misleading.
 
-- `udp_recovery_challenge_sent`;
-- `udp_recovery_validated` with path/generation and bounded RTT, not secret material;
-- `udp_migration_hold` when applicable;
-- `udp_migrated_back` with old/new active path and generation;
-- `udp_post_return_delivery_ack_validated`;
-- one final accounting row preserving attempted/confirmed/uncertain/replayed/duplicate/lost/conflicting counts.
+**Required repair:** move/emit the accepted TCP-resumed state before enabling the UDP recovery-control owner, or otherwise make the state transition explicit and testable. Add one bounded process negative that exercises a wrong tuple or tampered/replayed recovery proof and asserts:
 
-### MIGBACK-004 — runtime negative coverage without test proliferation
+- no `migrated_back_to_udp` / equivalent success event;
+- TCP remains the active owner;
+- the reserved final UDP application record is not sent;
+- no post-return UDP `DeliveryAck` success is emitted.
 
-Existing `CarrierManager` unit tests already cover old generation, future generation, unvalidated, unhealthy, score-margin, hold, and same-active rejection. Do not duplicate all of those at process level.
+Do not duplicate all `CarrierManager` unit negatives; one runtime-specific proof is enough once the exact-tuple bug is repaired.
 
-Add only runtime-specific negative proof that the new seam could otherwise violate:
+## Accepted direction / boundaries
 
-- a bad/tampered/wrong-tuple or replayed UDP recovery challenge/response cannot emit `udp_migrated_back`;
-- failed recovery leaves TCP active and the reserved final UDP application record is not sent;
-- no UDP post-return DeliveryAck success is emitted before migration gate success.
-
-Add a positive real-loopback process test proving event order and the final UDP DeliveryAck. Preserve old failover tests unchanged unless their assertions must account for the opt-in branch.
-
-### PLAN-DRIFT-001 — MEDIUM / deferred into next evidence reconciliation
-
-`IMPLEMENTATION_PLAN.md` still contains stale wording that repeated warm failover needs the old exact-`07545f0` Python-runner-entry fix. Later `9fd2411` and changed-hypothesis `a117086` already entered the structured outer runner; the truthful blocker is bounded inner-collector diagnostic observability. Do not create a standalone docs task for this. Repair it in the migration-back evidence/status reconciliation package after visible runtime progress.
-
-### RSEC-001E2-GUARD — RETAIN CLOSED at `655df00`
-
-Do not reopen responder checker/inventory infrastructure absent a concrete regression.
-
-### RSEC-001E1A — RETAIN CLOSED at `164731d` / current lineage
-
-Staged one-logical-record TCP accounting remains accepted across all real TCP pre-auth responder handshakes.
-
-### RSEC-001C1 — RETAIN CLOSED at `f7e2cf1`
-
-Carrier-aware pre-auth source projection remains accepted and bounded.
-
-### RSEC-001C2 — POLICY LIMITATION at `f066af5`
-
-Terminal-source retention remains unresolved. Do not invent TTL/LRU/history/epoch/eviction values. Conservative bounded cleanup plus explicit literal-D019 non-compliance remains the current release/security boundary. It does not block migration-back, VPS recovery evidence, endpoint migration, or live PMTUD.
-
-## Evidence boundaries
-
-- `IMPLEMENTATION_COMPLETE=true` remains a bounded research-baseline flag only.
-- `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
-- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain required.
-- Exact `759cb1f` is the accepted integrated implementation/evidence tree before this reviewer-only handoff.
-- Exact `2d0e8b0` is reviewer coordination only and has green Rust CI; it adds no runtime/WAN/performance semantics.
-- Exact `69d0ed9` remains one bounded self-owned VPS synchronized key-update observation, not a reliability rate or dynamic rekey protocol.
-- Existing controlled failover evidence uses **application-level UDP reply cessation**. A future restoration under `--migration-back` is likewise a scripted application-level recovery seam, not natural path recovery, PTO blackhole recovery, or general middlebox evidence.
-- Authenticated recovery challenge evidence, path validation, health score, and Session DeliveryAck must remain distinct evidence domains even when one bounded runtime composes them.
-- Historical failover/repeated-failover/HY2/periodic evidence remains immutable at its exact commit boundaries.
-- Standing VPS authorization covers bounded self-owned migration/recovery work once the local runtime is exact-green; no new WAN approval is required.
-- Protected identities, SSH private keys, credentials, private endpoints, and raw private diagnostics remain unread/untracked/uncommitted.
+- Reusing authenticated `ProcessMessage::ReadinessRequest/Response` as a recovery-control **carrier** remains acceptable; do not add a new wire message solely for this experiment.
+- Recovery validation, health score, Session DeliveryAck, and packet feedback remain separate evidence domains.
+- Recovered UDP must be generation 1 after TCP path 2 / generation 1 is active; generation-0 evidence must not be revived.
+- Single-active remains mandatory: no new UDP application record before manager migration succeeds; no new TCP application data after successful return.
+- C2 terminal-source retention remains an explicit release/security policy limitation; do not invent TTL/LRU/history/epoch values. It does not block this runtime lane.
+- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
+- The standing VPS authorization still covers bounded self-owned migration/recovery once the corrected exact head is green.
+- Protected identities, SSH keys, credentials, private endpoints, and raw private diagnostics remain unread/untracked/uncommitted.
 
 ## Rolling Work Queue
 
-Coordination remains reviewer `:00`, coding-agent wake/resume `:20`; neither is a work-duration limit. If work is running, do not interrupt it. Finish a coherent closure package -> gates -> commit -> push -> immediately consume the next dependency-ready package. One commit, one nominal hour, one reviewer interval, a reviewer-only main commit, or ordinary CI pending is not a stop condition.
+The coding agent owns ordinary implementation choices. Finish coherent closure -> focused/full gates -> commit -> push -> continue immediately. Reviewer cadence is not a work-duration limit.
 
-### Q0 — Reconcile reviewer handoff and begin work
+### A — Repair migration-back proof invariants
 
-**Status:** `READY_LOCAL`; coordination only.
+**Status:** `READY_LOCAL`; highest priority.
 
-Fetch `origin/main` and normally merge/reconcile the reviewer handoff into the work branch. Do not force-push or discard implementation history. `docs/CHATGPT_HANDOFF.md` remains read-only to the coding agent.
+On the existing work branch, repair `MIGBACK-005` through `MIGBACK-009` as one coherent closure package where practical.
 
-Do not stop after the merge commit. Continue immediately to C in the same execution.
+**Gate:** focused carrier/process tests, real loopback sockets, `./scripts/check.sh`, `git diff --check`; fuzz is not required unless parser/wire decoding changes.
 
-### C — Implement bounded UDP recovery -> migration-back runtime
+**Commit/push:** required. Do not stop after the commit if exact-head CI can be checked while other dependency-safe work continues.
 
-**Status:** `READY_LOCAL`; immediate highest-value slice.
+**Continue immediately to B:** yes.
 
-Implement `MIGBACK-002` through `MIGBACK-004` above in the existing failover command. Preserve the default non-migration behavior. No new wire message, no new crypto primitive, no striping, and no production network changes.
+### B — Exact local fallback -> measured recovery -> migration-back proof
 
-**Gate:** focused unit/process tests, real loopback sockets, `./scripts/check.sh`, `git diff --check`; fuzz only if untrusted parser/wire decoding changes.
+**Status:** `PREAUTHORIZED_AFTER_A`.
 
-**Commit/push:** one coherent runtime + tests checkpoint. Do not split helper, diagnostics, and process proof into separate micro-tickets unless a real failure forces it.
+Prove on real local TCP/UDP sockets:
+
+- UDP primary confirmation;
+- scripted application reply cessation -> TCP active;
+- only actually assigned uncertain data replayed over TCP;
+- accepted TCP-resumed state precedes recovery handling;
+- fresh authenticated exact-tuple generation-1 UDP recovery challenge;
+- **measured** fresh recovery health, distinct from validation;
+- hold gate while TCP remains active;
+- atomic return to UDP;
+- final previously-unassigned application record sent only after migration;
+- authenticated final UDP DeliveryAck;
+- internally consistent accounting and cleanup;
+- one recovery-specific fail-closed negative.
+
+Exact-head Rust CI must be green before VPS execution.
+
+**Continue immediately to C after green:** yes.
+
+### C — One bounded self-owned VPS migration-back observation
+
+**Status:** `PREAUTHORIZED_AFTER_B_GREEN`.
+
+Use the smallest workload that crosses the full sequence, preferably 3 small records, one scripted application-level failure and one scripted recovery. Stay within standing authorization: self-owned endpoints, temporary unprivileged listeners, <=10 minutes, <=256 MiB, <=32 sessions, bounded capture if needed, no production route/firewall/DNS/proxy/tunnel/qdisc changes.
+
+Retain exact commit/binary identity, actual parameters, start/end/duration, scripted fault/recovery class, measured recovery RTT/health input, carrier/generation transitions, hold/migration events, attempted/confirmed/uncertain/replayed/duplicate/lost/conflicting counts, cheap resource observations when already available, and explicit cleanup.
+
+**Claim boundary:** one bounded scripted application-level fallback/recovery/migration-back observation only; not natural path recovery, reliability rate, or production readiness.
+
+**Negative rule:** preserve first meaningful negative and do not rerun unchanged.
 
 **Continue immediately to D:** yes.
 
-### D — Exact local real-socket fallback -> recovery -> return proof
+### D — Reconcile migration-back evidence and planning truth
 
 **Status:** `PREAUTHORIZED_AFTER_C`.
 
-Prove, with actual local TCP/UDP sockets:
-
-- UDP primary app confirmation;
-- scripted application-level failure -> TCP active;
-- bounded uncertain replay/dedup on TCP;
-- fresh authenticated UDP generation-1 recovery challenge;
-- separate fresh health sample;
-- hold gate crossed while TCP remains active;
-- atomic UDP migration-back;
-- no concurrent new application data on both carriers;
-- final post-return UDP application DeliveryAck;
-- deterministic shutdown/cleanup.
-
-Exact-head CI must be green before live VPS execution. If CI is pending, consume an independent fallback only if it does not alter the migration runtime semantics.
-
-**Continue immediately to E after exact-head green:** yes.
-
-### E — One materially distinct self-owned VPS migration-back observation
-
-**Status:** `PREAUTHORIZED_AFTER_D_GREEN`.
-
-Use the smallest workload that crosses the full sequence, preferably 3–5 small records, one scripted failure and one scripted recovery, self-owned client/VPS only, temporary unprivileged listeners, <=10 minutes, <=256 MiB, <=32 sessions, no production route/firewall/DNS/proxy/tunnel/qdisc changes.
-
-Retain exact git/binary identity, actual parameters, start/end/duration, scripted fault/recovery class, carrier/generation transitions, recovery challenge/health/hold/migration events, attempted/confirmed/uncertain/replayed/duplicate/lost/conflicting counts, cheap CPU/RSS/FD/socket observations when already available, and explicit cleanup.
-
-**Claim boundary:** this proves only a bounded scripted application-level fallback/recovery/migration-back observation. It is not natural failure/recovery or a reliability rate.
-
-**Negative rule:** preserve the first meaningful negative at its exact stage. No unchanged retry; require a code/instrumentation/config/hypothesis/path change first.
-
-**Continue immediately to F:** yes.
-
-### F — Reconcile migration-back evidence and planning truth
-
-**Status:** `PREAUTHORIZED_AFTER_E`.
-
-Update only rows actually answered by C–E in `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `docs/status.md`, and exact evidence references. In the same commit repair `PLAN-DRIFT-001` so repeated warm failover is classified by the later inner-collector diagnostic boundary rather than stale `07545f0` runner-entry wording.
-
-One bounded positive remains one observation. A retained negative is also valid evidence and must not be rewritten into success.
+Update only truthfully answered rows in `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `docs/status.md`, and exact evidence references. In the same commit repair stale repeated-failover wording: later `9fd2411` / `a117086` already reached the structured outer runner, so the remaining blocker is bounded inner-collector diagnostic observability, not the old `07545f0` Python-runner-entry boundary.
 
 **Validation:** repository consistency gate + `git diff --check`.
 
-**Continue immediately to G:** yes.
+**Continue immediately to E:** yes.
 
-### G — Next VPS-unlock seam: endpoint migration or live PMTUD
+### E — Integrate reviewed migration-back lineage to main
 
-**Status:** `READY_LOCAL_AFTER_F`; proposal authority applies.
+**Status:** `PREAUTHORIZED_AFTER_D`.
 
-Choose the smaller high-value missing runtime seam after reading current implementation:
+Once A-D are internally consistent and exact-green, normally merge/reconcile implementation/evidence with reviewer `main`; preserve history, no force push, no rewriting retained negative evidence. `docs/CHATGPT_HANDOFF.md` stays reviewer-owned.
 
-1. authenticated endpoint/source migration if the owned environment can create a genuine endpoint change without production route mutation; otherwise
-2. integrate existing authenticated PLPMTUD state into a live probe/ACK path without trusting unauthenticated ICMP; otherwise
+**Continue immediately to F:** yes.
+
+### F — Next VPS-unlock runtime seam
+
+**Status:** `READY_LOCAL_AFTER_E`; proposal authority applies.
+
+Prefer, in order:
+
+1. authenticated endpoint/source migration if the owned environment can create a genuine endpoint change without production-route mutation;
+2. integrate existing authenticated PLPMTUD state into a live probe/ACK path without trusting unauthenticated ICMP;
 3. another actual `BLOCKED_IMPLEMENTATION` release row with a short path to self-owned VPS evidence.
 
 Do not choose FEC, 0-RTT, striping, heterogeneous aggregation, or exotic carriers merely for queue depth.
 
-**Continue immediately to H:** yes.
+**Continue immediately to G:** yes.
 
-### H — Local proof + one bounded VPS observation for G
+### G — Local proof + one bounded VPS observation for F
 
-**Status:** `PREAUTHORIZED_AFTER_G_GREEN`.
+**Status:** `PREAUTHORIZED_AFTER_F_GREEN`.
 
-Local real-socket proof -> exact-head green -> one minimal materially distinct self-owned VPS observation if truthfully `READY_LIVE`. Preserve negative evidence and cleanup; no unchanged retry.
+Local real-socket proof -> exact-head green -> one minimal materially distinct self-owned VPS observation if truthfully `READY_LIVE`; preserve negative evidence and cleanup; no unchanged retry.
 
-**Continue immediately to I:** yes.
+### H — Repeated warm-failover diagnostic fallback
 
-### I — Repeated warm-failover diagnostic fallback
+**Status:** `READY_LOCAL_FALLBACK`; only if A/F are genuinely blocked or while unrelated exact CI is pending.
 
-**Status:** `READY_LOCAL_FALLBACK`; only if C/G are genuinely blocked or while exact CI is pending and work is independent.
-
-Do not rerun `9fd2411` or `a117086` unchanged. The next useful local change is bounded sanitized inner-collector failure categorization in outer structured evidence, followed by synthetic/dry verification. Only after that changed instrumentation may one materially changed VPS repeated-failover attempt be considered.
-
-This remains behind missing runtime capabilities so harness work does not become the project again.
-
-### J — Independent security/release-debt fallback
-
-**Status:** `READY_LOCAL_FALLBACK`; must never displace READY runtime/VPS work.
-
-While C2 remains unresolved, cover only deterministic debt independent of source retention or one exact-tree release-navigation consolidation after visible runtime progress. Reuse existing tests. Do not reopen pre-auth checker infrastructure.
-
-## Completion gates
-
-The synchronized key-update closure remains complete for its bounded question and is not to be rerun for freshness.
-
-The next visible closure is migration-back. C–F are complete only when:
-
-- the opt-in live runtime has a fresh current-generation UDP recovery proof after TCP becomes active;
-- validation and health evidence remain separate;
-- manager hold/margin gates are actually exercised;
-- single-active ownership is preserved;
-- one final new application record succeeds on UDP only after migration;
-- local real sockets and exact-head CI are green;
-- one bounded VPS observation or exact retained negative is archived when dependency-ready;
-- authoritative status/planning is reconciled without inflating scripted recovery into natural recovery;
-- release/freeze/production flags remain unchanged.
-
-The broader queue remains active through G–J unless a real stop condition occurs.
-
-## Do not expand into
-
-- a new recovery wire message when the existing authenticated control envelope suffices;
-- dynamic rekey-control work merely because fixed-schedule key update succeeded;
-- public or production listener deployment;
-- new source-retention TTL/LRU/history/epoch/eviction policy without reviewed authority;
-- FEC/0-RTT/UDP+TCP striping/heterogeneous aggregation/exotic carriers without an observed-problem gate;
-- unchanged repeats of historical failover/repeated-failover/HY2/key-update evidence;
-- reading, printing, copying, hashing, uploading, or committing protected identity / SSH private-key contents;
-- production route/firewall/DNS/proxy/tunnel/qdisc changes;
-- third-party targets or scanning;
-- release/RC/freeze/production promotion.
-
-## Questions requiring maintainer decision
-
-None for the current migration-back / VPS / next-runtime queue.
-
-C2 terminal-source retention remains a future release/security policy choice. Until approved, bounded cleanup plus explicit literal-D019 non-compliance remains in force and does not block independent runtime/WAN work.
+Do not rerun `9fd2411` or `a117086` unchanged. The next useful local change is bounded sanitized inner-collector failure categorization in outer structured evidence, followed by synthetic/dry verification. Only after changed instrumentation may one materially changed VPS attempt be considered. Keep this behind missing runtime capabilities so harness work does not become the project again.
