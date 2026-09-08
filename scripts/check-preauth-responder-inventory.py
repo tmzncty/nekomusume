@@ -9,8 +9,44 @@ data = json.loads(MANIFEST.read_text(encoding="utf-8"))
 if data.get("schema") != "nekomusume.preauth-responder-inventory.v1":
     raise SystemExit("preauth responder inventory: wrong schema")
 
+
+def bounded_region(text, begin, end, rid, label):
+    start = text.find(begin)
+    if start < 0:
+        raise ValueError(f"{rid}: missing {label} begin anchor {begin!r}")
+    stop = text.find(end, start + len(begin))
+    if stop < 0:
+        raise ValueError(f"{rid}: missing {label} end anchor {end!r}")
+    return text[start:stop]
+
+
+def validate_pending_lifecycle(responder, text):
+    rid = responder["id"]
+    required = (
+        "pending_producer_begin", "pending_producer_end",
+        "pending_consumer_begin", "pending_consumer_end",
+        "pending_expiry_begin", "pending_expiry_end",
+        "pending_reserve_anchor", "pending_store_anchor",
+        "pending_cancel_anchor", "expiry_cleanup_anchor",
+    )
+    if not all(responder.get(key) for key in required):
+        raise ValueError(f"{rid}: pending owner lacks scoped lifecycle anchors")
+    producer = bounded_region(text, responder["pending_producer_begin"], responder["pending_producer_end"], rid, "producer")
+    consumer = bounded_region(text, responder["pending_consumer_begin"], responder["pending_consumer_end"], rid, "consumer")
+    expiry = bounded_region(text, responder["pending_expiry_begin"], responder["pending_expiry_end"], rid, "expiry")
+    reserve = producer.find(responder["pending_reserve_anchor"])
+    store = producer.find(responder["pending_store_anchor"], reserve + len(responder["pending_reserve_anchor"]))
+    if reserve < 0 or store < 0:
+        raise ValueError(f"{rid}: producer does not prove reserve -> persisted store ordering")
+    if responder["pending_cancel_anchor"] not in consumer:
+        raise ValueError(f"{rid}: consumer lacks scoped terminal cancellation")
+    if responder["expiry_cleanup_anchor"] not in expiry:
+        raise ValueError(f"{rid}: expiry region lacks scoped cleanup")
+
+
 seen = set()
-for responder in data.get("responders", []):
+responders = data.get("responders", [])
+for responder in responders:
     rid = responder.get("id")
     if not rid or rid in seen:
         raise SystemExit(f"preauth responder inventory: missing/duplicate id {rid!r}")
@@ -19,13 +55,10 @@ for responder in data.get("responders", []):
     text = path.read_text(encoding="utf-8")
     begin = responder["begin"]
     end = responder["end"]
-    start = text.find(begin)
-    if start < 0:
-        raise SystemExit(f"{rid}: missing begin anchor {begin!r}")
-    stop = text.find(end, start + len(begin))
-    if stop < 0:
-        raise SystemExit(f"{rid}: missing end anchor {end!r}")
-    region = text[start:stop]
+    try:
+        region = bounded_region(text, begin, end, rid, "responder")
+    except ValueError as error:
+        raise SystemExit(error) from error
     cursor = 0
     for anchor in responder["ordered"]:
         position = region.find(anchor, cursor)
@@ -41,20 +74,27 @@ for responder in data.get("responders", []):
         anchor = responder.get(key)
         if anchor and anchor not in text:
             raise SystemExit(f"{rid}: missing {key} {anchor!r}")
-    reserve = responder.get("pending_reserve_anchor")
-    store = responder.get("pending_store_anchor")
-    cancel = responder.get("pending_cancel_anchor")
     if responder.get("pending_owner"):
-        if not all((reserve, store, cancel)):
-            raise SystemExit(f"{rid}: pending owner lacks reserve/store/cancel anchors")
-        reserve_at = text.find(reserve)
-        store_at = text.find(store, reserve_at + len(reserve))
-        if reserve_at < 0 or store_at < 0 or reserve_at > store_at:
-            raise SystemExit(f"{rid}: pending owner does not prove reserve -> persist -> consume ordering")
-        if cancel not in region and cancel not in text:
-            raise SystemExit(f"{rid}: pending owner lacks terminal cancellation anchor {cancel!r}")
-        if not responder.get("expiry_cleanup_anchor"):
-            raise SystemExit(f"{rid}: pending owner lacks expiry cleanup anchor")
+        try:
+            validate_pending_lifecycle(responder, text)
+        except ValueError as error:
+            raise SystemExit(error) from error
+
+# Regression: an identical store anchor outside the scoped producer must not
+# rescue a broken persisted-owner lifecycle.
+pending_fixture = next(r for r in responders if r.get("id") == "failover_udp_pending")
+fixture = "\n".join((
+    pending_fixture["pending_expiry_begin"], pending_fixture["expiry_cleanup_anchor"], pending_fixture["pending_expiry_end"],
+    pending_fixture["pending_consumer_begin"], pending_fixture["pending_cancel_anchor"], pending_fixture["pending_consumer_end"],
+    pending_fixture["pending_producer_begin"], pending_fixture["pending_reserve_anchor"], pending_fixture["pending_producer_end"],
+    pending_fixture["pending_store_anchor"],
+))
+try:
+    validate_pending_lifecycle(pending_fixture, fixture)
+except ValueError:
+    pass
+else:
+    raise SystemExit("failover_udp_pending: unrelated store anchor satisfied scoped producer mutation")
 
 expected = {
     "ordinary_tcp_probe",

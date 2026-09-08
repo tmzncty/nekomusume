@@ -118,7 +118,13 @@
       "expiry_cleanup_anchor": "expired.queue.invalidate_after_process_expiry()",
       "pending_reserve_anchor": "preauth.enqueue(&mut admission)",
       "pending_store_anchor": "pending = Some(PendingUdpNegotiation",
-      "pending_cancel_anchor": "pending.take()"
+      "pending_cancel_anchor": "pending.take()",
+      "pending_producer_begin": "let mut admission = match preauth.admit_carrier(preauth::CarrierKind::Udp, peer)",
+      "pending_producer_end": "} else {\n                        preauth.release(admission);",
+      "pending_consumer_begin": "if let Some(pending_state) = pending.as_mut() {",
+      "pending_consumer_end": "} else {\n                    let mut admission = match preauth.admit_carrier",
+      "pending_expiry_begin": "let expired_states = preauth.expire();",
+      "pending_expiry_end": "if secure.is_none() {"
     },
     {
       "id": "failover_udp_new",
@@ -139,7 +145,13 @@
       "expiry_cleanup_anchor": "expired.queue.invalidate_after_process_expiry()",
       "pending_reserve_anchor": "preauth.enqueue(&mut admission)",
       "pending_store_anchor": "pending = Some(PendingUdpNegotiation",
-      "pending_cancel_anchor": "preauth.release(admission)"
+      "pending_cancel_anchor": "pending.take()",
+      "pending_producer_begin": "let mut admission = match preauth.admit_carrier(preauth::CarrierKind::Udp, peer)",
+      "pending_producer_end": "} else {\n                        preauth.release(admission);",
+      "pending_consumer_begin": "if let Some(pending_state) = pending.as_mut() {",
+      "pending_consumer_end": "} else {\n                    let mut admission = match preauth.admit_carrier",
+      "pending_expiry_begin": "let expired_states = preauth.expire();",
+      "pending_expiry_end": "if secure.is_none() {"
     },
     {
       "id": "failover_tcp",
