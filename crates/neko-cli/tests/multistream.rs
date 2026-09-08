@@ -12,6 +12,23 @@ use std::{
     time::Duration,
 };
 
+fn connect_with_startup_deadline(addr: &str, deadline: Duration) -> TcpStream {
+    let deadline_at = std::time::Instant::now() + deadline;
+    loop {
+        match TcpStream::connect(addr) {
+            Ok(stream) => return stream,
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+                assert!(
+                    std::time::Instant::now() < deadline_at,
+                    "server did not bind before deadline: {error}"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => panic!("unexpected startup connection error: {error}"),
+        }
+    }
+}
+
 fn identity(bin: &str, name: &str) -> (PathBuf, String) {
     let path = std::env::temp_dir().join(format!("neko-multistream-{name}-{}", std::process::id()));
     let out = Command::new(bin)
@@ -367,8 +384,8 @@ fn executable_rejects_unsupported_only_negotiation_before_noise_or_data() {
         .spawn()
         .unwrap();
 
-    thread::sleep(Duration::from_millis(50));
-    let mut socket = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
+    let mut socket =
+        connect_with_startup_deadline(&format!("127.0.0.1:{port}"), Duration::from_secs(2));
     // A syntactically valid N1 hello whose only offer is unsupported by this executable.
     frame_write(&mut socket, &[b'N', b'V', 1, 1, 0, 2]);
     socket
