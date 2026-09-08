@@ -985,9 +985,15 @@ fn failover_server(args: &[String]) {
     let mut buf = [0u8; 65536];
     // Explicitly opt-in, bounded application-level fault seam. Production and
     // ordinary controlled-stop runs never cease replies.
-    let restore_udp_replies_after_tcp = args
-        .iter()
-        .any(|a| a == "--restore-udp-replies-after-tcp" || a == "--migration-back");
+    let migration_back = args.iter().any(|a| a == "--migration-back");
+    let restore_udp_replies_after_tcp = args.iter().any(|a| a == "--restore-udp-replies-after-tcp");
+    let recovery_enabled = migration_back || restore_udp_replies_after_tcp;
+    let tcp_delivery_delay_ms = parse(args, "--test-tcp-delivery-delay-ms", Some("0"))
+        .parse::<u64>()
+        .unwrap_or_else(|_| fail("invalid TCP delivery delay"));
+    if tcp_delivery_delay_ms > 1000 {
+        fail("TCP delivery delay outside 0-1000 ms")
+    }
     let cease_udp_replies_after = args
         .windows(2)
         .find(|w| w[0] == "--cease-udp-replies-after")
@@ -1006,6 +1012,7 @@ fn failover_server(args: &[String]) {
     let mut delayed_noise_duplicate_sent = false;
     let mut guard = None;
     let mut app = Vec::new();
+    let mut migration_back_complete = false;
     let udp_local_port = udp.local_addr().map(|a| a.port()).unwrap_or(up);
     let tcp_local_port = tcp.local_addr().map(|a| a.port()).unwrap_or(tp);
     let mut runtime =
@@ -1428,8 +1435,7 @@ fn failover_server(args: &[String]) {
                 println!(
                     "carrier_event name=tcp_resource_admitted session=7001 target_path=2 generation=1 delivery_epoch=1 final_challenge=3 source=runtime_limits"
                 );
-                let tcp_records =
-                    count.saturating_sub(if restore_udp_replies_after_tcp { 2 } else { 1 });
+                let tcp_records = count.saturating_sub(if recovery_enabled { 2 } else { 1 });
                 for _ in 0..tcp_records {
                     bound_stream_to_deadline(&stream, experiment_deadline, None)
                         .unwrap_or_else(|_| fail("TCP data deadline elapsed"));
@@ -1456,6 +1462,9 @@ fn failover_server(args: &[String]) {
                                 )
                                 .is_ok()
                         {
+                            if tcp_delivery_delay_ms > 0 {
+                                std::thread::sleep(Duration::from_millis(tcp_delivery_delay_ms));
+                            }
                             let logical = ProcessMessage::DeliveryAck {
                                 session,
                                 stream: stream_id,
@@ -1480,7 +1489,7 @@ fn failover_server(args: &[String]) {
                     }
                 }
                 println!("carrier_event name=tcp_resumed session=7001 generation=1");
-                if restore_udp_replies_after_tcp {
+                if recovery_enabled {
                     println!(
                         "carrier_event name=udp_recovery_owner_started session=7001 generation=1"
                     );
@@ -1588,11 +1597,22 @@ fn failover_server(args: &[String]) {
                                 if let Some(delivered) = runtime.pop_receive(5).unwrap() {
                                     app.extend_from_slice(&delivered.data);
                                 }
+                                migration_back_complete = true;
                                 break;
                             }
                             break;
                         }
                     }
+                }
+                if migration_back && !migration_back_complete {
+                    emit_diagnostic(
+                        args,
+                        "server",
+                        "udp_recovery_failed",
+                        count,
+                        ",\"active\":\"tcp\",\"reason\":\"terminal_milestone_missing\"",
+                    );
+                    fail("migration-back terminal milestone missing")
                 }
                 let mode = if cease_udp_replies_after.is_some() {
                     "automatic_health_failure"
@@ -1654,9 +1674,12 @@ fn failover_client(args: &[String]) {
         fail("ports outside 40080-40100")
     }
     let automatic_health_failover = args.iter().any(|a| a == "--automatic-health-failover");
-    let restore_udp_replies_after_tcp = args
-        .iter()
-        .any(|a| a == "--restore-udp-replies-after-tcp" || a == "--migration-back");
+    let migration_back = args.iter().any(|a| a == "--migration-back");
+    let restore_udp_replies_after_tcp = args.iter().any(|a| a == "--restore-udp-replies-after-tcp");
+    let recovery_enabled = migration_back || restore_udp_replies_after_tcp;
+    if migration_back && (!automatic_health_failover || count < 3) {
+        fail("--migration-back requires --automatic-health-failover and count >= 3")
+    }
     let cold_health_failover = args.iter().any(|a| a == "--cold-health-failover");
     if cold_health_failover && !automatic_health_failover {
         fail("--cold-health-failover requires --automatic-health-failover")
@@ -1855,7 +1878,7 @@ fn failover_client(args: &[String]) {
     // Leave the assigned logical range uncertain at the carrier boundary.
     // In migration-back mode the final record is deliberately unassigned until
     // the manager authorizes the return to UDP.
-    let uncertain_end = if restore_udp_replies_after_tcp {
+    let uncertain_end = if recovery_enabled {
         records.len().saturating_sub(1)
     } else {
         records.len()
@@ -2295,21 +2318,6 @@ fn failover_client(args: &[String]) {
         )
     };
     println!("carrier_event name=tcp_resume_guard session=7001 generation=1");
-    if automatic_health_failover {
-        manager
-            .observe(
-                PathId(2),
-                HealthSample {
-                    rtt_us: tcp_authenticated
-                        .duration_since(tcp_connect_started)
-                        .as_micros()
-                        .min(u64::MAX as u128) as u64,
-                    loss_per_mille: 0,
-                    pto: 1,
-                },
-            )
-            .unwrap();
-    }
     let new_active_at = if automatic_health_failover {
         let decision = if warm_recovery {
             manager
@@ -2336,12 +2344,13 @@ fn failover_client(args: &[String]) {
     let mut first_resumed_data_at = None;
     let mut first_resumed_ack_at = None;
     let mut replayed_records = 0usize;
-    let uncertain_records = if restore_udp_replies_after_tcp {
+    let mut tcp_active_sample = None;
+    let uncertain_records = if recovery_enabled {
         records.len().saturating_sub(2)
     } else {
         records.len().saturating_sub(1)
     };
-    let post_return_record = if restore_udp_replies_after_tcp {
+    let post_return_record = if recovery_enabled {
         records.last().cloned()
     } else {
         None
@@ -2354,7 +2363,8 @@ fn failover_client(args: &[String]) {
         .encode()
         .unwrap();
         let encrypted = ts.seal(&logical).unwrap();
-        first_resumed_data_at.get_or_insert_with(Instant::now);
+        let resumed_sent = Instant::now();
+        first_resumed_data_at.get_or_insert(resumed_sent);
         write_frame(&mut tcp, &encrypted).unwrap();
         let ack = read_frame(&mut tcp, PROCESS_FRAME_MAX)
             .unwrap_or_else(|_| fail("TCP delivery acknowledgement timeout"));
@@ -2364,7 +2374,16 @@ fn failover_client(args: &[String]) {
         if !delivery_ack_matches(&plain, &record) {
             fail("invalid TCP delivery acknowledgement")
         }
-        first_resumed_ack_at.get_or_insert_with(Instant::now);
+        let resumed_ack = Instant::now();
+        first_resumed_ack_at.get_or_insert(resumed_ack);
+        tcp_active_sample.get_or_insert(HealthSample {
+            rtt_us: resumed_ack
+                .duration_since(resumed_sent)
+                .as_micros()
+                .min(u64::MAX as u128) as u64,
+            loss_per_mille: 0,
+            pto: 0,
+        });
         replayed_records = replayed_records.saturating_add(1);
         delivery
             .delivery_ack(
@@ -2434,7 +2453,7 @@ fn failover_client(args: &[String]) {
             ),
         );
     }
-    if automatic_health_failover && restore_udp_replies_after_tcp {
+    if automatic_health_failover && recovery_enabled {
         let request = ProcessMessage::ReadinessRequest {
             session: SessionId(7001),
             target_path: 1,
@@ -2457,16 +2476,29 @@ fn failover_client(args: &[String]) {
             1,
             ",\"path\":1,\"generation\":1",
         );
+        let tcp_active_sample = tcp_active_sample
+            .unwrap_or_else(|| fail("missing authenticated TCP application RTT sample"));
+        manager.observe(PathId(2), tcp_active_sample).unwrap();
+        emit_diagnostic(
+            args,
+            "client",
+            "tcp_active_health_observed",
+            1,
+            &format!(
+                ",\"path\":2,\"generation\":1,\"rtt_us\":{},\"loss_per_mille\":0,\"pto\":0",
+                tcp_active_sample.rtt_us
+            ),
+        );
         let mut recovery_buf = [0u8; READINESS_FRAME_MAX];
-        let deadline = Instant::now() + Duration::from_secs(secs.min(3));
-        let mut recovered = false;
-        while Instant::now() < deadline {
-            u.send_to(&ciphertext, target).unwrap();
-            u.set_read_timeout(Some(Duration::from_millis(200)))
-                .unwrap();
-            if let Ok(n) = u.recv(&mut recovery_buf)
-                && let Ok(plain) = us.open_unreliable(&recovery_buf[..n])
-                && matches!(
+        u.send_to(&ciphertext, target).unwrap();
+        u.set_read_timeout(Some(Duration::from_secs(secs.min(3))))
+            .unwrap();
+        let udp_recovery_sample = match u.recv_from(&mut recovery_buf) {
+            Ok((n, source)) if source == target => {
+                let plain = us
+                    .open_unreliable(&recovery_buf[..n])
+                    .unwrap_or_else(|_| fail("UDP recovery response authentication failed"));
+                if !matches!(
                     ProcessMessage::decode(&plain),
                     Ok(ProcessMessage::ReadinessResponse {
                         session: SessionId(7001),
@@ -2476,41 +2508,63 @@ fn failover_client(args: &[String]) {
                         challenge_id: 1,
                         admitted: true
                     })
-                )
-            {
-                recovered = true;
-                let recovery_rtt_us =
-                    challenge_sent.elapsed().as_micros().min(u64::MAX as u128) as u64;
-                manager
-                    .observe(
-                        PathId(1),
-                        HealthSample {
-                            rtt_us: recovery_rtt_us,
-                            loss_per_mille: 0,
-                            pto: 0,
-                        },
-                    )
-                    .unwrap();
-                break;
+                ) {
+                    fail("UDP recovery response tuple mismatch")
+                }
+                HealthSample {
+                    rtt_us: challenge_sent.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                    loss_per_mille: 0,
+                    pto: 0,
+                }
             }
-        }
-        if !recovered {
-            fail("UDP recovery validation timeout")
-        }
-        let recovery_rtt_us = challenge_sent.elapsed().as_micros().min(u64::MAX as u128) as u64;
+            Ok(_) => {
+                emit_diagnostic(
+                    args,
+                    "client",
+                    "udp_recovery_failed",
+                    1,
+                    ",\"active\":\"tcp\",\"reason\":\"wrong_peer\"",
+                );
+                fail("UDP recovery response from wrong peer")
+            }
+            Err(_) => {
+                emit_diagnostic(
+                    args,
+                    "client",
+                    "udp_recovery_failed",
+                    1,
+                    ",\"active\":\"tcp\",\"reason\":\"timeout\"",
+                );
+                fail("UDP recovery validation timeout")
+            }
+        };
+        manager.observe(PathId(1), udp_recovery_sample).unwrap();
+        emit_diagnostic(
+            args,
+            "client",
+            "udp_recovery_validated",
+            1,
+            &format!(
+                ",\"path\":1,\"generation\":1,\"challenge_id\":1,\"rtt_us\":{},\"loss_per_mille\":0,\"pto\":0",
+                udp_recovery_sample.rtt_us
+            ),
+        );
         let candidate = MigrationCandidate {
             path: PathId(1),
             generation: PathGeneration(1),
             validated: true,
-            health: HealthSample {
-                rtt_us: recovery_rtt_us,
-                loss_per_mille: 0,
-                pto: 0,
-            },
+            health: udp_recovery_sample,
         };
         if manager.migrate_back_to_udp(candidate).is_ok() {
             fail("migration-back bypassed hold gate")
         }
+        emit_diagnostic(
+            args,
+            "client",
+            "udp_migration_hold",
+            1,
+            ",\"active\":\"tcp\",\"path\":2,\"generation\":1",
+        );
         manager
             .migrate_back_to_udp(candidate)
             .unwrap_or_else(|_| fail("migration-back gate rejected"));
@@ -2519,6 +2573,13 @@ fn failover_client(args: &[String]) {
         }
         println!("carrier_event name=udp_recovered session=7001 generation=1 validated=true");
         println!("carrier_event name=migrated_back_to_udp session=7001 generation=1");
+        emit_diagnostic(
+            args,
+            "client",
+            "udp_migrated_back",
+            1,
+            ",\"from\":\"tcp\",\"from_path\":2,\"to\":\"udp\",\"to_path\":1,\"generation\":1",
+        );
         let post_record =
             post_return_record.unwrap_or_else(|| fail("missing post-return UDP record"));
         let post = ProcessMessage::Data {
@@ -2564,14 +2625,14 @@ fn failover_client(args: &[String]) {
         count,
         &format!(
             ",\"udp_confirmed_records\":{},\"udp_confirmed_bytes\":{},\"uncertain_records\":{},\"uncertain_bytes\":{},\"replayed_records\":{},\"replayed_bytes\":{},\"confirmed_records\":{},\"confirmed_bytes\":{},\"duplicate_records\":0,\"duplicate_bytes\":0,\"lost_records\":0,\"lost_bytes\":0,\"conflicting_records\":0,\"conflicting_bytes\":0",
-            usize::from(restore_udp_replies_after_tcp) + 1,
-            (usize::from(restore_udp_replies_after_tcp) + 1) * bytes,
+            usize::from(recovery_enabled) + 1,
+            (usize::from(recovery_enabled) + 1) * bytes,
             uncertain_records,
             uncertain_records * bytes,
             replayed_records,
             replayed_records * bytes,
-            usize::from(restore_udp_replies_after_tcp) + 1 + replayed_records,
-            (usize::from(restore_udp_replies_after_tcp) + 1 + replayed_records) * bytes
+            usize::from(recovery_enabled) + 1 + replayed_records,
+            (usize::from(recovery_enabled) + 1 + replayed_records) * bytes
         ),
     );
     println!(

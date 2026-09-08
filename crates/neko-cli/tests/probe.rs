@@ -685,9 +685,11 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
             "--cease-udp-replies-after",
             "1",
             "--send-malformed-after-cessation",
-            "--restore-udp-replies-after-tcp",
+            "--migration-back",
             "--test-readiness-delay-ms",
             "400",
+            "--test-tcp-delivery-delay-ms",
+            "10",
             "--diagnostic",
             "--experiment-id",
             "warm-failover-server",
@@ -717,7 +719,7 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
             "--duration",
             "10",
             "--automatic-health-failover",
-            "--restore-udp-replies-after-tcp",
+            "--migration-back",
             "--diagnostic",
             "--experiment-id",
             "warm-failover-client",
@@ -756,8 +758,15 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
         "{client_log}"
     );
     assert!(client_log.contains("\"state\":\"failed\""), "{client_log}");
-    assert!(!client_log.contains("\"rtt_us\""), "{client_log}");
-    assert!(!client_log.contains("\"loss_per_mille\""), "{client_log}");
+    assert!(
+        client_log.contains("\"event\":\"tcp_active_health_observed\""),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains("\"event\":\"udp_recovery_validated\""),
+        "{client_log}"
+    );
+    assert!(client_log.contains("\"rtt_us\":"), "{client_log}");
     assert!(
         client_log.contains("\"fallback_class\":\"warm\""),
         "{client_log}"
@@ -854,10 +863,65 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
 
 #[test]
 fn migration_back_tamper_fails_closed_before_return() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("migration-tamper-server");
+    let cp = tmp("migration-tamper-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let udp = 40086u16;
+    let tcp = 40087u16;
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--cease-udp-replies-after",
+            "1",
+            "--send-malformed-after-cessation",
+            "--migration-back",
+            "--test-readiness-delay-ms",
+            "400",
+            "--test-tcp-delivery-delay-ms",
+            "10",
+            "--diagnostic",
+            "--experiment-id",
+            "migration-tamper-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
     let output = Command::new(bin)
         .args([
             "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
             "--automatic-health-failover",
             "--migration-back",
             "--test-migration-back-tamper",
@@ -865,13 +929,31 @@ fn migration_back_tamper_fails_closed_before_return() {
             "3",
             "--bytes",
             "16",
+            "--duration",
+            "10",
+            "--diagnostic",
+            "--experiment-id",
+            "migration-tamper-client",
         ])
         .output()
         .unwrap();
+    let (server_status, server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
     assert!(!output.status.success());
+    assert!(!server_status.success(), "{server_log}");
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("tcp_delivery_ack_validated"), "{stdout}");
+    assert!(stdout.contains("udp_recovery_challenge_sent"), "{stdout}");
+    assert!(stdout.contains("udp_recovery_failed"), "{stdout}");
+    assert!(stdout.contains("\"active\":\"tcp\""), "{stdout}");
     assert!(!stdout.contains("migrated_back_to_udp"));
     assert!(!stdout.contains("udp_return_delivery_ack_validated"));
+    assert!(!server_log.contains("failover_server_ok"), "{server_log}");
+    assert!(
+        !server_log.contains("\"event\":\"summary\""),
+        "{server_log}"
+    );
 }
 
 #[test]
