@@ -1,8 +1,8 @@
-# Release item-4 subgate factual review — exact `bb008d0`
+# Release item-4 subgate factual review — exact `e743c64`
 
 ## Scope
 
-Developer-prepared factual review support for exact commit `bb008d0302c17dcf34dac7c5b18259fd34ec495f`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support for reachable exact commit `e743c64a4f62498dd98f03d64797acb44cb18fdc`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
@@ -35,7 +35,7 @@ Developer-prepared factual review support for exact commit `bb008d0302c17dcf34da
 
 ## Exact-tree gates
 
-On exact `bb008d0`, `scripts/check.sh` and `git diff --check` passed. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
+On reachable exact `e743c64`, `scripts/check.sh` and `git diff --check` passed before this review-text correction was committed. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
 
 ## Remaining release boundaries
 
