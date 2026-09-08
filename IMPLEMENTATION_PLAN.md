@@ -114,15 +114,12 @@ cleanup comes from separate direct post-exit observations.
 - `BLOCKED_IMPLEMENTATION`: live PMTUD (state model not integrated into a live probe/ACK path).
 - `BLOCKED_ENVIRONMENT`: IPv6 (no real owned IPv6 endpoint/path available).
 - `BLOCKED_ORCHESTRATION_CURRENT_LINE_HY2`: exact `61a6490` C follow-up consumed one new outer wrapper invocation but stopped at local port-range preflight (exit 2), with zero VPS deployments/samples/result/comparative statistics/runtime evidence; historical bed2940 outer=1 `NEKO_BIN` preflight is separate. Both lines verified zero cleanup and did not touch the existing Hysteria service.
-- `BLOCKED_DIAGNOSTICS`: HY2 (latest `hy2-1` client exit lacks discriminating
-  diagnostics); repeated warm failover (later exact `9fd2411` / `a117086` entered
-  the structured outer runner, but bounded sanitized inner-collector failure
-  categorization is still missing).
+- `BLOCKED_DIAGNOSTICS`: HY2 (latest `hy2-1` client exit lacks discriminating diagnostics).
+- `BLOCKED_ORCHESTRATION_CURRENT_LINE`: repeated warm failover exact `9a94922` ended before cycle 1 with an explicit primary `startup_setup` evidence boundary after the diagnostic-correctness repair; zero listener/process residue was observed. This is not a root cause or runtime result, and the same class must not be retried without a new setup hypothesis and material change.
 - `READY_LIVE`: none for remaining unimplemented capabilities; the live key-update row is already answered by one bounded self-owned observation at exact `2f4f59a`/`69d0ed9`.
 
 Migration-back now has one bounded scripted local/VPS answer at exact `5d6582c`;
-the next repeated-failover seam, if selected, is sanitized inner-collector failure
-categorization rather than another runner-entry retry. Item 3 remains unchecked.
+repeated failover now has one corrected exact-`9a94922` fresh attempt ending at the explicit primary `startup_setup` evidence boundary with no valid cycle prefix and zero observed listener/process residue. Exact `2b784a3`/`3aa4828` remains unchanged historical evidence. Item 3 remains unchecked.
 
 ### Exact `a117086` corrected structured batch checkpoint (2026-09-04)
 
