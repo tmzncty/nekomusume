@@ -2234,6 +2234,7 @@ pub struct EndpointRebindState {
     active_path: PathId,
     active_generation: PathGeneration,
     candidate: Option<EndpointRebindCandidate>,
+    retired_source_tag: Option<u64>,
 }
 
 impl EndpointRebindState {
@@ -2243,6 +2244,7 @@ impl EndpointRebindState {
             active_path: path,
             active_generation: generation,
             candidate: None,
+            retired_source_tag: None,
         }
     }
 
@@ -2257,6 +2259,9 @@ impl EndpointRebindState {
     }
     pub const fn candidate(&self) -> Option<EndpointRebindCandidate> {
         self.candidate
+    }
+    pub const fn retired_source_tag(&self) -> Option<u64> {
+        self.retired_source_tag
     }
 
     /// Authenticated input from a new source is candidate-only. It cannot
@@ -2292,6 +2297,7 @@ impl EndpointRebindState {
         if response != candidate {
             return Err(EndpointRebindError::ChallengeMismatch);
         }
+        self.retired_source_tag = Some(self.active_source_tag);
         self.active_source_tag = candidate.source_tag;
         self.active_path = candidate.path;
         self.active_generation = candidate.generation;
@@ -4104,6 +4110,7 @@ mod concurrent_manager_tests {
         assert!(state.candidate().is_some());
         assert_eq!(state.validate_and_promote(candidate), Ok(()));
         assert_eq!(state.active_source_tag(), 22);
+        assert_eq!(state.retired_source_tag(), Some(11));
         assert_eq!(state.active_generation(), PathGeneration(4));
         assert!(state.candidate().is_none());
     }
