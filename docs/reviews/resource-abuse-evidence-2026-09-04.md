@@ -1,5 +1,13 @@
 # Resource and abuse-limit evidence review — 2026-09-04
 
+## Current exact-tree reconciliation — `2566666` / `8a67be3` lineage
+
+**Engineering evidence state:** `ENGINEERING_EVIDENCE_CLOSED` for the non-policy pre-auth controls proven by the integrated tree: source tuple projection, charge-before-parse and exact response charging, all seven inventoried responder surfaces/six admission sites, atomic rollback and terminalization, source/global concurrency ceilings, expiry/release/error cleanup, bounded response deadlines, and aggregate-only secret-safe diagnostics.
+
+**Policy state:** `SOURCE_RETENTION_POLICY_BLOCKED`. D019 terminal source-accounting retention after the last live state disappears remains unresolved; the current release/reopen behavior is retained as evidence of that conflict, not compliance. No TTL/LRU/history bound, external authority, or D019 weakening is selected here.
+
+**Claim boundary:** RSEC-001 is not fully closed. This reconciliation is deterministic/process evidence only, not an independent security audit, public-listener approval, production-capacity result, RC decision, or release authorization. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain required.
+
 **Reviewed tree:** `bb9e26814365e82465a6636ac7d7f74107b4b53f`
 
 **Scope:** reviewer-facing mapping of repository evidence to `SECURITY.md`. This is not an external audit, security approval, production-capacity claim, RC decision, or protocol freeze.
