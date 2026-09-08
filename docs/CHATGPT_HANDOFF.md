@@ -1,198 +1,177 @@
-# ChatGPT reviewer handoff — HY2 truth reconciled; pending-owner proof partially accepted; stabilize exact-tree gate and continue closure
+# ChatGPT reviewer handoff — local closure accepted; stop growing audit scaffolding and advance exact-tree package/VPS operator evidence
 
 ## Reviewed state
 
-- Previous reviewer baseline: exact `9d6ee5b79e5da73622a5ccc02fe60a5ba9d2468c` (`docs(handoff): accept HY2 negative and reconcile current truth`).
-- Default `main` at this review: exact `c1524cf6258ea1bf6c2528105a63bf42633ff14c` (`docs: reconcile HY2 current-line truth`).
-- New commits since the previous reviewer baseline:
-  - exact `53fb7b59cd223ad3746e3385d2faa4d71607d085` — `test: scope pending preauth lifecycle proof`;
-  - exact `4ab020df33df092a04001a6d0d157cb97e87fc6a` — merge preserving reviewer handoff while integrating `53fb7b5`;
-  - exact `c1524cf6258ea1bf6c2528105a63bf42633ff14c` — `docs: reconcile HY2 current-line truth`.
-- No active work branch is ahead of main. `work/e1a-staged-accounting-20260907` remains stale at exact `f4404257520e9a014ac4e785b0ab9a97f8aaf794`; `work/continue-20260904` is older still. Do not coordination-merge either branch. Fetch current main and continue from current truth.
-- Exact-main Rust CI run `34256096848` had an initial `stable checks` failure in the pre-existing multistream unsupported-negotiation process test, then passed after one reviewer-triggered rerun of only that failed job. The nightly decode fuzz smoke was green. The initial failure was `TcpStream::connect(...).unwrap()` receiving `ConnectionRefused` after the test's fixed 50 ms child-start sleep; the second attempt completed successfully.
+- Previous reviewer handoff: exact `8bf5a5c66cbb0d01ed01c64091cc18d2cb3cb127` (`docs(handoff): accept HY2 truth and refine closure queue`).
+- Current default `main` observed during this review: exact `eecd06863f36488c471a4e0500e0692687789d9c` (`docs: record current package operator closure`), parent `f19ad280b7363b6f4a86c7c34dc50e2b12b92ea3`.
+- New developer-owned work reviewed since the prior handoff:
+  - `b36d153c9e297fbe0ed9922b83508e9ca3316609` — `test: lock legacy failover digest exception`;
+  - `eec023cb4b2f0ac59dde0b289a59a45c92fb8c76` — `test: bound multistream server startup`;
+  - `6952fa9928d895fcd3f9e51bfeebbe3719660488` — `test: isolate sibling pending owner proofs`;
+  - `f19ad280b7363b6f4a86c7c34dc50e2b12b92ea3` — `docs: record bounded preauth engineering review`;
+  - `eecd06863f36488c471a4e0500e0692687789d9c` — `docs: record current package operator closure`.
+- Exact-head Rust CI is green for `b36d153` (`34262392377`), `eec023c` (`34263155476`), `6952fa9` (`34264256803`), and `f19ad28` (`34265058562`). The exact-`eecd068` run `34266873823` was still in progress when this handoff was written; it is a documentation-only child of already-green `f19ad28`, so it does not block the agent from preparing the next slice, but do not call exact `eecd068` CI green until GitHub actually says so.
+- No work branch is ahead of `main`. `work/e1a-staged-accounting-20260907` remains stale at `f4404257520e9a014ac4e785b0ab9a97f8aaf794`; do not coordination-merge it.
 
 ## Review verdict
 
-### ACCEPT — HY2 current-line truth reconciliation is complete
+### ACCEPT — multistream startup race is closed narrowly and correctly
 
-`c1524cf` closes the previous documentation/evidence HIGH. Authoritative planning text now distinguishes:
+`eec023c` replaces the fixed 50 ms child-start sleep with a bounded connect-with-deadline loop that retries only listener-start `ConnectionRefused` and returns the first successful connection as the actual negotiation test connection. There is no sacrificial readiness connection for the one-shot server, and no production negotiation/Noise/Session/Carrier behavior changed. Keep this shape; no further generic process-readiness framework is requested.
 
-- historical exact `61a6490`: local preflight/orchestration negative, no VPS runtime evidence;
-- current exact `13da094`: `BLOCKED_HARNESS_CURRENT_LINE_HY2`, one materially changed self-owned attempt with valid `nekomusume-1` success followed by `hy2-1` exit, typed `unknown` / `client_started`, no complete pair and no performance comparison.
+### ACCEPT — repeated-failover legacy digest exception is locked to the one frozen historical value
 
-The same-class HY2 fair-pair retry remains `FROZEN_NO_RETRY` without a concrete new hypothesis plus material code/config/instrumentation/path change. Do not add generic HY2 diagnostics merely because the current category is `unknown`.
+`b36d153` keeps Draft 2020-12 validation over the retained corpus, accepts canonical 64-hex SHA-256 values, accepts only the exact frozen legacy malformed digest, and rejects sibling malformed/non-64-hex examples. This is the correct compatibility boundary. Do not rewrite the historical artifact and do not reopen repeated-warm-failover WAN because of schema work.
 
-### PARTIAL ACCEPT — `53fb7b5` materially improves pending-owner static proof, but does not yet meet the full locality contract
+### ACCEPT — pending UDP ownership is now explicitly modeled as a shared lifecycle
 
-The new checker is useful and should be kept:
+`6952fa9` makes the two pending UDP inventory entries explicitly share one bounded producer/consumer/expiry lifecycle and adds mutation negatives so sibling producer/store, consumer cancellation, or expiry cleanup text cannot rescue a broken intended region. Manual exact-tree review of the current failover-UDP paths also finds the authenticated dequeue/release path and the new-admission rejection/enqueue-failure/non-hello releases present.
 
-- `failover_udp_pending` and `failover_udp_new` are explicitly marked persisted pending owners;
-- reserve -> persisted-store ordering is checked inside a bounded producer region;
-- pending cancellation is checked inside a bounded consumer region;
-- expiry queue invalidation is checked inside a bounded expiry region;
-- a negative fixture proves that an identical `pending = Some(PendingUdpNegotiation...)` string outside the producer region cannot rescue a missing producer store.
+A residual review-precision limitation remains: some non-pending generic inventory anchors are still whole-file membership checks. That is **not current evidence of a runtime leak** and is no longer a reason to keep extending the checker. Reopen checker precision only if a concrete exact-tree review defect or false pass is demonstrated. The anti-audit-infrastructure rule applies now.
 
-This closes the previous whole-file `reserve/store` false-pass shape.
+### ACCEPT WITH STRICT BOUNDARY — pre-auth engineering controls have a bounded exact-tree reviewer pass; D019 is still not closed
 
-Residual MEDIUM review-precision gap: `validate_pending_lifecycle(responder, text)` still searches from the beginning of the whole file for each producer/consumer/expiry begin/end anchor, and both UDP inventory entries currently use the same lifecycle region anchors. Therefore the two entries can prove the same first matching shared lifecycle rather than independently proving that each inventory surface is bound to the intended ownership region. In addition, the generic `admission_owner_anchor`, `success_cleanup_anchor`, `expiry_cleanup_anchor`, and `rejection_cleanup_anchor` membership check remains whole-file before pending-specific validation.
+`f19ad28` records `ENGINEERING_CONTROLS_REVIEWED` for exact `6952fa9`. The reviewed implementation has the expected non-policy engineering shape: opaque TCP/UDP source-domain keys, aggregate-only `Debug`, validated process limits, per-source/global pre-admission count/memory checks, charge-before-parse input accounting, charge-before-send response accounting, bounded response permits/deadlines, source/global queue bounds, rollback/terminalization on accounting errors, and release/expiry cleanup.
 
-This is **not evidence of a runtime pre-auth leak**. It is a static-review precision defect: the checker claim is stronger than what it presently proves.
+The important contradiction remains visible in code: `ProcessPreauthAdmission::release()` removes the source entry when its final live state disappears, so the same source can later obtain fresh source-lifetime accounting. D019 says retry/reconnect/carrier/error cleanup must not reset the source/lifetime ceiling or reopen admission after it is reached. Therefore:
 
-The coding agent should use the proposal protocol rather than wait for a reviewer-designed API. Reasonable minimal shapes include:
+- `ENGINEERING_CONTROLS_REVIEWED` is a bounded engineering/reviewer result only;
+- full RSEC/D019 remains `SOURCE_RETENTION_POLICY_BLOCKED`;
+- do not invent retention TTL, LRU/history capacity, or silently weaken the no-reset wording;
+- adversarial-load/capacity suitability and formal security/release approval are not implied by the deterministic engineering tests;
+- this policy blocker must not stall package/operator/runtime work that is independent of source-retention semantics.
 
-1. represent the shared UDP pending lifecycle once, with explicit parent/producer/consumer/expiry ownership regions and have the two responder entries reference that shared lifecycle; or
-2. keep per-responder declarations but add a parent/controller boundary or occurrence-scoped region so identical sibling anchors cannot satisfy the wrong responder.
+### ACCEPT AS LOCAL OBSERVATION, NOT AUTHORITATIVE VPS EVIDENCE — current-tree package rehearsal
 
-Choose the shape with the least duplicated state and easiest fail-closed negative tests. Do not create a generic static-analysis framework.
+`eecd068` documents a local exact-`f19ad28` package rehearsal: two package builds with identical archive hash, package smoke, authenticated loopback TCP and UDP exchanges, same-tree immutable-directory symlink switch/rollback, external-state marker retention, and cleanup. The document is appropriately explicit that this is local-only, not a distinct-version upgrade result, not WAN evidence, not RC, and not production readiness.
 
-### CI-FLAKE-001 — MEDIUM exact-tree gate reliability defect
+Do not inflate this prose record into the old N5-style authoritative VPS artifact set: the new commit contains the bounded narrative and hashes but not an equivalent committed raw-log/manifest directory. That is acceptable as a local observation because the next priority is a real operator/VPS result, not backfilling another local evidence framework.
 
-The exact current tree is green after the failed-job rerun, so there is no basis to call the product/runtime broken. However the initial failure is reproducible as a code-level race shape: `executable_rejects_unsupported_only_negotiation_before_noise_or_data` spawns the server, sleeps a fixed 50 ms, then unwraps one `TcpStream::connect` attempt. A temporarily slower CI runner can therefore fail before exercising the negotiation invariant.
-
-Fix this narrowly. Preferred minimal shape is a bounded loopback connect-with-deadline helper that retries only pre-accept `ConnectionRefused`/equivalent startup errors and returns the first successful TCP stream as the **actual test connection**. Do not make a separate readiness connection that the one-shot server could accidentally accept. The test must still fail if the server never binds within the bounded deadline, and must still prove unsupported-only negotiation is rejected before Noise/session data.
-
-Do not treat a green rerun as a reason to leave an obvious fixed-sleep process-start race indefinitely in a release/security gate.
-
-### RSEC / D019 boundary remains unchanged
-
-Current honest RSEC state remains:
-
-- `ENGINEERING_CONTROLS_PRESENT`;
-- `INDEPENDENT_REVIEW_OPEN`;
-- `SOURCE_RETENTION_POLICY_BLOCKED`.
-
-The D019 source-lifetime conflict remains a maintainer/security-policy checkpoint: current cleanup can remove the final source entry and later admit the same source with fresh source-lifetime accounting, while D019's no-reset wording requires a stronger lifetime notion. Agent/reviewer must not invent TTL/LRU/history size/capacity, silently weaken D019, or claim terminal source-retention compliance.
-
-That policy checkpoint blocks full RSEC/D019 closure only. It does not block the local engineering review, package/operator evidence, or other independent output lanes below.
+The historical N5 package lifecycle remains authoritative for exact old trees only. Its parent `91a735c...` is now 300 commits behind exact `f19ad28`; since then the runtime changed materially (large changes in carrier, CLI, crypto, wire/session and responder behavior). Therefore the old N5 A→B→A result cannot by itself establish current-binary package/operator behavior. This is enough reason to spend the next VPS opportunity on the current exact package.
 
 ## Design / proposal protocol
 
-The external coding agent remains an active designer. For architecture-internal local implementation/test shapes, it should compare 1–3 minimal designs where useful, state the invariant/risk/minimal negatives, choose the least-state/least-API/least-policy shape, implement, test, commit, push, and continue without waiting for reviewer preapproval.
+The external coding agent remains an active designer. For architecture-internal implementation/test/harness details, compare 1–3 minimal shapes when there is a genuine choice, state invariant/risk/minimal tests, choose the least-state/least-API/least-policy solution, implement, test, commit, push, and continue without waiting for reviewer preapproval.
 
-Stop only for actual architecture/security-policy/authorization boundaries: Session/Carrier/ACK/crypto/wire semantic changes, new numeric security policy, destructive migration, production or third-party action, new credentials/permissions, or a genuine maintainer value judgment.
+Do not stop on an ordinary API-granularity problem. Stop/escalate only for the real boundaries: Session/Carrier/ACK/crypto/wire semantic change, new numeric security policy, destructive migration, production/third-party mutation, new credentials/server/permissions, or a maintainer value judgment.
 
 ## Rolling queue
 
-Treat A–C as one compact **local gate closure package** rather than three disconnected audit mini-projects. If the agent completes one in 10–30 minutes with good tests, continue immediately through the package and then D/E.
+The prior local A–D closure package is complete enough. **Do not spend another cycle polishing checker/docs before outward work.** The next several slices should form one package/operator evidence closure, then reconcile release truth and only then select another genuinely ready question.
 
-### A. MEDIUM / READY_LOCAL — determinize the multistream child-start gate
+### A. HIGH OUTPUT PRIORITY / READY_VPS — exact-current-tree package install + authenticated WAN operator smoke
 
-**Goal:** remove the fixed-50-ms process-start race exposed by exact-main CI attempt 1.
+**Goal:** turn the current local package observation into one new self-owned VPS operator result for the exact current tree fetched after this handoff.
 
-**Why now:** exact-head eventually passed, but the release/security gate should not depend on scheduler luck.
+**Why now:** the VPS rental is time-limited; old N5 evidence predates roughly 300 commits and does not cover the materially changed current binary; standing authorization explicitly permits dedicated experimental install/upgrade/rollback rehearsal plus bounded self-owned TCP/UDP Session traffic.
 
-**Files:** `crates/neko-cli/tests/multistream.rs`; a tiny test-only helper in the same test module is preferred unless an existing helper already fits.
+**Files/evidence:** reuse `scripts/release/build-package.sh`, `scripts/release/smoke-package.sh`, existing probe CLI and existing remote-control/resource/cleanup helpers. Add only a compact evidence directory + summary needed to make the run inspectable. Do not create a new package framework.
 
-**Protected invariant:** no production runtime, negotiation, Noise, wire, Session, Carrier, or security-policy semantics change.
+**Protected invariants / authorization:**
 
-**Behavior:** bounded retry of the actual test connection until server bind/readiness or deadline; no sacrificial readiness connection; unsupported-only negotiation still must fail before Noise/data.
+- self-owned client ↔ self-owned VPS only;
+- dedicated experimental install/state/identity paths; fresh test identity/state, never repository or production identity material;
+- temporary high ports inside standing bounds; no production Hysteria/proxy/listener replacement;
+- no production route/firewall/DNS/proxy/tunnel/qdisc changes;
+- bounded runtime/bytes/sessions; cleanup every explicitly started listener/process and remove experimental install/state material after capture;
+- package evidence is not release/security approval.
 
-**Tests/gates:** focused `cargo test -p neko-cli --test multistream`, repeat the focused test enough times locally to expose obvious races without turning this into load testing, `scripts/check.sh`, `git diff --check`, exact-head CI.
+**Behavior:**
 
-**Commit/push:** yes. Continue immediately to B.
+1. fetch current `main`; verify the exact tree and its CI state before WAN;
+2. build the exact-current package and run existing package smoke locally; preserve build JSON/archive SHA/binary SHA/toolchain/target provenance;
+3. install that package into a dedicated experimental path on the self-owned VPS, run `capabilities --json`, and verify installed binary hash against package provenance;
+4. using the installed VPS binary, perform one bounded authenticated TCP smoke and one bounded authenticated UDP smoke from the self-owned client over the real client↔VPS path; preserve exact application-byte/count results rather than only process exit codes;
+5. prove listener/process cleanup and remove the dedicated experimental package/state/identity path after evidence capture.
 
-### B. MEDIUM / READY_LOCAL — finish pre-auth pending-owner checker locality
+A distinct-version A→B→A rehearsal is **optional, not a prerequisite** for this slice. Do it only if a genuinely distinct known-good package can be safely obtained/rebuilt from existing repository/tooling without inventing version semantics or requiring new credentials. Do not manufacture an "upgrade" by installing the same tree twice. If no suitable prior package is available, clean install + exact-current WAN TCP/UDP smoke + cleanup is the intended closure; retain historical N5 as the separate distinct-version rollback evidence.
 
-**Goal:** ensure an anchor in a sibling/shared block cannot satisfy the wrong inventoried lifecycle.
+**Tests/gates:** package build/smoke, `scripts/check.sh`, `git diff --check`; exact-head CI green before the VPS run. Evidence-only documentation commits after a successful/negative run still need exact-head CI, but do not rerun the network experiment merely because a later docs commit changes HEAD.
 
-**Why now:** `53fb7b5` is a good partial repair, but both UDP entries currently resolve identical lifecycle begin/end strings from whole-file origin and generic cleanup/owner membership is still whole-file.
+**Negative rule:** if TCP or UDP package/WAN smoke fails, preserve the bounded negative and cleanup. Retry only after a concrete package/runtime/config/instrumentation hypothesis changes materially. Do not chase a PASS.
 
-**Files:** `scripts/check-preauth-responder-inventory.py`, `docs/preauth-responder-inventory.v1.json`, focused checker fixture/test code only as needed.
+**Commit/push:** yes — commit the smallest inspectable evidence set and exact boundary summary. Continue immediately to B.
 
-**Protected invariant:** review precision only; no runtime pre-auth behavior, no policy values, no source-retention semantics change.
+### B. READY_LOCAL — reconcile package/operator and release-evidence truth
 
-**Behavior:** choose one minimal design under the proposal protocol. Prove the intended shared/per-responder ownership scope explicitly. Negative tests must include at least: an identical producer/store anchor in a sibling region cannot rescue the intended lifecycle; an identical consumer cancellation elsewhere cannot rescue a missing intended cancellation; an expiry cleanup outside the intended expiry region cannot satisfy it. Region-scope generic cleanup/owner anchors where the inventory claims responder-local proof.
+**Goal:** make `docs/status.md`, `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `docs/release-engineering.md`, and the release-review packet agree with what A actually proved.
 
-**Tests/gates:** focused checker, mutation/fixture negatives, `scripts/check.sh`, `git diff --check`, exact-head CI.
+**Why now:** current `eecd068` adds a local package claim; A should add either real VPS operator evidence or a bounded negative. Planning truth must distinguish those layers.
 
-**Commit/push:** yes. Continue immediately to C.
+**Protected invariant:** keep these distinctions explicit:
 
-### C. MEDIUM / READY_LOCAL — lock the one legacy repeated-failover digest exception
+- package code exists;
+- local reproducible build/package smoke;
+- installed-binary provenance;
+- real self-owned VPS install/operator smoke;
+- authenticated WAN TCP/UDP behavior;
+- distinct-version upgrade/rollback evidence;
+- RC/production/security approval.
 
-**Goal:** preserve only the exact frozen historical digest exception while keeping new diagnostic hashes strict.
-
-**Why now:** this remains the final small schema-regression debt from the repeated-failover diagnostic closure; it does not justify reopening WAN.
-
-**Files:** prefer `scripts/bench/run-repeated-warm-failover-test.py` or the existing focused schema test; change `schema/repeated-warm-failover.v1.json` only if a real defect is exposed.
-
-**Protected invariant:** no historical artifact rewrite, no repeated-warm-failover VPS rerun.
-
-**Behavior/tests:** Draft 2020-12 validation must accept the exact frozen legacy value, accept canonical 64-hex SHA-256, reject at least one sibling malformed/non-64-hex digest, and continue validating the full retained artifact corpus.
-
-**Gates:** focused test, `scripts/check.sh`, `git diff --check`, exact-head CI.
-
-**Commit/push:** yes. Continue immediately to D.
-
-### D. HIGH SECURITY REVIEW / READY_LOCAL except D019 policy — exact-tree partial RSEC review
-
-**Goal:** independently review the integrated exact tree for all non-policy pre-auth accounting controls.
-
-**Why now:** controls and adversarial tests exist; static ownership proof should be locally truthful after B; current repository still explicitly says independent review is open.
-
-**Files:** current `crates/neko-cli/src/preauth.rs`; every real responder call site; `crates/neko-cli/tests/probe.rs` and other adversarial tests; responder inventory/checker; `docs/reviews/resource-abuse-evidence-2026-09-04.md`; D018/D019 ADRs and current status.
-
-**Protected invariants:** charge before expensive parse/auth work; response bytes accounted before send; all real pre-auth listener surfaces covered; TCP/UDP source domains non-colliding; redacted observability; bounded live concurrency/queue/memory; rejection/expiry/success cleanup fail closed. Do not invent terminal source-retention policy.
-
-**Review behavior:** verify exact current-tree source projection, admission/charge ordering, responder coverage, queue/pending ownership, response accounting, cleanup, redaction and adversarial evidence provenance. If a concrete engineering defect exists, repair it with deterministic tests and continue. If the non-policy controls pass, state only a bounded result such as `ENGINEERING_CONTROLS_REVIEWED`; full RSEC/D019 must remain `SOURCE_RETENTION_POLICY_BLOCKED`.
-
-**Tests/gates:** focused adversarial tests plus `scripts/check.sh`, `git diff --check`, exact-head CI.
-
-**Commit/push:** yes when repository review/evidence truth changes. Continue to E; do not idle waiting for D019 policy.
-
-### E. READY_OUTPUT / VPS-VALUABLE — current-tree package/operator lifecycle closure
-
-**Goal:** produce a concrete operator-visible exact-tree result instead of extending audit infrastructure.
-
-**Why now:** substantial runtime code landed after the older N5 package evidence, and the VPS rental is time-limited. Dedicated experimental package install/upgrade/rollback rehearsal is standing-authorized and has evidence value that local unit tests do not fully replace.
-
-**Files:** `scripts/release/build-package.sh`, `scripts/release/smoke-package.sh`, package/release evidence docs only as necessary. Reuse existing harnesses; do not build a second packaging framework.
-
-**Protected invariant:** use only the dedicated experimental install path; preserve external identity/state without reading or committing secret material; no production service replacement; no production route/firewall/DNS/proxy/tunnel/qdisc changes.
-
-**Behavior:** first determine whether the old N5 evidence actually covers the materially changed current package/runtime contract. If not, build the exact current tree, verify manifest/binary hash/capability provenance, perform bounded authenticated TCP/UDP smoke from the isolated package, and where the existing harness safely supports it, do A→B→A upgrade/rollback with state-permission and cleanup checks. Prefer the self-owned VPS experimental path when that yields genuinely new operator evidence under standing authorization. If the package contract is demonstrably unchanged and old evidence is sufficient, record the exact-tree rationale and skip redundant execution rather than manufacturing activity.
-
-**Tests/gates:** package build/smoke, cleanup, exact binary/package identity, `scripts/check.sh`, exact-head CI. If a VPS rehearsal is performed, record actual parameters/timestamps/results/cleanup under the standing evidence contract.
-
-**Commit/push:** commit only genuinely new package/operator evidence or a real repair. Continue to F.
-
-### F. READY_LOCAL — release/evidence matrix reconciliation
-
-**Goal:** reconcile current status/ROADMAP/plan after A–E without inflating local or package evidence into WAN/release/security conclusions.
-
-**Why now:** prevents exact-tree review and operator work from silently changing milestone meaning.
-
-**Files:** `docs/status.md`, `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, release-review packet only if exact-tree claims changed.
-
-**Protected invariant:** `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged absent explicit reviewed decisions; HY2 and repeated-failover same-class runs remain frozen; D019 remains policy-blocked.
-
-**Behavior:** update only evidence actually obtained. Do not create another checker/harness unless a concrete consistency defect is discovered.
+Never collapse one layer into another. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged absent a separately reviewed decision. HY2 and repeated-warm-failover same-class retries remain frozen; D019 remains policy-blocked.
 
 **Tests/gates:** `scripts/check.sh`, `git diff --check`, exact-head CI.
 
-**Commit/push:** yes if current repository truth changes. Continue immediately to G when a real dependency-ready question exists.
+**Commit/push:** yes if repository truth changes. Continue immediately to C.
 
-### G. NEXT OUTPUT SELECTION — select one genuine dependency-ready runtime/operator/VPS question
+### C. READY_LOCAL / OPERATOR VALUE — audit current K/package contract for one concrete missing operator behavior, not a documentation wish list
 
-**Goal:** keep work pointed at system behavior rather than review infrastructure.
+**Goal:** after A/B, identify at most one current-tree package/operator defect or missing behavior that has direct operator value and can be closed without a new architecture/security-policy decision.
 
-**Selection rule:** re-read the exact post-F status/code/tests. First prefer a non-frozen standing-authorized VPS-only question with a concrete hypothesis that cannot be reconstructed locally. If none exists, prefer a bounded local runtime seam that directly opens one. `live PMTUD` is a plausible candidate only if the current accepted PLPMTUD state/spec and current runtime still leave a clearly bounded probe/ACK integration seam; do not implement it merely because an old roadmap row says `BLOCKED_IMPLEMENTATION`.
+**Why now:** package work should produce a usable lifecycle, not only archives and prose, but the repository already contains older lifecycle/SIGTERM evidence and some release-engineering text may be stale after later runtime work.
 
-**Do not select:** unchanged HY2 or repeated-failover reruns; speculative FEC/0-RTT/striping/multipath/exotic carriers; third-party targets; production network mutation; new security numbers.
+**Files:** re-read current `docs/release-engineering.md`, M5 release gate, lifecycle code/tests, N4/N5/N8 evidence, current CLI server behavior and any package helpers.
 
-**Execution contract:** define one bounded question, implement/test if needed, exact-head green before WAN, then run once under standing authorization if the hypothesis is materially new. Preserve negative results and cleanup exactly. Continue while READY work remains; do not stop because one commit or reviewer interval completed.
+**Selection examples (choose only if genuinely open on current tree):** stale-listener restart behavior, explicit bounded shutdown/readiness behavior, package permission/state retention, clean uninstall/rollback cleanup, or another concrete current operator defect exposed by A.
+
+**Do not select:** signed publication/SBOM/key-custody policy, service-manager production profile, aarch64 execution without an available authorized executor, or anything that requires pretending old evidence is current.
+
+**Proposal protocol:** if one architecture-internal shape is clearly bounded, propose/implement/test it and continue. If no real defect is found, record no new ticket and advance to D rather than manufacturing work.
+
+**Commit/push:** only for a real implementation/test/evidence delta.
+
+### D. READY_LOCAL — release/evidence matrix reconciliation after the package closure
+
+**Goal:** close any remaining matrix drift introduced by current package/runtime work, without turning matrix maintenance into its own project.
+
+**Files:** current release/evidence matrix sources, `docs/status.md`, `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, release/security review packet as actually needed.
+
+**Behavior:** make each row point to exact current evidence and keep stale historical evidence labeled historical. Do not upgrade any WAN/performance/security/release claim because a package smoke succeeded.
+
+**Tests/gates:** existing governance/evidence checks, `scripts/check.sh`, `git diff --check`, exact-head CI.
+
+**Commit/push:** yes only when drift exists. Continue to E.
+
+### E. NEXT OUTPUT SELECTION — choose one genuinely dependency-ready runtime/VPS question
+
+**Goal:** keep the project moving toward system behavior once package/operator closure is complete.
+
+**Selection rule:** re-read the exact post-D status/code/tests. Prefer a standing-authorized VPS-only question with a concrete new hypothesis that local tests cannot reconstruct. If none exists, prefer a small local runtime seam that directly opens such a question and does not change core semantics.
+
+**Important PMTUD boundary:** current `docs/spec/m2-plpmtud.md` is still a socket-free research model. The accepted PMTUD ADR explicitly says the next implementation gate must first define authenticated probe/ACK wire fields, IPv4/IPv6 overhead accounting, PTB validation, timer/cooldown constants, fragmentation semantics and event schemas, and says no live implementation/public listener is authorized until that gate is accepted. Therefore **do not treat the old `BLOCKED_IMPLEMENTATION` roadmap row as permission to implement live PMTUD.** A live PMTUD integration now crosses wire/security-policy design and is a maintainer/new-stage boundary unless a later accepted ADR already resolves those requirements.
+
+**Do not select:** unchanged HY2 or repeated-failover reruns; speculative FEC/0-RTT/striping/multipath/exotic carriers; third-party targets; production network mutation; invented security numbers.
+
+If no non-frozen dependency-ready runtime/VPS question exists after D, stop adding infrastructure and leave the queue shorter rather than inventing work.
+
+### F. POLICY-BLOCKED PARALLEL LANE — D019 source retention
+
+**Status:** `SOURCE_RETENTION_POLICY_BLOCKED`.
+
+Current engineering controls may remain reviewed while this lane waits. Do not modify source-retention lifetime semantics without a maintainer decision choosing a bounded authority/retention model or revising D019 explicitly. Do not let this block A–E.
 
 ## VPS / evidence priority
 
-- Standing authorization continues to cover bounded self-owned TCP/UDP Session/diagnostic/benchmark/capture/cleanup, dedicated experimental package rehearsal, and the existing HY2 comparison shape.
-- HY2 same-class retry is frozen after the exact-`13da094` `unknown/client_started` negative.
-- Repeated warm failover same-class retry remains frozen after the repeated `startup_setup` boundary.
-- Package/operator lifecycle is the next explicit VPS-valued outward lane after correctness/security gates A–D because the current VPS rental is time-limited.
-- A future WAN retry/run requires an actual question and material hypothesis/change, not merely a desire for a PASS.
+- Current top priority is A: exact-tree package install + real authenticated self-owned client↔VPS TCP/UDP smoke, because it is both standing-authorized and not reproduced by the new local package narrative.
+- HY2 remains frozen after exact `13da094` `unknown/client_started`; no unchanged retry.
+- Repeated warm failover remains frozen after repeated `startup_setup`; no unchanged retry.
+- A failed package/WAN attempt is preserved as evidence and retried only after a material hypothesis/change.
+- No VPS/load run may substitute for deterministic security accounting or D019 policy.
 
 ## Visible-output check
 
-The last 24–48 hours already produced real runtime/VPS outputs: endpoint source rebinding, migration-back, periodic/key-update evidence, and a materially changed HY2 negative. Therefore A–D remain justified bounded correctness/security closure, but they must not grow into a generic audit framework. E deliberately returns the queue to a concrete package/operator result, followed by a new runtime/VPS question only if one is genuinely ready.
+The recent window has already produced real endpoint rebinding/migration/key-update/HY2 evidence, and this round also closes three local correctness/review debts plus records a current package observation. That is enough audit/checker work. The next visible output should be an operator/VPS result or a concrete package defect repair, not another generic checker/parser/harness.
 
 ## Maintainer/admin boundary
 
-The only known maintainer/security-value checkpoint in this queue remains D019 terminal source-retention policy. It blocks full D019/RSEC closure, not A–G engineering/evidence work. No administrator action is required for the currently READY slices.
+No administrator action is required for A–D under the existing standing authorization. D019 source-retention remains the known security-policy checkpoint. Live PMTUD integration is also not a normal READY implementation slice under the current ADR because its required wire/security gate is not yet accepted; escalate only if/when the project actually chooses to enter that new design stage.
