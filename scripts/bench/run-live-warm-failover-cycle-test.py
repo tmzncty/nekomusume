@@ -87,8 +87,14 @@ def invoke(scenario="success", marker="", server_executable=None, client_executa
   env=os.environ.copy(); env.update(SCENARIO=scenario,NEKO_FAILOVER_CYCLE_INDEX="1",NEKO_FAILOVER_GIT_COMMIT=commit or HEAD,NEKO_FAILOVER_BINARY=binary or sys.executable,NEKO_FAILOVER_UDP_PORT="40081",NEKO_FAILOVER_TCP_PORT="40080",NEKO_FAILOVER_SERVER_STARTUP_SECONDS="0.01")
   if scenario == "early_exit_malformed_cleanup": env["CLEANUP_MARKER"] = str(pathlib.Path(td)/"cleanup-ran")
   suffix=[marker] if marker else []
-  env["NEKO_FAILOVER_SERVER_COMMAND_JSON"]=json.dumps([server_executable or sys.executable,str(fake),"failover-server","--diagnostic","--experiment-id","warm-cycle-1-server","--cease-udp-replies-after","1"]+suffix)
-  env["NEKO_FAILOVER_CLIENT_COMMAND_JSON"]=json.dumps([client_executable or sys.executable,str(fake),"failover-client","--diagnostic","--experiment-id","warm-cycle-1-client","--automatic-health-failover"]+suffix)
+  server_command=[server_executable or sys.executable,str(fake),"failover-server","--diagnostic","--experiment-id","warm-cycle-1-server","--cease-udp-replies-after","1"]+suffix
+  client_command=[client_executable or sys.executable,str(fake),"failover-client","--diagnostic","--experiment-id","warm-cycle-1-client","--automatic-health-failover"]+suffix
+  if scenario == "missing_required_token": server_command.remove("--diagnostic")
+  if scenario == "wrong_required_value": server_command[-1] = "2"
+  if scenario in ("malformed_startup_timeout", "nonfinite_startup_timeout", "out_of_range_startup_timeout"):
+   env["NEKO_FAILOVER_SERVER_STARTUP_TIMEOUT_SECONDS"]={"malformed_startup_timeout":"bad","nonfinite_startup_timeout":"nan","out_of_range_startup_timeout":"11"}[scenario]
+  env["NEKO_FAILOVER_SERVER_COMMAND_JSON"]=json.dumps(server_command)
+  env["NEKO_FAILOVER_CLIENT_COMMAND_JSON"]=json.dumps(client_command)
   env["NEKO_FAILOVER_CLEANUP_COMMAND_JSON"]=json.dumps([sys.executable,str(fake),"cleanup"])
   if endpoints is not None: env["NEKO_FAILOVER_ENDPOINTS_JSON"]=json.dumps(endpoints(fake))
   p=subprocess.run([sys.executable,str(ADAPTER)],env=env,text=True,capture_output=True,timeout=30)
@@ -108,6 +114,9 @@ for scenario, category in (
  p,row=invoke(scenario); assert p.returncode==2 and p.stdout == "" and '"category":"' + category + '"' in p.stderr, (scenario,p.stderr)
 p,row=invoke("early_exit_malformed_cleanup")
 assert p.returncode==2 and p.stdout == "" and p.cleanup_ran and '"category":"startup_setup"' in p.stderr, p.stderr
+for scenario in ("missing_required_token", "wrong_required_value", "malformed_startup_timeout", "nonfinite_startup_timeout", "out_of_range_startup_timeout"):
+ p,row=invoke(scenario)
+ assert p.returncode==2 and p.stdout=="" and '"category":"startup_setup"' in p.stderr, (scenario,p.stderr)
 with tempfile.TemporaryDirectory() as td:
  symlink=pathlib.Path(td)/"python-symlink"
  try:

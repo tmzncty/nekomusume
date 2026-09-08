@@ -28,6 +28,7 @@ import json
 import os
 import pathlib
 import re
+import math
 import shutil
 import signal
 import subprocess
@@ -175,11 +176,11 @@ def checkout_head() -> str:
 
 def requires(argv: list[str], token: str, value: str | None = None) -> None:
     if token not in argv:
-        raise CollectionError(f"command missing {token}")
+        raise CollectionError(f"command missing {token}", "startup_setup")
     if value is not None:
         index = argv.index(token)
         if index + 1 >= len(argv) or argv[index + 1] != value:
-            raise CollectionError(f"command requires {token} {value}")
+            raise CollectionError(f"command requires {token} {value}", "startup_setup")
 
 def event_objects(text: str) -> list[dict[str, Any]]:
     values = []
@@ -378,7 +379,12 @@ def main() -> int:
             server = subprocess.Popen(server_cmd, stdin=subprocess.PIPE if server_input is not None else subprocess.DEVNULL, stdout=server_log, stderr=subprocess.STDOUT, start_new_session=True, shell=False)
             if server_input is not None:
                 assert server.stdin is not None; server.stdin.write(server_input); server.stdin.close()
-            startup_timeout = float(os.environ.get("NEKO_FAILOVER_SERVER_STARTUP_TIMEOUT_SECONDS", "5"))
+            try:
+                startup_timeout = float(os.environ.get("NEKO_FAILOVER_SERVER_STARTUP_TIMEOUT_SECONDS", "5"))
+            except ValueError as exc:
+                raise CollectionError("invalid server startup timeout", "startup_setup") from exc
+            if not math.isfinite(startup_timeout) or not 0 < startup_timeout <= 10:
+                raise CollectionError("invalid server startup timeout", "startup_setup")
             try:
                 server_start_readiness(tmp_path / "server.log", server, "server", server_identity,
                                        {"count": PARAMETERS["record_count"], "record_payload_bytes": PARAMETERS["record_payload_bytes"],
