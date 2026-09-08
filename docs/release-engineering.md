@@ -22,7 +22,7 @@ The script uses `Cargo.lock`, disables incremental compilation, normalizes archi
 scripts/release/smoke-package.sh dist-a/nekomusume-*.tar.gz
 ```
 
-The smoke rejects absolute/traversal paths, extracts without archive ownership or permission inheritance, verifies `SHA256SUMS`, requires mode `0755` for the executable and `0644` for documentation, then runs secret-free `capabilities --json` when target equals host. The CLI already creates identity files as `0600` on Unix; operators must never package, copy, log, or overwrite an existing identity.
+The smoke validates the complete expected archive shape before extraction, rejects absolute/traversal paths and non-regular members (including links and special files), extracts without archive ownership or permission inheritance, verifies `SHA256SUMS`, requires mode `0755` for the executable and `0644` for documentation, then runs secret-free `capabilities --json` when target equals host. Synthetic adversarial archive regressions are wired into `scripts/check.sh`. The CLI already creates identity files as `0600` on Unix; operators must never package, copy, log, or overwrite an existing identity.
 
 Current deterministic CLI tests cover externally emitted signal-driven `READY -> DRAINING -> STOPPED` lifecycle and same-address rebind after shutdown for bounded TCP and UDP servers at exact `7cebe6b`. The prior exact-`14be1c8` installed-package attempt remains an incomplete orchestration negative; the single changed-hypothesis exact-`7cebe6b` VPS invocation is separately anchored by its sanitized result and provenance erratum.
 
