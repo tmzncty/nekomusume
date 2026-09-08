@@ -56,6 +56,6 @@ Exact `a9928c8` was then installed in a dedicated temporary path on the self-own
 - native aarch64 cross-build and execution evidence;
 - pinned compiler/linker/container provenance and cross-environment reproducibility;
 - signed checksums, signing-key custody, SBOM/provenance, and publication workflow;
-- one changed-hypothesis installed-package VPS SIGTERM, listener release, and same-port restart/rebind observation; the prior `package-lifecycle-14be-20260909` attempt remains an incomplete orchestration negative;
+- installed-package VPS SIGTERM, listener release, and same-port restart/rebind evidence remains open: the changed-hypothesis exact-`7cebe6b` attempt passed package smoke and installed-hash equality but stopped before TCP readiness evidence collection, and the package-lifecycle line is frozen against same-class retry;
 - service-manager sandboxing, least-privilege runtime profile, upgrade/state compatibility tests;
 - independent security/release review and all blocked M5 WAN/production gates.
