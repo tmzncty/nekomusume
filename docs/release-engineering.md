@@ -45,6 +45,10 @@ For upgrade, fully smoke the new archive, install it as a new immutable version 
 
 For rollback, stop the explicitly managed process, atomically point `current` to the saved prior release directory, and rerun capabilities/package smoke. If state format ever changes, a separately reviewed backward-compatibility and backup procedure is required; this slice defines no state migration. Remove an old release only after rollback observation, and never recursively remove the external state/identity path.
 
+## Current-tree revalidation
+
+Exact `f19ad28` was rebuilt twice with identical archive identity and exercised through isolated authenticated TCP/UDP package smokes plus a same-tree immutable-directory symlink switch/rollback. See [`package-operator-current-tree-f19ad28-20260909.md`](package-operator-current-tree-f19ad28-20260909.md). This supplements rather than replaces the historical distinct-version N5 A→B→A evidence.
+
 ## Honest remaining K
 
 - native aarch64 cross-build and execution evidence;
