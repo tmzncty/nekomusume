@@ -38,7 +38,7 @@ not be promoted to public-WAN reachability.
 - [x] **N5 package lifecycle:** reproducible x86_64 package install A -> upgrade B
   -> rollback A with retained external state and cleanup evidence.
 - [x] **Current-tree package/VPS operator smoke:** exact `a9928c8` package installed in a dedicated self-owned VPS path; installed hash matched, bounded authenticated TCP/UDP smokes passed, and remote/local cleanup was verified. This is bounded operator evidence only, not release or production approval.
-- [x] **Installed-package lifecycle attempts:** exact `14be1c8` ended before a complete phase record; after exact `7cebe6b` added externally observable DRAINING, the one changed-hypothesis attempt passed package smoke and installed-hash equality but stopped before TCP readiness evidence collection. Both are orchestration negatives with verified cleanup, not runtime lifecycle defect claims; this line is frozen against same-class retry.
+- [x] **Installed-package lifecycle attempts:** exact `14be1c8` ended before a complete phase record. After exact `7cebe6b` added externally observable DRAINING, the one changed-hypothesis attempt completed the bounded TCP and UDP lifecycle (READY, SIGTERM, DRAINING/STOPPED, listener release, same-port restart, authenticated 32-byte exchange) with verified cleanup. The earlier result remains an orchestration negative; the later result is bounded operator evidence, not service-manager, release, or production approval.
 - [x] **N6 architecture audit:** first-RC target, if later approved, is
   x86_64-unknown-linux-gnu only; aarch64 remains a candidate target.
 - [x] **N7-11 TCP multistream authenticated admission:** exact N1 transcript is

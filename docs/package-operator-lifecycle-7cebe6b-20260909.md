@@ -10,16 +10,29 @@ One materially changed, bounded self-owned installed-package lifecycle attempt f
 
 ## Incremental evidence and result
 
-The orchestration wrote phase markers incrementally. The retained phase prefix is:
+The orchestration wrote phase markers incrementally. The complete retained phase record is:
 
 ```json
 {"phase":"start","status":"ok"}
 {"phase":"package_smoke","status":"ok"}
 {"phase":"installed_hash","status":"ok"}
 {"phase":"tcp-preclean","status":"ok"}
+{"phase":"tcp-ready","status":"ok"}
+{"phase":"tcp-signal-stop","status":"ok"}
+{"phase":"tcp-rebind-ready","status":"ok"}
+{"phase":"tcp-authenticated-exchange","status":"ok"}
+{"phase":"tcp-clean","status":"ok"}
+{"phase":"udp-preclean","status":"ok"}
+{"phase":"udp-ready","status":"ok"}
+{"phase":"udp-signal-stop","status":"ok"}
+{"phase":"udp-rebind-ready","status":"ok"}
+{"phase":"udp-authenticated-exchange","status":"ok"}
+{"phase":"udp-clean","status":"ok"}
+{"phase":"cleanup_pre_delete","status":"ok"}
+{"phase":"cleanup_post_delete","status":"ok"}
 ```
 
-The command exited nonzero before recording `tcp-ready`. Therefore the exact boundary is `BLOCKED_ORCHESTRATION_CURRENT_LINE_PACKAGE_LIFECYCLE` at TCP startup/readiness evidence collection. Package smoke and installed-binary hash equality completed; no truthful claim is made that remote TCP readiness, SIGTERM handling, drain/stop, restart/rebind, authenticated TCP exchange, or any UDP phase passed or failed at runtime. In particular, this result does not disprove the green local process tests and does not identify a runtime root cause.
+The installed package completed the intended bounded lifecycle for both transports: readiness, SIGTERM shutdown with ordered `DRAINING`/`STOPPED`, listener release, same-port restart, and one authenticated 32-byte exchange after restart. This is an exact-tree, self-owned VPS operator observation only; it does not establish daemon/service-manager hardening, sustained WAN reliability, public reachability, performance superiority, release, production readiness, or security approval.
 
 ## Cleanup
 

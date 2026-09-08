@@ -56,6 +56,6 @@ Exact `a9928c8` was then installed in a dedicated temporary path on the self-own
 - native aarch64 cross-build and execution evidence;
 - pinned compiler/linker/container provenance and cross-environment reproducibility;
 - signed checksums, signing-key custody, SBOM/provenance, and publication workflow;
-- installed-package VPS SIGTERM, listener release, and same-port restart/rebind evidence remains open: the changed-hypothesis exact-`7cebe6b` attempt passed package smoke and installed-hash equality but stopped before TCP readiness evidence collection, and the package-lifecycle line is frozen against same-class retry;
+- installed-package VPS SIGTERM, listener release, and same-port restart/rebind evidence is recorded for exact `7cebe6b`: the changed-hypothesis run completed the bounded TCP and UDP lifecycle with ordered `READY -> DRAINING -> STOPPED`, same-port authenticated restart exchanges, and verified cleanup; this remains operator evidence, not daemon/service-manager, release, or production approval;
 - service-manager sandboxing, least-privilege runtime profile, upgrade/state compatibility tests;
 - independent security/release review and all blocked M5 WAN/production gates.
