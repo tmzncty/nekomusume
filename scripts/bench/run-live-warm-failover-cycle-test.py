@@ -17,7 +17,7 @@ experiment_id="warm-cycle-1-"+role
 def j(event,seq=0,**kw): print(json.dumps(dict(experiment_id=experiment_id,role=role,event=event,seq=seq,**kw)),flush=True)
 if mode == "failover-server":
  if scenario == "delayed_start": import time; time.sleep(0.15)
- if scenario == "early_exit": sys.exit(9)
+ if scenario in ("early_exit", "early_exit_malformed_cleanup"): sys.exit(9)
  j("start",count=4 if scenario in ("start_mismatch","adversarial") else 3,record_payload_bytes=16,application_bytes_total=48,udp_port=40081,tcp_port=40080,max_seconds=15);
  if scenario in ("duplicate_start","adversarial"): j("start",count=3,record_payload_bytes=16,application_bytes_total=48,udp_port=40081,tcp_port=40080,max_seconds=15)
  if scenario in ("malformed_json","adversarial"): print("  {not-json")
@@ -25,7 +25,9 @@ if mode == "failover-server":
  if scenario == "json_list": print("  []")
  if scenario == "json_scalar": print("  42")
  if scenario == "malformed_list": print("  [not-json")
- print("carrier_event name=udp_negotiated session=7001 generation=0 version=0"); print("carrier_event name=udp_authenticated session=7001 generation=0");
+ print("carrier_event name=udp_negotiated session=7001 generation=0 version=0");
+ if scenario == "duplicate_negotiation": print("carrier_event name=udp_negotiated session=7001 generation=0 version=0")
+ print("carrier_event name=udp_authenticated session=7001 generation=0");
  if scenario != "missing_resume": print("carrier_event name=tcp_negotiated session=7001 generation=1 version=0\ncarrier_event name=tcp_authenticated session=7001 generation=1\ncarrier_event name=tcp_resume_validated session=7001 generation=1")
  if scenario != "missing_readiness":
   [j("tcp_readiness_response",n,admitted=True) for n in (1,2,3)]
@@ -39,8 +41,10 @@ if mode == "failover-client":
  print("carrier_event name=udp_authenticated session=7001 generation=0"); j("udp_delivery_ack_validated",1); j("udp_uncertain_range_sent",2,len=16)
  if scenario != "missing_readiness":
   [j("tcp_warm_readiness",n,warm=n==3) for n in (1,2,3)]; print("carrier_event name=tcp_warm session=7001 generation=1 readiness=3 application_data=0")
+  if scenario == "duplicate_readiness": j("tcp_warm_readiness",3,warm=True)
  if scenario not in ("timeout","missing_resume","missing_readiness","missing_accounting"):
   j("tcp_delivery_ack_validated",1); j("tcp_delivery_ack_validated",2)
+  if scenario == "duplicate_application_ack": j("tcp_delivery_ack_validated",2)
  if scenario not in ("timeout","missing_timing"):
   timing=dict(failure_decided_at_us=100,first_resumed_data_accepted_us=130,first_resumed_ack_at_us=140,recovery_latency_us=30)
   if scenario == "negative_timing": timing["failure_decided_at_us"]=-1
@@ -63,8 +67,11 @@ if mode == "failover-client":
   if scenario == "duplicate_summary": j("summary",3,records=3,application_bytes_total=48)
  sys.exit(124 if scenario=="timeout" else 0)
 if mode == "cleanup":
- value={"listeners_remaining":1 if scenario=="cleanup" else 0}
- if scenario != "missing_remote_process_postcheck": value["processes_remaining"]=0
+ marker=os.environ.get("CLEANUP_MARKER")
+ if marker: open(marker,"w").write("ran")
+ malformed=scenario in ("malformed_cleanup","early_exit_malformed_cleanup")
+ value={} if malformed else {"listeners_remaining":1 if scenario=="cleanup" else 0}
+ if scenario not in ("missing_remote_process_postcheck", "malformed_cleanup", "early_exit_malformed_cleanup"): value["processes_remaining"]=0
  print(json.dumps(value)); sys.exit(1 if scenario=="cleanup" else 0)
 '''
 
@@ -78,19 +85,38 @@ def invoke(scenario="success", marker="", server_executable=None, client_executa
  with tempfile.TemporaryDirectory() as td:
   fake=pathlib.Path(td)/"fake.py"; fake.write_text(FAKE); fake.chmod(0o700)
   env=os.environ.copy(); env.update(SCENARIO=scenario,NEKO_FAILOVER_CYCLE_INDEX="1",NEKO_FAILOVER_GIT_COMMIT=commit or HEAD,NEKO_FAILOVER_BINARY=binary or sys.executable,NEKO_FAILOVER_UDP_PORT="40081",NEKO_FAILOVER_TCP_PORT="40080",NEKO_FAILOVER_SERVER_STARTUP_SECONDS="0.01")
+  if scenario == "early_exit_malformed_cleanup": env["CLEANUP_MARKER"] = str(pathlib.Path(td)/"cleanup-ran")
   suffix=[marker] if marker else []
-  env["NEKO_FAILOVER_SERVER_COMMAND_JSON"]=json.dumps([server_executable or sys.executable,str(fake),"failover-server","--diagnostic","--experiment-id","warm-cycle-1-server","--cease-udp-replies-after","1"]+suffix)
-  env["NEKO_FAILOVER_CLIENT_COMMAND_JSON"]=json.dumps([client_executable or sys.executable,str(fake),"failover-client","--diagnostic","--experiment-id","warm-cycle-1-client","--automatic-health-failover"]+suffix)
+  server_command=[server_executable or sys.executable,str(fake),"failover-server","--diagnostic","--experiment-id","warm-cycle-1-server","--cease-udp-replies-after","1"]+suffix
+  client_command=[client_executable or sys.executable,str(fake),"failover-client","--diagnostic","--experiment-id","warm-cycle-1-client","--automatic-health-failover"]+suffix
+  if scenario == "missing_required_token": server_command.remove("--diagnostic")
+  if scenario == "wrong_required_value": server_command[-1] = "2"
+  if scenario in ("malformed_startup_timeout", "nonfinite_startup_timeout", "out_of_range_startup_timeout"):
+   env["NEKO_FAILOVER_SERVER_STARTUP_TIMEOUT_SECONDS"]={"malformed_startup_timeout":"bad","nonfinite_startup_timeout":"nan","out_of_range_startup_timeout":"11"}[scenario]
+  env["NEKO_FAILOVER_SERVER_COMMAND_JSON"]=json.dumps(server_command)
+  env["NEKO_FAILOVER_CLIENT_COMMAND_JSON"]=json.dumps(client_command)
   env["NEKO_FAILOVER_CLEANUP_COMMAND_JSON"]=json.dumps([sys.executable,str(fake),"cleanup"])
   if endpoints is not None: env["NEKO_FAILOVER_ENDPOINTS_JSON"]=json.dumps(endpoints(fake))
   p=subprocess.run([sys.executable,str(ADAPTER)],env=env,text=True,capture_output=True,timeout=30)
+  p.cleanup_ran = (pathlib.Path(td)/"cleanup-ran").exists()
   return p, json.loads(p.stdout) if p.stdout.strip() else None
 
 p,row=invoke(); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]["status"]=="passed"; assert row["semantic"]["readiness_proofs"]==3; assert row["accounting"]["uncertain_records"]==2
 p,row=invoke("delayed_start"); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]["status"]=="passed"
-p,row=invoke("early_exit"); assert p.returncode==2 and p.stdout == "" and "server exited before JSON event: start" in p.stderr
-p,row=invoke("missing_client_start"); assert p.returncode==2 and p.stdout == "" and "missing client JSON event: start" in p.stderr
-p,row=invoke("malformed_json"); assert p.returncode==2 and p.stdout == "" and "malformed server JSON event: start" in p.stderr
+for scenario, category in (
+ ("early_exit", "startup_setup"),
+ ("duplicate_negotiation", "evidence_serialization"),
+ ("duplicate_readiness", "evidence_serialization"),
+ ("duplicate_application_ack", "evidence_serialization"),
+ ("malformed_json", "evidence_serialization"),
+ ("malformed_cleanup", "cleanup"),
+):
+ p,row=invoke(scenario); assert p.returncode==2 and p.stdout == "" and '"category":"' + category + '"' in p.stderr, (scenario,p.stderr)
+p,row=invoke("early_exit_malformed_cleanup")
+assert p.returncode==2 and p.stdout == "" and p.cleanup_ran and '"category":"startup_setup"' in p.stderr, p.stderr
+for scenario in ("missing_required_token", "wrong_required_value", "malformed_startup_timeout", "nonfinite_startup_timeout", "out_of_range_startup_timeout"):
+ p,row=invoke(scenario)
+ assert p.returncode==2 and p.stdout=="" and '"category":"startup_setup"' in p.stderr, (scenario,p.stderr)
 with tempfile.TemporaryDirectory() as td:
  symlink=pathlib.Path(td)/"python-symlink"
  try:

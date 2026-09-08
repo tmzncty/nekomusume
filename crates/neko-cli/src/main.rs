@@ -33,7 +33,7 @@ use signal_hook::{
 };
 use std::{
     env, fs,
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket},
     path::PathBuf,
     sync::{
@@ -2703,6 +2703,12 @@ fn endpoint_rebind_server(args: &[String]) {
     socket
         .set_read_timeout(Some(Duration::from_secs(secs)))
         .unwrap();
+    let promotion_delay_ms = parse(args, "--test-promotion-delay-ms", Some("0"))
+        .parse::<u64>()
+        .unwrap_or_else(|_| fail("invalid promotion delay"));
+    if promotion_delay_ms > 1000 {
+        fail("promotion delay outside 0-1000 ms")
+    }
     let mut buf = [0u8; 65536];
     emit_diagnostic(args, "server", "start", 0, ",\"mode\":\"endpoint_rebind\"");
     println!("endpoint_rebind_server_ready");
@@ -2871,6 +2877,44 @@ fn endpoint_rebind_server(args: &[String]) {
             ",\"reason\":\"tuple_mismatch\"",
         );
         fail("endpoint challenge response tuple mismatch")
+    }
+    if promotion_delay_ms > 0 {
+        let hold_until = Instant::now() + Duration::from_millis(promotion_delay_ms);
+        socket
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let mut held_data = false;
+        while Instant::now() < hold_until {
+            match socket.recv_from(&mut buf) {
+                Ok((held_n, held_source)) if held_source == endpoint_b => {
+                    if let Ok(held_plain) = secure.open_unreliable(&buf[..held_n])
+                        && matches!(
+                            ProcessMessage::decode(&held_plain),
+                            Ok(ProcessMessage::Data { .. })
+                        )
+                    {
+                        held_data = true;
+                    }
+                }
+                Ok(_) => {}
+                Err(error)
+                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+                Err(_) => fail("promotion delay interception failed"),
+            }
+        }
+        socket
+            .set_read_timeout(Some(Duration::from_secs(secs)))
+            .unwrap();
+        if held_data {
+            fail("post-rebind Data arrived before promotion sync")
+        }
+        emit_diagnostic(
+            args,
+            "server",
+            "endpoint_promotion_delay_held",
+            1,
+            &format!(",\"milliseconds\":{}", promotion_delay_ms),
+        );
     }
     state
         .validate_and_promote(candidate, 7001, 1, challenge_id)

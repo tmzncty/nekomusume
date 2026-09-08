@@ -198,10 +198,8 @@ Cleanup conclusions are based on separate direct post-exit observations.
 Current classification: NAT/source-endpoint change is `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` for the exact `a8f49fc` same-Session source-port observation with authenticated post-promotion synchronization under a fixed crypto record context; exact `c81fa73` remains superseded candidate evidence and general NAT/public reachability remains outside the claim. Live PMTUD is `BLOCKED_IMPLEMENTATION`; migration-back is `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`
 at exact `5d6582c` with one scripted self-owned local/VPS observation; live key
 update is likewise bounded-live sufficient at exact `2f4f59a`/`69d0ed9`; IPv6 is
-`BLOCKED_ENVIRONMENT`; HY2 and repeated warm failover are
-`BLOCKED_DIAGNOSTICS`; no remaining unimplemented row is `READY_LIVE`; the live key-update row is already answered by one bounded self-owned observation at exact `2f4f59a`/`69d0ed9`. Later exact `9fd2411` / `a117086` already entered the structured outer runner;
-the truthful repeated-failover seam is bounded sanitized inner-collector failure
-categorization, not another runner-entry retry. This checkpoint does not close the release-evidence milestone.
+`BLOCKED_ENVIRONMENT`; HY2 is `BLOCKED_DIAGNOSTICS`, while repeated warm failover is `BLOCKED_ORCHESTRATION_CURRENT_LINE`; no remaining unimplemented row is `READY_LIVE`; the live key-update row is already answered by one bounded self-owned observation at exact `2f4f59a`/`69d0ed9`. Later exact `9fd2411` / `a117086` already entered the structured outer runner;
+the truthful current repeated-failover result is one exact-`f17b648` post-fix outer invocation after final diagnostic-attribution repair and green CI, ending before cycle 1 with explicit primary `startup_setup` evidence boundary and zero observed listener/process residue. It repeats exact `9a94922`'s category/hash/size, is not a root-cause or runtime-failover result, and closes the current line against same-class retry without a new material setup hypothesis. Earlier negatives remain unchanged historical evidence. This checkpoint does not close the release-evidence milestone.
 
 ### 2026-09-04 exact-a117086 evidence checkpoint
 
