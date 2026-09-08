@@ -108,6 +108,7 @@ def test_nonzero_stderr_is_bounded_private_and_validate_only():
         assert code == 1 and batch["completed_cycles"] == 0
         diagnostic = batch["first_failure"]["diagnostic"]
         assert diagnostic["bytes"] <= module.MAX_DIAGNOSTIC_BYTES and diagnostic["truncated"]
+        assert diagnostic["category"] == "nonzero_exit"
         assert "supersecret" not in pathlib.Path(private / "cycle-1.stderr.txt").read_text()
         assert "192.0.2.9" not in pathlib.Path(private / "cycle-1.stderr.txt").read_text()
         assert "supersecret" not in output.read_text()
@@ -185,6 +186,7 @@ def main() -> None:
         batch, code = module.run(["--output", str(pathlib.Path(td) / "result.json"), "--", "fake"], invoke=nonzero_with_row)
         assert code == 1 and batch["completed_cycles"] == 0
         assert batch["first_failure"]["kind"] == "invalid_cycle_evidence"
+        assert batch["first_failure"]["diagnostic_category"] == "invalid_evidence"
         assert "nonzero with a row" in batch["first_failure"]["detail"]
 
     # Exit 0 + malformed output is also a collector contradiction.
@@ -194,6 +196,8 @@ def main() -> None:
         batch, code = module.run(["--output", str(pathlib.Path(td) / "result.json"), "--", "fake"], invoke=zero_malformed)
         assert code == 1 and batch["completed_cycles"] == 0
         assert batch["first_failure"]["kind"] == "invalid_cycle_evidence"
+        assert batch["first_failure"]["diagnostic_category"] == "malformed_output"
+        assert batch["first_failure"]["diagnostic"]["category"] == "malformed_output"
     print(f"repeated warm failover tests passed: {len(tests)}")
 
 if __name__ == "__main__":

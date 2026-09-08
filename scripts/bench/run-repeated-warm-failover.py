@@ -39,7 +39,23 @@ class EvidenceError(ValueError):
         super().__init__(message)
         self.diagnostic = diagnostic
 
-def retain_private_diagnostics(stderr: str, cycle_index: int) -> dict[str, Any]:
+DIAGNOSTIC_CATEGORIES = ("nonzero_exit", "timeout", "malformed_output", "missing_event", "invalid_evidence")
+
+
+def diagnostic_category(error: BaseException) -> str:
+    if isinstance(error, subprocess.TimeoutExpired):
+        return "timeout"
+    detail = str(error).lower()
+    if isinstance(error, json.JSONDecodeError) or "malformed json" in detail or "not-json" in detail:
+        return "malformed_output"
+    if "missing" in detail and "event" in detail:
+        return "missing_event"
+    return "invalid_evidence"
+
+
+def retain_private_diagnostics(stderr: str, cycle_index: int, category: str = "nonzero_exit") -> dict[str, Any]:
+    if category not in DIAGNOSTIC_CATEGORIES:
+        raise ValueError("invalid diagnostic category")
     import re
     text = stderr.replace("\x00", "�")
     for pattern, replacement in ((r"(?i)(password|token|secret|private[_ -]?key|authorization)\s*[:=]\s*[^\s]+", r"\1=<redacted>"),(r"(?i)(ssh|https?|tcp|udp)://[^\s]+", r"\1://<redacted>"),(r"(?<![A-Za-z0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]{1,5})?", "<endpoint>"),(r"(?i)(?:/home|/root|/tmp|/media|[A-Za-z]:\\)[^\r\n ]*", "<path>")):
@@ -52,7 +68,7 @@ def retain_private_diagnostics(stderr: str, cycle_index: int) -> dict[str, Any]:
     with open(target + ".tmp", "wb") as handle:
         os.fchmod(handle.fileno(), 0o600); handle.write(data)
     os.replace(target + ".tmp", target)
-    return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data), "truncated": len(encoded) > len(data), "classification": "collector_failure"}
+    return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data), "truncated": len(encoded) > len(data), "classification": "collector_failure", "category": category}
 
 def obj(value: Any, name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
@@ -205,8 +221,9 @@ def run(argv: list[str], invoke: Callable[..., subprocess.CompletedProcess[str]]
         try:
             completed = invoke(args.command, text=True, capture_output=True, timeout=remaining, env=env, check=False)
             if completed.returncode != 0:
-                diagnostic = retain_private_diagnostics(completed.stderr or "", index)
+                diagnostic = retain_private_diagnostics(completed.stderr or "", index, "nonzero_exit")
                 if completed.stdout.strip():
+                    diagnostic["category"] = "invalid_evidence"
                     raise EvidenceError("collector returned nonzero with a row", diagnostic)
                 raise EvidenceError(f"collector returned nonzero ({completed.returncode}); diagnostic {diagnostic['classification']} sha256={diagnostic['sha256'][:16]} bytes={diagnostic['bytes']}", diagnostic)
             raw = json.loads(completed.stdout)
@@ -220,9 +237,13 @@ def run(argv: list[str], invoke: Callable[..., subprocess.CompletedProcess[str]]
                 first_failure = {"cycle_index": index, "kind": "cycle_failed", "detail": row["result"]["failure_stage"] or "reported failure"}
                 break
         except (subprocess.TimeoutExpired, json.JSONDecodeError, EvidenceError) as error:
-            first_failure = {"cycle_index": index, "kind": "invalid_cycle_evidence", "detail": str(error)[:240]}
-            if isinstance(error, EvidenceError) and error.diagnostic is not None:
-                first_failure["diagnostic"] = error.diagnostic
+            category = (error.diagnostic.get("category")
+                        if isinstance(error, EvidenceError) and error.diagnostic else diagnostic_category(error))
+            first_failure = {"cycle_index": index, "kind": "invalid_cycle_evidence", "detail": str(error)[:240], "diagnostic_category": category}
+            if not isinstance(error, EvidenceError) or error.diagnostic is None:
+                first_failure["diagnostic"] = retain_private_diagnostics("", index, category)
+            else:
+                first_failure["diagnostic"] = {**error.diagnostic, "category": category}
             break
 
     elapsed_ms = int((clock() - started) * 1000)

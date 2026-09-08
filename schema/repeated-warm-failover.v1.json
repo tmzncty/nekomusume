@@ -18,11 +18,12 @@
   "$defs": {
     "failure": {
       "type": "object", "additionalProperties": false,
-      "required": ["cycle_index", "kind", "detail"],
+      "required": ["cycle_index", "kind", "detail", "diagnostic_category"],
       "properties": {
         "cycle_index": {"type": "integer", "minimum": 1, "maximum": 6},
         "kind": {"enum": ["batch_timeout", "cycle_failed", "invalid_cycle_evidence"]},
-        "detail": {"type": "string", "maxLength": 240}, "diagnostic": {"type": "object", "additionalProperties": false, "required": ["sha256", "bytes", "truncated", "classification"], "properties": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "bytes": {"type": "integer", "minimum": 0, "maximum": 4096}, "truncated": {"type": "boolean"}, "classification": {"const": "collector_failure"}}}
+        "diagnostic_category": {"enum": ["nonzero_exit", "timeout", "malformed_output", "missing_event", "invalid_evidence"]},
+        "detail": {"type": "string", "maxLength": 240}, "diagnostic": {"type": "object", "additionalProperties": false, "required": ["sha256", "bytes", "truncated", "classification", "category"], "properties": {"category": {"enum": ["nonzero_exit", "timeout", "malformed_output", "missing_event", "invalid_evidence"]}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "bytes": {"type": "integer", "minimum": 0, "maximum": 4096}, "truncated": {"type": "boolean"}, "classification": {"const": "collector_failure"}}}
       }
     },
     "count": {"type": "integer", "minimum": 0},
