@@ -438,6 +438,12 @@ fn emit_lifecycle(lifecycle: &lifecycle::Lifecycle) {
         .flush()
         .unwrap_or_else(|_| fail("lifecycle output failed"));
 }
+fn emit_signal_shutdown(lifecycle: &lifecycle::Lifecycle) {
+    lifecycle.drain();
+    emit_lifecycle(lifecycle);
+    lifecycle.stopped();
+    emit_lifecycle(lifecycle);
+}
 fn server(args: &[String]) {
     let lifecycle = lifecycle::Lifecycle::new();
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -653,9 +659,7 @@ fn server(args: &[String]) {
                         {
                             UdpWait::Datagram(n, data_peer) => (n, data_peer),
                             UdpWait::Shutdown => {
-                                lifecycle.drain();
-                                lifecycle.stopped();
-                                println!("lifecycle_state=STOPPED readiness=false");
+                                emit_signal_shutdown(&lifecycle);
                                 return;
                             }
                             UdpWait::Deadline => fail("data timeout"),
@@ -678,9 +682,7 @@ fn server(args: &[String]) {
         }
     }
     if shutdown.load(Ordering::Acquire) {
-        lifecycle.drain();
-        lifecycle.stopped();
-        println!("lifecycle_state=STOPPED readiness=false");
+        emit_signal_shutdown(&lifecycle);
         return;
     }
     lifecycle.failed();

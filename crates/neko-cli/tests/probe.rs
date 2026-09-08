@@ -393,8 +393,22 @@ fn sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings() {
             log.contains("lifecycle_state=READY readiness=true"),
             "{log}"
         );
-        assert!(
-            log.contains("lifecycle_state=STOPPED readiness=false"),
+        let ready = log.find("lifecycle_state=READY readiness=true").unwrap();
+        let draining = log
+            .find("lifecycle_state=DRAINING readiness=false")
+            .unwrap();
+        let stopped = log.find("lifecycle_state=STOPPED readiness=false").unwrap();
+        assert!(ready < draining && draining < stopped, "{log}");
+        assert_eq!(
+            log.matches("lifecycle_state=DRAINING readiness=false")
+                .count(),
+            1,
+            "{log}"
+        );
+        assert_eq!(
+            log.matches("lifecycle_state=STOPPED readiness=false")
+                .count(),
+            1,
             "{log}"
         );
         if transport == "tcp" {

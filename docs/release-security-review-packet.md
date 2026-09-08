@@ -2,15 +2,17 @@
 
 **Scope:** evidence index only. This is not an audit, security approval, production authorization, protocol freeze, or release decision.
 
-**Prepared at exact commit:** `36494928315a83b728a2e3ac647ee4ab0e25c416`
-**Handoff SHA-256 (read-only):** `6de20f52b7d7faa7c43961ba64b2e00ac8076385a83219cd5462966daff066a4`
+**Evidence indexed through exact implementation/test commit:** `ff1e8f8803715adc2015e9e45a9414e3a15a50c7`
+
+This packet is an evidence index, not a self-referential commit attestation; later packet-text commits may update the index without changing the tested tree.
 
 ## Review boundaries
 
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain unchanged.
 - Bounded release item 3 and natural-loss evidence remain unchecked.
 - Existing historical artifacts remain immutable; current exact-tree evidence is indexed without rewriting them.
-- The packet now indexes one bounded self-owned VPS package install/authenticated TCP+UDP smoke; this remains operator evidence, not release, production, public-reachability, or security approval.
+- The packet indexes one bounded self-owned VPS package install/authenticated TCP+UDP smoke; this remains operator evidence, not release, production, public-reachability, or security approval.
+- The prior installed-package lifecycle attempt remains an incomplete orchestration negative; the repaired lifecycle emission is local implementation/test evidence only until a separately authorized changed-hypothesis VPS run completes.
 
 ## Evidence index
 
