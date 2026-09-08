@@ -94,10 +94,10 @@ p,row=invoke(); runner.validate_cycle(row, 1); assert p.returncode==0 and row["r
 p,row=invoke("delayed_start"); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]["status"]=="passed"
 for scenario, category in (
  ("early_exit", "startup_setup"),
- ("duplicate_negotiation", "negotiation_auth"),
- ("duplicate_readiness", "readiness"),
- ("duplicate_application_ack", "application_runtime"),
- ("malformed_json", "evidence_serialization"),
+ ("duplicate_negotiation", "evidence_serialization"),
+ ("duplicate_readiness", "evidence_serialization"),
+ ("duplicate_application_ack", "evidence_serialization"),
+ ("malformed_json", "startup_setup"),
  ("malformed_cleanup", "cleanup"),
 ):
  p,row=invoke(scenario); assert p.returncode==2 and p.stdout == "" and '"category":"' + category + '"' in p.stderr, (scenario,p.stderr)

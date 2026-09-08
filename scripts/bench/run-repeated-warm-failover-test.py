@@ -9,7 +9,9 @@ import pathlib
 import subprocess
 import tempfile
 
+
 SCRIPT = pathlib.Path(__file__).with_name("run-repeated-warm-failover.py")
+SCHEMA = SCRIPT.parent.parent.parent / "schema" / "repeated-warm-failover.v1.json"
 spec = importlib.util.spec_from_file_location("repeated_warm", SCRIPT)
 assert spec and spec.loader
 module = importlib.util.module_from_spec(spec)
@@ -67,6 +69,25 @@ def expect_invalid(value: dict, text: str) -> None:
         assert text in str(error), str(error)
     else:
         raise AssertionError("invalid evidence accepted")
+
+def test_schema_accepts_historical_and_new_negative() -> None:
+    from jsonschema import Draft202012Validator
+    schema = json.loads(SCHEMA.read_text())
+    validator = Draft202012Validator(schema)
+    historical = pathlib.Path(__file__).parents[2] / "artifacts" / "repeated-warm-failover" / "a117086-typed-negative" / "result.json"
+    for historical_path in pathlib.Path(__file__).parents[2].glob("artifacts/repeated-warm-failover/*/result.json"):
+        errors = list(validator.iter_errors(json.loads(historical_path.read_text())))
+        assert not errors, (historical_path, errors)
+    marker = json.dumps({"schema": "nekomusume.inner-failure.v1", "category": "startup_setup", "reason": "server_exited_before_json_event_start"})
+    def failing(*_args, **_kwargs):
+        return subprocess.CompletedProcess([], 2, "", marker)
+    with tempfile.TemporaryDirectory() as td:
+        batch, code = module.run(["--output", str(pathlib.Path(td) / "result.json"), "--", "fake"], invoke=failing)
+    errors = list(validator.iter_errors(batch))
+    assert not errors, errors
+    assert batch["first_failure"]["diagnostic_category"] == "startup_setup"
+    assert batch["first_failure"]["diagnostic"]["category"] == "startup_setup"
+
 
 def test_six_success() -> None:
     batch, code, called = execute([row(i) for i in range(1, 7)])
@@ -211,6 +232,21 @@ def main() -> None:
         assert "hidden" not in tracked and "192.0.2.9" not in tracked
         private_text = (private / "cycle-1.stderr.txt").read_text()
         assert "hidden" not in private_text and "192.0.2.9" not in private_text
+
+    # A malformed cleanup must not mask an earlier explicitly-owned startup failure.
+    with tempfile.TemporaryDirectory() as td:
+        private = pathlib.Path(td) / "private"
+        marker = json.dumps({"schema": "nekomusume.inner-failure.v1", "category": "startup_setup", "reason": "server_exited_before_json_event_start"})
+        def startup_with_bad_cleanup(*_args, **_kwargs):
+            return subprocess.CompletedProcess([], 2, "", marker + "\ncleanup=malformed")
+        old = os.environ.get("NEKO_PRIVATE_DIAGNOSTICS_DIR")
+        os.environ["NEKO_PRIVATE_DIAGNOSTICS_DIR"] = str(private)
+        try:
+            batch, code = module.run(["--output", str(pathlib.Path(td) / "result.json"), "--", "fake"], invoke=startup_with_bad_cleanup)
+        finally:
+            if old is None: os.environ.pop("NEKO_PRIVATE_DIAGNOSTICS_DIR", None)
+            else: os.environ["NEKO_PRIVATE_DIAGNOSTICS_DIR"] = old
+        assert code == 1 and batch["first_failure"]["diagnostic_category"] == "startup_setup"
 
     # Exit 0 + malformed output is also a collector contradiction.
     with tempfile.TemporaryDirectory() as td:

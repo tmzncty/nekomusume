@@ -59,37 +59,19 @@ class CollectionError(ValueError):
 
 
 def category_for(message: str) -> str:
-    detail = message.lower()
-    if "cleanup" in detail or "listener" in detail or "process" in detail:
-        return "cleanup"
-    if any(token in detail for token in ("negotiat", "handshake", "noise", "auth", "trust", "version")):
-        return "negotiation_auth"
-    if any(token in detail for token in ("readiness", "warm", "resume", "uncertain")):
-        return "readiness"
-    if any(token in detail for token in ("delivery acknowledgement", "delivery_ack", "application")):
-        return "application_runtime"
-    if ("start" in detail and ("exited before" in detail or "startup" in detail or "invalid cycle" in detail)):
-        return "startup_setup"
-    if "missing" in detail and "start" in detail:
-        return "startup_setup"
-    if any(token in detail for token in ("json", "evidence", "timing", "accounting", "summary", "out of order", "cardinality")):
-        return "evidence_serialization"
-    if any(token in detail for token in ("readiness", "warm", "resume", "uncertain")):
-        return "readiness"
-    if any(token in detail for token in ("handshake", "negotiat", "noise", "auth", "trust", "version")):
-        return "negotiation_auth"
-    if any(token in detail for token in ("delivery", "application", "tcp", "udp", "socket", "timeout")):
-        return "application_runtime"
-    return "startup_setup"
+    # Conservative fallback for unmarked failures: prose never establishes a
+    # runtime stage. Explicitly owned CollectionError categories are required
+    # for fine-grained attribution.
+    return "nonzero_exit"
 
 def command(name: str) -> list[str]:
     try:
         value = json.loads(os.environ[name])
     except (KeyError, json.JSONDecodeError) as exc:
-        raise CollectionError(f"invalid {name}") from exc
+        raise CollectionError(f"invalid {name}", "startup_setup") from exc
     if (not isinstance(value, list) or not 1 <= len(value) <= MAX_ARGV or
             any(not isinstance(arg, str) or not arg or "\0" in arg or len(arg) > 4096 for arg in value)):
-        raise CollectionError(f"invalid {name}")
+        raise CollectionError(f"invalid {name}", "startup_setup")
     return value
 
 def executable_path(value: str) -> pathlib.Path:
@@ -97,25 +79,25 @@ def executable_path(value: str) -> pathlib.Path:
     if not candidate.is_absolute() and candidate.parent == pathlib.Path("."):
         found = shutil.which(value)
         if found is None:
-            raise CollectionError("command executable is unavailable")
+            raise CollectionError("command executable is unavailable", "startup_setup")
         candidate = pathlib.Path(found)
     try:
         return candidate.resolve(strict=True)
     except OSError as exc:
-        raise CollectionError("command executable is unavailable") from exc
+        raise CollectionError("command executable is unavailable", "startup_setup") from exc
 
 def require_same_executable(argv: list[str], binary: pathlib.Path) -> None:
     try:
         same = os.path.samefile(executable_path(argv[0]), binary)
     except OSError as exc:
-        raise CollectionError("cannot compare command executable") from exc
+        raise CollectionError("cannot compare command executable", "startup_setup") from exc
     if not same:
-        raise CollectionError("command executable differs from declared binary")
+        raise CollectionError("command executable differs from declared binary", "startup_setup")
 
 def valid_argv(value: Any, name: str) -> list[str]:
     if (not isinstance(value, list) or not 1 <= len(value) <= MAX_ARGV or
             any(not isinstance(arg, str) or not arg or "\0" in arg or len(arg) > 4096 for arg in value)):
-        raise CollectionError(f"invalid {name}")
+        raise CollectionError(f"invalid {name}", "startup_setup")
     return value
 
 def endpoints(binary: pathlib.Path, binary_sha: str, binary_bytes: int, commit: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -129,43 +111,43 @@ def endpoints(binary: pathlib.Path, binary_sha: str, binary_bytes: int, commit: 
     try:
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise CollectionError("invalid NEKO_FAILOVER_ENDPOINTS_JSON") from exc
+        raise CollectionError("invalid NEKO_FAILOVER_ENDPOINTS_JSON", "startup_setup") from exc
     if not isinstance(value, list) or len(value) != 2:
-        raise CollectionError("invalid endpoint descriptors")
+        raise CollectionError("invalid endpoint descriptors", "startup_setup")
     result: dict[str, dict[str, Any]] = {}
     for item in value:
         role=item.get("role") if isinstance(item, dict) else None
         execution=item.get("execution") if isinstance(item, dict) else None
         expected_keys = {"role", "execution", "binary", "argv"} | ({"transport_argv", "ssh_executable"} if execution == "ssh" else set())
         if not isinstance(item, dict) or set(item) != expected_keys:
-            raise CollectionError("invalid endpoint descriptor")
+            raise CollectionError("invalid endpoint descriptor", "startup_setup")
         declared=item.get("binary")
         if role not in ("server", "client") or role in result or execution not in ("local", "ssh"):
-            raise CollectionError("invalid endpoint role or execution")
+            raise CollectionError("invalid endpoint role or execution", "startup_setup")
         if (not isinstance(declared, dict) or set(declared) != {"path", "sha256", "bytes", "git_commit"} or
                 not isinstance(declared["path"], str) or not declared["path"] or "\0" in declared["path"] or
                 declared["sha256"] != binary_sha or declared["bytes"] != binary_bytes or declared["git_commit"] != commit):
-            raise CollectionError("endpoint binary differs from staged binary identity")
+            raise CollectionError("endpoint binary differs from staged binary identity", "startup_setup")
         argv=valid_argv(item.get("argv"), "endpoint argv")
         if argv[0] != declared["path"]:
-            raise CollectionError("endpoint argv executable differs from underlying binary")
+            raise CollectionError("endpoint argv executable differs from underlying binary", "startup_setup")
         normalized={"role":role,"execution":execution,"binary":declared,"argv":argv}
         if execution == "local":
-            if "transport_argv" in item: raise CollectionError("local endpoint has transport")
+            if "transport_argv" in item: raise CollectionError("local endpoint has transport", "startup_setup")
             require_same_executable(argv,binary)
         else:
             transport=valid_argv(item.get("transport_argv"),"SSH transport argv")
             declared_ssh=item.get("ssh_executable")
             if not isinstance(declared_ssh, str) or not declared_ssh:
-                raise CollectionError("invalid SSH executable")
+                raise CollectionError("invalid SSH executable", "startup_setup")
             try:
                 if not os.path.samefile(executable_path(transport[0]), executable_path(declared_ssh)):
-                    raise CollectionError("SSH transport executable differs from declared SSH executable")
+                    raise CollectionError("SSH transport executable differs from declared SSH executable", "startup_setup")
             except OSError as exc:
-                raise CollectionError("cannot compare SSH transport executable") from exc
+                raise CollectionError("cannot compare SSH transport executable", "startup_setup") from exc
             normalized["transport_argv"]=transport
         result[role]=normalized
-    if set(result) != {"server","client"}: raise CollectionError("missing endpoint role")
+    if set(result) != {"server","client"}: raise CollectionError("missing endpoint role", "startup_setup")
     return result["server"], result["client"]
 
 def execution_argv(endpoint: dict[str, Any]) -> tuple[list[str], bytes | None]:
@@ -180,15 +162,15 @@ def checkout_head() -> str:
             capture_output=True, text=True, timeout=5, check=True,
         ).stdout.strip()
         if not root:
-            raise CollectionError("adapter checkout is unavailable")
+            raise CollectionError("adapter checkout is unavailable", "startup_setup")
         head = subprocess.run(
             ["git", "-C", root, "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=5, check=True,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
-        raise CollectionError("adapter checkout is unavailable") from exc
+        raise CollectionError("adapter checkout is unavailable", "startup_setup") from exc
     if not HEX40.fullmatch(head):
-        raise CollectionError("adapter checkout HEAD is invalid")
+        raise CollectionError("adapter checkout HEAD is invalid", "startup_setup")
     return head
 
 def requires(argv: list[str], token: str, value: str | None = None) -> None:
@@ -211,9 +193,9 @@ def event_objects(text: str) -> list[dict[str, Any]]:
         try:
             value = json.loads(candidate)
         except json.JSONDecodeError as exc:
-            raise CollectionError(f"malformed JSON event on line {line_number}") from exc
+            raise CollectionError(f"malformed JSON event on line {line_number}", "evidence_serialization") from exc
         if not isinstance(value, dict) or not isinstance(value.get("event"), str):
-            raise CollectionError(f"invalid JSON event on line {line_number}")
+            raise CollectionError(f"invalid JSON event on line {line_number}", "evidence_serialization")
         values.append(value)
     return values
 
@@ -223,7 +205,7 @@ def carrier(text: str, name: str) -> list[str]:
 def singleton_carrier(text: str, name: str) -> str | None:
     rows = carrier(text, name)
     if len(rows) > 1:
-        raise CollectionError(f"duplicate carrier event: {name}")
+        raise CollectionError(f"duplicate carrier event: {name}", "evidence_serialization")
     return rows[0] if rows else None
 
 def version(text: str, name: str) -> int | None:
@@ -234,10 +216,10 @@ def version(text: str, name: str) -> int | None:
 def one_event(events: list[dict[str, Any]], name: str, required: bool = False, role: str | None = None) -> dict[str, Any] | None:
     matches = [item for item in events if item.get("event") == name]
     if len(matches) > 1:
-        raise CollectionError(f"duplicate JSON event: {name}")
+        raise CollectionError(f"duplicate JSON event: {name}", "evidence_serialization")
     if required and not matches:
         prefix = f"{role} " if role else ""
-        raise CollectionError(f"missing {prefix}JSON event: {name}")
+        raise CollectionError(f"missing {prefix}JSON event: {name}", "evidence_serialization")
     return matches[0] if matches else None
 
 def exact_nonnegative_int(value: Any) -> bool:
@@ -246,20 +228,20 @@ def exact_nonnegative_int(value: Any) -> bool:
 def validate_event_stream(events: list[dict[str, Any]], role: str, identity: str) -> None:
     for item in events:
         if item.get("role") != role or item.get("experiment_id") != identity:
-            raise CollectionError(f"{role} event identity mismatch")
+            raise CollectionError(f"{role} event identity mismatch", "evidence_serialization")
 
 def event_position(text: str, name: str) -> int:
     for index, line in enumerate(text.splitlines()):
         candidate = line.lstrip()
         if candidate.startswith("{") and json.loads(candidate).get("event") == name:
             return index
-    raise CollectionError(f"missing JSON event: {name}")
+    raise CollectionError(f"missing JSON event: {name}", "evidence_serialization")
 
 def carrier_position(text: str, name: str) -> int:
     for index, line in enumerate(text.splitlines()):
         if line.startswith("carrier_event ") and f"name={name} " in line:
             return index
-    raise CollectionError(f"missing carrier event: {name}")
+    raise CollectionError(f"missing carrier event: {name}", "evidence_serialization")
 
 def strictly_ordered(*positions: int) -> bool:
     return all(left < right for left, right in zip(positions, positions[1:]))
@@ -311,7 +293,7 @@ def server_start_readiness(log_path: pathlib.Path, process: subprocess.Popen[byt
                            identity: str, expected: dict[str, int], timeout: float) -> None:
     """Wait for one complete, validated start event without consuming the log."""
     if not 0 < timeout <= 10:
-        raise CollectionError("invalid server startup timeout")
+        raise CollectionError("invalid server startup timeout", "startup_setup")
     deadline = time.monotonic() + timeout
     while True:
         text = log_path.read_text(errors="replace") if log_path.exists() else ""
@@ -322,14 +304,14 @@ def server_start_readiness(log_path: pathlib.Path, process: subprocess.Popen[byt
             if start is not None:
                 if any(not exact_nonnegative_int(start.get(key)) or start.get(key) != value
                        for key, value in expected.items()):
-                    raise CollectionError("malformed server JSON event: start")
+                    raise CollectionError("malformed server JSON event: start", "startup_setup")
                 return
         except CollectionError as exc:
-            raise CollectionError("malformed server JSON event: start") from exc
+            raise CollectionError("malformed server JSON event: start", "startup_setup") from exc
         if process.poll() is not None:
-            raise CollectionError("server exited before JSON event: start")
+            raise CollectionError("server exited before JSON event: start", "startup_setup")
         if time.monotonic() >= deadline:
-            raise CollectionError("server_start_timeout")
+            raise CollectionError("server_start_timeout", "startup_setup")
         time.sleep(0.01)
 
 def main() -> int:
@@ -340,19 +322,19 @@ def main() -> int:
     try:
         index_text = os.environ.get("NEKO_FAILOVER_CYCLE_INDEX", "")
         if not index_text.isdigit() or not 1 <= int(index_text) <= 6:
-            raise CollectionError("invalid cycle index")
+            raise CollectionError("invalid cycle index", "startup_setup")
         index = int(index_text)
         commit = os.environ.get("NEKO_FAILOVER_GIT_COMMIT", "")
         if not HEX40.fullmatch(commit):
-            raise CollectionError("invalid git commit")
+            raise CollectionError("invalid git commit", "startup_setup")
         if checkout_head() != commit:
-            raise CollectionError("git commit differs from adapter checkout HEAD")
+            raise CollectionError("git commit differs from adapter checkout HEAD", "startup_setup")
         binary = pathlib.Path(os.environ.get("NEKO_FAILOVER_BINARY", ""))
         if not binary.is_file():
-            raise CollectionError("binary is not a file")
+            raise CollectionError("binary is not a file", "startup_setup")
         binary_bytes = binary.stat().st_size
         if binary_bytes <= 0:
-            raise CollectionError("binary is empty")
+            raise CollectionError("binary is empty", "startup_setup")
         binary_sha = hashlib.sha256(binary.read_bytes()).hexdigest()
         server_endpoint, client_endpoint = endpoints(binary, binary_sha, binary_bytes, commit)
         server_argv, client_argv = server_endpoint["argv"], client_endpoint["argv"]
@@ -367,7 +349,7 @@ def main() -> int:
         udp_port = int(os.environ.get("NEKO_FAILOVER_UDP_PORT", "40081"))
         tcp_port = int(os.environ.get("NEKO_FAILOVER_TCP_PORT", "40080"))
         if not all(40080 <= value <= 40100 for value in (udp_port, tcp_port)) or udp_port == tcp_port:
-            raise CollectionError("ports outside CLI bounded range")
+            raise CollectionError("ports outside CLI bounded range", "startup_setup")
         parameters = dict(PARAMETERS, udp_port=udp_port, tcp_port=tcp_port)
         server_identity = f"warm-cycle-{index}-server"
         client_identity = f"warm-cycle-{index}-client"
@@ -411,8 +393,12 @@ def main() -> int:
         finally:
             terminate(client); terminate(server)
             server_log.close(); client_log.close()
-        cleanup = subprocess.run(cleanup_argv, capture_output=True, text=True, timeout=5, check=False, start_new_session=True)
+        primary_error = startup_error
+        cleanup_error: CollectionError | None = None
+        listeners = 0
+        processes: int | None = None
         try:
+            cleanup = subprocess.run(cleanup_argv, capture_output=True, text=True, timeout=5, check=False, start_new_session=True)
             cleanup_value = json.loads(cleanup.stdout)
             listeners = cleanup_value["listeners_remaining"]
             allowed_cleanup = {"listeners_remaining", "processes_remaining"}
@@ -422,10 +408,14 @@ def main() -> int:
             processes = cleanup_value.get("processes_remaining")
             if remote_server and (isinstance(processes, bool) or not isinstance(processes, int) or processes < 0):
                 raise ValueError
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            raise CollectionError("cleanup command did not return bounded evidence")
-        if startup_error is not None:
-            raise startup_error
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
+            cleanup_error = CollectionError("cleanup command did not return bounded evidence", "cleanup")
+        # Preserve the earliest known execution/collection boundary. Cleanup is
+        # always attempted, but must not mask a prior startup/runtime error.
+        if primary_error is not None:
+            raise primary_error
+        if cleanup_error is not None:
+            raise cleanup_error
 
         server_text = (tmp_path / "server.log").read_text(errors="replace")
         client_text = (tmp_path / "client.log").read_text(errors="replace")
@@ -449,10 +439,10 @@ def main() -> int:
                for key, value in expected_client.items()) or any(
                 not exact_nonnegative_int(server_start.get(key)) or server_start.get(key) != value
                 for key, value in expected_server.items()):
-            raise CollectionError("start parameters mismatch")
+            raise CollectionError("start parameters mismatch", "evidence_serialization")
         if any(client_start.get(key) != server_start.get(key) for key in
                ("count", "record_payload_bytes", "application_bytes_total", "udp_port", "tcp_port")):
-            raise CollectionError("server/client start parameters mismatch")
+            raise CollectionError("server/client start parameters mismatch", "evidence_serialization")
         readiness_events = [item for item in ce if item.get("event") == "tcp_warm_readiness"]
         readiness = {item.get("seq") for item in readiness_events}
         event_cardinality = {
@@ -466,9 +456,9 @@ def main() -> int:
         if all(item is not None for item in (timing_event, accounting_event, summary_client)):
             for label, (actual, expected) in event_cardinality.items():
                 if actual != expected:
-                    raise CollectionError(f"invalid {label} cardinality")
+                    raise CollectionError(f"invalid {label} cardinality", "evidence_serialization")
         if len(readiness_events) != len(readiness):
-            raise CollectionError("duplicate TCP readiness evidence")
+            raise CollectionError("duplicate TCP readiness evidence", "evidence_serialization")
         terminal_events = [name for name, item in (("failover_timing", timing_event), ("failover_accounting", accounting_event),
                                              ("summary", summary_client)) if item is not None]
         if terminal_events == ["failover_timing", "failover_accounting", "summary"] and not strictly_ordered(
@@ -476,13 +466,13 @@ def main() -> int:
                 event_position(client_text, "tcp_warm_readiness"), carrier_position(client_text, "tcp_warm"),
                 event_position(client_text, "failover_timing"), event_position(client_text, "failover_accounting"),
                 carrier_position(client_text, "ordered_records_complete"), event_position(client_text, "summary")):
-            raise CollectionError("client evidence out of order")
+            raise CollectionError("client evidence out of order", "evidence_serialization")
         if summary_server is not None and not strictly_ordered(
                 event_position(server_text, "start"), carrier_position(server_text, "udp_negotiated"),
                 carrier_position(server_text, "udp_authenticated"), carrier_position(server_text, "tcp_negotiated"),
                 carrier_position(server_text, "tcp_authenticated"), carrier_position(server_text, "tcp_resume_validated"),
                 carrier_position(server_text, "tcp_resumed"), event_position(server_text, "summary")):
-            raise CollectionError("server evidence out of order")
+            raise CollectionError("server evidence out of order", "evidence_serialization")
         udp_acks = count_events(ce, "udp_delivery_ack_validated")
         ordered = singleton_carrier(client_text, "ordered_records_complete") is not None
         server_resumed = singleton_carrier(server_text, "tcp_resumed") is not None
@@ -516,7 +506,7 @@ def main() -> int:
                         raw_timing["failure_decided_at_us"] <= raw_timing["first_resumed_data_accepted_us"] <= raw_timing["first_resumed_ack_at_us"] and
                         raw_timing["recovery_latency_us"] == raw_timing["first_resumed_data_accepted_us"] - raw_timing["failure_decided_at_us"])
         if timing_event is not None and not timing_valid:
-            raise CollectionError("invalid failover timing")
+            raise CollectionError("invalid failover timing", "evidence_serialization")
         timing = {"failure_decided_at_us": raw_timing["failure_decided_at_us"],
                   "first_resumed_data_at_us": raw_timing["first_resumed_data_accepted_us"],
                   "first_resumed_ack_at_us": raw_timing["first_resumed_ack_at_us"],
@@ -538,7 +528,7 @@ def main() -> int:
                             accounting["confirmed_records"] + accounting["lost_records"] == count and
                             all(accounting[key] == 0 for key in ("duplicate_records", "duplicate_bytes", "lost_records", "lost_bytes", "conflicting_records", "conflicting_bytes")))
         if accounting_event is not None and not accounting_valid:
-            raise CollectionError("invalid failover accounting")
+            raise CollectionError("invalid failover accounting", "evidence_serialization")
         client_reaped = bool(cr and cr.get("cleanup", {}).get("complete"))
         server_reaped = (cleanup.returncode == 0 and listeners == 0 and processes == 0) if remote_server else bool(sr and sr.get("cleanup", {}).get("complete"))
         cleanup_verified = cleanup.returncode == 0 and listeners == 0 and client_reaped and server_reaped
