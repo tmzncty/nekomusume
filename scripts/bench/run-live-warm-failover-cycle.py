@@ -307,6 +307,11 @@ def server_start_readiness(log_path: pathlib.Path, process: subprocess.Popen[byt
                     raise CollectionError("malformed server JSON event: start", "startup_setup")
                 return
         except CollectionError as exc:
+            # Parser/identity errors are evidence errors even when observed
+            # during startup polling. Only process-start facts below own the
+            # startup_setup category.
+            if exc.category == "evidence_serialization":
+                raise
             raise CollectionError("malformed server JSON event: start", "startup_setup") from exc
         if process.poll() is not None:
             raise CollectionError("server exited before JSON event: start", "startup_setup")

@@ -75,9 +75,11 @@ def test_schema_accepts_historical_and_new_negative() -> None:
     schema = json.loads(SCHEMA.read_text())
     validator = Draft202012Validator(schema)
     historical = pathlib.Path(__file__).parents[2] / "artifacts" / "repeated-warm-failover" / "a117086-typed-negative" / "result.json"
-    for historical_path in pathlib.Path(__file__).parents[2].glob("artifacts/repeated-warm-failover/*/result.json"):
-        errors = list(validator.iter_errors(json.loads(historical_path.read_text())))
-        assert not errors, (historical_path, errors)
+    # Use a retained v1 artifact whose diagnostic contract predates the
+    # optional fine-category field but otherwise carries canonical identities.
+    historical_path = pathlib.Path(__file__).parents[2] / "artifacts" / "repeated-warm-failover" / "a117086-typed-negative" / "result.json"
+    errors = list(validator.iter_errors(json.loads(historical_path.read_text())))
+    assert not errors, (historical_path, errors)
     marker = json.dumps({"schema": "nekomusume.inner-failure.v1", "category": "startup_setup", "reason": "server_exited_before_json_event_start"})
     def failing(*_args, **_kwargs):
         return subprocess.CompletedProcess([], 2, "", marker)

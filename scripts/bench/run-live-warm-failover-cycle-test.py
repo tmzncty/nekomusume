@@ -17,7 +17,7 @@ experiment_id="warm-cycle-1-"+role
 def j(event,seq=0,**kw): print(json.dumps(dict(experiment_id=experiment_id,role=role,event=event,seq=seq,**kw)),flush=True)
 if mode == "failover-server":
  if scenario == "delayed_start": import time; time.sleep(0.15)
- if scenario == "early_exit": sys.exit(9)
+ if scenario in ("early_exit", "early_exit_malformed_cleanup"): sys.exit(9)
  j("start",count=4 if scenario in ("start_mismatch","adversarial") else 3,record_payload_bytes=16,application_bytes_total=48,udp_port=40081,tcp_port=40080,max_seconds=15);
  if scenario in ("duplicate_start","adversarial"): j("start",count=3,record_payload_bytes=16,application_bytes_total=48,udp_port=40081,tcp_port=40080,max_seconds=15)
  if scenario in ("malformed_json","adversarial"): print("  {not-json")
@@ -67,8 +67,11 @@ if mode == "failover-client":
   if scenario == "duplicate_summary": j("summary",3,records=3,application_bytes_total=48)
  sys.exit(124 if scenario=="timeout" else 0)
 if mode == "cleanup":
- value={} if scenario=="malformed_cleanup" else {"listeners_remaining":1 if scenario=="cleanup" else 0}
- if scenario not in ("missing_remote_process_postcheck", "malformed_cleanup"): value["processes_remaining"]=0
+ marker=os.environ.get("CLEANUP_MARKER")
+ if marker: open(marker,"w").write("ran")
+ malformed=scenario in ("malformed_cleanup","early_exit_malformed_cleanup")
+ value={} if malformed else {"listeners_remaining":1 if scenario=="cleanup" else 0}
+ if scenario not in ("missing_remote_process_postcheck", "malformed_cleanup", "early_exit_malformed_cleanup"): value["processes_remaining"]=0
  print(json.dumps(value)); sys.exit(1 if scenario=="cleanup" else 0)
 '''
 
@@ -82,12 +85,14 @@ def invoke(scenario="success", marker="", server_executable=None, client_executa
  with tempfile.TemporaryDirectory() as td:
   fake=pathlib.Path(td)/"fake.py"; fake.write_text(FAKE); fake.chmod(0o700)
   env=os.environ.copy(); env.update(SCENARIO=scenario,NEKO_FAILOVER_CYCLE_INDEX="1",NEKO_FAILOVER_GIT_COMMIT=commit or HEAD,NEKO_FAILOVER_BINARY=binary or sys.executable,NEKO_FAILOVER_UDP_PORT="40081",NEKO_FAILOVER_TCP_PORT="40080",NEKO_FAILOVER_SERVER_STARTUP_SECONDS="0.01")
+  if scenario == "early_exit_malformed_cleanup": env["CLEANUP_MARKER"] = str(pathlib.Path(td)/"cleanup-ran")
   suffix=[marker] if marker else []
   env["NEKO_FAILOVER_SERVER_COMMAND_JSON"]=json.dumps([server_executable or sys.executable,str(fake),"failover-server","--diagnostic","--experiment-id","warm-cycle-1-server","--cease-udp-replies-after","1"]+suffix)
   env["NEKO_FAILOVER_CLIENT_COMMAND_JSON"]=json.dumps([client_executable or sys.executable,str(fake),"failover-client","--diagnostic","--experiment-id","warm-cycle-1-client","--automatic-health-failover"]+suffix)
   env["NEKO_FAILOVER_CLEANUP_COMMAND_JSON"]=json.dumps([sys.executable,str(fake),"cleanup"])
   if endpoints is not None: env["NEKO_FAILOVER_ENDPOINTS_JSON"]=json.dumps(endpoints(fake))
   p=subprocess.run([sys.executable,str(ADAPTER)],env=env,text=True,capture_output=True,timeout=30)
+  p.cleanup_ran = (pathlib.Path(td)/"cleanup-ran").exists()
   return p, json.loads(p.stdout) if p.stdout.strip() else None
 
 p,row=invoke(); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]["status"]=="passed"; assert row["semantic"]["readiness_proofs"]==3; assert row["accounting"]["uncertain_records"]==2
@@ -97,10 +102,12 @@ for scenario, category in (
  ("duplicate_negotiation", "evidence_serialization"),
  ("duplicate_readiness", "evidence_serialization"),
  ("duplicate_application_ack", "evidence_serialization"),
- ("malformed_json", "startup_setup"),
+ ("malformed_json", "evidence_serialization"),
  ("malformed_cleanup", "cleanup"),
 ):
  p,row=invoke(scenario); assert p.returncode==2 and p.stdout == "" and '"category":"' + category + '"' in p.stderr, (scenario,p.stderr)
+p,row=invoke("early_exit_malformed_cleanup")
+assert p.returncode==2 and p.stdout == "" and p.cleanup_ran and '"category":"startup_setup"' in p.stderr, p.stderr
 with tempfile.TemporaryDirectory() as td:
  symlink=pathlib.Path(td)/"python-symlink"
  try:
