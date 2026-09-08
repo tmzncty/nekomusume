@@ -22,7 +22,7 @@ Both archives passed their exact tree's `scripts/release/smoke-package.sh`. Inst
 
 ## Result
 
-The immutable release-directory sequence completed:
+The immutable release-directory sequence completed. The five-line sanitized phase anchor is retained verbatim at [`package-operator-distinct-version-91a735c-dc90c5f-20260909.result.jsonl`](package-operator-distinct-version-91a735c-dc90c5f-20260909.result.jsonl), SHA-256 `4e54f3205cf295ec82e9186eb6b6271558e6babddae819c5ef34e1595a0ddb09`, with exit status `0` and five records:
 
 ```json
 {"phase":"installed_distinct_hashes","status":"ok"}
