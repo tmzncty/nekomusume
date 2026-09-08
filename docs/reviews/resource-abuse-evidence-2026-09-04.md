@@ -2,7 +2,7 @@
 
 ## Current exact-tree reconciliation — `2566666` / `8a67be3` lineage
 
-**Engineering evidence state:** `ENGINEERING_EVIDENCE_CLOSED` for the non-policy pre-auth controls proven by the integrated tree: source tuple projection, charge-before-parse and exact response charging, all seven inventoried responder surfaces/six admission sites, atomic rollback and terminalization, source/global concurrency ceilings, expiry/release/error cleanup, bounded response deadlines, and aggregate-only secret-safe diagnostics.
+**Engineering evidence state:** `ENGINEERING_CONTROLS_PRESENT / INDEPENDENT_REVIEW_OPEN` for the non-policy pre-auth controls exercised by the integrated tree: source tuple projection, charge-before-parse and exact response charging, all seven inventoried responder surfaces/six admission sites, atomic rollback and terminalization, source/global concurrency ceilings, expiry/release/error cleanup, bounded response deadlines, and aggregate-only secret-safe diagnostics. Exact-tree independent review remains open, so these controls are not labeled closed.
 
 **Policy state:** `SOURCE_RETENTION_POLICY_BLOCKED`. D019 terminal source-accounting retention after the last live state disappears remains unresolved; the current release/reopen behavior is retained as evidence of that conflict, not compliance. No TTL/LRU/history bound, external authority, or D019 weakening is selected here.
 
