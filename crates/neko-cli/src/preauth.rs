@@ -697,4 +697,39 @@ mod tests {
         admission.release(ticket);
         assert!(admission.admit(peer).is_ok());
     }
+
+    #[test]
+    fn adversarial_same_source_reservations_are_bounded_and_redacted() {
+        let mut admission = ListenerAdmission::new();
+        let peer: SocketAddr = "198.51.100.7:40100".parse().unwrap();
+        let mut tickets = Vec::new();
+        for _ in 0..8 {
+            tickets.push(admission.admit_carrier(CarrierKind::Udp, peer).unwrap());
+        }
+        assert!(admission.admit_carrier(CarrierKind::Udp, peer).is_err());
+        assert_eq!(admission.process.live_states(), 8);
+        let debug = format!("{:?}", admission.process);
+        assert!(!debug.contains("198.51.100.7"));
+        for ticket in tickets {
+            admission.release(ticket);
+        }
+        assert_eq!(admission.process.live_states(), 0);
+        assert_eq!(admission.process.memory_bytes(), 0);
+    }
+
+    #[test]
+    fn adversarial_input_budget_rejects_before_parse_and_reopens_source() {
+        let mut admission = ListenerAdmission::new();
+        let peer: SocketAddr = "127.0.0.1:40101".parse().unwrap();
+        let mut ticket = admission.admit_carrier(CarrierKind::Udp, peer).unwrap();
+        for _ in 0..4 {
+            admission.charge_input(&mut ticket, 64, 64).unwrap();
+        }
+        assert!(admission.charge_input(&mut ticket, 64, 64).is_err());
+        assert!(admission.charge_response(&mut ticket, 1).is_err());
+        admission.release(ticket);
+        let next = admission.admit_carrier(CarrierKind::Udp, peer).unwrap();
+        admission.release(next);
+        assert_eq!(admission.process.live_states(), 0);
+    }
 }
