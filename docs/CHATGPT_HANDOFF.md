@@ -1,206 +1,202 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-08 12:57 Asia/Shanghai
-Repository main HEAD reviewed before this handoff: `643216794ffb53577213a6d4ba05457ea3f84768`
-Previous reviewer handoff commit: `643216794ffb53577213a6d4ba05457ea3f84768`
-Previous checked implementation HEAD: `bd43f5b466e5f4eb39ec516582dd1a8f49a89f61`
-Current execution branch: `work/e1a-staged-accounting-20260907` at exact `f024458926ec66d1d07ccf9b07534ae3d71bdf60`
-Current runtime implementation under review: exact `5d6582c0a674306cf47002d4cd26d6e0c6065c22`
-Exact implementation/evidence-head Rust CI: run `34188050956` — `success`
+Checked at: 2026-09-08 13:58 Asia/Shanghai
+Repository main HEAD reviewed before this handoff: `e2cad4f69189ae470743274e07ab8c0c79c9adf4`
+Previous reviewer handoff commit: `e2cad4f69189ae470743274e07ab8c0c79c9adf4`
+Previous checked implementation/evidence HEAD: `f024458926ec66d1d07ccf9b07534ae3d71bdf60`
+Current execution branch: `work/e1a-staged-accounting-20260907` at exact `a4da7b244511f687e513f8276bdf15d305e53397`
+Current endpoint-rebinding implementation commits under review: `7046e525150a652e13692d7e93310d3c48a4de10` + `a4da7b244511f687e513f8276bdf15d305e53397`
+Exact current execution-head GitHub Actions: run `34191255282` — `stable checks=success`, `nightly decode fuzz smoke=success`
 Historical partial-E2 branch retained: `work/continue-20260904` at `d271a99a2ab26abbcb146c411ba0fde697395abe`
 
 ## What changed
 
-The coding agent consumed the previous migration-back review and closed the live-evidence gaps in one coherent runtime/test repair, then ran exactly one bounded self-owned VPS observation and retained a narrow evidence note. This is healthy `Agent implement -> reviewer challenge -> Agent repair -> live evidence` iteration and is a genuine outward result.
+The coding agent consumed the endpoint-rebinding handoff promptly and made real implementation progress rather than idling. It merged the reviewer handoff into the work branch, then added a bounded `EndpointRebindState`/`EndpointRebindCandidate` model and tests. A follow-up commit retained the immediately retired source binding so the old endpoint can be recognized after promotion. Exact branch CI is green.
 
-Accepted exact `5d6582c` repairs:
+This is **not** `STALLED_IMPLEMENTATION`. The work is moving. It is also **not yet a runtime endpoint-rebinding capability**: the new commits touch the carrier state contract only; the live CLI/socket challenge-response path, process-level positive/negative tests, and VPS evidence do not exist yet.
 
-- `--migration-back` is now a distinct terminal experiment mode rather than being silently aliased to the legacy restore seam;
-- the client uses exact-peer `recv_from` for recovery and rejects a response from any source other than the configured peer;
-- recovery is a one-shot fresh authenticated challenge for this bounded experiment, so a successful observation can truthfully carry zero observed retry/loss/PTO;
-- active TCP health is measured from a real resumed authenticated Data -> exact `DeliveryAck` round trip rather than connect/Noise setup time;
-- one measured UDP recovery `HealthSample` is reused for both manager observation and the migration candidate;
-- the server requires exact Session/path/generation/epoch/challenge semantics and a complete post-return UDP Data/DeliveryAck milestone before a requested migration-back run can report success;
-- the final post-return application record remains unassigned until the manager has actually authorized UDP return;
-- final accounting includes that UDP-confirmed record correctly;
-- the migration-back tamper negative now launches a real server, proves TCP fallback/resumed DeliveryAck first, reaches recovery, then fails closed with no migration/post-return success;
-- exact `5d6582c` passed the full repository gate and exact execution/evidence head `f024458` has green Rust CI.
-
-The retained bounded VPS observation at `docs/notes/migration-back-vps-5d6582c-20260908.md` is internally consistent with those semantics: one IPv4 Session, three 16-byte records, scripted application-level UDP reply cessation, authenticated warm TCP fallback, measured TCP health, one exact-peer generation-1 UDP recovery challenge, hold-gated return, and only then one new UDP application record with authenticated `DeliveryAck`. Client and server exited successfully and cleanup found no retained experimental listener/process.
+The state direction is useful, but before wiring it into `neko-cli` it needs a small structural correction. The current API can accidentally encode the wrong security ownership model if used literally.
 
 ## Review verdict
 
-**MIGRATION_BACK_BOUNDED_LIVE_ACCEPTED — accept exact `5d6582c` runtime plus exact `f024458` evidence/status reconciliation for the bounded question. No HIGH/BLOCKER remains in this closure. Integrate this accepted lineage to `main`, then immediately open the next missing runtime capability: authenticated UDP source-endpoint rebinding with fresh path-generation validation.**
+**CONTINUE_WITH_STATE_CONTRACT_CORRECTION — accept the bounded state-machine direction and green exact-head CI, but tighten challenge ownership and exact endpoint/Session binding before runtime integration. Then complete the real socket seam and go straight to one bounded self-owned VPS source-endpoint-change observation.**
 
-This acceptance is deliberately narrow. The live observation used a scripted application-reply cessation and a bounded test-only 10 ms TCP `DeliveryAck` delay to cross the already-existing score margin. It therefore does **not** establish natural path recovery, a reliability rate, real-path comparative performance, public reachability, or production readiness. Those exclusions are already stated in the evidence note and must remain.
+No administrator action is required. No new wire type, crypto primitive, Session ACK semantic or numeric security policy is needed for the preferred repair.
 
-No administrator action is required for the migration-back closure or the next local endpoint-rebinding implementation. Standing authorization covers a later bounded self-owned TCP/UDP endpoint-migration observation if the local/runtime gates are green.
+## Reviewer findings
 
-## Reviewer findings / navigation decisions
+### EPREB-001 — HIGH contract risk — server-generated freshness is not structurally owned by the server
 
-### MIGBACK-015 — ACCEPTED — the prior four live-evidence defects are closed
+`EndpointRebindCandidate` currently contains `challenge_id`, and `observe_candidate()` accepts the entire candidate including that value. If the runtime maps a client-originated candidate record directly into this struct, the peer can effectively choose the value that is later treated as the server challenge. That would violate the intended two-way validation contract: authenticated input from B is only a candidate signal; the server must generate a **new** challenge after observing B, send it to exact B, and promote only after the exact authenticated response returns from B.
 
-The reviewed `5d6582c` code now binds recovery to the exact peer and exact authenticated tuple, uses measured comparable health inputs, makes requested migration-back terminal rather than fall-through, and contains a real process-level tamper negative. Do not reopen MIGBACK-010 through MIGBACK-014 without a new concrete regression.
+Required repair: split candidate observation from challenge issuance. Acceptable minimal shapes include:
 
-The 10 ms test-only TCP DeliveryAck delay is acceptable **only as part of this explicitly scripted bounded experiment**. It is not network latency evidence and must not be used in a performance claim. The retained note states this correctly.
+- `observe_candidate(candidate_without_challenge)` followed by `arm_challenge(server_generated_id)`; or
+- `observe_candidate(candidate_without_challenge, server_generated_id)` where the second argument is explicitly caller/server-owned and never copied from the candidate message.
 
-### NAV-EP-001 — READY_LOCAL — endpoint/source change is now the best outward runtime target
+The stored pending state may contain the armed challenge after that point. The runtime must never treat a client-selected challenge as fresh server validation evidence.
 
-Current planning classifies NAT/source-endpoint change as `BLOCKED_IMPLEMENTATION`: there is no authenticated live rebinding runner. This is a better next target than live PLPMTUD because the carrier architecture already says a Session is not bound to a five-tuple and a Path is a concrete carrier/peer instance, while D064 already includes `address_change` as a carrier-transition reason.
+Minimum unit proof: candidate observation does not promote; no response can validate before the server challenge is armed; wrong challenge fails closed; exact armed challenge promotes once.
 
-The owned environment can produce a genuine source-endpoint change without modifying production routes, firewall, DNS, proxy, tunnel or qdisc: the client can replace/rebind its UDP socket to a new ephemeral local endpoint while keeping the same authenticated logical Session. This directly unlocks a high-value rental-window VPS question.
+### EPREB-002 — HIGH contract risk — exact current Session/path/epoch binding is not enforced by the state object
 
-**Design authority:** the coding agent may propose/choose the smallest local API/state-machine shape and implement it without waiting. No new wire kind is required for the preferred shape below.
+The new state currently stores active source/path/generation, but not the expected Session identity or delivery epoch. `observe_candidate()` only checks that `session_id`, `delivery_epoch` and `challenge_id` are nonzero. It therefore does not itself reject a wrong-but-nonzero Session/epoch tuple. It also accepts any path and any generation greater than the current generation.
 
-Preferred semantic shape:
+For this bounded source-endpoint-rebind seam, the contract should structurally bind the candidate to the already-authenticated logical Session and the current path lineage. Preferred minimal direction:
 
-1. Start an authenticated UDP Session on source endpoint A, path 1 / generation N, and confirm at least one small application record.
-2. Create a new client UDP socket bound to a different ephemeral endpoint B. Do not mutate host routing/firewall/qdisc.
-3. From B, send one bounded authenticated unreliable readiness/control record identifying the same Session and a fresh candidate path generation. This is only a candidate signal; it is **not** by itself path validation and must not move application ownership.
-4. On receiving an authenticated candidate from a different source, the server keeps A as the current owner and sends its **own fresh authenticated `ReadinessRequest` challenge** to B. Reuse the existing authenticated readiness control envelope; do not add a new wire type solely for this lab seam.
-5. B must receive that exact-peer challenge and return the exact authenticated `ReadinessResponse` from B. The server promotes the candidate only after receiving the response from exact B with exact Session/path/generation/epoch/challenge binding.
-6. Promotion is atomic: the new endpoint becomes the current UDP path generation; the old endpoint becomes stale/draining for new application ownership. No new application Data is sent to B before validation completes.
-7. Send one previously-unassigned application record after promotion and require the exact authenticated Session `DeliveryAck` through B.
-8. A later authenticated/replayed/stale-generation record arriving from old endpoint A must not revive the old generation or create `PathValidated`, Session delivery, readiness, or ownership evidence.
+- initialize the state with the expected Session id and current delivery epoch, or pass them as explicit trusted expectations to candidate observation;
+- require exact Session and delivery epoch equality;
+- require the rebind path to be the intended current UDP path lineage for this seam;
+- derive/validate the fresh generation from trusted current state rather than accepting an arbitrary peer-selected future generation.
 
-This two-way server-generated challenge is important. Merely authenticating a client-originated record from B proves that a holder of Session keys can send from B; it does not prove the server's challenge reached B. Do not silently treat “authenticated packet from a new source” as complete path validation.
+Do not invent a new numeric policy. A checked current-generation -> next-generation transition or an existing manager-issued generation is enough.
 
-**Security/resource invariants:**
+### EPREB-003 — MEDIUM security/API wording — a truncated endpoint hash is not an “exact source endpoint”
 
-- exact source endpoint is part of the candidate-path binding;
-- candidate input cannot mutate current application ownership before fresh challenge/response validation;
-- no unauthenticated control changes endpoint/path state;
-- pre-validation response bytes remain inside existing bounded validation/amplification limits;
-- one outstanding candidate/challenge is enough for the bounded seam; do not create unbounded source/challenge history;
-- stale generation, wrong Session, wrong delivery epoch, wrong challenge, tamper, replay and old endpoint after promotion fail closed;
-- Session delivery, path validation, packet feedback and health remain separate evidence domains;
-- no new numeric security policy, TTL/LRU/history limit, wire frame type, crypto primitive or Session ACK semantics.
+The carrier comment says `source_tag` may be “typically a stable hash of the socket address”. A 64-bit hash cannot serve as a literal exact-endpoint security identity because collisions alias distinct endpoints.
 
-If the smallest implementation truly requires a new wire type or a new numeric security policy, stop **this lane only**, record the exact reason, and continue to the independent repeated-warm-failover diagnostics fallback. Do not invent policy values.
+The carrier layer may still use an opaque `u64` token, but the runtime must establish that token only **after an exact `SocketAddr` comparison/binding** or allocate a collision-free per-run opaque token from a bounded map. Do not make authorization/path-validation correctness depend on a truncated address hash. Tracked events should continue to omit raw private addresses.
 
-### NAV-PMTU-001 — NOT READY FOR AUTONOMOUS LIVE IMPLEMENTATION
+Update the API comment/test contract accordingly.
 
-Do **not** select live PLPMTUD ahead of endpoint rebinding merely because a socket-free `neko-reliable::Plpmtud` model exists. The current PMTUD ADR explicitly says the next implementation gate still must define exact authenticated probe/ACK wire fields, IPv4/IPv6/header accounting, PTB validation, timer/cooldown constants, record-fragmentation semantics and event schemas; it also labels several resource/probe numbers as implementation-gate candidates rather than frozen policy.
+### EPREB-004 — MEDIUM lifecycle — wrong validation must not leave a reusable ambiguous pending state
 
-Therefore direct live PLPMTUD integration today would cross the project's wire/numeric-policy escalation boundary. The agent may inspect/research it, but must not invent those decisions while a cleaner dependency-ready endpoint-migration lane exists.
+`validate_and_promote()` currently returns `ChallengeMismatch` while retaining the candidate. For the first bounded opt-in CLI seam, the simplest safe behavior is terminal failure of that experiment run after a wrong source/tuple/challenge/tamper/replay. If the state object is intended to be reusable instead, add an explicit one-shot reject/abandon transition. Do not silently keep a failed candidate indefinitely and later accept unrelated responses.
 
-### EVID-001 — migration-back claim boundary remains narrow
+No TTL/LRU/history number is needed. The experiment may simply fail closed and drop the bounded state.
 
-Accepted facts are: one scripted bounded self-owned IPv4 fallback/recovery/return observation at exact `5d6582c`, exact binary identity recorded, actual bounded parameters recorded, measured TCP and UDP decision inputs recorded, 3/3 logical records / 48 application bytes confirmed, one uncertain/replayed middle record, no duplicate/lost/conflicting record, and cleanup verified.
+### EPREB-005 — ACCEPTED DIRECTION — one retired source is enough for this single-rebind seam
 
-Not accepted: natural UDP recovery, NAT rebinding, reliability percentage, performance superiority, public reachability, production readiness, protocol freeze or release.
+`a4da7b2` retains the immediately retired source binding when promotion succeeds. That is a useful bounded mechanism for the required stale-old-A negative. Do not generalize it into unbounded source history. After promotion, a record/control attempt from the retired source must not create new path validation, promotion, Session delivery or success evidence.
 
-## Accepted repository boundaries
+## Evidence and repository boundaries
 
+- Exact `a4da7b2` is green local/CI **state-model evidence only**. It does not prove a UDP socket changed source endpoint.
+- `main` at this review still contains reviewer documentation lineage but not the accepted migration-back runtime/evidence lineage nor the endpoint-state commits. Do not describe default `main` as containing those capabilities yet.
+- Accepted migration-back evidence at exact `5d6582c`/`f024458` remains valid and narrow; do not rerun it unchanged.
+- NAT/source-endpoint change remains `BLOCKED_IMPLEMENTATION` until the real socket seam exists and passes its gates.
+- C2 source-retention remains an explicit release/security policy limitation. Do not invent TTL/LRU/history/epoch values.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
-- `IMPLEMENTATION_COMPLETE=true` remains a bounded research-implementation flag only.
-- C2 source-retention remains an explicit release/security policy limitation. Do not invent TTL/LRU/history/epoch values while unrelated post-auth runtime work can continue.
-- Existing migration-back evidence is retained at its exact commit boundary. Do not rerun it unchanged.
-- Exact `f024458` is green and carries accepted migration-back evidence/status reconciliation; it is not yet merged into reviewer `main` at the time of this handoff.
 - IPv6 remains environment-blocked.
-- Historical repeated-failover / HY2 negatives remain immutable at their exact commits; no unchanged retry.
-- Protected identities, SSH keys, credentials, private endpoints and raw private diagnostics remain unread/untracked/uncommitted.
+- Protected identities, SSH keys, credentials, raw private addresses and raw private diagnostics remain unread/untracked/uncommitted.
 
 ## Rolling Work Queue
 
-This is a continuous pre-authorized queue. Finish coherent capability/evidence closure -> focused/full gates -> commit -> push -> continue immediately. Reviewer cadence is not a work-ticket length.
+This is a continuous pre-authorized queue. One commit, one test, one reviewer interval or one nominal hour is never a stop condition.
 
-### A — Integrate accepted migration-back lineage into `main`
+### A — Tighten endpoint-rebinding state ownership before CLI wiring
 
-**Status:** `READY_GIT`; immediate coordination cleanup, not a new design gate.
+**Status:** `READY_LOCAL`; highest priority correctness repair.
 
-Fetch current reviewer `main`, merge/reconcile it into the execution branch while preserving this reviewer-owned `docs/CHATGPT_HANDOFF.md`, then integrate the accepted `5d6582c` runtime + `f024458` evidence/status lineage to `main` without force-push or history rewriting. Resolve any handoff conflict in favor of the current reviewer file.
+**Files/concepts:** `crates/neko-carrier/src/lib.rs`, endpoint-rebind unit tests.
 
-**Gate:** resulting integrated exact head must have `scripts/check.sh`, `git diff --check`, and exact-head CI green. If CI is merely pending, independent endpoint-rebinding local design/code may continue on the work branch; do not idle.
+Implement EPREB-001 through EPREB-004 with the smallest typed/state-machine change. Keep one outstanding bounded candidate only. Preserve EPREB-005 retired-source behavior.
+
+Required unit boundaries:
+
+- exact trusted Session/epoch/path lineage required;
+- peer candidate cannot choose server freshness token;
+- candidate alone cannot promote;
+- wrong source/tuple/challenge/generation fails closed;
+- exact server-armed response promotes exactly once;
+- retired old source cannot be treated as current after promotion;
+- no unbounded history and no new numeric policy.
+
+Run focused carrier tests, `./scripts/check.sh`, `git diff --check`; commit + push.
 
 **Continue immediately to B:** yes.
 
-### B — Authenticated UDP endpoint-rebinding runtime seam
+### B — Real UDP source-endpoint-rebinding CLI/socket seam
 
-**Status:** `READY_LOCAL`; proposal authority applies.
+**Status:** `PREAUTHORIZED_AFTER_A`; proposal authority applies.
 
-**Goal / why now:** turn the remaining NAT/source-endpoint-change matrix row from `BLOCKED_IMPLEMENTATION` into a real authenticated runtime path that can be tested with a genuine source-port change and later observed on the self-owned VPS.
+Implement an opt-in bounded experimental runtime path rather than silently changing all UDP server behavior.
 
-**Primary files/concepts:** `crates/neko-cli/src/main.rs`, existing failover/readiness control helpers, `CarrierManager` / path generation state, process tests. Reuse `ProcessMessage::ReadinessRequest/ReadinessResponse` and existing authenticated unreliable control if structurally suitable. Do not redesign post-auth Data/DeliveryAck.
+Positive sequence:
 
-**Behavior:** implement NAV-EP-001. Prefer a bounded opt-in experimental CLI seam such as endpoint-rebind/source-change rather than silently changing every UDP server path in this first closure.
+1. authenticate one logical UDP Session on endpoint A and confirm one small application record;
+2. client creates a genuinely new UDP socket bound to a different ephemeral source endpoint B;
+3. B sends authenticated candidate control for the same Session/current path lineage/fresh generation; candidate alone does not move ownership;
+4. server observes exact B, generates its own fresh authenticated `ReadinessRequest`, and sends it to exact B;
+5. B receives that exact-peer request and returns exact authenticated `ReadinessResponse` from B;
+6. server validates exact source + Session + path + generation + epoch + challenge, then atomically promotes B and retires A;
+7. only after promotion, send one previously-unassigned application Data record through B and require exact Session `DeliveryAck`;
+8. one later stale authenticated datagram/control from retired A must not revive the old generation or produce delivery/path-validation/success evidence.
 
-**Protected invariants:** same logical Session; new exact source is candidate-only until server-generated challenge round trip; generation-scoped validation; single-active application owner; no application Data on candidate before promotion; old source cannot revive after promotion; secret-safe events.
+Use `recv_from`/exact-peer checks where source identity matters. Do not use a truncated endpoint hash as the sole security check. No raw address in tracked events.
 
-**Minimal structured events:** semantic equivalents of `endpoint_candidate_seen`, `endpoint_challenge_sent`, `endpoint_validated`, `endpoint_promoted`, `endpoint_rebind_failed`, plus generation/path/session-safe identifiers but no raw address in tracked evidence.
+Minimal secret-safe events: semantic equivalents of `endpoint_candidate_seen`, `endpoint_challenge_sent`, `endpoint_validated`, `endpoint_promoted`, `endpoint_rebind_failed`, plus safe Session/path/generation markers.
 
 **Commit/push:** coherent runtime checkpoint required.
 
 **Continue immediately to C:** yes.
 
-### C — Endpoint-rebinding deterministic + real-loopback negative matrix
+### C — Process-level positive and true fail-closed negative
 
 **Status:** `PREAUTHORIZED_AFTER_B`.
 
-Positive minimum:
+Positive must prove a real local source-port inequality A != B, one pre-rebind confirmed record, challenge round trip, promotion, one post-promotion Data/DeliveryAck, and single-active ownership.
 
-- authenticated application record succeeds on endpoint A;
-- client rebinds to a genuinely different local UDP source port B;
-- candidate control from B alone does not promote;
-- server-generated fresh challenge reaches B;
-- exact authenticated response from B validates/promotes fresh generation;
-- one previously-unassigned post-promotion Data record via B receives exact Session DeliveryAck;
-- accounting/ownership stays single-active.
+Negative must launch the real server and reach the authenticated candidate/challenge stage. Preferred single negative: respond from the wrong source or with a wrong/tampered challenge and assert nonzero experiment result, no `endpoint_promoted`, no post-promotion DeliveryAck and no success summary. Also exercise one stale old-A datagram after a successful promotion and assert it creates no new validation/delivery evidence.
 
-Negative minimum: use one meaningful runtime negative rather than duplicating all manager unit tests. Preferred: reach authenticated candidate/challenge on B, then tamper or return wrong challenge/generation/source; assert no promotion, no post-promotion DeliveryAck, no success summary and old active ownership remains valid. Also assert one stale old-A datagram after successful promotion cannot create new delivery/path-validation evidence.
+Do not accept a test that merely fails during setup as a “rebind negative”.
 
-Run focused process tests + relevant carrier tests + `./scripts/check.sh` + `git diff --check`. Run fuzz smoke only if parser/wire decode changes; this design should not require such a change.
+Run focused process tests + carrier tests + `./scripts/check.sh` + `git diff --check`. Fuzz smoke is only required if parser/wire decode changes; the preferred design should not require one.
 
 **Exact-head CI must be green before D.**
 
 **Continue immediately to D:** yes.
 
-### D — One bounded self-owned VPS endpoint/source-change observation
+### D — One bounded self-owned VPS source-endpoint-change observation
 
-**Status:** `PREAUTHORIZED_AFTER_C_GREEN`; standing authorization already covers ordinary bounded TCP/UDP migration/recovery work.
+**Status:** `PREAUTHORIZED_AFTER_C_GREEN`.
 
-Use the smallest genuine source-endpoint change the owned client/VPS setup can produce without production network mutation: client UDP socket A -> new ephemeral UDP socket B on the same controlled client, with the server observing a different source endpoint. It is acceptable if this demonstrates source-port/endpoint rebinding rather than a full public-IP change; describe exactly what changed.
+Standing authorization already covers this ordinary bounded self-owned TCP/UDP migration experiment. Do not request another WAN permission.
 
-Minimum workload: one pre-rebind confirmed record, one candidate/challenge/response path-validation sequence, one post-promotion confirmed record. Keep one Session, tiny payloads, short command bound. No production route/firewall/DNS/proxy/tunnel/qdisc changes.
+Use the smallest genuine endpoint change: client UDP socket A -> distinct ephemeral UDP socket B against the controlled VPS, same logical Session. No route/firewall/DNS/proxy/tunnel/qdisc mutation.
 
-Retain exact commit/binary, actual parameters/times, endpoint-change class (`source_port_changed` or stronger if genuinely observed), old/new endpoint inequality as a boolean/hash-safe relation rather than raw private address material, path/generation transitions, challenge outcome, post-promotion DeliveryAck, client/server exit, cleanup and cheap resource observations when already available.
+Minimum workload: one pre-rebind confirmed record, one candidate/server-challenge/response sequence, one post-promotion confirmed record, then cleanup.
 
-**Claim boundary:** one bounded authenticated self-owned endpoint-rebinding observation only; not general NAT traversal, roaming reliability, public reachability or production readiness.
+Retain exact commit/binary, actual parameters and times, `source_endpoint_changed=true` (or hash-safe inequality) without raw private address material, path/generation transitions, challenge outcome, DeliveryAck, client/server exits, cleanup, and cheap resource observations when already available.
+
+Claim only one bounded authenticated source-port/endpoint rebinding observation. Do not claim general NAT traversal, roaming reliability, public reachability or production readiness.
 
 Preserve the first meaningful negative; no unchanged retry.
 
 **Continue immediately to E:** yes.
 
-### E — Reconcile release matrix/status and integrate endpoint lineage
+### E — Evidence/status reconciliation and lineage integration
 
 **Status:** `PREAUTHORIZED_AFTER_D`.
 
-Update only facts actually established by D in `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `docs/status.md`, and a compact evidence note/artifact. If D proves only source-port rebinding, write exactly that; do not relabel it as arbitrary NAT/public-IP migration.
+Update only facts actually established in `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `docs/status.md` and a compact evidence note. If the experiment proves only source-port rebinding, say exactly that.
 
-Then integrate exact-green implementation/evidence lineage into `main`, preserving reviewer handoff ownership and history.
+Then integrate the accepted migration-back + endpoint-rebinding implementation/evidence lineage into `main`, preserving the newest reviewer-owned handoff and normal history. Because outward work is active, do not create repeated coordination-only merges before the capability closure unless branch divergence becomes a real blocker.
 
 **Continue immediately to F:** yes.
 
-### F — Repeated warm-failover diagnostic repair while next architecture gate is reviewed
+### F — Repeated warm-failover diagnostic blind spot
 
-**Status:** `READY_LOCAL_FALLBACK_AFTER_E`; bounded harness work is allowed here because migration-back and endpoint-rebinding have produced outward runtime results first.
+**Status:** `READY_LOCAL_FALLBACK_AFTER_E`.
 
-Do not rerun exact `9fd2411` / `a117086`. Add bounded sanitized inner-collector failure categorization so a nonzero collector result can be distinguished at least among startup/setup, negotiation/auth, readiness, application/runtime and evidence-serialization/cleanup categories without retaining secrets. Propagate that category to the existing outer typed result.
+Do not rerun exact `9fd2411` / `a117086`. Add bounded sanitized inner-collector failure categorization for at least startup/setup, negotiation/auth, readiness, application/runtime, evidence serialization and cleanup, then propagate the category to the existing outer typed result.
 
-Synthetic/local verification first. One later live retry is justified only if instrumentation materially changed and exact-head CI is green.
+Synthetic/local proof first. Exactly one later self-owned live retry is justified only after materially changed instrumentation and exact-head green CI.
 
-**Continue immediately to G:** yes.
-
-### G — One materially changed repeated-failover live attempt if F resolves the diagnostic blind spot
+### G — One materially changed repeated-failover live attempt
 
 **Status:** `PREAUTHORIZED_AFTER_F_GREEN`.
 
-Exactly one changed-hypothesis self-owned bounded attempt; retain prefix/negative evidence, exact binary/parameters, failure category and cleanup. Do not require six successful cycles to preserve a useful prefix. Do not mechanically repeat if the same classified failure recurs without a new hypothesis.
+Run exactly one changed-hypothesis bounded attempt. Preserve any valid prefix, failure category, exact binary/parameters and cleanup. If the same classified failure repeats without a new hypothesis, stop that lane rather than mechanically retrying.
 
-### H — Next protocol-gate selection, not speculative implementation
+### H — Next protocol-gate selection
 
 **Status:** `REVIEWER_CHECKPOINT_AFTER_E/G`.
 
-At this point re-evaluate the remaining matrix. Live PLPMTUD still requires its explicit wire/policy implementation gate unless a newer ADR has resolved it. HY2 remains a comparison lane, not the sole release gate. Prefer a real release-matrix blocker over FEC/0-RTT/striping/multipath/exotic-carrier work.
+Re-evaluate the remaining release matrix. Live PLPMTUD remains non-autonomous until its wire/policy gate is explicit. Do not implement FEC/0-RTT/striping/multipath/exotic carriers merely to keep busy. Prefer the next real release-matrix blocker that can be closed without inventing wire or numeric security policy.
 
-If all remaining runtime-capability rows genuinely require new wire or numeric security policy, that is a real maintainer/reviewer architecture checkpoint and may be escalated then; do not fabricate policy merely to keep commits moving.
+## Stop conditions
+
+Administrator escalation remains limited to: core Session/Carrier/ACK/crypto/wire architecture change; new numeric security policy/ADR value; destructive migration; work beyond standing authorization; possible production impact; new credentials/server/third-party authority; benchmark objective requiring maintainer value judgment; an unresolvable major security issue; or a genuinely new project phase.
+
+Everything above through the bounded VPS endpoint-rebinding observation is ordinary pre-authorized engineering work. Continue unless a real stop condition appears.
