@@ -709,7 +709,11 @@ mod tests {
         assert!(admission.admit_carrier(CarrierKind::Udp, peer).is_err());
         assert_eq!(admission.process.live_states(), 8);
         let debug = format!("{:?}", admission.process);
-        assert!(!debug.contains("198.51.100.7"));
+        assert_eq!(
+            debug,
+            "ProcessPreauthAdmission { live_states: 8, source_count: 1, memory_bytes: 131072, queued: 0, window_input_bytes: 0, window_input_packets: 0, window_work_units: 0, window_response_bytes: 0, window_response_packets: 0 }"
+        );
+        assert!(!debug.contains("[198, 51, 100, 7]"));
         for ticket in tickets {
             admission.release(ticket);
         }

@@ -1062,7 +1062,6 @@ struct ProcessPreauthSource {
 /// Process-owned admission accounting for unauthenticated work. Source keys are
 /// opaque bounded caller projections; raw addresses or identities need not be
 /// retained. Charges are atomic and happen before the protected operation.
-#[derive(Debug)]
 pub struct ProcessPreauthAdmission {
     limits: ProcessPreauthLimits,
     next_id: u64,
@@ -1077,6 +1076,24 @@ pub struct ProcessPreauthAdmission {
     response_bytes: usize,
     response_packets: usize,
 }
+
+impl std::fmt::Debug for ProcessPreauthAdmission {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProcessPreauthAdmission")
+            .field("live_states", &self.states.len())
+            .field("source_count", &self.sources.len())
+            .field("memory_bytes", &self.memory_bytes)
+            .field("queued", &self.queued)
+            .field("window_input_bytes", &self.input_bytes)
+            .field("window_input_packets", &self.input_packets)
+            .field("window_work_units", &self.work_units)
+            .field("window_response_bytes", &self.response_bytes)
+            .field("window_response_packets", &self.response_packets)
+            .finish()
+    }
+}
+
 impl ProcessPreauthAdmission {
     pub fn new(limits: ProcessPreauthLimits, now_ms: u64) -> Result<Self, SessionRejected> {
         if limits.max_states_per_source == 0
