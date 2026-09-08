@@ -1,321 +1,279 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-08 07:00 Asia/Shanghai
-Repository main HEAD reviewed: `49c4fc127c5750f1e91b2da30612f3be6c08fc93`
-Previous reviewer handoff commit: `49c4fc127c5750f1e91b2da30612f3be6c08fc93`
-Current implementation/evidence branch: `work/e1a-staged-accounting-20260907` at exact `69d0ed93d95bffa8727469cafb347b5c4d43b145`
-Previous checked implementation HEAD: `2f4f59a9887dbcde2973175d3f7abf30f8edaa15`
+Checked at: 2026-09-08 07:58 Asia/Shanghai
+Repository HEAD reviewed: `759cb1fe8a3f3a9cd8b7789595d291497412608f`
+Previous reviewer handoff commit: `3f162fd5a64b2862e719d3d43b01a12a0fca657f`
+Previous checked implementation/evidence HEAD: `69d0ed93d95bffa8727469cafb347b5c4d43b145`
+Current execution branch: `work/e1a-staged-accounting-20260907` at the same exact `759cb1fe8a3f3a9cd8b7789595d291497412608f`
 Historical partial-E2 branch retained: `work/continue-20260904` at `d271a99a2ab26abbcb146c411ba0fde697395abe`
 
 ## What changed
 
-One meaningful evidence commit landed after the previous review:
+Two coordination/evidence-closure commits landed after the previous review:
 
-- `69d0ed9` — **retains one bounded self-owned VPS synchronized periodic TCP key-update observation** for exact implementation `2f4f59a`. This is evidence/docs only; it does not change runtime, wire, crypto, Session, Carrier or release semantics.
+- `729917f` — reconciles the fixed-schedule live key-update result into `IMPLEMENTATION_PLAN.md`, `ROADMAP.md`, `docs/status.md`, and the retained evidence note. It correctly marks exact `2f4f59a` / evidence `69d0ed9` as sufficient only for the bounded self-owned fixed-schedule question and explicitly records that start/end/duration were not retained rather than inventing them.
+- `759cb1f` — deliberately merges the accepted implementation/evidence lineage with the latest reviewer lineage. `main` and `work/e1a-staged-accounting-20260907` now point to the same exact tree. This closes the long-running default-branch divergence without squashing or rewriting historical evidence commits.
 
-The retained observation records:
+Exact integrated-head CI is green on both refs:
 
-- administrator-controlled VPS identity verified by non-secret hostname/UID/architecture checks;
-- authenticated periodic TCP Session;
-- 3 application records x 16 bytes = 48 application bytes;
-- fixed `--key-update-after 1` schedule;
-- exact release binary size `1,208,216` bytes and SHA-256 `6be15273b2ce4b3e241d800d15d8eefd334d6d37615bae733c5bff4a64a89a43`;
-- both peers emitted secret-free `key_phase=1` after sequence 1;
-- client `attempted=3 confirmed=3 missing=0 duplicates=0`;
-- server `received=3 confirmed=3 duplicates=0`;
-- bounded cleanup found no experiment listener on TCP 40080 and no remaining Nekomusume experiment process; the remote experiment path and temporary local identity material were removed.
+- `main` Rust CI run `34169798559` — `success`;
+- `work/e1a-staged-accounting-20260907` Rust CI run `34169791969` — `success`.
 
-Exact-head CI is green:
+No new runtime semantics were introduced by `729917f` or the integration merge. The accepted staged pre-auth accounting, responder coverage, carrier-aware source projection, synchronized periodic TCP key update, mismatch negative, and bounded VPS key-update evidence are now all present on default `main`.
 
-- implementation/evidence exact `69d0ed93d95bffa8727469cafb347b5c4d43b145` — Rust CI run `34165984858`, `success`;
-- reviewer main exact `49c4fc127c5750f1e91b2da30612f3be6c08fc93` — Rust CI run `34165251936`, `success`.
+The visible key-update closure is therefore complete for its declared bounded question. Do not rerun it for freshness.
 
-This closes the previously `READY_LIVE_NOW` bounded question. Do **not** rerun the same key-update scenario for freshness. The result is one correctness observation, not a reliability rate or production rekey protocol.
-
-The authoritative planning/status files on the implementation branch are now stale in a concrete way: `IMPLEMENTATION_PLAN.md` still classifies live key update as `BLOCKED_IMPLEMENTATION`, and its opportunity section still says `READY_LIVE: none`, despite exact-green runtime plus retained VPS evidence. That must be reconciled before moving the accepted lineage onto default `main`.
+Only one coding-agent `:20` execution opportunity has occurred since the merge, and that opportunity performed the required integration itself. The absence of a migration-back implementation commit at this exact review is **not yet stagnation**.
 
 ## Review verdict
 
-**ACCEPT_BOUNDED_LIVE_KEY_UPDATE — advance immediately to authoritative classification reconciliation, then integrate the accepted implementation/evidence lineage onto default `main`, then continue outward to carrier recovery/migration-back.**
+**ACCEPT_INTEGRATED_OUTWARD_CLOSURE — A/B are complete. Advance directly to the missing carrier-recovery / migration-back runtime seam, with one small planning-drift repair folded into the next closure package.**
 
-No HIGH/BLOCKER correctness, security or evidence defect was discovered in `69d0ed9`. The evidence language is appropriately narrow and does not claim dynamic peer-negotiated rekey, arbitrary resynchronization, reliability, public reachability, performance superiority, RC or production readiness.
+No HIGH/BLOCKER correctness or security defect was found in the new commits. C2 terminal-source retention remains an explicit release/security policy limitation and does not block runtime/WAN work.
 
-C2 terminal-source retention remains an isolated release/security policy limitation and does not block this runtime/VPS queue. No administrator action is required.
+No administrator action is required.
 
-## Review findings and retained boundaries
+## Review findings
 
-### KEYUP-LIVE-001 — ACCEPTED — bounded self-owned VPS synchronized key update
+### COORD-001 — CLOSED at `759cb1f`
 
-The exact `2f4f59a` runtime, retained by evidence commit `69d0ed9`, now has both local/process evidence and one self-owned VPS observation:
+Default `main` once again contains the accepted executable/evidence truth. The implementation branch and main are aligned at one exact green tree. Do not create another long-lived divergence merely to avoid ordinary reviewer commits; normal fetch/reconcile remains sufficient.
 
-- one already-authenticated periodic TCP Session crosses exactly one fixed synchronized phase boundary;
-- application/DeliveryAck traffic continues after the boundary;
-- all 3/3 bounded application records complete in this observation;
-- no missing or duplicate application record is reported;
-- both endpoints independently report the same phase transition;
-- cleanup is recorded as zero experiment listener/process residue.
+### KEYUP-LIVE-001 — CLOSED for the bounded question
 
-This is sufficient for the narrow release-matrix question “can two controlled peers synchronously rekey this already-authenticated bounded periodic TCP Session at a fixed out-of-band schedule on the observed self-owned path?”
+Retain exact implementation `2f4f59a` and evidence `69d0ed9`:
 
-It does **not** prove:
+- one authenticated periodic TCP Session;
+- fixed out-of-band `--key-update-after 1` schedule;
+- 3 x 16-byte application records;
+- both peers report `key_phase=1` after sequence 1;
+- client 3/3 confirmed, server 3/3 received, zero reported missing/duplicates;
+- bounded cleanup reported no experiment listener/process residue;
+- exact binary identity retained.
 
-- a wire-level key-update negotiation/control message;
-- arbitrary peer-initiated rekey;
-- recovery from asymmetric update without failure;
-- dynamic resynchronization;
-- long-term key-rotation policy;
-- interaction with carrier transition;
-- reliability rate, production readiness, public reachability or superiority.
+The committed evidence now truthfully says that start/end timestamps and elapsed duration were **not retained**. Do not reconstruct them and do not rerun solely to fill that metadata gap.
 
-Do not repeat this exact scenario unless a new question, code/configuration change, instrumentation change or materially different path condition exists.
+This does not prove wire-level dynamic rekey negotiation, arbitrary peer-initiated rekey, asymmetric resynchronization, a rotation policy, reliability rate, production readiness, public reachability, or superiority.
 
-### KEYUP-EVIDENCE-002 — MEDIUM — experiment duration/start-end metadata not retained in the committed summary
+### PLAN-DRIFT-001 — MEDIUM — repeated-failover “next seam” wording is stale
 
-`docs/standing-vps-lab-authorization.md` asks every public experiment to be associated with start/end time, and the previous handoff asked to retain actual duration. `artifacts/periodic-key-update-vps-2f4f59a/evidence.md` records count, bytes, update boundary, binary identity, client/server outcomes and cleanup, but not explicit start/end or elapsed duration.
+`IMPLEMENTATION_PLAN.md` still contains an old execution hint saying the smallest next seam is to fix the exact-`07545f0` repeated-failover command boundary so an invocation can enter the Python runner. That no longer describes current repository truth.
 
-This is an evidence-completeness gap, **not** a reason to rerun the successful scenario.
+Later exact evidence already exists:
 
-During the next classification commit:
+- `9fd2411` / archive `c156868` entered the cross-host repeated warm-failover runner and produced a schema-valid batch-level `invalid_cycle_evidence` negative;
+- changed-hypothesis exact `a117086` / archive `69bad72` again reached the structured outer runner and produced 0/6 with `invalid_cycle_evidence` because the inner collector returned nonzero without a valid stdout row.
 
-- if the coding agent still has trustworthy structured/local experiment timestamps from this exact run, append only those exact values to the evidence note;
-- otherwise explicitly state `duration/start-end not retained` and keep the result bounded to the facts already committed;
-- never reconstruct or invent timestamps from commit time, shell history or guesswork.
+The truthful remaining repeated-failover blocker is therefore **inner collector / evidence-diagnostic observability**, not “did not enter the Python runner”. The retained negatives do not reveal a deeper runtime cause because the relevant inner diagnostic was not retained.
 
-Do not delay integration or the next runtime seam solely to manufacture missing duration metadata.
+Repair this stale planning wording the next time the authoritative release-evidence classification is touched. Do not create an hour of documentation work solely for this sentence, and do not use the stale wording to justify an unchanged VPS retry.
 
-### COORD-001 — ACTIVE — default main materially trails accepted executable truth
+If repeated warm failover becomes the active fallback lane, the next valid local change is instrumentation that retains a bounded sanitized inner failure category/diagnostic while preserving privacy; only then may one changed-hypothesis VPS invocation be considered.
 
-`main` at `49c4fc1` is reviewer/navigation lineage. The implementation/evidence branch at `69d0ed9` is 18 commits ahead and 3 reviewer commits behind from merge base `74abbd3`; it carries accepted E1A/E2/C1 work, local live-key-update runtime, mismatch negative and the VPS evidence.
+### RSEC-001E2-GUARD — RETAIN CLOSED at `655df00`
 
-This divergence is now large enough that default `main` must be reconciled at the next meaningful boundary. Do not keep accumulating runtime features only on the long-lived work branch.
+Do not reopen responder checker/inventory infrastructure absent a concrete regression.
 
-After authoritative key-update classification is corrected, perform one deliberate **normal non-force integration** onto default `main`. Preserve exact historical commits/evidence boundaries and preserve the latest reviewer-owned `docs/CHATGPT_HANDOFF.md` when resolving that file.
+### RSEC-001E1A — RETAIN CLOSED at `164731d` / current lineage
 
-### KEYUP-RUNTIME-001 — RETAINED ACCEPTED
+Staged one-logical-record TCP accounting remains present across ordinary, periodic, multistream, and failover pre-auth responder handshakes.
 
-Retain exact `0b293f7` synchronized periodic TCP runtime and `2f4f59a` mismatch negative. No new wire control frame, crypto primitive, Session/Carrier/ACK semantic or security-policy number was introduced.
-
-The event-specific mismatch assertions described by previous reviews remain optional MEDIUM diagnostic hardening only. They do not block runtime/VPS/integration work.
-
-### RSEC-001E2-GUARD — CLOSED at `655df00`
-
-Retain the responder-ordering/evidence guard. Do not reopen checker infrastructure absent a concrete regression.
-
-### RSEC-001E1A — CLOSED at `164731d` / current lineage
-
-Retain staged one-logical-record TCP accounting across ordinary, periodic, multistream and failover responder handshakes.
-
-### RSEC-001C1 — CLOSED at `f7e2cf1`
+### RSEC-001C1 — RETAIN CLOSED at `f7e2cf1`
 
 Carrier-aware pre-auth source projection remains accepted and bounded.
 
 ### RSEC-001C2 — POLICY LIMITATION at `f066af5`
 
-`docs/adr/m1-g0-preauth-source-retention-amendment-request.md` remains unresolved. Do not invent TTL/LRU/history/epoch/eviction values. For the current bounded research implementation, preserve bounded in-process cleanup and keep literal D019 terminal-source no-reset as an explicit unimplemented release/security limitation. This does not claim full D019 compliance and does not block independent runtime/WAN evidence.
+`docs/adr/m1-g0-preauth-source-retention-amendment-request.md` remains unresolved. Do not invent TTL/LRU/history/epoch/eviction values. Current bounded in-process cleanup remains allowed only with explicit acknowledgement that literal D019 terminal-source no-reset is not fully implemented. This is a release/security limitation, not a blocker for the outward runtime queue.
 
 ## Evidence boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains a bounded research-baseline flag only.
 - `CANONICAL_CORPUS_V1_FROZEN=true` remains corpus-specific only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain required.
-- Exact `69d0ed9` has green CI and adds retained self-owned VPS evidence for exact implementation `2f4f59a`; it adds no new implementation semantics.
-- The live key-update result is a **single bounded correctness observation** on one controlled path, not a reliability rate or production rekey protocol.
-- Fixed schedule synchronization remains out-of-band experimental configuration; no dynamic rekey negotiation may be implied.
-- Historical WAN/HY2/failover/periodic positive and negative evidence remains immutable at exact commit boundaries.
-- Standing VPS authorization continues to cover bounded self-owned TCP/UDP Session, key-update, failover, migration, recovery, PMTUD, resource observation, package rehearsal and cleanup within documented limits.
-- A failed future WAN run must be retained at its exact stage; no unchanged retry is permitted.
-- Protected identity material, SSH private keys, credentials, private endpoint material and raw private diagnostics remain unread/untracked/uncommitted. Secret connection configuration is used only through intended tools and must never be printed or copied into repository evidence.
+- Exact `759cb1f` is the integrated green repository truth; the merge itself adds no new WAN/runtime/performance semantics.
+- Exact `69d0ed9` retains one bounded self-owned VPS key-update observation for exact runtime `2f4f59a`; it is not a reliability rate or production rekey protocol.
+- Fixed-schedule key update remains experimental configuration; dynamic rekey negotiation is unsupported.
+- Historical failover/repeated-failover/HY2/periodic positive and negative evidence remains immutable at its exact commit boundary.
+- Standing VPS authorization covers bounded self-owned TCP/UDP Session, failover, migration, recovery, key update, PMTUD, resource observation, package rehearsal, capture, and cleanup within its documented limits.
+- The existing controlled failover evidence uses application-level UDP reply cessation. Do not call it natural packet loss, PTO blackhole, or general network recovery evidence.
+- Protected identities, SSH private keys, credentials, private endpoints, and raw private diagnostics remain unread/untracked/uncommitted. Secret connection configuration is used only through intended tools and must never be printed or copied into repository evidence.
 
 ## Rolling Work Queue
 
-Coordination cadence remains reviewer `:00`, coding-agent wake/resume `:20`; neither is a work-duration limit. If work is already running, do not interrupt it. Finish a coherent closure package -> gates -> commit -> push -> immediately consume the next dependency-ready package. One commit, nominal hour, reviewer interval, documentation checkpoint or ordinary CI wait is not a stop condition.
+Coordination remains reviewer `:00`, coding-agent wake/resume `:20`; neither is a work-duration limit. If work is already running, do not interrupt it. Finish a coherent closure package -> gates -> commit -> push -> immediately consume the next dependency-ready package. One commit, one nominal hour, one reviewer interval, a documentation checkpoint, or ordinary CI pending is not a stop condition.
 
-The coding agent owns ordinary local design choices under `AGENTS.md` proposal authority. The queue below is deliberately organized as outward closure packages rather than checker/doc micro-tickets.
+The coding agent owns ordinary local design choices under the `AGENTS.md` proposal protocol. Prefer a small number of complete outward closure packages over checker/doc micro-tickets.
 
-### A — Reconcile live-key-update evidence into authoritative status
+### C — Implement carrier recovery / migration-back runtime
 
-**Status:** `READY_LOCAL`; immediate next slice.
+**Status:** `READY_LOCAL`; immediate next runtime slice.
 
-**Goal / why now:** repository truth must stop calling live key update `BLOCKED_IMPLEMENTATION` now that exact-green runtime and one retained VPS observation exist.
+**Goal / why now:** migration-back remains a genuinely missing real-socket capability. The Carrier Manager already implements and tests the semantic gate, while the live failover runner currently promotes UDP -> warm/cold authenticated TCP and stops there. Closing the reverse path directly exercises the project’s defining Session-above-Carrier architecture and unlocks a high-value VPS-only observation.
 
-**Files/concepts:** `IMPLEMENTATION_PLAN.md`, `ROADMAP.md`, `docs/status.md`, and `artifacts/periodic-key-update-vps-2f4f59a/evidence.md` only if trustworthy exact timestamps/duration are still available.
+**Current reusable semantics:**
 
-**Protected invariants/evidence boundary:** update only the narrow fixed-schedule synchronized-key-update capability/evidence classification. Do not mark the whole release matrix complete. Do not promote RC/production/freeze/release. Do not rewrite historical negatives.
+- current controlled failover starts UDP active at path 1 / generation 0 and promotes authenticated TCP path 2 / generation 1;
+- `CarrierManager::migrate_back_to_udp(MigrationCandidate)` already requires a different path, **the current active generation**, explicit validation, healthy candidate evidence, score margin, and hold gate before mutation;
+- rejected migration candidates leave active ownership/metrics unchanged;
+- successful migration resets the hold and changes the single active owner; no simultaneous UDP+TCP application striping is permitted.
 
-**Required behavior:**
+**Files/concepts:** `crates/neko-cli/src/main.rs` failover runtime, `crates/neko-carrier/src/lib.rs` `CarrierManager` / `MigrationCandidate`, existing authenticated UDP path validation/readiness, Session `DeliveryAck`, uncertain/replay/dedup accounting, existing controlled reply-cessation fault seam.
 
-- replace stale `live key update = BLOCKED_IMPLEMENTATION` wording with a bounded evidence classification tied to exact `2f4f59a` / `69d0ed9`;
-- remove stale `READY_LIVE: none` only if current truth now has other ready rows; otherwise explicitly say the key-update row is answered and re-evaluate remaining rows;
-- distinguish local/runtime implementation, one live self-owned observation and unsupported dynamic rekey semantics;
-- if exact start/end/duration from the already-completed run is still available, append it; otherwise state it was not retained, without rerun or invention.
-
-**Validation:** `./scripts/check.sh` + `git diff --check`; documentation/status consistency checks already included in the repository gate.
-
-**Commit/push:** one coherent evidence/status commit on the implementation branch.
-
-**Continue immediately to B:** yes.
-
-### B — Integrate accepted implementation/evidence lineage into default main
-
-**Status:** `PREAUTHORIZED_AFTER_A_GREEN`; repository-truth closure.
-
-**Goal / why now:** default `main` should again contain the executable implementation and accepted evidence, not only reviewer navigation.
-
-**Files/concepts:** full accepted `work/e1a-staged-accounting-20260907` lineage plus current `origin/main`.
+**Proposal authority:** compare 1–3 minimal shapes and choose the smallest fail-closed implementation without waiting. A likely family is a **lab-bounded recovered UDP generation** inside the existing failover command: after TCP is active, obtain fresh authenticated/validated UDP recovery evidence for the current generation, feed existing health/hold gates, then atomically return application ownership to UDP. Equivalent designs are acceptable if they preserve the invariants below.
 
 **Protected invariants:**
 
-- no force-push;
-- no history rewrite or squash that destroys exact evidence boundaries;
-- no dropping accepted E1A/E2/C1/key-update commits;
-- latest reviewer-owned `docs/CHATGPT_HANDOFF.md` wins on that path if a merge conflict occurs;
-- governance flags unchanged.
+- Session identity/delivery state remains above Carrier;
+- single-active, multi-ready only; no new application data on UDP before migration gate success;
+- the old failed UDP generation must not be revived as current evidence; recovery must be represented as current-generation validated evidence consistent with the existing manager contract;
+- path validation remains distinct from packet health/score;
+- no unauthenticated packet may trigger migration;
+- no new wire/crypto/Session-ACK architecture merely to make the lab seam convenient;
+- no production route/firewall/DNS/proxy/tunnel/qdisc change;
+- preserve uncertain/replayed/dedup/confirmed accounting through both transitions.
 
-**Required behavior:** fetch current `origin/main`, perform one deliberate normal reconciliation/merge, run full repository gate, push integrated default branch according to existing repository workflow, and verify exact integrated-head CI.
+**Fault/recovery seam:** the current `--cease-udp-replies-after` behavior is explicitly an application-level lab fault. If a recovery control is needed, add the smallest bounded experimental-only seam and label it truthfully. Do not claim natural network recovery from a scripted reply restoration.
 
-**Validation:** `./scripts/check.sh` + `git diff --check` before push; exact integrated `main` CI must be green before a later VPS run that depends on integrated code.
+**Validation:** focused deterministic manager/runtime tests, then real loopback sockets. Required negative coverage includes stale/old generation, unvalidated recovery, unhealthy/margin failure, hold gate, and proof that failed migration leaves TCP active and does not send new UDP application data.
 
-**Commit/push:** ordinary merge/integration, no force.
+**Gate:** `./scripts/check.sh` + `git diff --check`; fuzz only if untrusted parser/wire decoding changes.
 
-**Continue immediately to C:** yes; if CI is pending, independent C design/local work may begin, but do not run VPS from an unverified integrated head when that exact head is the intended experiment candidate.
-
-### C — Select and specify the next outward runtime seam: carrier recovery / migration-back
-
-**Status:** `READY_LOCAL_AFTER_B`; proposal authority applies.
-
-**Goal / why now:** migration-back is still `BLOCKED_IMPLEMENTATION` for real-socket evidence even though Carrier Manager already has validated generation + health-margin + hold-gate state logic. It directly exercises Nekomusume’s defining Session-above-Carrier purpose and is higher value than cosmetic key-update assertions.
-
-**Default target:** one authenticated Session starts with UDP primary and warm authenticated TCP fallback, performs a bounded failure-driven promotion to TCP using existing uncertain/replay/dedup semantics, then after UDP recovery satisfies the existing validated generation/health-margin/hold gate and migrates application ownership back to UDP without dual-active data transmission.
-
-**Files/concepts:** existing failover/resume runtime in `crates/neko-cli`, Carrier Manager/migration-back state in `crates/neko-carrier`, existing DeliveryAck/uncertain/dedup evidence model and process tests.
-
-**Protected invariants:** Session remains above Carrier; `single-active, multi-ready`; no simultaneous UDP+TCP application striping; no new wire/crypto/Session-ACK architecture unless a genuine decision is discovered; no production network changes.
-
-**Proposal behavior:** compare 1–3 minimal implementation shapes, choose the smallest fail-closed path that reuses existing runtime and manager semantics, then implement without waiting for reviewer approval. If migration-back unexpectedly requires a core architecture decision, record the exact conflict and immediately choose another independent outward candidate rather than stopping the whole project.
-
-**Commit/push:** runtime seam + focused tests.
+**Commit/push:** one coherent runtime + tests slice.
 
 **Continue immediately to D:** yes.
 
-### D — Local real-socket migration-back proof
+### D — Local real-socket fallback -> recovery -> migration-back proof
 
 **Status:** `PREAUTHORIZED_AFTER_C`.
 
-**Goal:** prove the selected recovery/migration-back runtime with actual local sockets before spending WAN time.
+**Goal:** demonstrate the complete bounded state path with actual local TCP/UDP sockets before WAN use.
 
 **Required behavior:**
 
-- establish authenticated UDP primary and warm/ready TCP fallback;
-- inject only the existing bounded application-level or isolated test failure mechanism; do not claim natural packet-loss detection if the injection is application-level;
-- promote TCP under existing failover rules;
-- recover/revalidate UDP generation under existing manager gates;
-- migrate application ownership back to UDP only after the gate;
-- preserve uncertain/replayed/dedup/DeliveryAck accounting;
-- never have two active owners carrying new application data;
-- bounded shutdown/cleanup on success and failure.
+1. authenticated UDP primary carries application data;
+2. existing bounded application-level failure seam causes UDP -> TCP fallback under current rules;
+3. uncertain data is replayed/deduplicated under existing Session delivery semantics;
+4. UDP recovery is freshly authenticated/validated for the current generation;
+5. health-margin + hold gate is actually crossed;
+6. application ownership migrates back to UDP;
+7. at no point do TCP and UDP both carry new application data as active owners;
+8. post-return application `DeliveryAck` succeeds on UDP;
+9. bounded shutdown/cleanup succeeds on positive and negative paths.
 
-**Validation:** focused process/real-socket tests + `./scripts/check.sh` + `git diff --check`; fuzz only if untrusted parser/wire decode changes.
+**Evidence/assertions:** active carrier/generation transitions, fallback/recovery/migration event ordering, attempted/confirmed/missing/duplicate/uncertain/replayed counts, and no false success on rejected recovery.
 
-**Commit/push:** exact implementation head with green CI before E.
+**Commit/push:** exact local proof and tests. Exact-head CI must be green before E.
 
-**Continue immediately to E:** yes after exact-head green.
+**Continue immediately to E after exact-head green:** yes.
 
-### E — One materially distinct bounded self-owned VPS migration-back observation
+### E — One materially distinct self-owned VPS migration-back observation
 
-**Status:** `PREAUTHORIZED_AFTER_D_GREEN` if the local runtime path is truthfully ready.
+**Status:** `PREAUTHORIZED_AFTER_D_GREEN` if the local path is truthfully ready.
 
-**Goal / why now:** capture a second high-value rental-window-only behavior result: failure-driven fallback followed by recovery and migration-back in one bounded controlled Session.
+**Priority:** highest rental-window task once D is green.
 
-**Execution boundary:** self-owned client/VPS only, standing authorization, temporary unprivileged listeners, smallest workload that crosses fallback and recovery, <=10 minutes, <=256 MiB, <=32 sessions, no production route/firewall/DNS/proxy/tunnel/qdisc modification.
+**Execution boundary:** self-owned client/VPS only, standing authorization, temporary unprivileged listeners, smallest workload that crosses fallback and return, <=10 minutes, <=256 MiB application traffic, <=32 sessions, bounded capture only if useful, no production network modification.
 
-**Evidence:** exact git/binary identity, actual parameters, failure injection class, fallback/recovery/migration timestamps/events, active carrier/generation transitions, application attempted/confirmed/missing/duplicate/uncertain/replayed counts, cheap process/socket resource observations when already available, start/end/duration, explicit cleanup.
+**Evidence:** exact git and binary identity, actual parameters, start/end/duration, scripted failure/recovery class, active carrier/generation events, fallback and migration-back boundaries, application attempted/confirmed/missing/duplicate/uncertain/replayed counts, cheap CPU/RSS/FD/socket observations when already available, and explicit cleanup.
 
-**Claim boundary:** if the failure injection is controlled application-layer reply cessation, say exactly that; do not promote it to natural degradation/PTO-blackhole evidence.
+**Claim boundary:** scripted application-level reply cessation/restoration is exactly that; it is not natural degradation, PTO blackhole, or general middlebox recovery evidence.
 
-**Negative rule:** preserve the first meaningful negative. No unchanged retry; repair the discovered code/harness/config issue or change the hypothesis before another run.
+**Negative rule:** preserve the first meaningful negative at its exact stage. No unchanged retry. Repair code/instrumentation/config or change the hypothesis before another live attempt.
 
-**Commit/push:** bounded evidence checkpoint.
+**Commit/push:** one bounded evidence checkpoint.
 
 **Continue immediately to F:** yes.
 
-### F — Reconcile migration-back evidence and release matrix
+### F — Reconcile migration-back evidence and authoritative release matrix
 
 **Status:** `PREAUTHORIZED_AFTER_E`.
 
-**Goal:** update only the exact bounded capability/evidence rows answered by E.
+Update only the capability/evidence rows actually answered by C–E in `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `docs/status.md`, and the exact artifact references.
 
-**Files/concepts:** `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `docs/status.md`, exact new artifact/evidence references.
+In this same reconciliation, repair `PLAN-DRIFT-001`: remove the stale claim that repeated warm failover still needs the old `07545f0` Python-runner-entry fix. Reclassify it according to the later exact `9fd2411` / `a117086` inner-collector/evidence boundary without erasing either negative.
 
-**Protected boundary:** one successful bounded observation is not a reliability rate, production readiness or general natural-network recovery claim. Negative evidence retains its exact blocker category.
+One bounded positive remains one observation, not a reliability rate, production claim, or natural-network recovery result.
 
 **Validation:** repository consistency gate + `git diff --check`.
 
-**Commit/push:** evidence/status closure.
+**Commit/push:** one evidence/status closure.
 
 **Continue immediately to G:** yes.
 
-### G — Select the next VPS-unlock seam: endpoint/path migration or live PMTUD
+### G — Select the next VPS-unlock seam: endpoint migration or live PMTUD
 
 **Status:** `READY_LOCAL_AFTER_F`; proposal authority applies.
 
-**Priority choice:** inspect current code and choose the smaller/high-value real-network seam:
+Inspect current code and choose the smaller/high-value missing real-network seam:
 
-1. endpoint/source migration if the owned environment can create a genuine endpoint change without production route mutation; otherwise
-2. integrate existing authenticated PLPMTUD state into a live probe/ACK path without trusting unauthenticated ICMP; otherwise
-3. another genuinely `BLOCKED_IMPLEMENTATION` release row with a bounded path to VPS evidence.
+1. endpoint/source migration if the owned environment can produce a genuine endpoint change without production route mutation; otherwise
+2. integrate the existing authenticated PLPMTUD state into a live probe/ACK path without trusting unauthenticated ICMP; otherwise
+3. another real `BLOCKED_IMPLEMENTATION` release row with a short path to VPS evidence.
 
-Do not choose Experimental Track work merely to fill queue depth. Do not implement exotic carriers, FEC, 0-RTT or aggregation absent an observed problem.
+Do not choose FEC, 0-RTT, striping, heterogeneous aggregation, or exotic carriers merely to fill queue depth.
 
-**Commit/push:** one runtime-unlock slice + focused tests.
+**Commit/push:** runtime unlock + focused tests.
 
 **Continue immediately to H:** yes.
 
-### H — Local proof then one bounded VPS observation for the selected seam
+### H — Local proof then one bounded VPS observation for G
 
 **Status:** `PREAUTHORIZED_AFTER_G_GREEN`.
 
-Follow the same discipline: local real-socket proof first, exact-head green, then one minimal materially distinct self-owned VPS observation if the question is truly `READY_LIVE`. Preserve negative evidence and cleanup; no unchanged retry.
+Use the same discipline: local real-socket proof, exact-head green, then one minimal materially distinct self-owned VPS observation if the question is truly `READY_LIVE`. Preserve negatives and cleanup; no unchanged retry.
 
 **Continue immediately to I:** yes.
 
-### I — Independent security/release debt fallback
+### I — Repeated warm-failover diagnostic repair fallback
+
+**Status:** `READY_LOCAL_FALLBACK`; use only if C/G are genuinely architecture/environment blocked or while their exact CI is pending and this work is independent.
+
+Do **not** rerun `9fd2411` or `a117086` unchanged. The next useful slice is local instrumentation only: retain a bounded sanitized inner collector failure category/diagnostic in the outer structured evidence so a future changed-hypothesis invocation can distinguish configuration/orchestration/runtime failure without exposing endpoint/credential material.
+
+After the instrumentation change and local synthetic/dry verification, one materially changed self-owned VPS repeated-failover run is preauthorized if it answers the still-open repeated-resilience question. A new negative is valid evidence; no success is required.
+
+This fallback is intentionally behind the missing migration-back capability so harness work does not become the main project again.
+
+### J — Independent security/release debt fallback
 
 **Status:** `READY_LOCAL_FALLBACK`; must never displace READY runtime/VPS work.
 
-While C2 remains unresolved, cover only genuinely missing deterministic boundaries independent of terminal-source retention, or one exact-tree release-navigation consolidation after visible runtime progress. Reuse existing tests. Do not reopen pre-auth checker infrastructure. Do not let docs/checker work become the main lane again.
+While C2 remains unresolved, cover only deterministic boundaries independent of terminal-source retention or one exact-tree release-navigation consolidation after visible runtime progress. Reuse existing tests. Do not reopen pre-auth checker infrastructure.
 
-The optional key-update mismatch event-precision assertions may be done here only if no higher-value runtime/VPS work is dependency-ready.
+Optional key-update diagnostic precision belongs here only if no higher-value runtime/VPS work is ready.
 
 ## Completion gates
 
-The key-update outward closure is complete when all are true:
+The integrated key-update closure is complete now:
 
-- synchronized periodic authenticated TCP key update remains locally green;
-- exact implementation/evidence head CI is green;
-- one bounded self-owned VPS key-update observation is retained with exact implementation/binary/parameters/result/cleanup;
-- authoritative status no longer says live key update is `BLOCKED_IMPLEMENTATION`;
-- evidence explicitly distinguishes fixed experimental schedule from dynamic/production rekey protocol;
-- accepted implementation/evidence lineage is reconciled onto default `main`;
+- synchronized periodic key-update runtime exists and is exact-green;
+- mismatch fail-closed negative exists;
+- one bounded self-owned VPS observation is retained;
+- authoritative status no longer classifies live key update as implementation-blocked;
+- missing timestamps are explicitly recorded as not retained rather than invented;
+- accepted implementation/evidence lineage is on default `main`;
+- integrated exact-head CI is green;
 - governance flags remain unchanged.
 
-The first three are now satisfied at `69d0ed9`; A/B close the remaining repository-truth gates. Do not repeat the key-update VPS run merely to add more samples.
+The next visible closure is migration-back: C–F are complete only when the real runtime path exists, local sockets prove the full fallback/recovery/return sequence, one bounded VPS observation or exact retained negative is archived when dependency-ready, authoritative status is reconciled, and evidence wording stays within the scripted-fault boundary.
 
-The broader outward queue remains active through C–I unless a real stop condition occurs.
+The broader rolling queue remains active through G–J unless a real stop condition occurs.
 
 ## Do not expand into
 
-- new wire rekey-control frames solely to generalize the fixed-boundary experiment;
-- production/public listener deployment;
+- dynamic wire rekey-control work merely because fixed-schedule key update succeeded;
+- public or production listener deployment;
 - new source-retention TTL/LRU/history/epoch/eviction policy without reviewed authority;
-- FEC/0-RTT/striping/heterogeneous multipath/exotic carriers without an observed-problem gate;
-- unchanged repeats of historical failed WAN/HY2/repeated-failover/key-update lines;
-- reading/printing/copying/committing protected identity or SSH private-key contents;
+- FEC/0-RTT/UDP+TCP striping/heterogeneous aggregation/exotic carriers without an observed-problem gate;
+- unchanged repeats of historical failover/repeated-failover/HY2/key-update negatives or positives;
+- reading, printing, copying, hashing, uploading, or committing protected identity / SSH private-key contents;
 - production route/firewall/DNS/proxy/tunnel/qdisc changes;
 - third-party targets or scanning;
 - release/RC/freeze/production promotion.
 
 ## Questions requiring maintainer decision
 
-None for the current classification/integration/runtime/VPS queue.
+None for the current migration-back / VPS / next-runtime queue.
 
-C2 terminal-source retention remains a future release/security policy choice. Until a new policy is approved, conservative bounded cleanup plus explicit literal-D019 non-compliance remains in force and does not block this queue.
+C2 terminal-source retention remains a future release/security policy choice. Until a policy is approved, conservative bounded cleanup plus explicit literal-D019 non-compliance remains in force and does not block independent runtime/WAN work.
