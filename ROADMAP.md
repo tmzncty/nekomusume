@@ -195,12 +195,14 @@ and zero-client/zero-application result SHA-256
 `bcd8f5582a221b4192fd561301f1e5799996d1a51de673dc05f184d4ba044d71`.
 Cleanup conclusions are based on separate direct post-exit observations.
 
-Current classification: NAT/source-endpoint change, migration-back, live key
-update, and live PMTUD are `BLOCKED_IMPLEMENTATION`; IPv6 is
+Current classification: NAT/source-endpoint change and live PMTUD are
+`BLOCKED_IMPLEMENTATION`; migration-back is `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`
+at exact `5d6582c` with one scripted self-owned local/VPS observation; live key
+update is likewise bounded-live sufficient at exact `2f4f59a`/`69d0ed9`; IPv6 is
 `BLOCKED_ENVIRONMENT`; HY2 and repeated warm failover are
-`BLOCKED_DIAGNOSTICS`; no remaining unimplemented row is `READY_LIVE`; the live key-update row is already answered by one bounded self-owned observation at exact `2f4f59a`/`69d0ed9`. The smallest next seam is to fix
-and locally dry-run the repeated-failover command boundary through Python-runner
-entry. This checkpoint does not close the release-evidence milestone.
+`BLOCKED_DIAGNOSTICS`; no remaining unimplemented row is `READY_LIVE`; the live key-update row is already answered by one bounded self-owned observation at exact `2f4f59a`/`69d0ed9`. Later exact `9fd2411` / `a117086` already entered the structured outer runner;
+the truthful repeated-failover seam is bounded sanitized inner-collector failure
+categorization, not another runner-entry retry. This checkpoint does not close the release-evidence milestone.
 
 ### 2026-09-04 exact-a117086 evidence checkpoint
 
@@ -209,4 +211,4 @@ The corrected structured six-cycle attempt is a typed orchestration/evidence-col
 
 ### 2026-09-04 final current-line orchestration boundaries
 
-The historical exact-`60cd40d` periodic pre-application negative remains retained. Exact `85346ce` archives the sole changed-hypothesis exact-`00ac2c1` follow-up: `ssh_transport_exit` 255, no readiness, client, application traffic, or metrics, with verified-zero cleanup. The R-009 erratum corrects the immutable result's legacy `protocol_entered=true` interpretation; it did not prove remote executor acceptance. Periodic is `BLOCKED_ORCHESTRATION_CURRENT_LINE_PERIODIC`; exact `4a2129e` keeps repeated failover `BLOCKED_ORCHESTRATION_CURRENT_LINE`. Natural loss stays unchecked; NAT/source change, migration-back, and live PMTUD stay `BLOCKED_IMPLEMENTATION`; live key update is `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` at exact `2f4f59a`/`69d0ed9`; IPv6 stays `BLOCKED_ENVIRONMENT`; HY2 stays `BLOCKED_DIAGNOSTICS`. Release evidence remains open and governance/release state is unchanged. The exact `61a6490` C follow-up consumed one new outer wrapper invocation and stopped locally at port-range preflight (exit 2), with zero VPS deployments, samples, result/comparative statistics, or runtime evidence; historical bed2940 outer=1 `NEKO_BIN` preflight remains separate. Both lines verified zero residue and did not touch the existing Hysteria service. The current HY2 line is `BLOCKED_ORCHESTRATION_CURRENT_LINE_HY2`; no historical artifact is rewritten.
+The historical exact-`60cd40d` periodic pre-application negative remains retained. Exact `85346ce` archives the sole changed-hypothesis exact-`00ac2c1` follow-up: `ssh_transport_exit` 255, no readiness, client, application traffic, or metrics, with verified-zero cleanup. The R-009 erratum corrects the immutable result's legacy `protocol_entered=true` interpretation; it did not prove remote executor acceptance. Periodic is `BLOCKED_ORCHESTRATION_CURRENT_LINE_PERIODIC`; exact `4a2129e` keeps repeated failover `BLOCKED_ORCHESTRATION_CURRENT_LINE`. Natural loss stays unchecked; NAT/source change and live PMTUD stay `BLOCKED_IMPLEMENTATION`; migration-back is `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` at exact `5d6582c`; live key update is `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` at exact `2f4f59a`/`69d0ed9`; IPv6 stays `BLOCKED_ENVIRONMENT`; HY2 stays `BLOCKED_DIAGNOSTICS`. Release evidence remains open and governance/release state is unchanged. The exact `61a6490` C follow-up consumed one new outer wrapper invocation and stopped locally at port-range preflight (exit 2), with zero VPS deployments, samples, result/comparative statistics, or runtime evidence; historical bed2940 outer=1 `NEKO_BIN` preflight remains separate. Both lines verified zero residue and did not touch the existing Hysteria service. The current HY2 line is `BLOCKED_ORCHESTRATION_CURRENT_LINE_HY2`; no historical artifact is rewritten.

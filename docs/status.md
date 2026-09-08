@@ -212,17 +212,14 @@ The retained release-evidence rows are reconciled as follows:
   experiment processes, listeners, and runtime temp paths.
 
 - NAT / source-endpoint change — `BLOCKED_IMPLEMENTATION`: capability remains explicitly unsupported; no authenticated live rebinding/endpoint-change runner exists.
-- migration-back — `BLOCKED_IMPLEMENTATION`: deterministic manager gating exists, but no live socket path executes validated migration back to UDP.
+- migration-back — `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`: exact `5d6582c` provides a fail-closed opt-in live socket path, positive and tampered real-process proofs, and one bounded self-owned VPS observation retained in `docs/notes/migration-back-vps-5d6582c-20260908.md`. It proves one scripted application-level recovery only, not natural recovery, reliability, public reachability or production readiness.
 - live key update — `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`: exact `2f4f59a` provides the fixed synchronized periodic TCP runtime and mismatch negative; evidence commit `69d0ed9` retains one bounded self-owned VPS observation (`periodic-key-update-vps-2f4f59a`) with 3/3 authenticated records and phase-1 events. This does not claim dynamic negotiation, arbitrary peer-initiated rekey, reliability, public reachability, production readiness or a rekey policy.
 - live PMTUD — `BLOCKED_IMPLEMENTATION`: PLPMTUD is bounded state-model evidence only and is not integrated into a live carrier probe/ACK path.
 - IPv6 — `BLOCKED_ENVIRONMENT`: no real owned IPv6 endpoint/path is currently available; historical probes do not supply the missing current environment.
 - HY2 fair pair — `BLOCKED_DIAGNOSTICS`: the latest retained prefix ends at `hy2-1` `client_exit` without enough retained diagnostics to distinguish harness, endpoint, or HY2 runtime cause; another unchanged live retry is not justified.
-- repeated warm failover — `BLOCKED_ORCHESTRATION_CURRENT_LINE`: the exact-`07545f0` command boundary must first be corrected and locally dry-run through runner entry; neither retained orchestration negative is a runtime row.
+- repeated warm failover — `BLOCKED_DIAGNOSTICS`: later exact `9fd2411` / `a117086` entered the structured outer runner; the remaining useful seam is bounded sanitized inner-collector failure categorization. Historical negatives remain unchanged and are not runtime rows.
 
-There is no remaining unimplemented `READY_LIVE` row; the live key-update row is already sufficient for its bounded self-owned observation. The smallest unlock seam is local and
-non-networked: correct and verify the exact-`07545f0` repeated-failover command
-array/argument boundary so one outer invocation demonstrably enters the Python
-batch runner. The bounded release matrix therefore remains open, with
+There is no remaining unimplemented `READY_LIVE` row; live key update and migration-back are already sufficient for their bounded self-owned questions. The next repeated-failover seam, if selected, is local sanitized inner-collector failure categorization, not another runner-entry retry. The bounded release matrix therefore remains open, with
 `RELEASE_CANDIDATE=false`, `FREEZE=false`, `PRODUCTION_READY=false`, and
 `RELEASED=false`.
 
@@ -259,7 +256,7 @@ At the reviewed tree, every Era-4 ledger row has one closed classification in `d
 - `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`: A, G, H, I, J (their declared bounded questions already have adequate evidence; do not re-run merely because more testing is possible).
 - `OPEN_READY`: B, C, D, E, F, L, M, T. Each carries a specific unresolved question, `evidence_needed`, `next_action`, dependency statement, and local execution scope; this is an opportunity classification, not authorization or a release claim.
 - `BLOCKED_DEPENDENCY`: N depends on implementation-blocked K; O depends on N. Privileged environment availability alone cannot make either dependency-ready, and no VPS row is currently ready for execution.
-- `BLOCKED_IMPLEMENTATION`: K (migration-back), R (PLPMTUD integration). NAT/source-endpoint change and live PMTUD remain implementation-blocked; live key update is `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` at exact `2f4f59a`/`69d0ed9`.
+- `BLOCKED_IMPLEMENTATION`: R (PLPMTUD integration). NAT/source-endpoint change and live PMTUD remain implementation-blocked; K (migration-back) is `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` at exact `5d6582c`; live key update is `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` at exact `2f4f59a`/`69d0ed9`.
 - Security promotion remains blocked by RSEC-001 in `docs/reviews/resource-abuse-evidence-2026-09-04.md`: process-owned source/global pre-auth accounting is now integrated across the bounded probe, failover, periodic and multistream server listener paths, but source-tuple/charge-order coverage still requires independent review plus adversarial concurrency/rate/expiry evidence before any public-listener, RC or security claim.
 - `BLOCKED_ENVIRONMENT`: IPv6 (no real owned IPv6 path).
 - `BLOCKED_ORCHESTRATION_CURRENT_LINE`: periodic, repeated warm failover, and HY2; the exact `61a6490` HY2 follow-up consumed one outer invocation and stopped at local port-range preflight (exit 2), with no VPS deployment, samples, result, metrics, or runtime evidence.
