@@ -12,9 +12,10 @@ mod reachability;
 
 use neko_carrier::{
     ActiveCarrier, CarrierHealthEvidence, CarrierManager, CarrierSwitchReason, DataId,
-    FailoverController, FairScheduler, FlowLimits, HealthEvidenceLimits, HealthLimits,
-    HealthSample, HealthState, ManagerLimits, MigrationCandidate, PathGeneration, PathId,
-    ReadinessObservation, StreamId as CarrierStreamId, StreamPriority,
+    EndpointRebindCandidate, EndpointRebindState, FailoverController, FairScheduler, FlowLimits,
+    HealthEvidenceLimits, HealthLimits, HealthSample, HealthState, ManagerLimits,
+    MigrationCandidate, PathGeneration, PathId, ReadinessObservation, StreamId as CarrierStreamId,
+    StreamPriority,
 };
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, ResumeGuard, TrustPolicy,
@@ -41,7 +42,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-const USAGE: &str = "Usage: neko <server|client|probe|periodic-server|periodic-client|lab|failover-server|workload|failover-client|keygen|capabilities> [bounded options]
+const USAGE: &str = "Usage: neko <server|client|probe|periodic-server|periodic-client|lab|failover-server|failover-client|endpoint-rebind-server|endpoint-rebind-client|workload|keygen|capabilities> [bounded options]
 
   --count N: bounded authenticated exchanges (1-64; periodic 1-600)\n  periodic-*: one TCP Session, duration 1-600s, interval 100-5000ms, <=1MiB app data; reconnect unsupported\n  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
@@ -2668,6 +2669,555 @@ fn failover_client(args: &[String]) {
         !automatic_health_failover
     );
 }
+fn endpoint_rebind_server(args: &[String]) {
+    let count = exchange_count(args);
+    let bytes = parse(args, "--bytes", Some("16"))
+        .parse::<usize>()
+        .unwrap_or_else(|_| fail("invalid bytes"));
+    let secs = parse(args, "--duration", Some("10"))
+        .parse::<u64>()
+        .unwrap_or_else(|_| fail("invalid duration"));
+    if count != 2 || bytes == 0 || bytes > MAX_BYTES || secs == 0 || secs > MAX_DURATION {
+        fail("endpoint rebind requires count=2, bytes=1-1200, duration=1-30")
+    }
+    let port = parse(args, "--udp-port", Some("40081"))
+        .parse::<u16>()
+        .unwrap_or_else(|_| fail("invalid UDP port"));
+    if !(40080..=MAX_PORT).contains(&port) {
+        fail("port outside 40080-40100")
+    }
+    let id = load_or_generate(&PathBuf::from(parse(
+        args,
+        "--identity",
+        Some("neko-server.identity"),
+    )));
+    let client = unhex(&parse(args, "--client-key", None));
+    let policy = TrustPolicy::new(vec![TrustRecord {
+        version: 1,
+        public_key: client,
+        scope: b"failover".to_vec(),
+        status: TrustStatus::Active,
+    }]);
+    let socket = UdpSocket::bind(parse(args, "--udp-bind", Some(&format!("0.0.0.0:{port}"))))
+        .unwrap_or_else(|_| fail("UDP bind failed"));
+    socket
+        .set_read_timeout(Some(Duration::from_secs(secs)))
+        .unwrap();
+    let mut buf = [0u8; 65536];
+    emit_diagnostic(args, "server", "start", 0, ",\"mode\":\"endpoint_rebind\"");
+    println!("endpoint_rebind_server_ready");
+
+    let (n, endpoint_a) = socket
+        .recv_from(&mut buf)
+        .unwrap_or_else(|_| fail("endpoint A negotiation timeout"));
+    let mut negotiation =
+        VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS).unwrap();
+    let selection = negotiation
+        .server_accept_hello(&buf[..n])
+        .unwrap_or_else(|_| fail("endpoint A negotiation rejected"));
+    socket.send_to(&selection, endpoint_a).unwrap();
+    let binding = negotiation.authenticated_binding().unwrap();
+    let (n, source) = socket
+        .recv_from(&mut buf)
+        .unwrap_or_else(|_| fail("endpoint A handshake timeout"));
+    if source != endpoint_a {
+        fail("endpoint A changed before authentication")
+    }
+    let (response, mut secure) =
+        ResponderHandshake::new_with_prologue_binding(&id, policy, DOMAIN, binding.as_bytes())
+            .unwrap()
+            .receive_first(&buf[..n], context(1))
+            .unwrap_or_else(|_| fail("endpoint A authentication rejected"));
+    socket.send_to(&response, endpoint_a).unwrap();
+
+    let mut runtime = SessionRuntime::new(SessionId(7001), runtime_limits(bytes, 2), 0).unwrap();
+    runtime.open_stream(StreamId(1), 0).unwrap();
+    let (n, source) = socket
+        .recv_from(&mut buf)
+        .unwrap_or_else(|_| fail("pre-rebind Data timeout"));
+    if source != endpoint_a {
+        fail("pre-rebind Data used wrong endpoint")
+    }
+    let plain = secure
+        .open_unreliable(&buf[..n])
+        .unwrap_or_else(|_| fail("pre-rebind Data authentication failed"));
+    let ProcessMessage::Data { session, record } =
+        ProcessMessage::decode(&plain).unwrap_or_else(|_| fail("pre-rebind Data malformed"))
+    else {
+        fail("pre-rebind Data missing")
+    };
+    if session != SessionId(7001) {
+        fail("pre-rebind Session mismatch")
+    }
+    runtime
+        .receive(
+            InboundRecord {
+                stream: record.stream,
+                offset: record.offset,
+                data: record.data.clone(),
+            },
+            1,
+        )
+        .unwrap_or_else(|_| fail("pre-rebind delivery rejected"));
+    let ack = ProcessMessage::DeliveryAck {
+        session,
+        stream: record.stream,
+        offset: record.offset,
+        len: record.data.len(),
+    }
+    .encode()
+    .unwrap();
+    socket
+        .send_to(&secure.seal_unreliable(&ack).unwrap(), endpoint_a)
+        .unwrap();
+    let _ = runtime.pop_receive(2).unwrap();
+    emit_diagnostic(
+        args,
+        "server",
+        "endpoint_a_confirmed",
+        1,
+        ",\"path\":1,\"generation\":0",
+    );
+
+    let mut state = EndpointRebindState::new(1, PathId(1), PathGeneration(0), 7001, 1)
+        .unwrap_or_else(|_| fail("endpoint state setup failed"));
+    let (n, endpoint_b) = socket
+        .recv_from(&mut buf)
+        .unwrap_or_else(|_| fail("endpoint candidate timeout"));
+    if endpoint_b == endpoint_a {
+        fail("candidate endpoint did not change")
+    }
+    let candidate_plain = secure
+        .open_unreliable(&buf[..n])
+        .unwrap_or_else(|_| fail("endpoint candidate authentication failed"));
+    if !matches!(
+        ProcessMessage::decode(&candidate_plain),
+        Ok(ProcessMessage::ReadinessResponse {
+            session: SessionId(7001),
+            target_path: 1,
+            path_generation: 1,
+            delivery_epoch: 1,
+            challenge_id: 0,
+            admitted: false
+        })
+    ) {
+        fail("endpoint candidate tuple mismatch")
+    }
+    let candidate = EndpointRebindCandidate {
+        source_tag: 2,
+        path: PathId(1),
+        generation: PathGeneration(1),
+    };
+    state
+        .observe_candidate(candidate)
+        .unwrap_or_else(|_| fail("endpoint candidate rejected"));
+    emit_diagnostic(
+        args,
+        "server",
+        "endpoint_candidate_seen",
+        1,
+        ",\"path\":1,\"generation\":1,\"source_endpoint_changed\":true",
+    );
+    let mut random = [0u8; 8];
+    getrandom::getrandom(&mut random).unwrap_or_else(|_| fail("challenge randomness unavailable"));
+    let mut challenge_id = u64::from_be_bytes(random);
+    if challenge_id == 0 {
+        challenge_id = 1;
+    }
+    state
+        .arm_challenge(challenge_id)
+        .unwrap_or_else(|_| fail("endpoint challenge rejected"));
+    let request = ProcessMessage::ReadinessRequest {
+        session: SessionId(7001),
+        target_path: 1,
+        path_generation: 1,
+        delivery_epoch: 1,
+        challenge_id,
+    }
+    .encode()
+    .unwrap();
+    socket
+        .send_to(&secure.seal_unreliable(&request).unwrap(), endpoint_b)
+        .unwrap();
+    emit_diagnostic(
+        args,
+        "server",
+        "endpoint_challenge_sent",
+        1,
+        ",\"path\":1,\"generation\":1",
+    );
+    let (n, response_source) = socket
+        .recv_from(&mut buf)
+        .unwrap_or_else(|_| fail("endpoint challenge response timeout"));
+    if response_source != endpoint_b {
+        emit_diagnostic(
+            args,
+            "server",
+            "endpoint_rebind_failed",
+            1,
+            ",\"reason\":\"wrong_source\"",
+        );
+        fail("endpoint challenge response from wrong source")
+    }
+    let response_plain = secure
+        .open_unreliable(&buf[..n])
+        .unwrap_or_else(|_| fail("endpoint challenge response authentication failed"));
+    if !matches!(ProcessMessage::decode(&response_plain), Ok(ProcessMessage::ReadinessResponse { session: SessionId(7001), target_path: 1, path_generation: 1, delivery_epoch: 1, challenge_id: response_id, admitted: true }) if response_id == challenge_id)
+    {
+        emit_diagnostic(
+            args,
+            "server",
+            "endpoint_rebind_failed",
+            1,
+            ",\"reason\":\"tuple_mismatch\"",
+        );
+        fail("endpoint challenge response tuple mismatch")
+    }
+    state
+        .validate_and_promote(candidate, 7001, 1, challenge_id)
+        .unwrap_or_else(|_| fail("endpoint promotion rejected"));
+    emit_diagnostic(
+        args,
+        "server",
+        "endpoint_validated",
+        1,
+        ",\"path\":1,\"generation\":1",
+    );
+    emit_diagnostic(
+        args,
+        "server",
+        "endpoint_promoted",
+        1,
+        ",\"path\":1,\"generation\":1,\"source_endpoint_changed\":true",
+    );
+
+    let (mut n, mut post_source) = socket
+        .recv_from(&mut buf)
+        .unwrap_or_else(|_| fail("post-rebind Data timeout"));
+    if post_source == endpoint_a {
+        emit_diagnostic(
+            args,
+            "server",
+            "endpoint_stale_source_rejected",
+            1,
+            ",\"path\":1,\"generation\":0",
+        );
+        (n, post_source) = socket
+            .recv_from(&mut buf)
+            .unwrap_or_else(|_| fail("post-rebind Data timeout"));
+    }
+    if post_source != endpoint_b || state.active_source_tag() != 2 {
+        fail("post-rebind Data used inactive endpoint")
+    }
+    let post_plain = secure
+        .open_unreliable(&buf[..n])
+        .unwrap_or_else(|_| fail("post-rebind Data authentication failed"));
+    let ProcessMessage::Data {
+        session: post_session,
+        record: post_record,
+    } = ProcessMessage::decode(&post_plain).unwrap_or_else(|_| fail("post-rebind Data malformed"))
+    else {
+        fail("post-rebind Data missing")
+    };
+    if post_session != SessionId(7001) {
+        fail("post-rebind Session mismatch")
+    }
+    runtime
+        .receive(
+            InboundRecord {
+                stream: post_record.stream,
+                offset: post_record.offset,
+                data: post_record.data.clone(),
+            },
+            3,
+        )
+        .unwrap_or_else(|_| fail("post-rebind delivery rejected"));
+    let post_ack = ProcessMessage::DeliveryAck {
+        session: post_session,
+        stream: post_record.stream,
+        offset: post_record.offset,
+        len: post_record.data.len(),
+    }
+    .encode()
+    .unwrap();
+    socket
+        .send_to(&secure.seal_unreliable(&post_ack).unwrap(), endpoint_b)
+        .unwrap();
+    let _ = runtime.pop_receive(4).unwrap();
+    emit_diagnostic(
+        args,
+        "server",
+        "endpoint_post_delivery_ack_sent",
+        2,
+        ",\"path\":1,\"generation\":1",
+    );
+    emit_diagnostic(
+        args,
+        "server",
+        "summary",
+        2,
+        &format!(
+            ",\"classification\":\"A\",\"records\":2,\"application_bytes_total\":{}",
+            bytes * 2
+        ),
+    );
+    println!(
+        "endpoint_rebind_server_ok records=2 application_bytes_total={}",
+        bytes * 2
+    );
+}
+
+fn endpoint_rebind_client(args: &[String]) {
+    let count = exchange_count(args);
+    let bytes = parse(args, "--bytes", Some("16"))
+        .parse::<usize>()
+        .unwrap_or_else(|_| fail("invalid bytes"));
+    let secs = parse(args, "--duration", Some("10"))
+        .parse::<u64>()
+        .unwrap_or_else(|_| fail("invalid duration"));
+    if count != 2 || bytes == 0 || bytes > MAX_BYTES || secs == 0 || secs > MAX_DURATION {
+        fail("endpoint rebind requires count=2, bytes=1-1200, duration=1-30")
+    }
+    let addr = parse(args, "--addr", Some("127.0.0.1"));
+    let port = parse(args, "--udp-port", Some("40081"))
+        .parse::<u16>()
+        .unwrap_or_else(|_| fail("invalid UDP port"));
+    let target = format!("{addr}:{port}")
+        .parse::<SocketAddr>()
+        .unwrap_or_else(|_| fail("bad UDP target"));
+    let id = load_or_generate(&PathBuf::from(parse(
+        args,
+        "--identity",
+        Some("neko-client.identity"),
+    )));
+    let server_key = unhex(&parse(args, "--server-key", None));
+    let endpoint_a = UdpSocket::bind("0.0.0.0:0").unwrap();
+    endpoint_a
+        .set_read_timeout(Some(Duration::from_secs(secs)))
+        .unwrap();
+    let mut buf = [0u8; 65536];
+    let mut negotiation =
+        VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
+    endpoint_a
+        .send_to(&negotiation.client_hello().unwrap(), target)
+        .unwrap();
+    let (n, source) = endpoint_a.recv_from(&mut buf).unwrap();
+    if source != target {
+        fail("negotiation response from wrong peer")
+    }
+    negotiation.client_accept_response(&buf[..n]).unwrap();
+    let binding = negotiation.authenticated_binding().unwrap();
+    let mut handshake = InitiatorHandshake::new_with_prologue_binding(
+        &id,
+        &server_key,
+        b"failover",
+        DOMAIN,
+        binding.as_bytes(),
+    )
+    .unwrap();
+    endpoint_a
+        .send_to(&handshake.first_message().unwrap(), target)
+        .unwrap();
+    let (n, source) = endpoint_a.recv_from(&mut buf).unwrap();
+    if source != target {
+        fail("handshake response from wrong peer")
+    }
+    let mut secure = handshake.finish(&buf[..n], context(1)).unwrap();
+    let payload = vec![b'x'; bytes];
+    let first_record = OutboundRecord {
+        stream: StreamId(1),
+        offset: 0,
+        data: payload.clone(),
+    };
+    let first = ProcessMessage::Data {
+        session: SessionId(7001),
+        record: first_record.clone(),
+    }
+    .encode()
+    .unwrap();
+    endpoint_a
+        .send_to(&secure.seal_unreliable(&first).unwrap(), target)
+        .unwrap();
+    let (n, source) = endpoint_a.recv_from(&mut buf).unwrap();
+    if source != target {
+        fail("pre-rebind DeliveryAck from wrong peer")
+    }
+    let ack = secure.open_unreliable(&buf[..n]).unwrap();
+    if !delivery_ack_matches(&ack, &first_record) {
+        fail("pre-rebind DeliveryAck mismatch")
+    }
+    emit_diagnostic(
+        args,
+        "client",
+        "endpoint_a_confirmed",
+        1,
+        ",\"path\":1,\"generation\":0",
+    );
+
+    let endpoint_b = UdpSocket::bind("0.0.0.0:0").unwrap();
+    endpoint_b
+        .set_read_timeout(Some(Duration::from_secs(secs)))
+        .unwrap();
+    if endpoint_a.local_addr().unwrap() == endpoint_b.local_addr().unwrap() {
+        fail("source endpoint did not change")
+    }
+    let candidate = ProcessMessage::ReadinessResponse {
+        session: SessionId(7001),
+        target_path: 1,
+        path_generation: 1,
+        delivery_epoch: 1,
+        challenge_id: 0,
+        admitted: false,
+    }
+    .encode()
+    .unwrap();
+    endpoint_b
+        .send_to(&secure.seal_unreliable(&candidate).unwrap(), target)
+        .unwrap();
+    emit_diagnostic(
+        args,
+        "client",
+        "endpoint_candidate_sent",
+        1,
+        ",\"path\":1,\"generation\":1,\"source_endpoint_changed\":true",
+    );
+    let (n, source) = endpoint_b
+        .recv_from(&mut buf)
+        .unwrap_or_else(|_| fail("endpoint challenge timeout"));
+    if source != target {
+        fail("endpoint challenge from wrong peer")
+    }
+    let challenge_plain = secure
+        .open_unreliable(&buf[..n])
+        .unwrap_or_else(|_| fail("endpoint challenge authentication failed"));
+    let ProcessMessage::ReadinessRequest {
+        session,
+        target_path,
+        path_generation,
+        delivery_epoch,
+        challenge_id,
+    } = ProcessMessage::decode(&challenge_plain)
+        .unwrap_or_else(|_| fail("endpoint challenge malformed"))
+    else {
+        fail("endpoint challenge missing")
+    };
+    if session != SessionId(7001)
+        || target_path != 1
+        || path_generation != 1
+        || delivery_epoch != 1
+        || challenge_id == 0
+    {
+        fail("endpoint challenge tuple mismatch")
+    }
+    let mut response_id = challenge_id;
+    if args.iter().any(|a| a == "--test-wrong-rebind-challenge") {
+        response_id = response_id.wrapping_add(1);
+        if response_id == 0 {
+            response_id = 1;
+        }
+    }
+    let response = ProcessMessage::ReadinessResponse {
+        session,
+        target_path,
+        path_generation,
+        delivery_epoch,
+        challenge_id: response_id,
+        admitted: true,
+    }
+    .encode()
+    .unwrap();
+    endpoint_b
+        .send_to(&secure.seal_unreliable(&response).unwrap(), target)
+        .unwrap();
+    emit_diagnostic(
+        args,
+        "client",
+        "endpoint_challenge_answered",
+        1,
+        ",\"path\":1,\"generation\":1",
+    );
+    if args.iter().any(|a| a == "--test-wrong-rebind-challenge") {
+        let _ = endpoint_b.recv_from(&mut buf);
+        fail("test wrong endpoint challenge completed without rejection")
+    }
+    if args.iter().any(|a| a == "--test-stale-old-endpoint") {
+        let stale = ProcessMessage::ReadinessResponse {
+            session: SessionId(7001),
+            target_path: 1,
+            path_generation: 0,
+            delivery_epoch: 1,
+            challenge_id,
+            admitted: true,
+        }
+        .encode()
+        .unwrap();
+        endpoint_a
+            .send_to(&secure.seal_unreliable(&stale).unwrap(), target)
+            .unwrap();
+        emit_diagnostic(
+            args,
+            "client",
+            "endpoint_stale_source_sent",
+            1,
+            ",\"path\":1,\"generation\":0",
+        );
+    }
+    let second_record = OutboundRecord {
+        stream: StreamId(1),
+        offset: bytes as u64,
+        data: payload,
+    };
+    let second = ProcessMessage::Data {
+        session: SessionId(7001),
+        record: second_record.clone(),
+    }
+    .encode()
+    .unwrap();
+    endpoint_b
+        .send_to(&secure.seal_unreliable(&second).unwrap(), target)
+        .unwrap();
+    let (n, source) = endpoint_b
+        .recv_from(&mut buf)
+        .unwrap_or_else(|_| fail("post-rebind DeliveryAck timeout"));
+    if source != target {
+        fail("post-rebind DeliveryAck from wrong peer")
+    }
+    let ack = secure
+        .open_unreliable(&buf[..n])
+        .unwrap_or_else(|_| fail("post-rebind DeliveryAck authentication failed"));
+    if !delivery_ack_matches(&ack, &second_record) {
+        fail("post-rebind DeliveryAck mismatch")
+    }
+    emit_diagnostic(
+        args,
+        "client",
+        "endpoint_promoted",
+        1,
+        ",\"path\":1,\"generation\":1,\"source_endpoint_changed\":true",
+    );
+    emit_diagnostic(
+        args,
+        "client",
+        "endpoint_post_delivery_ack_validated",
+        2,
+        ",\"path\":1,\"generation\":1",
+    );
+    emit_diagnostic(
+        args,
+        "client",
+        "summary",
+        2,
+        &format!(
+            ",\"classification\":\"A\",\"records\":2,\"application_bytes_total\":{}",
+            bytes * 2
+        ),
+    );
+    println!(
+        "endpoint_rebind_client_ok records=2 application_bytes_total={}",
+        bytes * 2
+    );
+}
+
 fn failover_gate(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("failover-server") => failover_server(args),
@@ -3033,6 +3583,8 @@ fn main() {
         Some("capabilities") => capabilities(&a),
         Some("multistream") => multistream::run(&a),
         Some("failover") | Some("failover-server") | Some("failover-client") => failover_gate(&a),
+        Some("endpoint-rebind-server") => endpoint_rebind_server(&a),
+        Some("endpoint-rebind-client") => endpoint_rebind_client(&a),
         Some("keygen") => {
             let path = PathBuf::from(parse(&a, "--identity", Some("neko-client.identity")));
             let id = load_or_generate(&path);

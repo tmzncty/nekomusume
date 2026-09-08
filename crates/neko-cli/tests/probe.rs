@@ -150,6 +150,28 @@ fn ready_failover_server(mut child: Child) -> ReadyServer {
     }
 }
 
+fn ready_endpoint_rebind_server(mut child: Child) -> ReadyServer {
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let mut startup_log = String::new();
+    loop {
+        let mut line = String::new();
+        assert_ne!(
+            reader.read_line(&mut line).unwrap(),
+            0,
+            "endpoint rebind exited before ready: {startup_log}"
+        );
+        startup_log.push_str(&line);
+        if line.contains("endpoint_rebind_server_ready") {
+            return ReadyServer {
+                child,
+                stdout: reader,
+                startup_log,
+            };
+        }
+    }
+}
+
 fn signal_term(child: &Child) {
     let status = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
@@ -2151,6 +2173,193 @@ fn periodic_server_signal_cleanup_is_bounded() {
     assert!(log.contains("cleanup=verified"), "{log}");
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
+}
+
+#[test]
+fn endpoint_rebind_real_sockets_promote_new_source_and_reject_stale_old_source() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("endpoint-rebind-server");
+    let cp = tmp("endpoint-rebind-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let port = 40090u16;
+    let server = Command::new(bin)
+        .args([
+            "endpoint-rebind-server",
+            "--udp-port",
+            &port.to_string(),
+            "--udp-bind",
+            &format!("127.0.0.1:{port}"),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "2",
+            "--bytes",
+            "16",
+            "--duration",
+            "5",
+            "--diagnostic",
+            "--experiment-id",
+            "endpoint-rebind-test-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_endpoint_rebind_server(server);
+    let out = Command::new(bin)
+        .args([
+            "endpoint-rebind-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &port.to_string(),
+            "--identity",
+            cp.to_str().unwrap(),
+            "--server-key",
+            &sk,
+            "--count",
+            "2",
+            "--bytes",
+            "16",
+            "--duration",
+            "5",
+            "--test-stale-old-endpoint",
+            "--diagnostic",
+            "--experiment-id",
+            "endpoint-rebind-test-client",
+        ])
+        .output()
+        .unwrap();
+    let (server_status, server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{client_log} {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(server_status.success(), "{server_log}");
+    assert!(
+        client_log.contains("\"source_endpoint_changed\":true"),
+        "{client_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"endpoint_candidate_seen\""),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"endpoint_challenge_sent\""),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"endpoint_promoted\""),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"endpoint_stale_source_rejected\""),
+        "{server_log}"
+    );
+    assert!(
+        client_log.contains("endpoint_post_delivery_ack_validated"),
+        "{client_log}"
+    );
+    assert!(
+        server_log.contains("records=2 application_bytes_total=32"),
+        "{server_log}"
+    );
+}
+
+#[test]
+fn endpoint_rebind_wrong_challenge_fails_after_candidate_without_success() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("endpoint-rebind-negative-server");
+    let cp = tmp("endpoint-rebind-negative-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let port = 40090u16;
+    let server = Command::new(bin)
+        .args([
+            "endpoint-rebind-server",
+            "--udp-port",
+            &port.to_string(),
+            "--udp-bind",
+            &format!("127.0.0.1:{port}"),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "2",
+            "--bytes",
+            "16",
+            "--duration",
+            "3",
+            "--diagnostic",
+            "--experiment-id",
+            "endpoint-rebind-negative-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_endpoint_rebind_server(server);
+    let out = Command::new(bin)
+        .args([
+            "endpoint-rebind-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &port.to_string(),
+            "--identity",
+            cp.to_str().unwrap(),
+            "--server-key",
+            &sk,
+            "--count",
+            "2",
+            "--bytes",
+            "16",
+            "--duration",
+            "3",
+            "--test-wrong-rebind-challenge",
+            "--diagnostic",
+            "--experiment-id",
+            "endpoint-rebind-negative-client",
+        ])
+        .output()
+        .unwrap();
+    let (server_status, server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success(), "{client_log}");
+    assert!(!server_status.success(), "{server_log}");
+    assert!(
+        server_log.contains("endpoint_candidate_seen"),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("endpoint_challenge_sent"),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("endpoint_rebind_failed"),
+        "{server_log}"
+    );
+    assert!(!server_log.contains("endpoint_promoted"), "{server_log}");
+    assert!(
+        !server_log.contains("endpoint_rebind_server_ok"),
+        "{server_log}"
+    );
+    assert!(
+        !client_log.contains("endpoint_post_delivery_ack_validated"),
+        "{client_log}"
+    );
 }
 
 #[test]
