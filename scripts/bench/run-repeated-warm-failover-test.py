@@ -109,6 +109,7 @@ def test_nonzero_stderr_is_bounded_private_and_validate_only():
         diagnostic = batch["first_failure"]["diagnostic"]
         assert diagnostic["bytes"] <= module.MAX_DIAGNOSTIC_BYTES and diagnostic["truncated"]
         assert diagnostic["category"] == "nonzero_exit"
+        assert batch["first_failure"]["diagnostic_category"] == "nonzero_exit"
         assert "supersecret" not in pathlib.Path(private / "cycle-1.stderr.txt").read_text()
         assert "192.0.2.9" not in pathlib.Path(private / "cycle-1.stderr.txt").read_text()
         assert "supersecret" not in output.read_text()
@@ -188,6 +189,28 @@ def main() -> None:
         assert batch["first_failure"]["kind"] == "invalid_cycle_evidence"
         assert batch["first_failure"]["diagnostic_category"] == "invalid_evidence"
         assert "nonzero with a row" in batch["first_failure"]["detail"]
+
+    # A bounded inner marker propagates its stage into the typed outer result;
+    # raw endpoint/secret text remains only in the redacted private hash input.
+    with tempfile.TemporaryDirectory() as td:
+        private = pathlib.Path(td) / "private"
+        marker = json.dumps({"schema": "nekomusume.inner-failure.v1", "category": "readiness", "reason": "missing_tcp_readiness"})
+        def categorized(*_args, **_kwargs):
+            return subprocess.CompletedProcess([], 2, "", marker + "\nsecret=hidden 192.0.2.9")
+        old = os.environ.get("NEKO_PRIVATE_DIAGNOSTICS_DIR")
+        os.environ["NEKO_PRIVATE_DIAGNOSTICS_DIR"] = str(private)
+        try:
+            batch, code = module.run(["--output", str(pathlib.Path(td) / "result.json"), "--", "fake"], invoke=categorized)
+        finally:
+            if old is None: os.environ.pop("NEKO_PRIVATE_DIAGNOSTICS_DIR", None)
+            else: os.environ["NEKO_PRIVATE_DIAGNOSTICS_DIR"] = old
+        assert code == 1 and batch["completed_cycles"] == 0
+        assert batch["first_failure"]["diagnostic_category"] == "readiness"
+        assert batch["first_failure"]["diagnostic"]["category"] == "readiness"
+        tracked = json.dumps(batch)
+        assert "hidden" not in tracked and "192.0.2.9" not in tracked
+        private_text = (private / "cycle-1.stderr.txt").read_text()
+        assert "hidden" not in private_text and "192.0.2.9" not in private_text
 
     # Exit 0 + malformed output is also a collector contradiction.
     with tempfile.TemporaryDirectory() as td:

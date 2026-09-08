@@ -25,7 +25,9 @@ if mode == "failover-server":
  if scenario == "json_list": print("  []")
  if scenario == "json_scalar": print("  42")
  if scenario == "malformed_list": print("  [not-json")
- print("carrier_event name=udp_negotiated session=7001 generation=0 version=0"); print("carrier_event name=udp_authenticated session=7001 generation=0");
+ print("carrier_event name=udp_negotiated session=7001 generation=0 version=0");
+ if scenario == "duplicate_negotiation": print("carrier_event name=udp_negotiated session=7001 generation=0 version=0")
+ print("carrier_event name=udp_authenticated session=7001 generation=0");
  if scenario != "missing_resume": print("carrier_event name=tcp_negotiated session=7001 generation=1 version=0\ncarrier_event name=tcp_authenticated session=7001 generation=1\ncarrier_event name=tcp_resume_validated session=7001 generation=1")
  if scenario != "missing_readiness":
   [j("tcp_readiness_response",n,admitted=True) for n in (1,2,3)]
@@ -39,8 +41,10 @@ if mode == "failover-client":
  print("carrier_event name=udp_authenticated session=7001 generation=0"); j("udp_delivery_ack_validated",1); j("udp_uncertain_range_sent",2,len=16)
  if scenario != "missing_readiness":
   [j("tcp_warm_readiness",n,warm=n==3) for n in (1,2,3)]; print("carrier_event name=tcp_warm session=7001 generation=1 readiness=3 application_data=0")
+  if scenario == "duplicate_readiness": j("tcp_warm_readiness",3,warm=True)
  if scenario not in ("timeout","missing_resume","missing_readiness","missing_accounting"):
   j("tcp_delivery_ack_validated",1); j("tcp_delivery_ack_validated",2)
+  if scenario == "duplicate_application_ack": j("tcp_delivery_ack_validated",2)
  if scenario not in ("timeout","missing_timing"):
   timing=dict(failure_decided_at_us=100,first_resumed_data_accepted_us=130,first_resumed_ack_at_us=140,recovery_latency_us=30)
   if scenario == "negative_timing": timing["failure_decided_at_us"]=-1
@@ -63,8 +67,8 @@ if mode == "failover-client":
   if scenario == "duplicate_summary": j("summary",3,records=3,application_bytes_total=48)
  sys.exit(124 if scenario=="timeout" else 0)
 if mode == "cleanup":
- value={"listeners_remaining":1 if scenario=="cleanup" else 0}
- if scenario != "missing_remote_process_postcheck": value["processes_remaining"]=0
+ value={} if scenario=="malformed_cleanup" else {"listeners_remaining":1 if scenario=="cleanup" else 0}
+ if scenario not in ("missing_remote_process_postcheck", "malformed_cleanup"): value["processes_remaining"]=0
  print(json.dumps(value)); sys.exit(1 if scenario=="cleanup" else 0)
 '''
 
@@ -88,9 +92,15 @@ def invoke(scenario="success", marker="", server_executable=None, client_executa
 
 p,row=invoke(); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]["status"]=="passed"; assert row["semantic"]["readiness_proofs"]==3; assert row["accounting"]["uncertain_records"]==2
 p,row=invoke("delayed_start"); runner.validate_cycle(row, 1); assert p.returncode==0 and row["result"]["status"]=="passed"
-p,row=invoke("early_exit"); assert p.returncode==2 and p.stdout == "" and "server exited before JSON event: start" in p.stderr
-p,row=invoke("missing_client_start"); assert p.returncode==2 and p.stdout == "" and "missing client JSON event: start" in p.stderr
-p,row=invoke("malformed_json"); assert p.returncode==2 and p.stdout == "" and "malformed server JSON event: start" in p.stderr
+for scenario, category in (
+ ("early_exit", "startup_setup"),
+ ("duplicate_negotiation", "negotiation_auth"),
+ ("duplicate_readiness", "readiness"),
+ ("duplicate_application_ack", "application_runtime"),
+ ("malformed_json", "evidence_serialization"),
+ ("malformed_cleanup", "cleanup"),
+):
+ p,row=invoke(scenario); assert p.returncode==2 and p.stdout == "" and '"category":"' + category + '"' in p.stderr, (scenario,p.stderr)
 with tempfile.TemporaryDirectory() as td:
  symlink=pathlib.Path(td)/"python-symlink"
  try:

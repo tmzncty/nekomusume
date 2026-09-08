@@ -39,18 +39,21 @@ class EvidenceError(ValueError):
         super().__init__(message)
         self.diagnostic = diagnostic
 
-DIAGNOSTIC_CATEGORIES = ("nonzero_exit", "timeout", "malformed_output", "missing_event", "invalid_evidence")
+DIAGNOSTIC_CATEGORIES = ("nonzero_exit", "timeout", "malformed_output", "missing_event", "invalid_evidence", "startup_setup", "negotiation_auth", "readiness", "application_runtime", "evidence_serialization", "cleanup")
 
 
 def diagnostic_category(error: BaseException) -> str:
     if isinstance(error, subprocess.TimeoutExpired):
         return "timeout"
     detail = str(error).lower()
+    marker = re.search(r'"category"\s*:\s*"([a-z_]+)"', detail)
+    if marker and marker.group(1) in DIAGNOSTIC_CATEGORIES:
+        return marker.group(1)
     if isinstance(error, json.JSONDecodeError) or "malformed json" in detail or "not-json" in detail:
         return "malformed_output"
     if "missing" in detail and "event" in detail:
         return "missing_event"
-    return "invalid_evidence"
+    return "nonzero_exit"
 
 
 def retain_private_diagnostics(stderr: str, cycle_index: int, category: str = "nonzero_exit") -> dict[str, Any]:
@@ -221,11 +224,12 @@ def run(argv: list[str], invoke: Callable[..., subprocess.CompletedProcess[str]]
         try:
             completed = invoke(args.command, text=True, capture_output=True, timeout=remaining, env=env, check=False)
             if completed.returncode != 0:
-                diagnostic = retain_private_diagnostics(completed.stderr or "", index, "nonzero_exit")
+                category = diagnostic_category(RuntimeError(completed.stderr or ""))
+                diagnostic = retain_private_diagnostics(completed.stderr or "", index, category)
                 if completed.stdout.strip():
                     diagnostic["category"] = "invalid_evidence"
                     raise EvidenceError("collector returned nonzero with a row", diagnostic)
-                raise EvidenceError(f"collector returned nonzero ({completed.returncode}); diagnostic {diagnostic['classification']} sha256={diagnostic['sha256'][:16]} bytes={diagnostic['bytes']}", diagnostic)
+                raise EvidenceError(f"collector returned nonzero ({completed.returncode}); diagnostic {diagnostic['category']} {diagnostic['classification']} sha256={diagnostic['sha256'][:16]} bytes={diagnostic['bytes']}", diagnostic)
             raw = json.loads(completed.stdout)
             row = validate_cycle(raw, index)
             if rows and any(row[key] != rows[0][key] for key in ("git_commit", "binary_sha256", "binary_bytes")):

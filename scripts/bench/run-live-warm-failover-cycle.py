@@ -49,8 +49,38 @@ PARAMETERS = {
     "concurrency": 1,
 }
 
+INNER_FAILURE_CATEGORIES = ("startup_setup", "negotiation_auth", "readiness", "application_runtime", "evidence_serialization", "cleanup")
+
+
 class CollectionError(ValueError):
-    pass
+    def __init__(self, message: str, category: str | None = None):
+        super().__init__(message)
+        self.category = category
+
+
+def category_for(message: str) -> str:
+    detail = message.lower()
+    if "cleanup" in detail or "listener" in detail or "process" in detail:
+        return "cleanup"
+    if any(token in detail for token in ("negotiat", "handshake", "noise", "auth", "trust", "version")):
+        return "negotiation_auth"
+    if any(token in detail for token in ("readiness", "warm", "resume", "uncertain")):
+        return "readiness"
+    if any(token in detail for token in ("delivery acknowledgement", "delivery_ack", "application")):
+        return "application_runtime"
+    if ("start" in detail and ("exited before" in detail or "startup" in detail or "invalid cycle" in detail)):
+        return "startup_setup"
+    if "missing" in detail and "start" in detail:
+        return "startup_setup"
+    if any(token in detail for token in ("json", "evidence", "timing", "accounting", "summary", "out of order", "cardinality")):
+        return "evidence_serialization"
+    if any(token in detail for token in ("readiness", "warm", "resume", "uncertain")):
+        return "readiness"
+    if any(token in detail for token in ("handshake", "negotiat", "noise", "auth", "trust", "version")):
+        return "negotiation_auth"
+    if any(token in detail for token in ("delivery", "application", "tcp", "udp", "socket", "timeout")):
+        return "application_runtime"
+    return "startup_setup"
 
 def command(name: str) -> list[str]:
     try:
@@ -541,7 +571,11 @@ def main() -> int:
         emitted = True
         return 0
     except (CollectionError, OSError, subprocess.SubprocessError, ValueError) as exc:
-        print(f"live failover collector: {exc}", file=sys.stderr)
+        category = exc.category if isinstance(exc, CollectionError) and exc.category in INNER_FAILURE_CATEGORIES else category_for(str(exc))
+        reason = re.sub(r"[^a-z0-9_.-]+", "_", str(exc).lower()).strip("_")[:96] or "collector_failure"
+        marker = json.dumps({"schema": "nekomusume.inner-failure.v1", "category": category, "reason": reason}, sort_keys=True, separators=(",", ":"))
+        print(marker, file=sys.stderr)
+        print(f"live failover collector: {category}:{reason}", file=sys.stderr)
         return 2
     finally:
         terminate(client); terminate(server)
