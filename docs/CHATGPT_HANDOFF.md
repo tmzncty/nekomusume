@@ -1,96 +1,87 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-08 19:02 Asia/Shanghai
-Repository main HEAD reviewed before this handoff: `ef94e48d9a6f3d91b839d20a613937eac6b8d19c`
-Previous reviewer handoff commit: `ef94e48d9a6f3d91b839d20a613937eac6b8d19c`
-Previous checked implementation/evidence HEAD: `04cdf7ae50c0023431972525301090f1ba9eb1a7`
-Current execution branch: `work/e1a-staged-accounting-20260907` at exact `9a94922794110ca0d9c0d8878f9903173d2de495`
-New coding commit under review: `9a94922794110ca0d9c0d8878f9903173d2de495` (`fix: make warm failover diagnostics truthful`)
-Exact GitHub Actions: main `ef94e48` run `34213318495` — `success`; implementation `9a94922` run `34216283788` — `success`.
-Branch topology at review: `main` and the execution branch are intentionally diverged from merge base `1b5625d4f7c0c7063684690805fe5fda662a41c8`; the work branch is four commits ahead and two reviewer-handoff commits behind. This is not a blocker and does not justify a coordination-only merge before the current closure package is reviewable.
-Historical partial-E2 branch `work/continue-20260904` remains retained and is not the active execution branch.
+Checked at: 2026-09-08 20:00 Asia/Shanghai
+Repository main HEAD reviewed before this handoff: `a73f44ef0aae61f6b2aea68d5be324cb4dd0556e`
+Previous reviewer handoff commit: `a73f44ef0aae61f6b2aea68d5be324cb4dd0556e`
+Previous checked implementation/evidence HEAD: `9a94922794110ca0d9c0d8878f9903173d2de495`
+Current execution branch: `work/e1a-staged-accounting-20260907` at exact `99996226815a58a99270b16c1bd62cd1773e3bed`
+New implementation commit under review: `f17b648690fed63cce6f52b6f24c4a79edc51695` (`fix: preserve warm failover primary stage`)
+New evidence/reconciliation commit under review: `99996226815a58a99270b16c1bd62cd1773e3bed` (`docs: retain post-fix failover boundary`)
+Exact GitHub Actions: main `a73f44e` run `34219166076` — `success`; implementation `f17b648` run `34220263467` — `success`; current execution `9999622` run `34222644026` — `success`.
+Branch topology at review remains intentionally diverged from merge base `1b5625d4f7c0c7063684690805fe5fda662a41c8`; the work branch now contains the implementation/evidence closure lineage while main contains the reviewer-only handoff lineage. This truth split is now old enough to close after the small local contract cleanup below; do not create multiple coordination-only merges.
 
 ## What changed
 
-The coding agent materially advanced the repeated-warm-failover diagnostic repair at exact `9a94922`. The v1 batch schema now makes `diagnostic_category` backward-compatible/optional, defines one shared diagnostic-category enum for top-level and nested category fields, and retains old failures whose diagnostic object has no category. The existing real JSON-Schema regression validates every retained `artifacts/repeated-warm-failover/*/result.json` plus a newly generated fine-category no-row batch. This closes the previous broad schema incompatibility blocker.
+Exact `f17b648` closes the material parts of the prior startup-attribution repair. Startup polling now preserves parser/identity/cardinality errors already owned as `evidence_serialization`; malformed JSON again has a deterministic evidence-serialization regression; a real inner combined scenario proves that server exit before a valid start remains the primary `startup_setup` failure even when cleanup actually runs and returns malformed evidence; and tracked diagnostic SHA-256 validation is restored to exact 64 lowercase hexadecimal characters. Exact-head CI is green.
 
-The inner collector also removed prose substring stage guessing. `category_for()` is now conservative (`nonzero_exit`), setup/config call sites largely construct explicit `startup_setup` errors, malformed/duplicate/cardinality/order/timing/accounting evidence largely constructs explicit `evidence_serialization`, and cleanup is attempted before the saved server-start primary error is re-raised. The changed duplicate negotiation/readiness/DeliveryAck tests now correctly expect `evidence_serialization`. Exact-head CI is green.
+After that gate, the coding agent made exactly one reviewer-authorized post-fix self-owned repeated-warm-failover attempt and retained it at exact `9999622`. The experiment binary was exact `f17b648`, CI run `34220263467` was green, the outer invocation ran from `2026-09-08T11:45:31Z` to `11:45:37Z`, and the bounded plan remained at most six sequential cycles with one local client / one owned VPS server per cycle, three 16-byte records and controlled application-level UDP reply cessation. It retained zero valid cycles and stopped before cycle 1 with `invalid_cycle_evidence`, primary `diagnostic_category=startup_setup`, sanitized diagnostic SHA-256 `5867711ad01f5cc505e982f9b5956b4b05d08758c2071f4fe6d5a6edaec4d101`, 160 bytes, `truncated=false`. Separate post-run cleanup observation found zero listeners/processes and the deployment was removed.
 
-No VPS attempt occurred in this interval. That remains correct because review found one remaining HIGH attribution defect and two small evidence-regression gaps that should be fixed before the next live run. These are narrow repairs to the just-added diagnostic seam, not a reason to grow a general audit framework.
+Crucially, this post-fix result repeats exact `9a94922`'s same category/hash/size. That is an evidence boundary, not a root-cause diagnosis and not runtime-failover evidence. It consumes the changed-hypothesis retry authorized by the previous handoff. The repeated-warm-failover WAN line is therefore **frozen against another same-class retry** until a concrete new setup hypothesis plus a material code/configuration/path change exists. Do not keep growing diagnostics merely to chase a PASS.
 
-The 24–48 hour visible-output check remains healthy: recent accepted outputs include live key update, migration-back/recovery, authenticated endpoint rebinding and its promotion-ordering guard, plus materially changed repeated-failover negatives. The current diagnostic work remains justified only because it directly unlocks one high-value rented-VPS question.
+The 24–48 hour visible-output check remains healthy: accepted live key-update, scripted migration-back/recovery, authenticated source-endpoint rebinding, deterministic promotion-ordering protection and now a truthful repeated-failover negative all exist. The diagnostic work has reached diminishing returns and must now be closed rather than recursively expanded.
 
 ## Review verdict
 
-**ACCEPT_MOST_OF_EXACT_`9a94922`; RWFDIAG_SCHEMA_COMPATIBILITY_IS_CLOSED; KEEP_ONE_HIGH_STARTUP-POLL_ATTRIBUTION_DEFECT_PLUS_TWO_BOUNDED_REGRESSION_FIXES_AT_QUEUE_HEAD; DO_NOT_RUN_THE_NEXT_REPEATED-FAILOVER_VPS_ATTEMPT_UNTIL_THE_SMALL_FIX_IS_EXACT-HEAD_GREEN; THEN MAKE_EXACTLY_ONE_CHANGED-HYPOTHESIS_SELF-OWNED_VPS_ATTEMPT.**
+**ACCEPT_EXACT_`f17b648`_CORE_ATTRIBUTION_REPAIR; ACCEPT_EXACT_`9999622`_AS_ONE_BOUNDED_POST-FIX_NEGATIVE_WITH_ITS_NARROW_BOUNDARY; FREEZE_SAME-CLASS_REPEATED-FAILOVER_WAN_RETRIES; REQUIRE_ONE_SMALL_LOCAL_CONTRACT/REGRESSION_CLEANUP_BEFORE_INTEGRATION; THEN_INTEGRATE_AND_MOVE_TO_THE_NEXT_OUTWARD_OR_RELEASE-CLOSURE_LANE.**
 
-There is no core Session/Carrier/ACK/crypto/wire architecture change, no new numeric security policy, no destructive migration, no credential requirement and no production action. Proposal authority applies. This is active implementation progress, not `STALLED_IMPLEMENTATION`.
+There is no new core Session/Carrier/ACK/crypto/wire architecture change, no new numeric security policy, no destructive migration, no new credential requirement and no production action. Proposal authority applies. This is active implementation/evidence progress, not `STALLED_IMPLEMENTATION`.
 
 ## Reviewer findings
 
-### RWFDIAG-002 — CLOSED for v1 compatibility / shared-category shape
+### RWFDIAG-003 — CLOSED for the live defect that blocked the post-fix attempt
 
-Exact `9a94922` fixes the former internal schema contradiction:
+The prior timing-dependent startup-poll rewrite is fixed for explicitly owned `evidence_serialization` errors. `event_objects`, stream identity checks and duplicate/cardinality checks keep their evidence category even when observed during startup polling. Actual server exit before a valid start and invalid start-contract fields remain startup/setup facts. The malformed-JSON regression is back to `evidence_serialization`.
 
-- `first_failure.diagnostic_category` is optional, so historical `batch_timeout`, `cycle_failed` and retained typed negatives without that field remain valid;
-- one `$defs.diagnosticCategory` enum is referenced by both top-level and nested category fields when present;
-- nested `diagnostic.category` is optional, preserving historical artifacts such as `4a2129e` / `c6ab8fd` whose diagnostic object predates the category field;
-- the test suite performs real Draft 2020-12 validation across the retained repeated-warm-failover artifact corpus and a fresh fine-category no-row batch.
+This is sufficient to accept the single exact-`f17b648` post-fix live attempt for the narrow `startup_setup` evidence boundary it actually emitted. Do not promote that label to a root cause.
 
-Do not rewrite historical artifacts.
+### RWFDIAG-004 — CLOSED
 
-### RWFDIAG-002A — MEDIUM / unnecessary SHA-256 validation weakening
+The inner collector now has a real combined regression: the server exits before a valid start, cleanup is definitely invoked, cleanup returns malformed bounded evidence, a test-only marker proves cleanup ran, stdout remains empty, and the emitted primary remains `startup_setup`. Earlier primary failure therefore wins over later cleanup failure while cleanup still executes.
 
-The same schema patch relaxes tracked `diagnostic.sha256` from exact 64 lowercase hex to `16..64`. Current writer code always stores the full `hashlib.sha256(...).hexdigest()`, and retained diagnostic-bearing artifacts also carry full 64-hex values; only human-readable `detail` text uses a 16-character display prefix.
+### RWFDIAG-002A — CLOSED
 
-Restore the schema field to exact `^[0-9a-f]{64}$`. Keep the **category field optionality** required for historical compatibility; do not conflate that compatibility fix with hash weakening.
+Tracked `first_failure.diagnostic.sha256` is again exactly `^[0-9a-f]{64}$`. Historical optional-category compatibility remains separate from that hash contract.
 
-### RWFDIAG-003 — HIGH / narrowed — server-start polling still rewrites evidence failures as startup
+### RWFDIAG-005 — MEDIUM / two pre-spawn ownership holes remain
 
-The broad prose inference is gone, which is accepted. However, `server_start_readiness()` currently wraps **every** `CollectionError` raised while polling the server log as:
+The collector still has two small local attribution holes that contradict the intended explicit setup ownership, although they do **not** invalidate the exact `f17b648` negative just retained:
 
-`CollectionError("malformed server JSON event: start", "startup_setup")`.
+1. `requires()` raises uncategorized `CollectionError` for a missing required command token/value. The outer fallback converts uncategorized failures to conservative `nonzero_exit`; these are actually pre-spawn command-contract failures and should be explicit `startup_setup`.
+2. `float(NEKO_FAILOVER_SERVER_STARTUP_TIMEOUT_SECONDS)` is parsed outside a typed conversion guard. A non-numeric value reaches the generic `ValueError` catch and becomes `nonzero_exit`, even though invalid startup-timeout configuration is also a setup/configuration failure.
 
-That catches errors already explicitly owned by `event_objects()`, `validate_event_stream()` and `one_event()` as `evidence_serialization`. The current test consequently changed `malformed_json` to expect `startup_setup`.
+Minimum repair: give both `requires()` failure forms `startup_setup`; wrap startup-timeout conversion so malformed/non-finite/out-of-range configuration deterministically yields `startup_setup`; add small focused regressions for missing required token/value and malformed timeout. Do not add new diagnostic categories or a general phase framework.
 
-This is not truthful stage ownership. Worse, the same malformed line can be observed either during the polling read or only during the later full-log parse depending on scheduling, which can make the diagnostic category timing-dependent even though the evidence defect is identical.
+This repair is **local-only**. It does not create a new WAN hypothesis and therefore must not be followed by another repeated-failover VPS retry.
 
-Required minimum repair:
+### RWFDIAG-006 — MEDIUM / historical schema corpus regression coverage was narrowed unnecessarily
 
-1. do not blanket-convert parser/identity/cardinality `evidence_serialization` errors to `startup_setup` inside `server_start_readiness()`;
-2. actual process-start facts remain `startup_setup`: unavailable/invalid config, spawn/start timeout, process exit before a valid start event, or invalid required fields of the start contract;
-3. malformed JSON/event shape, duplicate event/cardinality, identity contradiction and later evidence contradictions remain `evidence_serialization` regardless of when the polling loop first observes them;
-4. change the malformed-JSON regression back to deterministic `evidence_serialization` and add/retain one start-exit case proving `startup_setup`.
+Exact `9a94922` had a real Draft 2020-12 regression over every retained `artifacts/repeated-warm-failover/*/result.json`. Exact `f17b648` narrows that test to only `a117086-typed-negative/result.json` while changing the SHA pattern.
 
-While touching this seam, make pre-spawn `requires()` failures and invalid startup-timeout configuration explicitly `startup_setup` instead of relying on generic `nonzero_exit`. This is a tiny ownership cleanup, not a new phase framework.
+The reviewer re-read the current retained corpus: `4a2129e` and `c6ab8fd` carry full 64-hex diagnostic hashes with no fine category; `9fd2411` and `a117086` carry no diagnostic object/category. Their shapes remain compatible with the intended current schema, so this is a **coverage regression, not evidence corruption**. Restore the corpus-wide glob validation and keep the fresh fine-category generated-batch validation. Historical artifacts stay immutable.
 
-### RWFDIAG-004 — CODE DIRECTION ACCEPTED / MEDIUM regression gap
+### RWFDIAG-007 — MEDIUM / status text has a stale next-seam sentence
 
-The implementation now preserves the saved server-start `primary_error`, executes cleanup, captures a separate `cleanup_error`, and re-raises the earlier primary before a cleanup error. This is the correct precedence direction.
+Current work-branch `docs/status.md` correctly classifies repeated warm failover as `BLOCKED_ORCHESTRATION_CURRENT_LINE` at exact `f17b648`, but the immediately following paragraph still says the next seam is “local sanitized inner-collector failure categorization”. That categorization seam now exists and produced the post-fix negative. `ROADMAP.md` also retains an older sentence grouping repeated warm failover under `BLOCKED_DIAGNOSTICS` before describing the newer current-line boundary.
 
-The current regression does not prove it through the real inner collector. `run-repeated-warm-failover-test.py` synthesizes one subprocess result containing a `startup_setup` marker plus the text `cleanup=malformed`; no inner cleanup command is actually executed in that test. The inner fake harness separately tests `early_exit` and `malformed_cleanup`, but not the required combined case.
+During the closure reconciliation, remove those stale statements without rewriting historical evidence. The current truth is: same-class repeated-failover WAN retry is closed absent a new material setup hypothesis; the retained negative is not a runtime failover result; release evidence item 3 remains open.
 
-Add one deterministic **inner-collector** scenario: server exits before a valid start, cleanup is definitely invoked and returns malformed/failing bounded evidence, a test-only side effect proves cleanup ran, stdout remains empty, and the emitted primary marker remains `startup_setup`. Do not add a secondary tracked schema field merely for this test.
+### RSEC-001 — HIGH for RC/security promotion, independent from the frozen failover line
 
-### RWFDIAG-003B — claim boundary for fine runtime stages
+Pre-auth admission implementation exists, but independent exact-tree review and adversarial concurrency/rate/expiry/release evidence remain open. The current security review requires source projection, charge-before-parse/response ordering, every real listener/responder call site, concurrent reservations, rate-window rejection, expiry/release, fail-closed cleanup and secret-safe counters. Candidate numeric limits must not be changed merely to make tests pass.
 
-The new schema may continue to accept `negotiation_auth`, `readiness` and `application_runtime`, but the collector must emit those only from explicit owned runtime evidence points. Do not add string matching merely to make every enum value appear in tests. A next live failure may truthfully remain `nonzero_exit` if no stronger stage is established.
-
-### RSEC-001 — HIGH for RC/security promotion, independent from this outward closure
-
-Pre-auth accounting remains a real release/security package: source projection, charge-before-parse/response ordering, every real responder/listener call site, concurrent reservations, rate-window rejection, expiry/release, fail-closed cleanup and exact-tree review remain open. Existing candidate numeric limits must not be changed merely to make tests pass. Keep this after the current rented-VPS outward closure unless a newly discovered security defect forces it earlier.
+RSEC-001 blocks release/security/public-listener promotion, not bounded authenticated research probes. Once the current outward/evidence lineage is integrated, it becomes a primary local closure lane unless the HY2 fair-pair question can be unlocked with one small security-neutral seam.
 
 ## Evidence / claim boundaries
 
-- Default `main` before this handoff is exact `ef94e48`; exact-main Rust CI run `34213318495` is green.
-- Execution exact `9a94922` has green exact-head Rust CI run `34216283788`. It is locally/CI validated diagnostic/schema code, **not** new WAN evidence.
-- Exact `9a94922` closes the former broad v1 compatibility and prose-guessing defects, but the startup-poll category rewrite above prevents treating its fine-stage contract as ready for a new live attribution run yet.
-- Exact `3aa4828` remains immutable historical changed-hypothesis negative evidence. Its then-emitted `cleanup` label is still only the collector label recorded by that older tree, not a retroactively corrected root-cause claim.
-- Historical repeated-failover negatives `4a2129e`, `9fd2411`, `a117086` and `c6ab8fd` remain immutable and validate under the current intended v1 compatibility boundary.
+- Default `main` before this handoff is exact `a73f44e`; exact-main Rust CI run `34219166076` is green.
+- Exact implementation `f17b648` has green exact-head Rust CI run `34220263467`. Current work/evidence HEAD `9999622` has green exact-head Rust CI run `34222644026`.
+- Exact `9999622` retains one post-fix repeated-warm-failover negative only. `completed_cycles=0`; therefore there is no retained runtime negotiation/auth/readiness/failover/application-accounting/timing/per-cycle resource conclusion from that invocation.
+- The repeated `startup_setup` category/hash/size relative to exact `9a94922` closes this current WAN line against unchanged or category-only reruns. A stage label is not a causal diagnosis.
+- Exact `3aa4828`, `9a94922`, `2b784a3`, `4a2129e`, `9fd2411`, `a117086` and `c6ab8fd` remain immutable historical evidence; do not rewrite old artifacts to match newer categories.
 - Endpoint rebinding exact `a8f49fc` / `7405da4`, migration-back exact `5d6582c` / `f024458`, and live key-update exact `2f4f59a` / `69d0ed9` remain accepted only for their previously stated bounded questions. No unchanged reruns.
-- Live PLPMTUD remains implementation/design blocked; do not invent probe/ACK wire fields, timer/cooldown or numeric policy as filler.
+- Live PLPMTUD remains implementation/design blocked; do not invent probe/ACK wire fields, timers/cooldowns or new numeric policy as filler.
 - IPv6 remains environment-blocked.
-- HY2 still has no fair paired comparison and no performance conclusion.
+- HY2 still has no fair paired comparison and no performance conclusion. Existing Hysteria service must not be touched as production infrastructure; only temporary owned experimental instances inside standing authorization are eligible.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - Protected identities, credentials, SSH material, private endpoints and raw private diagnostics remain unread/untracked/uncommitted.
 
@@ -98,80 +89,92 @@ Pre-auth accounting remains a real release/security package: source projection, 
 
 This is a continuous dependency-ordered queue. A commit, nominal hour, reviewer interval, green test or negative VPS attempt is not a stop condition while a safe dependency-satisfied slice remains.
 
-### A — Finish repeated-failover diagnostic truthfulness as one small repair
+### A — Close the remaining local repeated-failover contract gaps
 
-**Status:** `READY_LOCAL`, HIGH queue head. Proposal authority applies.
+**Status:** `READY_LOCAL`, MEDIUM, bounded final cleanup. Proposal authority applies.
 
-Goal: close the narrowed RWFDIAG-003 attribution defect plus RWFDIAG-002A/004 regression gaps without adding a new diagnostic framework.
+Goal: finish RWFDIAG-005/006 without adding any new diagnostic machinery.
 
-Primary files: `scripts/bench/run-live-warm-failover-cycle.py`, `scripts/bench/run-live-warm-failover-cycle-test.py`, `schema/repeated-warm-failover.v1.json`; touch outer tests only if needed for the existing contract.
+Primary files: `scripts/bench/run-live-warm-failover-cycle.py`, `scripts/bench/run-live-warm-failover-cycle-test.py`, `scripts/bench/run-repeated-warm-failover-test.py`.
 
-Protected invariants: valid six-cycle row semantics unchanged; controlled application reply-cessation classification unchanged; historical artifacts immutable; raw diagnostics private/redacted/hash-only; cleanup always executes; no Session/Carrier/ACK/crypto/wire behavior changes.
+Protected invariants: existing valid row semantics unchanged; historical artifacts immutable; no Session/Carrier/ACK/crypto/wire change; no new category enum; no raw private diagnostic retention.
 
 Required behavior/tests:
 
-1. polling-time malformed/duplicate/identity evidence remains `evidence_serialization`, never opportunistically becomes `startup_setup`;
-2. server exit before a valid start and invalid pre-spawn/start-timeout configuration are explicitly `startup_setup`;
-3. remove remaining prose-derived stage ownership; generic unknown nonzero remains conservative;
-4. startup failure + malformed cleanup executes the real inner cleanup seam and still emits startup as primary;
-5. restore tracked diagnostic SHA-256 schema to exactly 64 lowercase hex while retaining historical category optionality;
-6. historical artifact schema regression and fresh fine-category batch schema regression remain green.
+1. missing required command token/value is explicit `startup_setup`;
+2. malformed/non-finite/out-of-range startup-timeout configuration is explicit `startup_setup`;
+3. restore real Draft 2020-12 validation over **all** retained repeated-warm-failover `result.json` artifacts plus the generated fine-category negative;
+4. keep malformed/duplicate/identity evidence as `evidence_serialization` and keep the real primary-vs-cleanup combined regression.
 
-Commit and push the complete small repair. Do not run the VPS before B.
+Commit and push. **Do not run repeated-failover VPS after this slice.** It is not a new setup hypothesis.
 
 **Continue immediately to B:** yes.
 
-### B — Local + exact-head gate for A
+### B — Exact-head gate + current-state reconciliation
 
 **Status:** `PREAUTHORIZED_AFTER_A`.
 
-Run the focused inner/outer repeated-failover tests, real JSON-Schema regressions, `./scripts/check.sh`, and `git diff --check`. Fuzz is unnecessary unless parser/wire codec code changes, which this slice should not do.
+Run focused inner/outer failover tests, JSON-Schema tests, `./scripts/check.sh`, and `git diff --check`; fuzz is unnecessary unless parser/wire codec code changes. Push and require green exact-head CI.
 
-Push and require green exact-head CI. Do not add checker/doc-only work after green.
+Then make one compact developer-owned status/evidence reconciliation removing only stale current-state statements: repeated warm failover is `BLOCKED_ORCHESTRATION_CURRENT_LINE`, the current same-class live line is frozen without a material setup hypothesis, and “next seam is inner categorization” is no longer current. Do not rewrite old artifacts or inflate any WAN claim.
 
-**Continue immediately to C after green:** yes.
+**Continue immediately to C:** yes.
 
-### C — Exactly one fresh materially changed repeated-warm-failover VPS attempt
+### C — Integrate accepted closure lineage to default main once
 
-**Status:** `PREAUTHORIZED_AFTER_B_GREEN`; highest-value VPS opportunity.
+**Status:** `PREAUTHORIZED_AFTER_B_GREEN`.
 
-Standing authorization already covers this bounded self-owned TCP/UDP failover experiment. Do not request WAN permission again. A/B materially changes diagnostic ownership and the invalid category race, so exactly one new attempt is justified.
+Merge current reviewer `main` into the execution branch while preserving reviewer ownership/content of `docs/CHATGPT_HANDOFF.md`, resolve only genuine conflicts, run the normal gate, and integrate the accepted implementation/evidence lineage to default `main` without history rewriting. Observe exact-main CI.
 
-Preserve exact commit/binary, actual bounded parameters/ports, start/end, valid cycle prefix if any, client/server results when a row exists, typed diagnostic boundary only when explicitly established, and cleanup. A stage label is an evidence boundary, not a causal root-cause claim. Preserve a negative result. Do not rerun the same classified failure without another material hypothesis/code/config/path change.
+This should close the long-lived main/work truth split. Do not create additional coordination-only merges after tiny follow-up commits.
 
-**Continue immediately to D:** yes.
+**Continue immediately to D after green:** yes.
 
-### D — Reconcile C and make at most one evidence-producing repair
+### D — HY2 direct-unlock proposal or explicit skip
 
-**Status:** `PREAUTHORIZED_AFTER_C`.
+**Status:** `REVIEW_READY_AFTER_C`; outward/VPS-priority lane.
 
-If C adds a new fact, write one compact evidence/status reconciliation; do not rewrite exact `3aa4828` or older artifacts.
+Re-read the latest retained fair-pair artifact/harness at the exact current tree and identify why `hy2-1` ends at `client_exit` without discriminating evidence. The agent must propose 1–3 minimal shapes and choose the smallest security-neutral seam that can distinguish harness/setup from actual HY2 client/runtime failure while preserving lifecycle/resource-accounting symmetry with Nekomusume.
 
-If C exposes one concrete orchestration defect inside the existing architecture, the coding agent may propose the smallest repair, test/commit/push it, and only after that material change plus exact-head green make at most one further bounded attempt. If C repeats the same boundary without a new safe hypothesis, freeze the negative and close this repeated-failover line. Do not grow additional diagnostic infrastructure merely to chase PASS.
+Allowed implementation shape: bounded typed exit/stderr classification or an equivalent existing-harness observation that directly unlocks one same-condition pair. Do **not** build a generic diagnostic framework, alter benchmark workload/security levels to favor either implementation, touch an existing production Hysteria service, or require new credentials/permissions.
 
-### E — Integrate accepted closure lineage to default main once
+If no small seam can truthfully unlock a fair pair, record that as a developer note only if useful and **skip directly to F** rather than manufacturing work.
 
-**Status:** `PREAUTHORIZED_AFTER_D`.
+**Continue immediately to E only if D materially changes the hypothesis and exact-head CI is green.**
 
-After A-D are reviewable/green with no new HIGH blocker, merge current reviewer `main` into the execution branch while preserving reviewer ownership of `docs/CHATGPT_HANDOFF.md`, then integrate the accepted implementation/evidence lineage to default `main` without history rewriting. Observe exact-main CI.
+### E — At most one materially changed self-owned HY2 fair-pair attempt
 
-Do not create coordination-only merges after tiny commits; one closure integration is enough.
+**Status:** `PREAUTHORIZED_ONLY_IF_D_GREEN_AND_TRUTHFUL`.
 
-### F — HY2 direct-unlock opportunity only
+Standing authorization already covers a bounded Nekomusume-vs-HY2 comparison on owned client/VPS endpoints. Run at most one attempt with the existing same-condition workload/security/lifecycle/resource contract. Preserve a negative or slower Nekomusume result exactly. No superiority claim follows from a one-off sample or incomplete pair.
 
-**Status:** `REVIEW_READY_AFTER_E`.
+If the attempt fails in the same class without a new hypothesis, freeze it; no mechanical retry. If it produces a complete comparable pair, reconcile only the actually supported statistics/claim boundary.
 
-Re-read the latest retained `hy2-1 client_exit` evidence and fair-pair harness. If one minimal security-neutral instrumentation/configuration seam can directly unlock a same-condition paired owned-VPS run, implement/test it and make at most one materially changed attempt under standing authorization. Preserve negative/slower results.
+**Continue immediately to F:** yes.
 
-If this would become another generic harness project, require new credentials/permissions, touch an existing production HY2 service, or still cannot produce a fair pair, keep HY2 blocked and continue to G.
+### F — Focused RSEC-001 adversarial release/security closure
 
-### G — Focused RSEC-001 adversarial release/security closure
+**Status:** `READY_LOCAL_AFTER_C` and also the fallback if D is not a direct unlock.
 
-**Status:** `READY_LOCAL_AFTER_OUTWARD_CLOSURE`.
+Re-read exact current `ProcessPreauthAdmission`, `ListenerAdmission`, every real TCP/UDP responder/listener call site and `docs/reviews/resource-abuse-evidence-2026-09-04.md`. Build one bounded closure package around **existing candidate limits**:
 
-Re-read exact current pre-auth implementation plus `docs/reviews/resource-abuse-evidence-2026-09-04.md`. Build one bounded adversarial closure package around the **existing** candidate limits: source projection, charge-before-parse/response ordering, every real responder/listener call site, concurrent reservations, rate-window rejection, expiry/release, fail-closed cleanup and secret-safe diagnostics. Do not invent new numeric policy.
+- source projection / tuple ownership;
+- charge input before parse/auth work;
+- charge exact response bytes before response send;
+- every real responder/listener integration point;
+- concurrent reservation success/rejection and atomic rollback;
+- global/source rate-window rejection;
+- idle/lifetime expiry and release;
+- cleanup after errors/timeouts;
+- redacted observable counters sufficient to prove accounting without secrets.
 
-Close only what the exact tree proves. If a new safe VPS-ready outward capability becomes available while this security package is underway, retain a parallel/follow-up exit rather than letting audit infrastructure monopolize the project.
+Prefer deterministic/process adversarial tests over VPS load. Do not invent or tune numeric limits. If a discovered bug can be repaired inside existing ownership/state-machine semantics, propose/implement/test it directly; only a required new numeric security policy or core architectural change escalates.
+
+### G — Exact-tree RSEC reconciliation and next milestone decision input
+
+**Status:** `PREAUTHORIZED_AFTER_F`.
+
+Run full local gates and exact-head CI, then update the resource-abuse review/status only for what the exact tree proves. If RSEC-001 closes, mark the security evidence package closed but **do not** set RC/freeze/production/release flags. Re-read the remaining bounded release matrix and select the next real dependency-satisfied output lane; do not default back to checker/docs growth.
 
 ## Stop / escalation boundary
 
