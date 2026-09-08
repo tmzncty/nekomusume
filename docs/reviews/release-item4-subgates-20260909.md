@@ -9,6 +9,7 @@ Developer-prepared factual review support for reachable exact commit `38ea31057f
 ### Package provenance and rollback
 
 - Exact `a9928c8` package was built reproducibly in the recorded environment; packaged and installed VPS binary hashes matched, and bounded authenticated TCP/UDP package smokes completed with cleanup.
+- Current package smoke validates exact archive shape and member type before extraction, rejects path escape, links, special members and unexpected layout, then enforces checksums/modes and native secret-free capabilities. Synthetic adversarial archives are exercised by `scripts/check.sh`; this is release-tool validation, not signing or publication trust.
 - Exact `7cebe6b` installed-package lifecycle observation completed TCP and UDP `READY -> DRAINING -> STOPPED`, listener release, same-port restart/rebind, authenticated 32-byte post-restart exchanges, and cleanup.
 - Historical N5 remains the older distinct-version A→B→A rollback observation. The separate exact `91a735c -> dc90c5f -> 91a735c` rehearsal uses genuinely different package/binary hashes, retains an external temporary identity/state marker for the bounded probe contract, and returns the selected release to A. Neither observation establishes arbitrary state-schema compatibility, publication signing, SBOM/provenance service, service-manager hardening, or production deployment.
 
