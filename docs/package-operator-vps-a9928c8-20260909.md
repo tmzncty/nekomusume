@@ -5,7 +5,7 @@
 One bounded self-owned client↔VPS package/operator observation for exact commit `a9928c809e493e1c7f06ba692958fee6608b4f7d`. This is not release approval, RC, production readiness, public/general reachability, or a distinct-version compatibility result. The existing production Hysteria service was not modified.
 
 - Experiment ID: `package-vps-a992-20260909`
-- VPS target: self-owned `192.144.192.215`; remote bind `10.0.0.6`
+- VPS target: `self-owned-vps-A`; remote bind: `private-bind-A`
 - Target architecture: `x86_64`
 - Experimental ports: TCP `40080`, UDP `40081`
 - Application profile: 2 authenticated exchanges × 32 bytes per transport; bounded 5-second server duration
