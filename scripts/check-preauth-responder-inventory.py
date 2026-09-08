@@ -72,7 +72,10 @@ for responder in responders:
         "rejection_cleanup_anchor",
     ):
         anchor = responder.get(key)
-        if anchor and anchor not in text:
+        # Persisted pending-owner anchors are checked in their declared,
+        # occurrence-stable lifecycle regions below; whole-file membership
+        # would let a sibling responder satisfy the wrong owner.
+        if anchor and not responder.get("pending_owner") and anchor not in text:
             raise SystemExit(f"{rid}: missing {key} {anchor!r}")
     if responder.get("pending_owner"):
         try:
@@ -80,21 +83,40 @@ for responder in responders:
         except ValueError as error:
             raise SystemExit(error) from error
 
-# Regression: an identical store anchor outside the scoped producer must not
-# rescue a broken persisted-owner lifecycle.
-pending_fixture = next(r for r in responders if r.get("id") == "failover_udp_pending")
-fixture = "\n".join((
+# The two inventoried UDP entries intentionally share one persisted pending
+# lifecycle. Make that sharing explicit rather than allowing either entry to
+# silently borrow a different sibling occurrence.
+pending_owners = [r for r in responders if r.get("pending_owner")]
+if len(pending_owners) != 2:
+    raise SystemExit("preauth responder inventory: expected two pending owners")
+lifecycle_keys = (
+    "pending_producer_begin", "pending_producer_end", "pending_consumer_begin",
+    "pending_consumer_end", "pending_expiry_begin", "pending_expiry_end",
+    "pending_reserve_anchor", "pending_store_anchor", "pending_cancel_anchor",
+    "expiry_cleanup_anchor",
+)
+if any(tuple(r.get(key) for key in lifecycle_keys) != tuple(pending_owners[0].get(key) for key in lifecycle_keys) for r in pending_owners[1:]):
+    raise SystemExit("preauth responder inventory: sibling pending owners do not reference one shared lifecycle")
+
+# Mutation regressions: an identical anchor outside the intended region must not
+# rescue producer/store, consumer/cancel, or expiry cleanup ownership.
+pending_fixture = pending_owners[0]
+fixture_parts = (
     pending_fixture["pending_expiry_begin"], pending_fixture["expiry_cleanup_anchor"], pending_fixture["pending_expiry_end"],
     pending_fixture["pending_consumer_begin"], pending_fixture["pending_cancel_anchor"], pending_fixture["pending_consumer_end"],
     pending_fixture["pending_producer_begin"], pending_fixture["pending_reserve_anchor"], pending_fixture["pending_producer_end"],
     pending_fixture["pending_store_anchor"],
-))
-try:
-    validate_pending_lifecycle(pending_fixture, fixture)
-except ValueError:
-    pass
-else:
-    raise SystemExit("failover_udp_pending: unrelated store anchor satisfied scoped producer mutation")
+)
+for label, fixture in (
+    ("store", "\n".join(fixture_parts)),
+    ("cancel", "\n".join(fixture_parts).replace(pending_fixture["pending_cancel_anchor"], "missing-cancel")),
+    ("expiry", "\n".join(fixture_parts).replace(pending_fixture["expiry_cleanup_anchor"], "missing-expiry")),
+):
+    try:
+        validate_pending_lifecycle(pending_fixture, fixture)
+    except ValueError:
+        continue
+    raise SystemExit(f"failover_udp_pending: unrelated {label} anchor satisfied scoped lifecycle mutation")
 
 expected = {
     "ordinary_tcp_probe",
