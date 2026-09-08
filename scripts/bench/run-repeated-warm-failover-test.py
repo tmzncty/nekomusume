@@ -91,6 +91,44 @@ def test_schema_accepts_historical_and_new_negative() -> None:
     assert batch["first_failure"]["diagnostic"]["category"] == "startup_setup"
 
 
+def test_diagnostic_digest_exception_is_exact_and_historical_only() -> None:
+    from jsonschema import Draft202012Validator
+    schema = json.loads(SCHEMA.read_text())
+    validator = Draft202012Validator(schema)
+    base = row(1, False)
+    diagnostic = {
+        "sha256": "5040d8408ea06ace72a43c7a746be9f29c9ef001a5e1ae4bed573391f3b11f4",
+        "bytes": 0, "truncated": False, "classification": "collector_failure",
+    }
+    batch = {"schema": "nekomusume.repeated-warm-failover.v1", "expected_cycles": 6,
+             "concurrency": 1, "status": "failed", "completed_cycles": 1,
+             "elapsed_ms": 1, "cycles": [base], "first_failure": {"cycle_index": 1,
+             "kind": "cycle_failed", "detail": "fixture", "diagnostic": diagnostic}}
+    # The one frozen legacy value remains accepted by the Draft 2020-12 schema.
+    assert not list(validator.iter_errors(batch))
+    for digest in ("not-a-sha256", "0" * 63, "f" * 65):
+        mutated = copy.deepcopy(batch)
+        mutated["first_failure"]["diagnostic"]["sha256"] = digest
+        assert list(validator.iter_errors(mutated)), digest
+    canonical = copy.deepcopy(batch)
+    canonical["first_failure"]["diagnostic"]["sha256"] = "a" * 64
+    assert not list(validator.iter_errors(canonical))
+    # Generated diagnostics are canonical regardless of the compatibility exception.
+    with tempfile.TemporaryDirectory() as td:
+        private = pathlib.Path(td) / "private"
+        old = os.environ.get("NEKO_PRIVATE_DIAGNOSTICS_DIR")
+        os.environ["NEKO_PRIVATE_DIAGNOSTICS_DIR"] = str(private)
+        try:
+            generated = module.retain_private_diagnostics("new diagnostic", 1)
+        finally:
+            if old is None:
+                os.environ.pop("NEKO_PRIVATE_DIAGNOSTICS_DIR", None)
+            else:
+                os.environ["NEKO_PRIVATE_DIAGNOSTICS_DIR"] = old
+    assert module.HEX64.fullmatch(generated["sha256"])
+    assert generated["sha256"] != "5040d8408ea06ace72a43c7a746be9f29c9ef001a5e1ae4bed573391f3b11f4"
+
+
 def test_six_success() -> None:
     batch, code, called = execute([row(i) for i in range(1, 7)])
     assert code == 0
