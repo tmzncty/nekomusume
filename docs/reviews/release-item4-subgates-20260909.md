@@ -1,0 +1,42 @@
+# Release item-4 subgate factual review — exact `bb008d0`
+
+## Scope
+
+Developer-prepared factual review support for exact commit `bb008d0302c17dcf34dac7c5b18259fd34ec495f`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+
+## Verified subgate facts
+
+### Package provenance and rollback
+
+- Exact `a9928c8` package was built reproducibly in the recorded environment; packaged and installed VPS binary hashes matched, and bounded authenticated TCP/UDP package smokes completed with cleanup.
+- Exact `7cebe6b` installed-package lifecycle observation completed TCP and UDP `READY -> DRAINING -> STOPPED`, listener release, same-port restart/rebind, authenticated 32-byte post-restart exchanges, and cleanup.
+- Historical N5 remains the distinct-version A→B→A rollback observation for older exact trees. Current-tree lifecycle evidence does not establish current-vs-historical state-format compatibility, publication signing, SBOM/provenance service, service-manager hardening, or production deployment.
+
+### Canonical-vector status
+
+- Corpus v1 remains content-addressed and mechanically validated at 42 vectors across 10 domains with `freeze=true`.
+- That freeze is corpus-scoped only. It is not a full protocol/interoperability freeze or release approval.
+
+### Comparison methodology and HY2
+
+- The paired comparison harness retains ordered raw prefixes, suppresses comparative summaries for incomplete pairs, validates payload/resource/lifecycle identity, and bounds/redacts diagnostics.
+- Current exact `13da094` HY2 evidence remains `BLOCKED_HARNESS_CURRENT_LINE_HY2` at `unknown / client_started`: Nekomusume sample 1 succeeded, HY2 sample 1 exited before application bytes, so no complete pair, median/P95, performance, superiority, or general HY2 reliability claim exists. Same-class retry remains frozen.
+
+### Negotiation, Noise, trust, and parser boundaries
+
+- Current deterministic gates cover canonical version negotiation before data admission, exact negotiation/transcript binding into Noise, allowlist/trust rejection, tamper/replay rejection, bounded framing, malformed/truncated/oversize rejection, and fuzz-smoke.
+- These are implementation/test facts, not an independent cryptographic/security approval or frozen public protocol claim.
+
+### Pre-auth resource controls and D019
+
+- Bounded non-policy engineering controls remain reviewed: carrier/source projection, admission before expensive work, input/response accounting, source/global state/queue/memory bounds, terminalization/rollback, expiry/release cleanup, aggregate redacted observability, and listener inventory.
+- Full RSEC/D019 remains `SOURCE_RETENTION_POLICY_BLOCKED`: terminal release can remove final source state while D019 currently requires source-lifetime accounting not to reset. No TTL, LRU/history capacity, external authority, or weakened no-reset semantics is selected here.
+- Deterministic tests do not establish adversarial-load capacity suitability or formal security approval.
+
+## Exact-tree gates
+
+On exact `bb008d0`, `scripts/check.sh` and `git diff --check` passed. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
+
+## Remaining release boundaries
+
+The repository still lacks formal independent security/release approval, full D019 policy closure, signed publication/key-custody/SBOM workflow, native aarch64 execution evidence, sustained/public/general reachability evidence, natural-loss evidence, and production/service-manager hardening. HY2 and repeated-failover same-class runs remain frozen. Live PMTUD requires an explicitly accepted authenticated wire/security design gate. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain unchanged.
