@@ -853,6 +853,28 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
 }
 
 #[test]
+fn migration_back_tamper_fails_closed_before_return() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let output = Command::new(bin)
+        .args([
+            "failover-client",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--test-migration-back-tamper",
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("migrated_back_to_udp"));
+    assert!(!stdout.contains("udp_return_delivery_ack_validated"));
+}
+
+#[test]
 fn udp_reply_cessation_seam_is_bounded_and_off_by_default() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let output = Command::new(bin)
