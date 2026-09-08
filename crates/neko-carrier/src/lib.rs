@@ -2201,6 +2201,104 @@ pub enum MigrationError {
     ScoreMargin,
     HoldGate,
 }
+
+/// Bounded post-authenticated UDP source-endpoint rebinding state.
+///
+/// `source_tag` is an opaque caller-owned exact endpoint binding (typically a
+/// stable hash of the socket address); the carrier layer never parses or logs
+/// an address. A candidate is only observable until the server-generated
+/// challenge is answered with the exact session/path/generation/epoch tuple.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EndpointRebindCandidate {
+    pub source_tag: u64,
+    pub path: PathId,
+    pub generation: PathGeneration,
+    pub session_id: u64,
+    pub delivery_epoch: u64,
+    pub challenge_id: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndpointRebindError {
+    AlreadyPending,
+    SameSource,
+    OldGeneration,
+    TupleMismatch,
+    NoCandidate,
+    ChallengeMismatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EndpointRebindState {
+    active_source_tag: u64,
+    active_path: PathId,
+    active_generation: PathGeneration,
+    candidate: Option<EndpointRebindCandidate>,
+}
+
+impl EndpointRebindState {
+    pub fn new(source_tag: u64, path: PathId, generation: PathGeneration) -> Self {
+        Self {
+            active_source_tag: source_tag,
+            active_path: path,
+            active_generation: generation,
+            candidate: None,
+        }
+    }
+
+    pub const fn active_source_tag(&self) -> u64 {
+        self.active_source_tag
+    }
+    pub const fn active_path(&self) -> PathId {
+        self.active_path
+    }
+    pub const fn active_generation(&self) -> PathGeneration {
+        self.active_generation
+    }
+    pub const fn candidate(&self) -> Option<EndpointRebindCandidate> {
+        self.candidate
+    }
+
+    /// Authenticated input from a new source is candidate-only. It cannot
+    /// change ownership or create validation evidence by itself.
+    pub fn observe_candidate(
+        &mut self,
+        candidate: EndpointRebindCandidate,
+    ) -> Result<(), EndpointRebindError> {
+        if self.candidate.is_some() {
+            return Err(EndpointRebindError::AlreadyPending);
+        }
+        if candidate.source_tag == self.active_source_tag {
+            return Err(EndpointRebindError::SameSource);
+        }
+        if candidate.generation.0 <= self.active_generation.0 {
+            return Err(EndpointRebindError::OldGeneration);
+        }
+        if candidate.session_id == 0 || candidate.delivery_epoch == 0 || candidate.challenge_id == 0
+        {
+            return Err(EndpointRebindError::TupleMismatch);
+        }
+        self.candidate = Some(candidate);
+        Ok(())
+    }
+
+    /// Only the exact server challenge response from the candidate endpoint
+    /// atomically promotes the new source and generation.
+    pub fn validate_and_promote(
+        &mut self,
+        response: EndpointRebindCandidate,
+    ) -> Result<(), EndpointRebindError> {
+        let candidate = self.candidate.ok_or(EndpointRebindError::NoCandidate)?;
+        if response != candidate {
+            return Err(EndpointRebindError::ChallengeMismatch);
+        }
+        self.active_source_tag = candidate.source_tag;
+        self.active_path = candidate.path;
+        self.active_generation = candidate.generation;
+        self.candidate = None;
+        Ok(())
+    }
+}
 const SCORE_BASE: i64 = 10_000;
 const SCORE_RTT_WEIGHT: i64 = 1;
 const SCORE_LOSS_WEIGHT: i64 = 5;
@@ -3979,6 +4077,75 @@ mod concurrent_manager_tests {
             m.observe_readiness(TCP, true, true, 8),
             Err(ConcurrentError::OldGeneration)
         );
+    }
+
+    #[test]
+    fn endpoint_rebind_requires_fresh_exact_challenge_and_promotes_atomically() {
+        let mut state = EndpointRebindState::new(11, PathId(1), PathGeneration(3));
+        let candidate = EndpointRebindCandidate {
+            source_tag: 22,
+            path: PathId(1),
+            generation: PathGeneration(4),
+            session_id: 7001,
+            delivery_epoch: 1,
+            challenge_id: 9,
+        };
+        assert_eq!(state.observe_candidate(candidate), Ok(()));
+        assert_eq!(state.active_source_tag(), 11);
+        assert_eq!(state.active_generation(), PathGeneration(3));
+        assert_eq!(
+            state.validate_and_promote(EndpointRebindCandidate {
+                challenge_id: 8,
+                ..candidate
+            }),
+            Err(EndpointRebindError::ChallengeMismatch)
+        );
+        assert_eq!(state.active_source_tag(), 11);
+        assert!(state.candidate().is_some());
+        assert_eq!(state.validate_and_promote(candidate), Ok(()));
+        assert_eq!(state.active_source_tag(), 22);
+        assert_eq!(state.active_generation(), PathGeneration(4));
+        assert!(state.candidate().is_none());
+    }
+
+    #[test]
+    fn endpoint_rebind_rejects_same_old_and_duplicate_candidates_without_mutation() {
+        let mut state = EndpointRebindState::new(11, PathId(1), PathGeneration(3));
+        let base = EndpointRebindCandidate {
+            source_tag: 11,
+            path: PathId(1),
+            generation: PathGeneration(3),
+            session_id: 7001,
+            delivery_epoch: 1,
+            challenge_id: 1,
+        };
+        assert_eq!(
+            state.observe_candidate(base),
+            Err(EndpointRebindError::SameSource)
+        );
+        assert_eq!(
+            state.observe_candidate(EndpointRebindCandidate {
+                source_tag: 12,
+                generation: PathGeneration(2),
+                ..base
+            }),
+            Err(EndpointRebindError::OldGeneration)
+        );
+        let candidate = EndpointRebindCandidate {
+            source_tag: 12,
+            generation: PathGeneration(4),
+            ..base
+        };
+        assert_eq!(state.observe_candidate(candidate), Ok(()));
+        assert_eq!(
+            state.observe_candidate(EndpointRebindCandidate {
+                source_tag: 13,
+                ..candidate
+            }),
+            Err(EndpointRebindError::AlreadyPending)
+        );
+        assert_eq!(state.active_source_tag(), 11);
+        assert_eq!(state.active_generation(), PathGeneration(3));
     }
 
     #[test]
