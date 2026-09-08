@@ -1,8 +1,8 @@
-# Release item-4 subgate factual review — exact `e743c64`
+# Release item-4 subgate factual review — exact `38ea310`
 
 ## Scope
 
-Developer-prepared factual review support for reachable exact commit `e743c64a4f62498dd98f03d64797acb44cb18fdc`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support for reachable exact commit `38ea31057f91eba60baa5a4c4e1b76515d6e65fa`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
@@ -10,7 +10,7 @@ Developer-prepared factual review support for reachable exact commit `e743c64a4f
 
 - Exact `a9928c8` package was built reproducibly in the recorded environment; packaged and installed VPS binary hashes matched, and bounded authenticated TCP/UDP package smokes completed with cleanup.
 - Exact `7cebe6b` installed-package lifecycle observation completed TCP and UDP `READY -> DRAINING -> STOPPED`, listener release, same-port restart/rebind, authenticated 32-byte post-restart exchanges, and cleanup.
-- Historical N5 remains the distinct-version A→B→A rollback observation for older exact trees. Current-tree lifecycle evidence does not establish current-vs-historical state-format compatibility, publication signing, SBOM/provenance service, service-manager hardening, or production deployment.
+- Historical N5 remains the older distinct-version A→B→A rollback observation. The separate exact `91a735c -> dc90c5f -> 91a735c` rehearsal uses genuinely different package/binary hashes, retains an external temporary identity/state marker for the bounded probe contract, and returns the selected release to A. Neither observation establishes arbitrary state-schema compatibility, publication signing, SBOM/provenance service, service-manager hardening, or production deployment.
 
 ### Canonical-vector status
 
@@ -35,7 +35,7 @@ Developer-prepared factual review support for reachable exact commit `e743c64a4f
 
 ## Exact-tree gates
 
-On reachable exact `e743c64`, `scripts/check.sh` and `git diff --check` passed before this review-text correction was committed. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
+On reachable exact `38ea310`, `scripts/check.sh` and `git diff --check` passed before this review-text update was committed. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
 
 ## Remaining release boundaries
 

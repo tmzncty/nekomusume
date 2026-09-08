@@ -2,7 +2,9 @@
 
 **Scope:** evidence index only. This is not an audit, security approval, production authorization, protocol freeze, or release decision.
 
-**Evidence indexed and gates rerun through reachable exact commit:** `e743c64a4f62498dd98f03d64797acb44cb18fdc`
+**Evidence indexed and gates rerun through reachable exact commit:** `38ea31057f91eba60baa5a4c4e1b76515d6e65fa`
+
+The packet text is updated after that tested tree; it is not a self-referential commit attestation.
 
 This packet is an evidence index, not a self-referential commit attestation; later packet-text commits may update the index without changing the tested tree.
 
@@ -13,6 +15,7 @@ This packet is an evidence index, not a self-referential commit attestation; lat
 - Existing historical artifacts remain immutable; current exact-tree evidence is indexed without rewriting them.
 - The packet indexes one bounded self-owned VPS package install/authenticated TCP+UDP smoke; this remains operator evidence, not release, production, public-reachability, or security approval.
 - The exact `14be1c8` installed-package attempt remains an incomplete orchestration negative. The single changed-hypothesis exact-`7cebe6b` invocation is separately anchored by a sanitized 26-record result and provenance erratum; it is bounded operator evidence only.
+- The exact `91a735c -> dc90c5f -> 91a735c` distinct-package rehearsal preserves external temporary identity/state for the bounded probe contract; it is not arbitrary state-schema compatibility or production upgrade approval.
 
 ## Evidence index
 
