@@ -1,0 +1,26 @@
+experiment_id=package-lifecycle-7ce-20260909
+commit=7cebe6b34008fcd6aae096ca7cd3a579f9aa6f3b
+endpoint=self-owned-vps-A
+private_bind=private-bind-A
+archive_sha256=c30497b4a31ec36f8a1f39d7d39baa80a2fc1a8c78e792253b5be740f7a14404
+binary_sha256=6283a25a93b2fabd0f8cb06008ec72225cf52e29950811aec2b6a8dbf5da80de
+installed_binary_sha256=6283a25a93b2fabd0f8cb06008ec72225cf52e29950811aec2b6a8dbf5da80de
+tcp_result=probe_ok transport=tcp bytes=32 elapsed_ms=184
+udp_result=probe_ok transport=udp bytes=32 elapsed_ms=62
+{"phase":"start","status":"ok"}
+{"phase":"package_smoke","status":"ok"}
+{"phase":"installed_hash","status":"ok"}
+{"phase":"tcp-preclean","status":"ok"}
+{"phase":"tcp-ready","status":"ok"}
+{"phase":"tcp-signal-stop","status":"ok"}
+{"phase":"tcp-rebind-ready","status":"ok"}
+{"phase":"tcp-authenticated-exchange","status":"ok"}
+{"phase":"tcp-clean","status":"ok"}
+{"phase":"udp-preclean","status":"ok"}
+{"phase":"udp-ready","status":"ok"}
+{"phase":"udp-signal-stop","status":"ok"}
+{"phase":"udp-rebind-ready","status":"ok"}
+{"phase":"udp-authenticated-exchange","status":"ok"}
+{"phase":"udp-clean","status":"ok"}
+{"phase":"cleanup_pre_delete","status":"ok"}
+cleanup_post_delete=verified
