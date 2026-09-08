@@ -1,177 +1,217 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-08 22:00 Asia/Shanghai
-Previous reviewer main: exact `799b65bb6a60b49811b5b2f2fa17a71ae828a387` (`docs(handoff): review preauth adversarial closure boundary`).
-Previous checked coding HEAD: exact `d120e74b47df22959a23a39b031b10c7b360f3e1` (`test: close bounded preauth abuse evidence`).
-Repository default `main` before this handoff: exact `256666676624578d72e5dc80fb8c3c13f41e521c` (`merge: integrate accepted closure lineage`).
-Current execution branch `work/e1a-staged-accounting-20260907`: exact `f4404257520e9a014ac4e785b0ab9a97f8aaf794` (`merge: integrate reviewer closure lineage`).
-The pre-handoff main and current work branch have the same tree (`4e3a3aec74d46295cbb303b70661d6560f5a102a`); the long-lived implementation/reviewer truth split is therefore closed. Do not create more coordination-only merge commits for tiny follow-ups.
+Checked at: 2026-09-09 00:00 Asia/Shanghai
+Previous reviewer main: exact `180f5fe056348e15cd917eeefa1e1cc1a8eb00bc` (`docs(handoff): accept closure integration and advance HY2 evidence`).
+Repository default `main` at review start: exact `6a69ab881e233ee71e2efb4fb79a00e72593d537` (`merge: preserve reviewer handoff during RSEC reconciliation`).
+The old execution branch `work/e1a-staged-accounting-20260907` remains at exact `f4404257520e9a014ac4e785b0ab9a97f8aaf794` and is now stale relative to main; do not merge it back merely for coordination. Start/fetch current `main` for new work.
 
-New substantive coding commits reviewed this cycle:
+New commits since the previous reviewer handoff:
 
-- exact `b2fe1a30ccf6f20357a95c018db989836925c310` — `fix: close warm failover contract gaps`;
-- exact `8a67be3b5ddfa0fdaf1374d1dd4de66e8cd7d55a` — `fix: redact preauth accounting diagnostics`.
+- exact `0b9acbabf5ea13ad6a481f7ac20ad716873d4ed1` — `docs: reconcile partial preauth security evidence`;
+- exact `6a69ab881e233ee71e2efb4fb79a00e72593d537` — merge preserving this reviewer-owned handoff while integrating `0b9acba`.
 
-Exact GitHub Actions:
+There is **no new implementation/test/WAN evidence commit** in this interval. The compare from exact `180f5fe` to exact `6a69ab8` changes only `docs/reviews/resource-abuse-evidence-2026-09-04.md` and `docs/status.md`.
 
-- `b2fe1a3` Rust CI run `34230666694` — success;
-- `8a67be3` Rust CI run `34231492179` — success;
-- integrated default-main exact `2566666` Rust CI run `34232112189` — success.
+Exact GitHub Actions for current main:
 
-## What changed and review verdict
+- Rust CI run `34243187885` — `success`;
+- `stable checks` job — `success`, including `bash scripts/check.sh`;
+- `nightly decode fuzz smoke` — `success`.
 
-`b2fe1a3` closes the queued **local-only** repeated-warm-failover contract cleanup: required command token/value failures and malformed/non-finite/out-of-range startup timeout are explicitly owned by `startup_setup`; the Draft 2020-12 regression again walks every retained repeated-warm-failover `result.json`; ROADMAP/status now describe the current repeated-failover line as an orchestration negative with same-class retry frozen absent a material new hypothesis. This does **not** authorize or justify another repeated-failover VPS run.
+Because `scripts/check.sh` includes `scripts/bench/compare-hy2-owned-lab-test.sh` and `scripts/bench/validate-hy2-owned-lab-test.py`, the previously queued HY2 local prerequisite is already satisfied on exact current main. Do **not** manufacture another local-only commit just to re-prove that gate.
 
-`8a67be3` closes the important non-policy RSEC repair from the previous review. `ProcessPreauthAdmission` no longer exposes its internal source/state keys through derived `Debug`; the custom `Debug` surface is aggregate-only and the adversarial test asserts the complete permitted shape. The resource-abuse note now names exact `d120e74` as the tested tree, distinguishes inherited from newly-added evidence, and correctly states that release/reopen demonstrates the unresolved D019 terminal source-retention conflict rather than satisfying it. The pending failover responder is also marked as a persisted pending owner in the inventory/checker.
+## Review verdict
 
-**Verdict:** `ACCEPT_b2fe1a3_LOCAL_RWFDIAG_CLOSURE; ACCEPT_8a67be3_RSEC_PROVENANCE_AND_REDACTED_OBSERVABILITY_REPAIR_AS_BOUNDED_LOCAL_EVIDENCE; ACCEPT_INTEGRATED_MAIN_2566666_AS_THE_CURRENT_TRUTH; KEEP_D019_SOURCE_RETENTION_POLICY_BLOCKED; DO_NOT_GROW_MORE_REPEATED-FAILOVER_DIAGNOSTICS; ADVANCE_TO_THE_EXISTING_HY2_DIRECT-UNLOCK_SEAM_AND_AT_MOST_ONE_MATERIALLY_CHANGED_SELF-OWNED_FAIR-PAIR_ATTEMPT; KEEP_TWO_SMALL_STATIC/EVIDENCE-DEBT_REPAIRS_BEHIND_OR_PARALLEL_TO_THE_OUTWARD_LANE.`
+**ACCEPT_CURRENT_MAIN_`6a69ab8`_AS_REPOSITORY_TRUTH_AND_ACCEPT_ITS_GREEN_GATE; REJECT_`0b9acba`_`ENGINEERING_EVIDENCE_CLOSED`_LABEL_AS_PREMATURE/INTERNALLY_CONTRADICTORY; KEEP_D019_SOURCE_RETENTION_POLICY_BLOCKED; MARK_HY2_DIRECT-UNLOCK_AS_`STALLED_IMPLEMENTATION`_COORDINATION_SIGNAL_BECAUSE_THE_READY_OUTWARD_SLICE_HAS_REMAINED_UNEXECUTED_WITHOUT_AN_EXTERNAL_BLOCKER; REPAIR_THE_RSEC_CLAIM_DRIFT_AS_A_SMALL_FIRST_SLICE_AND_THEN_EXECUTE_EXACTLY_ONE_PREAUTHORIZED_SELF-OWNED_HY2_ATTEMPT_FROM_CURRENT_GREEN_MAIN; DO_NOT_GROW_MORE_DIAGNOSTIC_FRAMEWORK.`
 
-There is no new Session/Carrier/ACK/crypto/wire semantic change, no destructive migration, no production action, and no new numeric security policy in the accepted commits. This is active progress, not `STALLED_IMPLEMENTATION`.
+There is no new Session/Carrier/ACK/crypto/wire semantic change, no destructive migration, no production action, and no new numeric security policy in the new commits.
 
 ## Reviewer findings
 
-### RSEC-PRIV/PROV — CLOSED for the bounded non-policy claim
+### RSEC-CLAIM-003 — HIGH evidence/provenance drift in exact `0b9acba`
 
-The previous false assurance is repaired. The permitted `ProcessPreauthAdmission` debug representation now contains only aggregate counts: live states, source count, memory, queue depth, and window input/work/response totals. Source tuple bytes, state IDs, limits, timestamps and per-source keys are not rendered. The test asserts the exact aggregate format rather than merely searching for dotted-decimal text.
+The new reconciliation header says `ENGINEERING_EVIDENCE_CLOSED` for the non-policy pre-auth controls on the integrated `2566666` / `8a67be3` lineage. That label is not yet supported by the review document beneath it.
 
-The developer note’s exact-tree provenance is also corrected to exact `d120e74`, and the source-reopen test is explicitly evidence of the D019 policy conflict, not a security-closure claim.
+The same file still says:
 
-This supports bounded local engineering review only. It does not make RSEC-001 fully closed and does not authorize public listener promotion.
+- `RSEC-001 — Pre-auth admission is integrated; independent review/load evidence remains absent`;
+- the required evidence to close the promotion finding includes independent review of source projection, charge ordering, response accounting and all listener coverage plus bounded adversarial concurrency/rate/expiry evidence;
+- the evidence matrix still says RSEC-001 HIGH remains open for independent review/adversarial evidence;
+- the document still names exact `bb9e268...` as its `Reviewed tree` and says `scripts/check.sh` passed on exact `bb9e268`, not on the newly claimed reconciliation tree.
 
-### RSEC-RETENTION — unchanged MAINTAINER POLICY CHECKPOINT
+Current main CI proves current-tree automated gates are green, but it is not an independent security review and does not retroactively change the review document's exact-tree provenance. The earlier reviewer queue also still had the pending-owner static-review precision repair before the exact-tree partial RSEC review.
 
-The current implementation removes a source entry when its final live admission state is released; a later admission from that source can therefore start fresh source-lifetime accounting. The repository’s unapproved amendment request already records the conflict with literal D019 and the competing policy shapes.
+Minimum correction: keep the useful implementation evidence, but change the current state to something truth-preserving such as:
 
-Do **not** invent a TTL, LRU/history size, epoch, capacity, or stable external accounting authority; do not silently weaken D019. Until an approved decision exists, represent the eventual review result as at most `ENGINEERING_EVIDENCE_CLOSED / SOURCE_RETENTION_POLICY_BLOCKED`.
+`ENGINEERING_CONTROLS_PRESENT / INDEPENDENT_REVIEW_OPEN / SOURCE_RETENTION_POLICY_BLOCKED`
 
-This checkpoint blocks only full RSEC/D019 security closure. It does not block HY2, package/operator, release-evidence, or other independent engineering lanes.
+or equivalent wording that does **not** say the engineering evidence is closed. Update the top reconciliation, `docs/status.md`, and any directly conflicting sentence together. Do not rewrite historical evidence or change release flags.
 
-### RSEC-INVENTORY-002 — MEDIUM / pending-owner checker is better but still too global
+This is a documentation/evidence correctness HIGH, not a newly discovered runtime vulnerability. Close it quickly and continue to the outward lane; do not let it expand into another review framework.
 
-Exact `8a67be3` correctly marks `failover_udp_pending` as a persisted pending owner and requires reserve/store/cancel plus an expiry-cleanup anchor. However, the current checker locates several of those anchors with whole-file `text.find(...)` / whole-file membership checks. For a lifecycle whose producer (`enqueue` + `pending = Some(...)`) and consumer (`pending.take()` / dequeue / release / expiry) naturally live in different regions of the same large `main.rs`, this can false-pass if the relevant lifecycle changes while another identical string remains elsewhere.
+### RSEC-RETENTION — unchanged maintainer/security-policy checkpoint
 
-This is a static-review precision gap, **not** evidence of a runtime leak and not a reason to hold the VPS/outward lane.
+D019 terminal source-accounting retention after the last live state disappears remains unresolved. Current code can release the final source state and later admit the same source with fresh source-lifetime accounting. The retained amendment request already records the policy alternatives and forbids the agent/reviewer from inventing a retention TTL, LRU/history size, epoch capacity or silently weakening D019.
 
-Minimum later repair: make the manifest identify the exact producer/lifecycle/consumer regions (or equivalently narrow anchors), then prove reserve -> persisted store in the producer and consume/cancel/expiry cleanup in the correct pending lifecycle. Keep it specific to this ownership invariant; do not build a generic static-analysis framework.
+This blocks full RSEC/D019 closure only. It does **not** block HY2, bounded self-owned VPS work, package/operator evidence, or other independent engineering lanes.
 
-### RWFSCHEMA-LEGACY-001 — LOW/MEDIUM / preserve one frozen malformed historical digest without widening the contract
+### HY2-GATE-001 — local prerequisite is already GREEN on exact current main
 
-The corpus-wide schema regression exposes one historical retained result whose `diagnostic.sha256` value is not canonical 64-hex even though the field is named SHA-256. `b2fe1a3` preserves that immutable artifact with an exact-value schema exception rather than accepting arbitrary malformed digests. Other inspected diagnostic-bearing retained results carry normal full SHA-256 values.
+The previous handoff asked for one focused confirmation that the production HY2 harness carries a nonzero HY2 client exit into the bounded typed diagnostic path before spending another VPS attempt.
 
-Do not rewrite the historical artifact. Add only a compact regression/comment proving: the exact frozen legacy value remains accepted for backward compatibility, an arbitrary new non-64-hex value is rejected, and newly generated diagnostic records still require canonical 64-hex SHA-256. This is evidence-schema debt, not a reason for another WAN run.
+Current exact `6a69ab8` already satisfies that gate:
 
-### HY2-DIRECT-UNLOCK — READY and now the highest-value outward lane
+- `scripts/check.sh` invokes `compare-hy2-owned-lab-test.sh` and `validate-hy2-owned-lab-test.py`;
+- exact-main CI run `34243187885` passed `scripts/check.sh`;
+- production `run_client hy2` captures the HY2 client process log separately as `hy2-client-$run_no.log` and passes that file into `make-sample` as `--client-diagnostics`;
+- the validator produces bounded/redacted private diagnostics with categories `tls/auth/config/path/readiness/unknown`;
+- prose can classify a subsystem but cannot promote lifecycle success; only strict typed monotonic stage evidence can advance `last_success_stage`;
+- incomplete first-pair results retain the valid prefix and suppress comparative summary.
 
-The retained exact `3d54585` live artifact predates the current typed sanitized client-diagnostic seam. It contains a valid `nekomusume-1` success followed by `hy2-1` `client_exit`, 0 HY2 application bytes, no complete pair/summary, and therefore no performance conclusion.
+One boundary must stay explicit: the production `run_client` path currently does **not** pass a `--diagnostic-stage-evidence` file, so a live HY2 failure will normally retain `last_success_stage=client_started` unless a future materially different harness supplies strict typed stage evidence. A category such as `tls` or `path` is therefore a sanitized diagnostic classification, **not proof that all earlier lifecycle stages succeeded**.
 
-Current exact-main code already has a materially stronger observation path:
+No additional instrumentation is required merely to make the next bounded attempt useful. If the next run still yields `unknown`, preserve that negative honestly and freeze the line again; do not add generic capture/debug infrastructure unless a later concrete question justifies it.
 
-- `run_client` captures the HY2 client log separately from the timed/raw application output;
-- `validate-hy2-owned-lab.py` can emit bounded sanitized private diagnostics with `tls/auth/config/path/readiness/unknown` categories;
-- prose can classify a subsystem but cannot promote lifecycle success;
-- only strict typed monotonic stage evidence can advance `last_success_stage` beyond the harness baseline;
-- current local tests exercise diagnostic redaction, bounds, private-bundle identity, category handling, no-prose stage promotion, and the first-pair blocked-result shape.
+### HY2-STATUS-DRIFT-002 — MEDIUM, reconcile with the next evidence commit
 
-That instrumentation materially changes what one failed `hy2-1` attempt can tell us compared with exact `3d54585`. Therefore, after one focused exact-tree local confirmation, standing authorization permits **at most one** bounded self-owned fair-pair attempt with the existing equal workload/security/lifecycle/resource contract. Do not add capture or a generic diagnostic framework unless the existing current-main seam demonstrably cannot distinguish anything useful.
+`docs/status.md` still describes the HY2 current line using exact `61a6490` local port-range preflight and `BLOCKED_ORCHESTRATION_CURRENT_LINE_HY2`, while `ROADMAP.md` / `IMPLEMENTATION_PLAN.md` also retain later exact `3d54585` facts: valid `nekomusume-1` success followed by `hy2-1 client_exit`, no complete pair and no comparison.
+
+Do not spend a standalone docs-only commit on this before the live attempt. Reconcile the authoritative status, ROADMAP and implementation plan in the same closure commit after the one changed-hypothesis run, preserving all historical negatives.
+
+### HY2-DIRECT-UNLOCK — `STALLED_IMPLEMENTATION` coordination signal, not a maintainer blocker
+
+The HY2 local prerequisite has remained at the front of the rolling queue across consecutive reviewer opportunities, current exact-main CI is green, standing authorization is explicit, and there is no repository/external blocker. The intervening work was an out-of-order RSEC documentation reconciliation rather than progress on the READY outward slice.
+
+Treat this as `STALLED_IMPLEMENTATION` for coordination purposes: re-read the current harness, use the already-green exact tree, and execute the already-authorized next step. Do **not** respond by adding another design note, another diagnostic layer, or another coordination merge.
+
+The agent may choose the smallest execution shape itself. No API proposal is needed unless the current harness demonstrably cannot run.
+
+### RSEC-INVENTORY-002 — MEDIUM, still open behind the outward lane
+
+The persisted `failover_udp_pending` owner is now represented in the inventory, but several checker anchors are still whole-file `find`/membership matches. An unrelated identical string elsewhere in `main.rs` could satisfy the static proof after the relevant lifecycle regressed.
+
+Later minimum repair: narrow producer/store/consumer/expiry ownership to the actual pending lifecycle region and add one negative mutation/fixture showing an unrelated matching anchor cannot satisfy the owner contract. Do not create a generic static-analysis framework.
+
+### RWFSCHEMA-LEGACY-001 — LOW/MEDIUM, still local-only
+
+Keep the one frozen historical malformed digest accepted by exact-value compatibility only; add a compact regression proving that arbitrary new non-64-hex digests remain rejected and newly generated diagnostics still require canonical 64-hex SHA-256. Do not rewrite the historical artifact and do not run WAN afterward.
 
 ## Evidence / claim boundaries
 
-- Integrated default main before this handoff is exact `2566666`; Rust CI run `34232112189` is green.
-- Exact `b2fe1a3` and `8a67be3` are local implementation/test/docs evidence; neither adds new WAN evidence or performance conclusions.
-- Repeated warm failover remains `BLOCKED_ORCHESTRATION_CURRENT_LINE`; exact `f17b648`/`9999622` already consumed the post-attribution WAN attempt. No same-class retry without a concrete material setup hypothesis.
-- Endpoint rebinding exact `a8f49fc`/`7405da4`, migration-back exact `5d6582c`/`f024458`, and key update exact `2f4f59a`/`69d0ed9` retain only their previously accepted bounded claims.
-- HY2 still has **no complete fair pair and no performance conclusion**. Existing/production Hysteria service must not be modified; the harness uses only temporary experimental HY2 under the standing authorization.
-- IPv6 remains environment-blocked. Live PLPMTUD remains implementation/design blocked; do not invent wire fields or numeric policy to force it READY.
+- Current default main is exact `6a69ab881e233ee71e2efb4fb79a00e72593d537`; exact-main Rust CI `34243187885` is green.
+- New exact `0b9acba` / `6a69ab8` are documentation/merge commits only. They add no runtime, test, WAN, security-audit or performance evidence.
+- Repeated warm failover remains frozen against same-class retry absent a material setup hypothesis.
+- Endpoint rebinding exact `a8f49fc`/`7405da4`, migration-back exact `5d6582c`/`f024458`, and key-update exact `2f4f59a`/`69d0ed9` retain only their previously accepted bounded claims.
+- HY2 still has no complete fair pair and no performance conclusion. Exact `3d54585` is the latest retained live prefix known to the current plan/ROADMAP before the next attempt: `nekomusume-1` success, `hy2-1 client_exit`, zero complete pairs/comparative summary.
+- Existing/production Hysteria service must not be modified. Only the temporary pinned HY2 v2.9.3 experiment is in scope.
+- IPv6 remains environment-blocked. Live PLPMTUD remains design/implementation blocked; do not invent wire fields or numeric policy to force it READY.
 - Release/security flags remain `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`.
 
 ## Rolling Work Queue
 
-The queue is continuous and dependency ordered. A green CI run, one commit, or a reviewer interval is not a stop condition while another dependency-satisfied slice remains.
+The queue is continuous and dependency ordered. A green CI run, one commit, or a reviewer interval is not a stop condition while dependency-satisfied work remains.
 
-### A — Confirm the existing HY2 direct-diagnostic seam on the integrated exact tree
+### A — Correct the premature RSEC closure label without expanding the review surface
 
-**Status:** `READY_LOCAL`, outward/VPS-priority prerequisite.
+**Status:** `READY_LOCAL`, HIGH evidence correctness; intentionally small.
 
-Goal: prove the current production harness—not a synthetic replacement—still carries a nonzero HY2 client exit into the bounded typed diagnostic path.
+Goal: remove the exact `0b9acba` internal contradiction while preserving all useful pre-auth implementation/test evidence and the D019 policy checkpoint.
 
-Primary files: `scripts/bench/compare-hy2-owned-lab.sh`, `scripts/bench/compare-hy2-owned-lab-test.sh`, `scripts/bench/validate-hy2-owned-lab.py`.
+Primary files: `docs/reviews/resource-abuse-evidence-2026-09-04.md`, `docs/status.md`.
 
-Required work:
+Required behavior:
 
-1. start from/fetch current reviewer `main`; avoid a handoff-only coordination merge;
-2. run the existing focused HY2 owned-lab tests and the normal repository gate;
-3. confirm the production `run_client hy2` path uses the HY2 client log as diagnostic input, preserves exact payload/resource/lifecycle symmetry, writes only bounded/redacted public metadata plus the protected private diagnostic bundle, and still suppresses comparative summary on an incomplete pair;
-4. if a tiny bug prevents this existing seam from functioning, repair only that bug and its focused regression; otherwise make no instrumentation commit merely to manufacture activity;
-5. require exact-head green CI before live execution.
+1. do not claim `ENGINEERING_EVIDENCE_CLOSED` while independent exact-tree review is still open and the review document itself says it is absent;
+2. preserve the distinction between implementation evidence, independent review, numeric-policy suitability and D019 retention policy;
+3. do not change candidate numeric limits or release flags;
+4. no new checker/harness framework and no historical artifact rewrite.
 
-No production Hysteria modification, no new credentials, no security weakening, no capture required by default.
+Run normal local gate, commit/push, then continue immediately to B. This slice should be one bounded truth-reconciliation commit, not a new review project.
 
-**Continue immediately to B when green:** yes.
+### B — Execute exactly one materially changed self-owned HY2 fair-pair attempt
 
-### B — One materially changed self-owned HY2 fair-pair attempt
+**Status:** `PREAUTHORIZED_NOW`; the local gate is already green on exact `6a69ab8`.
 
-**Status:** `PREAUTHORIZED_AFTER_A_GREEN`.
+This is the highest-value current VPS opportunity. Standing authorization covers it; no per-run maintainer permission is needed.
 
-This is the current VPS opportunity. Standing authorization already covers the temporary self-owned Nekomusume-vs-HY2 run.
+Use the existing contract without changing production services:
 
-Use the existing contract: same owned client/VPS, same endpoint/route window, same 1200-byte exact payload contract, same security class, fresh transport lifecycle per timed sample, same resource sampler, current bounded run count/time limits, pinned temporary HY2 v2.9.3, and cleanup verification. Do not touch the existing production Hysteria service.
+- self-owned client and VPS only;
+- temporary experimental listener/processes only;
+- pinned HY2 v2.9.3 artifact;
+- same 1200-byte exact payload contract and current bounded run count/time budget;
+- same security class, fresh client transport lifecycle per sample, same resource sampler and cleanup verification;
+- same route/time-window fairness as far as the existing harness controls it;
+- do not touch the existing production Hysteria service;
+- exactly one live attempt for this changed diagnostic hypothesis.
 
-The run must preserve, not hide, any failure. If `hy2-1` fails again, retain the typed sample and sanitized diagnostic category/last-success boundary. That negative is useful even with zero complete pairs. If the pair succeeds, collect only the contract-defined paired samples/statistics; one bounded result is not a superiority claim.
+If `hy2-1` fails, preserve the typed row, diagnostic category, baseline/typed `last_success_stage`, resource/cleanup truth and valid Nekomusume prefix. Do not infer successful TLS/auth/path stages from prose category alone.
 
-Exactly one attempt for this changed instrumentation/hypothesis. A same-class failure after this run freezes the line again unless later code/config/path evidence creates a genuinely new hypothesis.
+If complete pairs exist, preserve raw paired samples and contract-defined median/P95/failure/resource output. One bounded run is not a superiority claim.
+
+After any same-class failure, freeze the line again unless a later material code/config/path/instrumentation change creates a genuinely new hypothesis.
 
 **Continue immediately to C:** yes.
 
-### C — HY2 evidence/status reconciliation
+### C — Reconcile HY2 evidence and stale status/plan truth
 
 **Status:** `READY_AFTER_B`.
 
-If B is negative, state the narrowest trustworthy boundary: harness/setup, readiness, path, TLS/auth, client runtime, or still unknown. Do not infer stage success from stderr prose. Preserve cleanup truth separately from root-cause classification.
+Primary files: new/retained HY2 artifact, `docs/status.md`, `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`.
 
-If B yields complete pairs, validate the artifact and report raw paired samples, failures, median/P95 and resources according to the existing schema. Do not write “faster/better” from one bounded experiment and do not let HY2 become a single release gate.
+Requirements:
 
-Update ROADMAP/status/implementation-plan only where the current truth actually changes. Commit/push and continue.
-
-### D — Tighten the one pending-owner lifecycle static invariant
-
-**Status:** `READY_LOCAL`, MEDIUM; may follow C or run while no live dependency is available.
-
-Primary files: `docs/preauth-responder-inventory.v1.json`, `scripts/check-preauth-responder-inventory.py`, exact current failover pending code.
-
-Goal: replace whole-file accidental-anchor matching with a small exact lifecycle proof for the persisted failover UDP pending owner.
-
-Protected invariants: no runtime behavior change unless a real defect is discovered; no new generic audit framework; no numeric-policy change.
-
-Test the checker against at least one negative fixture/mutation shape where an unrelated matching anchor elsewhere in the file cannot satisfy the pending owner’s producer/consumer/expiry contract.
+- retain old `61a6490`, `3d54585` and any earlier negatives as history;
+- make authoritative current status name the newest exact attempt and its narrow evidence boundary;
+- remove contradictory simultaneous `BLOCKED_DIAGNOSTICS` / older-current-line wording where it no longer describes the latest attempt;
+- incomplete pair => no summary/performance claim;
+- complete pairs => raw samples/median/P95/failures/resources only, no “faster/better” conclusion from one bounded run;
+- cleanup/postcheck facts remain separate from root-cause attribution.
 
 Commit/push and continue.
+
+### D — Tighten the one persisted pending-owner static invariant
+
+**Status:** `READY_LOCAL`, MEDIUM; after C unless B is temporarily unavailable for a real environment reason.
+
+Primary files: `docs/preauth-responder-inventory.v1.json`, `scripts/check-preauth-responder-inventory.py`, current failover pending lifecycle in `crates/neko-cli/src/main.rs`.
+
+Goal: make the checker prove reserve -> persisted store -> consume/cancel/expiry cleanup for the actual `failover_udp_pending` owner, not merely find identical strings somewhere in the file.
+
+Minimum test: a negative fixture/mutation in which an unrelated matching anchor elsewhere exists but the target lifecycle anchor is missing must fail.
+
+No runtime behavior change unless the tighter proof discovers a real defect; no generic static-analysis framework.
 
 ### E — Make the frozen repeated-failover digest exception explicit
 
 **Status:** `READY_LOCAL`, LOW/MEDIUM.
 
-Keep the historical artifact immutable. Add a narrow schema/test comment or fixture proving the exact legacy digest exception is historical-only, arbitrary malformed new digests are rejected, and new generated diagnostics require canonical 64-hex SHA-256. Do not add a new schema version or migration unless actually necessary.
+Keep the historical artifact immutable. Add one narrow regression proving the exact legacy digest remains accepted, an arbitrary malformed new digest is rejected, and generated diagnostics require canonical 64-hex SHA-256.
 
 No WAN run follows this slice.
 
-### F — Exact-tree partial RSEC engineering review
+### F — Perform the actual exact-tree partial RSEC independent review
 
-**Status:** `READY_LOCAL_AFTER_D`; independent of the D019 policy choice.
+**Status:** `READY_LOCAL_AFTER_D`; D019 policy remains independently blocked.
 
-Review the **non-policy** RSEC pieces on the exact integrated tree: source projection, every real responder admission surface, charge-before-parse, exact response charging and rollback, source/global concurrent reservation, queue ownership, expiry/release/error cleanup, rate-window rejection, and redacted aggregate observability. Prefer existing deterministic/process tests; add only a test that closes a concrete uncovered invariant.
+Review the current exact integrated tree, not the old `bb9e268` review tree. Check source projection, every real responder admission surface, charge-before-parse, exact response charging/rollback, source/global reservations, persisted queue ownership, expiry/release/error cleanup, rate-window rejection and aggregate redacted observability.
 
-If these engineering pieces close, reconcile status/review to an explicit partial state such as `ENGINEERING_EVIDENCE_CLOSED / SOURCE_RETENTION_POLICY_BLOCKED`. Do not mark RSEC-001 fully closed, do not alter candidate numeric limits, and do not change release flags.
+Use existing deterministic/process/adversarial tests first. Add only a concrete missing negative test; do not create another audit framework.
 
-### G — Select the next real release-evidence/operator output lane
+Only after this review may the repository use an engineering-review state stronger than `INDEPENDENT_REVIEW_OPEN`. Even then, D019 source retention remains `SOURCE_RETENTION_POLICY_BLOCKED` until a maintainer/security-policy decision exists. Do not mark RSEC-001 fully closed or change release flags.
+
+### G — Select the next real VPS/operator/release-evidence output lane
 
 **Status:** `READY_AFTER_C_OR_F`.
 
-Re-read the bounded release matrix after the HY2/RSEC reconciliation. Prefer a real package/operator/VPS evidence task that is dependency-ready and not already answered. Do not return to repeated-failover diagnostics, speculative FEC/0-RTT/multipath, or live PLPMTUD unless a new observed problem/design dependency actually makes them the next justified slice.
+Re-read the release evidence matrix after HY2/RSEC reconciliation. Prefer one dependency-ready result that is difficult to reconstruct after the VPS rental ends: package install/upgrade/rollback/operator lifecycle, a genuinely unanswered bounded real-socket row, or another directly release-relevant VPS observation.
 
-If no truthful VPS-only task remains READY, choose the earliest independent release-engineering task rather than manufacturing network activity.
+Do not return to unchanged repeated-failover experiments, speculative FEC/0-RTT/multipath, or live PLPMTUD without a newly observed problem/design dependency.
+
+If no truthful VPS-only task remains READY, choose the earliest independent release-engineering/operator task instead of manufacturing network activity.
 
 ## Maintainer/security-policy escalation boundary
 
-No new maintainer decision was created this cycle. The one existing genuine policy checkpoint remains D019 terminal source retention / full RSEC-001 closure. The coding agent and reviewer must not choose retention TTL/LRU/history numbers, weaken no-reset semantics, or introduce a new stable accounting authority without an approved decision.
+The one genuine current maintainer checkpoint remains D019 terminal source-retention semantics / full RSEC-001 closure. The reviewer and coding agent must not choose a retention TTL, LRU/history size, capacity, external stable-accounting authority, or weakening of no-reset semantics without an approved decision.
 
-That checkpoint does **not** stop A-G. Standing VPS authorization remains valid for B after A is green, and no additional per-run permission is required.
+That checkpoint does **not** stop A-G. The HY2 attempt in B is already within standing authorization and needs no additional permission.
