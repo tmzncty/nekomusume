@@ -200,8 +200,7 @@ at exact `5d6582c` with one scripted self-owned local/VPS observation; live key
 update is likewise bounded-live sufficient at exact `2f4f59a`/`69d0ed9`; IPv6 is
 `BLOCKED_ENVIRONMENT`; HY2 and repeated warm failover are
 `BLOCKED_DIAGNOSTICS`; no remaining unimplemented row is `READY_LIVE`; the live key-update row is already answered by one bounded self-owned observation at exact `2f4f59a`/`69d0ed9`. Later exact `9fd2411` / `a117086` already entered the structured outer runner;
-the truthful repeated-failover seam is bounded sanitized inner-collector failure
-categorization, not another runner-entry retry. This checkpoint does not close the release-evidence milestone.
+the truthful repeated-failover result is now one exact-`2b784a3` changed-hypothesis outer invocation ending before cycle 1 with propagated inner `cleanup` category and zero residue; no same-class runner-entry retry is justified without a new cleanup hypothesis. This checkpoint does not close the release-evidence milestone.
 
 ### 2026-09-04 exact-a117086 evidence checkpoint
 
