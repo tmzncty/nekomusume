@@ -1,187 +1,197 @@
 # Nekomusume ChatGPT Handoff
 
-Checked at: 2026-09-08 15:58 Asia/Shanghai
-Repository main HEAD reviewed before this handoff: `d4434dc6745abf44f1a4e7d92a0f4260ab2fb2b9`
-Previous reviewer handoff commit: `d4434dc6745abf44f1a4e7d92a0f4260ab2fb2b9`
-Previous checked implementation HEAD: `c81fa736bf6d551aab8405a5c32c104772496bf8`
-Current execution branch: `work/e1a-staged-accounting-20260907` at exact `7405da4e9275e596b1e2db67494390ef742c4271`
-New implementation/evidence commits under review: `a8f49fcbffa7c0e13063db8772470d7b41f3e55d` (`fix: synchronize endpoint promotion`) + `7405da4e9275e596b1e2db67494390ef742c4271` (`docs: accept barrier endpoint evidence`)
-Exact implementation-head GitHub Actions: `a8f49fc` run `34199496127` — `success`; current execution-head `7405da4` run `34201786719` — `success`
-Previous reviewer-head GitHub Actions: `d4434dc` run `34198142169` — `success`
-Historical partial-E2 branch retained: `work/continue-20260904` at `d271a99a2ab26abbcb146c411ba0fde697395abe`
+Checked at: 2026-09-08 17:01 Asia/Shanghai
+Repository main HEAD reviewed before this handoff: `1b5625d4f7c0c7063684690805fe5fda662a41c8`
+Previous reviewer handoff commit: `2453d2298e5b52f930db81aac35fca2c4d660b1a`
+Previous checked implementation/evidence HEAD: `7405da4e9275e596b1e2db67494390ef742c4271`
+Current execution branch: `work/e1a-staged-accounting-20260907` at exact `3aa4828496c7caaa35fee7b5f1903ee06907dbe6`
+New implementation/evidence commits under review: `2b784a345fe87e8ef22152a1570bf3d125cdcdf5` (`bench: categorize warm failover collector failures`) + `3aa4828496c7caaa35fee7b5f1903ee06907dbe6` (`docs: record warm failover diagnostic result`)
+Exact GitHub Actions: main `1b5625d` run `34203186821` — `success`; implementation `2b784a3` run `34204326286` — `success`; execution/evidence HEAD `3aa4828` run `34206845370` — `success`.
+Historical partial-E2 branch remains retained: `work/continue-20260904`.
 
 ## What changed
 
-The coding agent resolved the two HIGH endpoint-rebinding findings instead of inventing a new wire message. Endpoint B now originates an ordinary authenticated `ReadinessRequest` as candidate/request input; the server treats that arrival as candidate-only metadata, generates its own independent fresh nonzero challenge, validates the exact Session/path/generation/epoch/challenge response from exact B, atomically promotes B, and only then sends the authenticated response to B's original request. The client blocks on and authenticates that post-promotion response before it can send the second previously-unassigned application `Data` from B.
+The old default-branch truth split is closed. `main` is now exact `1b5625d`, a merge whose parents are the accepted endpoint/migration lineage at `7405da4` and the previous reviewer handoff `2453d229`; exact-main CI is green. Do not recreate a coordination-only branch split merely to keep reviewer prose separate from already accepted runtime truth.
 
-This closes EPREB-006/007 structurally. The former unsolicited `ReadinessResponse(challenge_id=0, admitted=false)` sentinel is gone, path/control evidence remains separate from Session `DeliveryAck`, and post-rebind application traffic has an authenticated server->B synchronization point that can occur only after promotion. Exact `a8f49fc` also corrects future/non-next generation classification to tuple mismatch rather than `OldGeneration`.
+The coding agent then implemented RWFDIAG-001 at exact `2b784a3`: the inner warm-failover collector emits a bounded `nekomusume.inner-failure.v1` marker, the outer six-cycle runner propagates a finer diagnostic category, and synthetic tests cover several categories. Exact-head CI is green. After that green gate, exactly one materially changed self-owned client/VPS outer invocation was made. Exact `3aa4828` records that it ended before cycle 1 with `completed_cycles=0`, outer exit 1, an inner category reported as `cleanup`, and independently verified zero residue. No unchanged retry was made.
 
-The agent chose the narrower honest resolution for EPREB-008: carrier/source-binding generation advances 0 -> 1, while the authenticated crypto `RecordContext.path_generation` remains the existing fixed context. The implementation and evidence do not claim cryptographic path-generation migration.
+That is useful progress, but this review does **not** accept the new typed-diagnostic closure yet. Three correctness/evidence defects mean the current `cleanup` label is not trustworthy enough to drive another root-cause claim, and the checked-in v1 schema is internally incompatible with both the new categories and retained historical negatives.
 
-After green exact-head CI, one fresh bounded self-owned VPS observation was retained at `docs/notes/endpoint-rebind-vps-a8f49fc-20260908.md`. The run used one Session, two 16-byte application records, a temporary UDP listener and a real source-port change. The recorded order is A confirmation -> B candidate/request -> server fresh challenge -> exact response -> promotion -> authenticated promotion sync -> B application Data -> Session `DeliveryAck`; both endpoints exited 0 and cleanup was independently verified. Raw endpoints, credentials, private keys and payloads are not tracked. This is accepted only as one same-Session source-port/source-binding change under the fixed crypto record context; it is not general NAT traversal, roaming/public reachability, natural recovery, performance, reliability or production evidence.
-
-ROADMAP, IMPLEMENTATION_PLAN and status were reconciled to `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` for that narrow endpoint question. Exact `c81fa73` remains superseded candidate provenance. There is no reason to rerun endpoint rebinding unchanged.
-
-The visible-output check is satisfied: the last 24–48 hours produced synchronized live key update, scripted migration-back/recovery, a real endpoint-rebinding runtime and fresh VPS observations. Do not return the project to generic checker/schema hardening. The next harness work is justified only because it directly unlocks a previously failed repeated-warm-failover live question.
+The visible-output check remains healthy: the last 24–48 hours produced live key-update, migration-back/recovery, authenticated endpoint rebinding with VPS evidence, and now a genuinely changed repeated-failover negative. Do not turn the project into a generic checker/schema project. The following repair is justified only because it directly repairs the evidence path for a real outstanding repeated-WAN question.
 
 ## Review verdict
 
-**ACCEPT_ENDPOINT_REBINDING_CLOSURE_AND_ADVANCE_REPEATED_FAILOVER_DIAGNOSTICS.**
+**DO_NOT_ACCEPT_RWFDIAG_TYPED_CLOSURE_YET; ACCEPT_THE_2B784A3_LIVE_ATTEMPT_ONLY_AS_A_BOUNDED_NO-CYCLE_NEGATIVE; REPAIR_SCHEMA/STAGE_OWNERSHIP/PRIMARY-ERROR_PRECEDENCE, THEN MAKE ONE FRESH CHANGED-HYPOTHESIS VPS ATTEMPT.**
 
-No new HIGH/BLOCKER was found in exact `a8f49fc`/`7405da4` for the narrow claim above. Exact-head CI is green and the fresh VPS evidence is acceptable within its stated boundary. Do not repeat that live run merely to obtain another PASS.
+There is no core Session/Carrier/ACK/crypto/wire architectural blocker and no maintainer decision is required. Proposal authority applies. The repair must remain inside the existing runner/evidence contract and must not invent a new security numeric policy.
 
-One MEDIUM regression-proof gap remains: the previous handoff asked for a deterministic test that delays server validation/promotion and proves the client cannot emit the second B application record before the authenticated promotion synchronization response. The current code is serial/blocking in the correct order, and the accepted VPS observation records the correct order, so absence of that delay hook does **not** invalidate the narrow evidence. Add one compact deterministic regression test, but do not make it a reason to rerun the VPS observation or to delay the outward repeated-failover lane.
-
-The next real blocker is repeated warm failover diagnostics. The outer six-cycle runner already distinguishes generic collector outcomes (`nonzero_exit`, `timeout`, malformed output, missing event, invalid evidence), but the inner `run-live-warm-failover-cycle.py` still collapses all collector-side `CollectionError` failures to one free-text stderr line and exit 2. That is why the exact `a117086`/`c6ab8fd` line can retain `invalid_cycle_evidence` / `missing JSON event: start` but cannot safely distinguish setup/startup, negotiation/auth, readiness, application/runtime, evidence validation/serialization, or cleanup without reading a private diagnostic manually. This is a concrete instrumentation blind spot from an observed failed WAN run, not a request for a new audit framework.
+No unchanged live retry is permitted. The defects below constitute a material instrumentation/evidence-model change; after they are repaired and exact-head CI is green, standing authorization permits one fresh bounded self-owned repeated-failover attempt without asking the maintainer again.
 
 ## Reviewer findings
 
-### EPREB-006 — CLOSED
+### RWFDIAG-002 — HIGH / evidence blocker — v1 schema is not backward-compatible and rejects the new typed category shape
 
-Authenticated post-promotion synchronization now exists. Server promotion precedes `endpoint_promotion_sync_sent`; client requires exact-peer authenticated `endpoint_promotion_sync_received` before the second B application record is constructed/sent through the positive path. Session `DeliveryAck` remains separate.
+`schema/repeated-warm-failover.v1.json` currently requires `diagnostic_category` on **every** non-null `first_failure`, although the runner's `batch_timeout` and `cycle_failed` shapes do not emit that field and retained historical negatives such as exact `a117086` also lack it. This is already historical-schema drift.
 
-### EPREB-007 — CLOSED
+Exact `2b784a3` additionally extends top-level `first_failure.diagnostic_category` with `startup_setup`, `negotiation_auth`, `readiness`, `application_runtime`, `evidence_serialization`, and `cleanup`, but nested `first_failure.diagnostic.category` still accepts only the old five generic values. The outer runner stores the propagated fine category in both locations. Therefore a new no-row failure such as `cleanup` cannot validate against the checked-in v1 schema even though the Python tests pass.
 
-The unsolicited response sentinel is removed. B uses an ordinary authenticated request; the server's independent challenge supplies freshness/path validation; the delayed ordinary response is synchronization after promotion. No new `ProcessMessage` wire kind, crypto primitive, delivery-ACK meaning or numeric security policy was introduced.
+This is not a reason to create v2 unless truly necessary. Preferred minimum repair:
 
-### EPREB-008 — CLOSED BY NARROW CLAIM
+- keep historical v1 artifacts valid and immutable;
+- make diagnostic fields optional where historical/non-diagnostic failure kinds legitimately omit them, or use an equivalent backward-compatible conditional shape;
+- define one shared diagnostic-category enum (or otherwise keep the two category fields exactly consistent) including the accepted fine categories;
+- add a real JSON-Schema regression that validates at least one old retained artifact and one newly categorized no-row batch;
+- preserve `additionalProperties=false` and all existing privacy/bounds constraints.
 
-Carrier/source-binding generation changes 0 -> 1. Crypto `RecordContext.path_generation` stays fixed and is explicitly excluded from the claim. Do not later rewrite this evidence as cryptographic path-generation migration.
+Do not rewrite old artifacts just to satisfy a newly tightened schema.
 
-### EPREB-009 — CLOSED
+### RWFDIAG-003 — HIGH — `category_for(message)` infers runtime stage from error prose and overclaims evidence
 
-Stale generation remains `OldGeneration`; future/non-next generation is rejected as `TupleMismatch`.
+The current inner collector classifies arbitrary `CollectionError` text by substring. That means evidence-validation failures such as a duplicate `tcp_negotiated` carrier event can be labeled `negotiation_auth`, and duplicate `tcp_delivery_ack_validated` evidence can become `application_runtime`, even though what is actually known is that the retained event stream/cardinality is invalid. The synthetic tests introduced at `2b784a3` encode this inference instead of challenging it.
 
-### EPREB-011 — MEDIUM regression guard — deterministic promotion-delay proof still absent
+This violates the previous reviewer contract: stage must represent the earliest evidence boundary actually established, not a guess derived from words in an error message.
 
-The implementation's blocking order is correct, but there is no focused process regression that deliberately holds server promotion/sync and proves no second B application Data can arrive during that hold.
+Replace prose inference with explicit stage ownership. Proposal authority applies. A minimal shape may be a small local phase enum/state or stage-aware helper, but it must obey these invariants:
 
-Preferred minimum shape: add a test-only server delay/barrier hook or an equivalent deterministic interception seam. During the hold, the server must be able to assert that no post-rebind application Data was accepted/sent as success evidence; after promotion + sync, the same test completes the second Data/DeliveryAck. Keep it fixed/bounded and test-only. This is not a protocol timer or numeric security policy.
+- configuration/checkout/binary/endpoint/server-start preparation is `startup_setup`;
+- malformed JSON, duplicate events, impossible cardinality, ordering contradictions, invalid timing/accounting/summary objects are `evidence_serialization` unless stronger valid evidence explicitly establishes a narrower runtime stage;
+- `negotiation_auth`, `readiness`, and `application_runtime` may only be emitted after all earlier required evidence gates are valid and the collector can truthfully locate the failure in that phase;
+- absence of a later event alone is not proof that the later runtime phase itself failed;
+- unrecognized/early process death still falls back conservatively rather than manufacturing specificity.
 
-Do not add another general endpoint state framework. Do not rerun the VPS evidence after a test-only guard unless the positive runtime semantics themselves change.
+Delete or demote `category_for(message)`; do not build a larger logging framework.
 
-### RWFDIAG-001 — HIGH for the repeated-failover evidence lane, not for endpoint/runtime correctness — inner collector failure stage is not propagated
+### RWFDIAG-004 — HIGH — cleanup evidence can mask an earlier known startup failure
 
-Current outer `run-repeated-warm-failover.py` can retain a sanitized private stderr hash and a generic diagnostic category, but `run-live-warm-failover-cycle.py` catches broad collector errors and emits only `live failover collector: <text>` before exit 2. A failed no-row cycle therefore loses the stage boundary in the tracked typed result.
+The inner collector captures `startup_error`, then always runs and parses cleanup, but a malformed/failing cleanup result raises a new cleanup `CollectionError` before the saved startup error is re-raised. Thus one run can truthfully have an earlier startup failure and still be reported as `cleanup` only.
 
-Implement the smallest stage-carrying seam. Proposal authority applies. A good minimal shape is:
+This directly breaks the "earliest known evidence boundary" rule and means the exact-`2b784a3` live `cleanup` classification is not yet authoritative without additional proof.
 
-- preserve existing valid-cycle row semantics unchanged;
-- maintain a bounded inner stage such as `setup`, `server_startup`, `negotiation_auth`, `readiness`, `application_runtime`, `evidence_validation`, `cleanup`;
-- on a no-row collector failure, emit exactly one bounded machine-readable failure marker to stderr containing only a stage and a small stable reason code, never raw argv/endpoints/secrets/log text;
-- make the outer runner recognize only that marker and propagate the stage/category into its existing typed `first_failure`, while retaining the sanitized private stderr hash as before;
-- if the inner process dies before it can emit a valid marker, keep the current generic `nonzero_exit`/timeout behavior instead of inventing specificity;
-- historical artifacts must remain schema-valid and immutable. Prefer an optional/backward-compatible field or enum extension over rewriting old results; do not create a new evidence framework unless the existing v1 shape truly cannot carry the distinction.
+Repair with primary-error precedence: cleanup must still run, but it must not replace an earlier execution/collection failure. If there is no earlier primary error, cleanup failure may be the primary category. If carrying a bounded secondary cleanup fact would require unnecessary schema growth, keep the earliest primary typed marker and retain secondary cleanup detail only in the already-private sanitized diagnostic / independent cleanup observation.
 
-The stage classification must reflect the earliest evidence boundary actually known. Do not infer “negotiation failed” merely because later events are absent. For example, a server missing its validated `start` event is startup evidence; only after valid start evidence should negotiation/auth/readiness/application stages become claimable.
+Required deterministic negative: create one scenario with an earlier startup failure **and** malformed/failing cleanup; prove cleanup still executes, but the emitted primary marker remains the earlier startup category.
 
-Synthetic tests should exercise at least one genuine failure in each supported stage and verify that tracked JSON contains only the bounded stage/reason plus hash metadata, not the raw private diagnostic.
+### RWFDIAG-005 — MEDIUM evidence boundary — exact `3aa4828` is a real changed attempt, not yet a schema-valid typed batch closure
 
-### RSEC-001 — remains HIGH for release/security promotion, not a reason to block the outward diagnostics lane
+Preserve `docs/notes/repeated-warm-failover-2b784a3-typed-negative.md` and the exact live timestamps/binary/diagnostic hash as historical observation. Do not delete or overwrite it. However, do not currently describe its `cleanup` category as a validated root-cause stage or as a validator-valid v1 artifact. The repository does not retain a new result artifact under `artifacts/repeated-warm-failover/`, and the current schema cannot validate the propagated fine category shape anyway.
 
-Process-owned pre-auth accounting exists, but independent source-projection/charge-order/listener-coverage review plus bounded adversarial concurrency/rate/expiry evidence remain open before public-listener/RC/security promotion. Do not change candidate numeric limits merely to make tests pass. Keep this as a later focused release-gate package after the repeated-failover outward closure; do not let security tooling become the only active lane.
+Until RWFDIAG-002/003/004 are repaired, the safe claim is only: one exact-`2b784a3` changed-hypothesis outer invocation occurred, produced no cycle row/prefix/runtime result, emitted a collector diagnostic currently labeled cleanup, and later cleanup verification found zero residue. No WAN failover/reliability/runtime conclusion follows.
 
-## Evidence and repository boundaries
+The work-branch status phrase `BLOCKED_ORCHESTRATION_CURRENT_LINE` may remain as a broad current-line blocker only if it does not imply that cleanup has been proven as the root orchestration cause. Reconcile wording after the repaired run.
 
-- Exact `a8f49fc` is accepted implementation + exact-head CI for the repaired endpoint runtime; exact `7405da4` is its evidence/status reconciliation commit.
-- `docs/notes/endpoint-rebind-vps-a8f49fc-20260908.md` is one bounded real VPS/source-port observation, not general NAT/public reachability evidence.
-- Exact `c81fa73` remains superseded candidate evidence; do not upgrade or delete it.
-- Accepted migration-back evidence at exact `5d6582c`/`f024458` and live key-update evidence at exact `2f4f59a`/`69d0ed9` remain valid and narrow; no unchanged reruns.
-- Repeated warm failover remains `BLOCKED_DIAGNOSTICS`; exact `9fd2411`, `a117086` and `c6ab8fd` negatives are retained. No unchanged WAN retry is allowed until RWFDIAG-001 materially changes instrumentation/hypothesis.
-- Live PLPMTUD remains `BLOCKED_IMPLEMENTATION`; its live probe/ACK wire/control/accounting/timer choices are not pre-authorized design inventions. Do not use it as filler work.
+### EPREB-011 — MEDIUM regression guard — still open, not a live-evidence blocker
+
+The deterministic promotion-delay regression guard requested in the previous handoff is still absent: work since main `1b5625d` changes only repeated-failover scripts/schema/docs. Existing endpoint implementation and accepted VPS evidence remain valid and narrow; no endpoint VPS rerun is needed.
+
+Keep one compact test-only guard: hold server promotion/sync after B answers the challenge; prove no second B application Data is accepted before sync; release; prove sync then second Data + Session `DeliveryAck` complete.
+
+### RSEC-001 — HIGH for RC/security promotion, independent from the current outward repair
+
+Process-owned pre-auth accounting exists, but source projection, charge ordering, all real listener call-site coverage, concurrent reservation/rate-window/expiry/release evidence and exact-tree review remain open. Do not change candidate numeric limits merely to make tests pass. This is the next focused release/security package after the outward repeated-failover line is truthfully closed or blocked.
+
+## Evidence/repository boundaries
+
+- Default `main` exact `1b5625d` now contains the accepted migration-back + endpoint-rebinding runtime/evidence lineage and is exact-main CI green.
+- Exact `2b784a3` code CI is green, but green CI does not prove its new output is JSON-Schema-valid because the current tests do not validate the new fine-category batch against the schema.
+- Exact `3aa4828` CI is green and preserves a real changed-hypothesis live note; its no-cycle result is a negative observation, not a WAN/runtime success and not yet an accepted typed closure.
+- Historical repeated-failover negatives (`4a2129e`, `9fd2411`, `a117086`, `c6ab8fd`) remain immutable and must continue to validate under the repository's claimed v1 compatibility contract.
+- Endpoint rebinding exact `a8f49fc`/`7405da4`, migration-back exact `5d6582c`/`f024458`, and live key-update exact `2f4f59a`/`69d0ed9` remain accepted only for their previously stated bounded questions. No unchanged reruns.
+- Live PLPMTUD remains implementation/design blocked; do not invent probe/ACK wire fields, timer/cooldown or new numeric policy as filler.
 - IPv6 remains environment-blocked.
+- HY2 still lacks a fair paired comparison; do not claim performance conclusions from its retained partial/negative harness history.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
-- Default `main` is still reviewer-doc lineage at the start of this handoff; it does not yet contain the accepted migration-back/endpoint implementation/evidence lineage. That divergence should now be closed once, before new unreviewed implementation is mixed into the integration commit.
-- Protected identities, SSH keys, credentials, raw private addresses and private diagnostics remain unread/untracked/uncommitted.
+- Protected identities, credentials, SSH material, private endpoints and raw private diagnostics remain unread/untracked/uncommitted.
 
 ## Rolling Work Queue
 
-This is a continuous pre-authorized queue. One commit, one nominal hour, one reviewer interval or one successful test is never a stop condition. If a slice finishes quickly and cleanly, continue to the next dependency-satisfied slice.
+This is a continuous dependency-ordered queue. One commit, one nominal hour, one reviewer interval, one green test run or one negative VPS attempt is not automatically a stop condition. Continue while a safe dependency-satisfied slice exists.
 
-### A — Integrate the already-accepted runtime/evidence lineage into `main`
+### A — Repair the repeated-failover typed-diagnostic closure as one bounded correctness package
 
-**Status:** `READY_NOW`; coordination closure, do it once.
+**Status:** `READY_LOCAL`, HIGH, queue head. Proposal authority applies.
 
-Before starting new implementation, fetch current reviewer `main`, merge it into the execution branch without editing `docs/CHATGPT_HANDOFF.md`, then integrate the already-reviewed work through exact `7405da4` into `main` while preserving this newest reviewer handoff. Do not include any later unreviewed diagnostics implementation in that integration commit.
+Goal: fix RWFDIAG-002/003/004 together rather than creating three tiny checker commits.
 
-The purpose is to end the long default-branch truth split: after this closure, `main` should actually contain the accepted migration-back + endpoint-rebinding runtime/evidence lineage, not merely reviewer prose describing it. Run/observe exact-main CI. A merge commit or clean fast-forward shape is acceptable; do not rewrite history.
+Primary files: `scripts/bench/run-live-warm-failover-cycle.py`, `scripts/bench/run-repeated-warm-failover.py`, their existing tests, and `schema/repeated-warm-failover.v1.json`.
 
-**Continue immediately to B/C on the work branch:** yes. Exact-main CI need not idle independent local work, but do not call integration complete until it is green.
+Protected invariants: valid six-cycle rows unchanged; controlled application reply-cessation classification unchanged; historical artifacts immutable; raw diagnostics stay private/redacted/hash-only; no endpoint/secret path enters tracked evidence; cleanup always executes; no Session/Carrier/wire/crypto semantics change.
 
-### B — Add the endpoint promotion-delay regression guard
+Required behavior/tests:
 
-**Status:** `READY_LOCAL`; small bounded test-only repair; may run in parallel/order-adjacent to C after A is safely branched.
+1. v1 schema accepts retained historical negatives and a newly categorized no-row failure;
+2. fine diagnostic enum is internally consistent wherever represented;
+3. stage is assigned from explicit validated phase ownership, never substring guessing;
+4. duplicate/malformed/out-of-order/cardinality evidence is not mislabeled as a runtime negotiation/readiness/application cause;
+5. a genuine staged failure can still propagate `startup_setup`, `negotiation_auth`, `readiness`, `application_runtime`, `evidence_serialization`, or `cleanup` when that phase is actually established;
+6. simultaneous earlier startup failure + cleanup failure keeps the earlier primary stage while cleanup still runs;
+7. unknown/unmarked nonzero exits retain conservative generic fallback.
 
-Implement EPREB-011 with the smallest test hook. Files should stay near `crates/neko-cli/src/main.rs` and `crates/neko-cli/tests/probe.rs`; do not touch wire/crypto/spec unless a real defect forces it.
+Prefer the smallest new state/API. Commit and push the whole correctness package when focused tests pass; do not run the VPS yet.
 
-Required proof: hold promotion/sync deterministically after B has answered the server challenge; prove no second B application Data is accepted/emitted before sync; release the hold; prove promotion sync then second Data + Session `DeliveryAck` complete. Existing wrong-challenge and stale-source tests remain valid.
+**Continue immediately to B:** yes.
 
-Focused test + `./scripts/check.sh` + `git diff --check`. No VPS rerun for a test-only guard.
+### B — Local + exact-head gate for A
 
-**Continue immediately to C:** yes.
+**Status:** `PREAUTHORIZED_AFTER_A`.
 
-### C — Carry inner repeated-failover failure stage into the existing typed result
+Run focused inner/outer tests, real JSON-Schema validation including at least one historical artifact, `./scripts/check.sh`, and `git diff --check`. Fuzz is unnecessary unless parser/wire codec changes, which this slice should not do.
 
-**Status:** `READY_LOCAL`; highest-value new implementation slice after the tiny regression guard. Proposal authority applies.
+Push and require green exact-head CI. If schema validation exposes additional pre-existing v1 incompatibilities, repair only those required for historical/current repeated-failover artifacts; do not broaden into a repository-wide schema rewrite.
 
-Files/concepts: `scripts/bench/run-live-warm-failover-cycle.py`, `scripts/bench/run-repeated-warm-failover.py`, their existing tests, and `schema/repeated-warm-failover.v1.json` only as minimally necessary.
+**Continue immediately to C after green:** yes.
 
-Implement RWFDIAG-001, not a generic logging system. Preserve valid cycle rows, six-cycle sequential semantics, existing secret-safe private diagnostic hashing, exact binary/commit checks, cleanup behavior and historical artifact validity.
+### C — Exactly one fresh materially changed repeated-warm-failover VPS attempt
 
-At minimum distinguish setup, startup, negotiation/auth, readiness, application/runtime, evidence validation/serialization and cleanup when the evidence actually permits that distinction. Propagate a bounded stable stage/reason through the existing outer failure object. Raw stderr remains private/sanitized/hash-only and must not enter tracked evidence.
+**Status:** `PREAUTHORIZED_AFTER_B_GREEN`; highest-value VPS opportunity.
 
-Tests must show at least one stage-specific failure reaches the outer typed result, plus a malformed/unrecognized inner failure that correctly falls back to generic `nonzero_exit`/invalid evidence. Existing success/failed-row behavior must remain unchanged.
+Standing authorization already covers this self-owned bounded TCP/UDP failover experiment. Do not request WAN permission again.
+
+The A/B fixes materially change instrumentation and error precedence, so one new attempt is justified. Execute exactly one bounded outer attempt. Preserve exact commit/binary, actual ports/parameters, start/end, valid cycle prefix if any, typed primary stage/reason if actually established, client/server/result fields only when a row exists, and cleanup. If it fails, preserve the negative. Do not immediately rerun the same new classified failure without another material hypothesis/code/config/path change.
+
+A stage is an evidence boundary, not a root-cause statement.
 
 **Continue immediately to D:** yes.
 
-### D — Local/exact-head gate for the diagnostics change
+### D — Reconcile the new result and perform at most the next evidence-producing repair
 
 **Status:** `PREAUTHORIZED_AFTER_C`.
 
-Run the focused inner/outer runner tests, schema validation, `./scripts/check.sh`, `git diff --check`; fuzz is required only if an actual parser/wire codec changed, which this slice should not require. Commit and push the instrumentation/test package. Require green exact-head CI before the live changed-hypothesis attempt.
+Update one compact evidence/status reconciliation only if C creates a new fact. Preserve exact `3aa4828` as historical observation; do not rewrite it.
 
-If tests reveal that the stage cannot be known safely, report a coarser true stage; do not infer a deeper runtime cause from missing later events.
+If C identifies a concrete local orchestration defect inside existing architecture, the coding agent may propose the smallest fix, test/commit/push it, and—only after that material change and green gate—perform one further bounded attempt if needed. If C merely repeats the same stage without a new safe hypothesis, close the current repeated-failover line as the retained negative; do not grow another diagnostics framework.
 
-**Continue immediately to E after green:** yes.
+### E — Add EPREB-011 deterministic promotion-delay regression guard
 
-### E — Exactly one materially changed repeated-warm-failover live attempt
+**Status:** `READY_LOCAL_INDEPENDENT`; small test-only lane, no VPS rerun.
 
-**Status:** `PREAUTHORIZED_AFTER_D_GREEN`.
+Keep the hook local/test-only near the existing endpoint rebinding runtime/process tests. Hold promotion/sync deterministically after candidate challenge response, assert no second-B application Data before sync, then release and complete Data + Session `DeliveryAck`.
 
-Standing authorization already covers this bounded self-owned client <-> VPS TCP/UDP failover experiment. Do not ask again for WAN permission.
+Do not alter wire/crypto/numeric policy and do not repeat the accepted endpoint VPS observation.
 
-This run is justified because RWFDIAG-001 materially changes instrumentation and the diagnostic hypothesis. Execute exactly one bounded changed-hypothesis outer attempt. Preserve exact commit/binary, actual parameters, any valid cycle prefix, typed inner stage/reason if available, exits/resource fields that actually exist, start/end time and cleanup. If it fails, preserve the negative. Do not mechanically rerun the same classified failure without another material instrumentation/code/config/path/hypothesis change.
+### F — Integrate the repaired/reviewable lineage to default `main` once
 
-A stage classification is not a root-cause conclusion. `startup` means the retained evidence stopped at startup; it does not prove why the remote process failed. Likewise `negotiation_auth` does not identify crypto/network cause unless more direct evidence exists.
+**Status:** `PREAUTHORIZED_AFTER_D/E`.
 
-**Continue immediately to F:** yes.
+After A-D and the small EPREB guard are locally/exact-head green and have no new reviewer-blocking defect, merge current reviewer `main` into the work branch, preserve reviewer ownership of `docs/CHATGPT_HANDOFF.md`, then integrate accepted implementation/evidence lineage back to `main` without history rewriting. Observe exact-main CI.
 
-### F — Reconcile the repeated-failover result and choose only the next evidence-producing repair
+Do not create recurring coordination-only merges after every tiny commit; this is one closure merge after the package.
 
-**Status:** `PREAUTHORIZED_AFTER_E`.
+### G — HY2 current-line diagnostic opportunity, only if it can immediately unlock a fair paired VPS question
 
-Update a compact evidence/status note only if the live attempt creates a new fact. Preserve old negatives unchanged. If the new stage cleanly identifies a local implementation/orchestration defect with a safe fix inside existing architecture, fix it, test, commit and continue; if the same stage repeats without a new hypothesis, close this line as the new retained negative instead of retrying.
+**Status:** `REVIEW_READY_AFTER_F`, not permission to proliferate harness infrastructure.
 
-Do not spend a cycle expanding diagnostic schemas once the live blocker is discriminated enough to choose a real code/configuration fix or to conclude that the current line is blocked.
+Re-read the latest retained `hy2-1 client_exit` evidence and current fair-pair harness. If one minimal, security-neutral instrumentation/configuration seam can distinguish the current failure and directly unlock a same-condition paired run, implement/test it and make at most one materially changed self-owned VPS attempt under standing authorization. Preserve negative/slower results.
 
-### G — Focused RSEC-001 adversarial closure package
+If the needed change would become a broad generic harness project, require new credentials/permissions, touch an existing production HY2 service, or cannot produce a fair pair, leave HY2 blocked and move to H.
 
-**Status:** `READY_LOCAL_INDEPENDENT_AFTER_OUTWARD_CLOSURE`; security parallel lane, not a project-wide stop.
+### H — Focused RSEC-001 adversarial release/security closure package
 
-After E/F has produced the outward result, re-read exact current pre-auth implementation and `docs/reviews/resource-abuse-evidence-2026-09-04.md`. Build one bounded adversarial package around the **existing** candidate limits: source projection, charge-before-parse/response accounting, all real listener call-site coverage, concurrent reservations, rate-window rejection, expiry/release and cleanup/redacted counters. Do not invent or tune numeric limits merely to obtain PASS.
+**Status:** `READY_LOCAL_AFTER_OUTWARD_CLOSURE`; independent release lane.
 
-Prefer process/unit adversarial tests that close the actual RSEC-001 evidence requirements; do not create another checker framework. Commit/push tests and exact-tree evidence for reviewer challenge. This can progress while unrelated blocked WAN rows remain blocked.
+Re-read exact current pre-auth implementation and `docs/reviews/resource-abuse-evidence-2026-09-04.md`. Build one bounded adversarial package around the **existing** candidate limits: source projection, charge-before-parse/response ordering, all real responder/listener call sites, concurrent reservations, rate-window rejection, expiry/release, fail-closed cleanup, and secret-safe diagnostics. Do not invent new numeric policy merely for tests.
 
-### H — Next release-matrix/output gate
+Close only the exact security evidence that the implementation proves. Keep a safe outward/product lane available if a new VPS-ready capability appears while this review is in progress.
 
-**Status:** `REVIEWER_CHECKPOINT_AFTER_F/G`, with autonomous safe work allowed where dependencies are already explicit.
+## Stop / escalation boundary
 
-Re-read the exact release matrix after the repeated-failover and RSEC packages. Prefer an executable/package/operator/release capability or a real VPS question that is already semantically specified. Live PLPMTUD remains a design checkpoint while probe/ACK wire fields, header accounting, PTB validation, timer/cooldown and fragmentation semantics are not settled; FEC/0-RTT/striping/multipath/exotic carriers remain non-TODO unless an observed problem selects them.
-
-If the next safe release gate is package/operator install/upgrade/rollback in the dedicated experimental path, that is within standing authorization and preferable to speculative protocol work. If instead the choice requires a new wire meaning, numeric security policy or maintainer value judgment, freeze only that lane and continue any independent READY work.
-
-## Stop conditions
-
-Administrator escalation remains limited to: core Session/Carrier/ACK/crypto/wire architecture change; new numeric security policy/ADR value; destructive migration; work beyond standing authorization; possible production impact; new credentials/server/third-party authority; benchmark objective requiring maintainer value judgment; an unresolvable major security issue; or a genuinely new project phase.
-
-Endpoint rebinding is now closed for its narrow bounded question. Repeated-failover diagnostics, one changed-hypothesis self-owned live run, and focused existing-limit RSEC testing are all within current architecture/authorization and should proceed autonomously. Do not stop because a commit completed, an hour elapsed, or a reviewer interval ended.
+Do not notify the maintainer for the work above. Escalate only if a repair truly requires changing core Session/Carrier/ACK/crypto/wire semantics, selecting a new numeric security policy/ADR value, destructive migration, production impact, new credentials/server/third-party rights, an experiment outside standing authorization, a benchmark objective requiring maintainer value judgment, or a major security issue that cannot be resolved fail-closed inside the current architecture.
