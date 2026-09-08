@@ -2201,6 +2201,8 @@ fn endpoint_rebind_real_sockets_promote_new_source_and_reject_stale_old_source()
             "16",
             "--duration",
             "5",
+            "--test-promotion-delay-ms",
+            "100",
             "--diagnostic",
             "--experiment-id",
             "endpoint-rebind-test-server",
@@ -2267,6 +2269,10 @@ fn endpoint_rebind_real_sockets_promote_new_source_and_reject_stale_old_source()
     assert!(
         client_log.contains("\"event\":\"endpoint_promotion_sync_received\""),
         "{client_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"endpoint_promotion_delay_held\""),
+        "{server_log}"
     );
     assert!(
         server_log.contains("\"event\":\"endpoint_stale_source_rejected\""),
