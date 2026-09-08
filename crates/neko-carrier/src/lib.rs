@@ -1491,6 +1491,17 @@ impl FailoverController {
     pub fn record_recovery_latency(&mut self, latency_us: u64) {
         self.metrics.last_recovery_latency_us = Some(latency_us);
     }
+    /// Applies the already manager-authorized return to UDP. The manager owns
+    /// validation/generation/health/hold policy; this controller only commits
+    /// the single active owner transition after that decision succeeds.
+    pub fn apply_migration_back(&mut self) -> bool {
+        if self.active != ActiveCarrier::Tcp {
+            return false;
+        }
+        self.active = ActiveCarrier::Udp;
+        true
+    }
+
     pub fn tcp_resend(&self) -> Result<Vec<(DataId, Vec<u8>)>, FailoverError> {
         if self.active != ActiveCarrier::Tcp {
             return Err(FailoverError::WrongCarrier);
@@ -1555,6 +1566,18 @@ mod tcp_failover_tests {
         assert!(!capabilities[1].packet_feedback);
         assert!(capabilities[1].reliable && capabilities[1].ordered);
     }
+    #[test]
+    fn migration_back_owner_requires_tcp_and_is_idempotent() {
+        let mut f = FailoverController::new(2, 1, 8).unwrap();
+        assert!(!f.apply_migration_back());
+        assert!(!f.udp_pto_at(1));
+        assert!(f.udp_pto_at(2));
+        assert_eq!(f.active(), ActiveCarrier::Tcp);
+        assert!(f.apply_migration_back());
+        assert_eq!(f.active(), ActiveCarrier::Udp);
+        assert!(!f.apply_migration_back());
+    }
+
     #[test]
     fn hard_failure_switches_and_resends_uncertain_with_dedup() {
         let mut f = FailoverController::new(2, 4, 64).unwrap();

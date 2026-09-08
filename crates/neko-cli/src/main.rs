@@ -13,8 +13,8 @@ mod reachability;
 use neko_carrier::{
     ActiveCarrier, CarrierHealthEvidence, CarrierManager, CarrierSwitchReason, DataId,
     FailoverController, FairScheduler, FlowLimits, HealthEvidenceLimits, HealthLimits,
-    HealthSample, HealthState, ManagerLimits, PathGeneration, PathId, ReadinessObservation,
-    StreamId as CarrierStreamId, StreamPriority,
+    HealthSample, HealthState, ManagerLimits, MigrationCandidate, PathGeneration, PathId,
+    ReadinessObservation, StreamId as CarrierStreamId, StreamPriority,
 };
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, ResumeGuard, TrustPolicy,
@@ -985,6 +985,7 @@ fn failover_server(args: &[String]) {
     let mut buf = [0u8; 65536];
     // Explicitly opt-in, bounded application-level fault seam. Production and
     // ordinary controlled-stop runs never cease replies.
+    let restore_udp_replies_after_tcp = args.iter().any(|a| a == "--restore-udp-replies-after-tcp");
     let cease_udp_replies_after = args
         .windows(2)
         .find(|w| w[0] == "--cease-udp-replies-after")
@@ -1425,7 +1426,9 @@ fn failover_server(args: &[String]) {
                 println!(
                     "carrier_event name=tcp_resource_admitted session=7001 target_path=2 generation=1 delivery_epoch=1 final_challenge=3 source=runtime_limits"
                 );
-                for _ in 0..count.saturating_sub(1) {
+                let tcp_records =
+                    count.saturating_sub(if restore_udp_replies_after_tcp { 2 } else { 1 });
+                for _ in 0..tcp_records {
                     bound_stream_to_deadline(&stream, experiment_deadline, None)
                         .unwrap_or_else(|_| fail("TCP data deadline elapsed"));
                     let ciphertext = read_frame(&mut stream, PROCESS_FRAME_MAX)
@@ -1471,6 +1474,120 @@ fn failover_server(args: &[String]) {
                             if let Some(delivered) = runtime.pop_receive(3).unwrap() {
                                 app.extend_from_slice(&delivered.data);
                             }
+                        }
+                    }
+                }
+                if restore_udp_replies_after_tcp {
+                    println!(
+                        "carrier_event name=udp_recovery_owner_started session=7001 generation=1"
+                    );
+                    if let Some((ref mut udp_session, udp_peer)) = secure {
+                        let _ = udp.set_read_timeout(Some(Duration::from_millis(200)));
+                        let mut recovery_buf = [0u8; READINESS_FRAME_MAX];
+                        let deadline = Instant::now() + Duration::from_secs(3);
+                        while Instant::now() < deadline {
+                            let Ok((n, source)) = udp.recv_from(&mut recovery_buf) else {
+                                continue;
+                            };
+                            if source != udp_peer {
+                                continue;
+                            }
+                            let Ok(plain) = udp_session.open_unreliable(&recovery_buf[..n]) else {
+                                continue;
+                            };
+                            let Ok(ProcessMessage::ReadinessRequest {
+                                session,
+                                target_path: 1,
+                                path_generation: 1,
+                                delivery_epoch: 1,
+                                challenge_id,
+                            }) = ProcessMessage::decode(&plain)
+                            else {
+                                continue;
+                            };
+                            let response = ProcessMessage::ReadinessResponse {
+                                session,
+                                target_path: 1,
+                                path_generation: 1,
+                                delivery_epoch: 1,
+                                challenge_id,
+                                admitted: true,
+                            }
+                            .encode()
+                            .unwrap();
+                            let sealed = udp_session.seal_unreliable(&response).unwrap();
+                            udp.send_to(&sealed, source).unwrap();
+                            emit_diagnostic(
+                                args,
+                                "server",
+                                "udp_recovery_validated",
+                                challenge_id as usize,
+                                "",
+                            );
+                            // The recovery owner remains active for exactly one
+                            // bounded post-return application datagram. This
+                            // proves the owner transition carries DeliveryAck,
+                            // not merely a readiness response.
+                            let post_deadline = Instant::now() + Duration::from_secs(2);
+                            while Instant::now() < post_deadline {
+                                let Ok((n, post_source)) = udp.recv_from(&mut recovery_buf) else {
+                                    continue;
+                                };
+                                if post_source != udp_peer {
+                                    continue;
+                                }
+                                let Ok(post_plain) =
+                                    udp_session.open_unreliable(&recovery_buf[..n])
+                                else {
+                                    continue;
+                                };
+                                let Ok(ProcessMessage::Data {
+                                    session: post_session,
+                                    record: post_record,
+                                }) = ProcessMessage::decode(&post_plain)
+                                else {
+                                    continue;
+                                };
+                                let post_stream = post_record.stream;
+                                let post_offset = post_record.offset;
+                                let post_len = post_record.data.len();
+                                if post_session != SessionId(7001)
+                                    || runtime
+                                        .receive(
+                                            InboundRecord {
+                                                stream: post_stream,
+                                                offset: post_offset,
+                                                data: post_record.data,
+                                            },
+                                            4,
+                                        )
+                                        .is_err()
+                                {
+                                    continue;
+                                }
+                                let ack = ProcessMessage::DeliveryAck {
+                                    session: post_session,
+                                    stream: post_stream,
+                                    offset: post_offset,
+                                    len: post_len,
+                                }
+                                .encode()
+                                .unwrap();
+                                let sealed_ack = udp_session.seal_unreliable(&ack).unwrap();
+                                udp.send_to(&sealed_ack, post_source).unwrap();
+                                emit_diagnostic(
+                                    args,
+                                    "server",
+                                    "udp_return_delivery_ack_sent",
+                                    post_offset as usize / bytes.max(1),
+                                    "",
+                                );
+                                if let Some(delivered) = runtime.pop_receive(5).unwrap() {
+                                    app.extend_from_slice(&delivered.data);
+                                }
+                                break;
+                            }
+                            break;
                         }
                     }
                 }
@@ -1535,6 +1652,7 @@ fn failover_client(args: &[String]) {
         fail("ports outside 40080-40100")
     }
     let automatic_health_failover = args.iter().any(|a| a == "--automatic-health-failover");
+    let restore_udp_replies_after_tcp = args.iter().any(|a| a == "--restore-udp-replies-after-tcp");
     let cold_health_failover = args.iter().any(|a| a == "--cold-health-failover");
     if cold_health_failover && !automatic_health_failover {
         fail("--cold-health-failover requires --automatic-health-failover")
@@ -2190,11 +2308,19 @@ fn failover_client(args: &[String]) {
     } else {
         count.saturating_sub(1)
     };
+    let tcp_records = resend_records.saturating_sub(usize::from(
+        automatic_health_failover && restore_udp_replies_after_tcp,
+    ));
     let mut first_resumed_data_at = None;
     let mut first_resumed_ack_at = None;
     let mut replayed_records = 0usize;
     let uncertain_records = records.len().saturating_sub(1);
+    let mut post_return_record = None;
     for record in records.into_iter().skip(1).take(resend_records) {
+        if replayed_records == tcp_records {
+            post_return_record = Some(record);
+            break;
+        }
         let logical = ProcessMessage::Data {
             session: SessionId(7001),
             record: record.clone(),
@@ -2280,6 +2406,125 @@ fn failover_client(args: &[String]) {
                 first_ack.duration_since(experiment_origin).as_micros(),
                 latency
             ),
+        );
+    }
+    if automatic_health_failover && restore_udp_replies_after_tcp {
+        manager
+            .observe(
+                PathId(1),
+                HealthSample {
+                    rtt_us: 100,
+                    loss_per_mille: 0,
+                    pto: 0,
+                },
+            )
+            .unwrap();
+        manager
+            .observe(
+                PathId(2),
+                HealthSample {
+                    rtt_us: 500,
+                    loss_per_mille: 0,
+                    pto: 1,
+                },
+            )
+            .unwrap();
+        let request = ProcessMessage::ReadinessRequest {
+            session: SessionId(7001),
+            target_path: 1,
+            path_generation: 1,
+            delivery_epoch: 1,
+            challenge_id: 1,
+        }
+        .encode()
+        .unwrap();
+        let ciphertext = us.seal_unreliable(&request).unwrap();
+        let mut recovery_buf = [0u8; READINESS_FRAME_MAX];
+        let deadline = Instant::now() + Duration::from_secs(secs.min(3));
+        let mut recovered = false;
+        while Instant::now() < deadline {
+            u.send_to(&ciphertext, target).unwrap();
+            u.set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            if let Ok(n) = u.recv(&mut recovery_buf)
+                && let Ok(plain) = us.open_unreliable(&recovery_buf[..n])
+                && matches!(
+                    ProcessMessage::decode(&plain),
+                    Ok(ProcessMessage::ReadinessResponse {
+                        session: SessionId(7001),
+                        target_path: 1,
+                        path_generation: 1,
+                        delivery_epoch: 1,
+                        challenge_id: 1,
+                        admitted: true
+                    })
+                )
+            {
+                recovered = true;
+                break;
+            }
+        }
+        if !recovered {
+            fail("UDP recovery validation timeout")
+        }
+        let candidate = MigrationCandidate {
+            path: PathId(1),
+            generation: PathGeneration(1),
+            validated: true,
+            health: HealthSample {
+                rtt_us: 100,
+                loss_per_mille: 0,
+                pto: 0,
+            },
+        };
+        if manager.migrate_back_to_udp(candidate).is_ok() {
+            fail("migration-back bypassed hold gate")
+        }
+        manager
+            .migrate_back_to_udp(candidate)
+            .unwrap_or_else(|_| fail("migration-back gate rejected"));
+        if !failover.apply_migration_back() {
+            fail("migration-back ownership transition rejected")
+        }
+        println!("carrier_event name=udp_recovered session=7001 generation=1 validated=true");
+        println!("carrier_event name=migrated_back_to_udp session=7001 generation=1");
+        let post_record =
+            post_return_record.unwrap_or_else(|| fail("missing post-return UDP record"));
+        let post = ProcessMessage::Data {
+            session: SessionId(7001),
+            record: post_record.clone(),
+        }
+        .encode()
+        .unwrap();
+        let sealed = us.seal_unreliable(&post).unwrap();
+        u.send_to(&sealed, target).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let ack_len = recv_udp_delivery_ack(
+            &u,
+            target,
+            &mut us,
+            &post_record,
+            &negotiation_response,
+            &noise_response,
+            deadline,
+            &mut |_| {},
+        )
+        .unwrap_or_else(|_| fail("post-return UDP DeliveryAck timeout"));
+        delivery
+            .delivery_ack(
+                post_record.stream,
+                post_record.offset,
+                post_record.data.len(),
+                count as u64 + 5,
+            )
+            .unwrap();
+        failover.confirm(DataId(post_record.offset)).unwrap();
+        emit_diagnostic(
+            args,
+            "client",
+            "udp_return_delivery_ack_validated",
+            count,
+            &format!(",\"ciphertext_bytes\":{}", ack_len),
         );
     }
     emit_diagnostic(

@@ -677,7 +677,7 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
             "--bytes",
             "16",
             "--duration",
-            "5",
+            "10",
             "--udp-bind",
             &format!("127.0.0.1:{udp}"),
             "--tcp-bind",
@@ -685,6 +685,7 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
             "--cease-udp-replies-after",
             "1",
             "--send-malformed-after-cessation",
+            "--restore-udp-replies-after-tcp",
             "--test-readiness-delay-ms",
             "400",
             "--diagnostic",
@@ -714,8 +715,9 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
             "--bytes",
             "16",
             "--duration",
-            "3",
+            "10",
             "--automatic-health-failover",
+            "--restore-udp-replies-after-tcp",
             "--diagnostic",
             "--experiment-id",
             "warm-failover-client",
@@ -789,6 +791,15 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
         1
     );
     let warm = client_log.find("carrier_event name=tcp_warm").unwrap();
+    assert!(
+        client_log
+            .contains("carrier_event name=udp_recovered session=7001 generation=1 validated=true"),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains("carrier_event name=migrated_back_to_udp session=7001 generation=1"),
+        "{client_log}"
+    );
     let failed = client_log
         .find("carrier_event name=udp_health_failed")
         .unwrap();
@@ -807,7 +818,13 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
         client_log
             .matches("\"event\":\"tcp_delivery_ack_validated\"")
             .count(),
-        2
+        1
+    );
+    assert_eq!(
+        client_log
+            .matches("\"event\":\"udp_return_delivery_ack_validated\"")
+            .count(),
+        1
     );
     assert!(
         client_log.contains("failover_mode=automatic_health_failure"),
@@ -819,6 +836,10 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
     );
     assert!(
         server_log.contains("carrier_event name=tcp_resumed"),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("carrier_event name=udp_recovery_owner_started"),
         "{server_log}"
     );
     assert!(
