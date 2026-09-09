@@ -1,8 +1,8 @@
-# Release item-4 subgate factual review — exact `899b190`
+# Release item-4 subgate factual review — exact `489c345`
 
 ## Scope
 
-Developer-prepared factual review support for reachable exact commit `899b190379c7a1dd213bfb520eff221ef15cfe39`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support for reachable exact commit `489c345542414aebc726bea6dc5e7e714478061f`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
@@ -38,7 +38,7 @@ Developer-prepared factual review support for reachable exact commit `899b190379
 
 ## Exact-tree gates
 
-On reachable exact `899b190`, developer local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, and clean-tree checks passed. A native package from the same tree rejected deterministic malformed client configuration without creating the requested identity; provenance is retained in [`../local-identity-config-899b190-20260909.md`](../local-identity-config-899b190-20260909.md). Exact `0e664d6` remains the descriptor-bound reload gate retained in [`../local-identity-security-e5aeef2-20260909.md`](../local-identity-security-e5aeef2-20260909.md). Exact `749976f` remains the prior native packaged identity smoke, exact `b1b2552` remains the full CLI/package reproducibility evidence, and hosted runs remain separate evidence. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
+On reachable exact `489c345`, the serialized developer-local workspace test gate, `cargo fmt --all -- --check`, and `git diff --check` passed with clean initial/final trees. A native x86_64 package from the same tree passed archive smoke; packaged keygen created/reloaded an owner-only identity and rejected a valid-hex wrong-length peer key without creating the requested identity. Provenance is retained in [`../local-identity-config-489c345-20260909.md`](../local-identity-config-489c345-20260909.md). Exact `0e664d6` remains the prior descriptor-bound reload gate retained in [`../local-identity-security-0e664d6-20260909.md`](../local-identity-security-0e664d6-20260909.md); prior package evidence and hosted runs remain separate. A green gate is not a release/security decision.
 
 ## Remaining release boundaries
 
