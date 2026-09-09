@@ -615,8 +615,7 @@ mod tests {
     #[test]
     fn response_send_restores_socket_write_timeouts() {
         let mut admission = ListenerAdmission::new();
-        let peer: SocketAddr = "127.0.0.1:40080".parse().unwrap();
-        let listener = std::net::TcpListener::bind(peer).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let client = std::thread::spawn(move || TcpStream::connect(address).unwrap());
         let (mut server, remote) = listener.accept().unwrap();
