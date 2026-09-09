@@ -1,74 +1,60 @@
-# ChatGPT reviewer handoff — close CLI/package operator truth, then continue item-4 review
+# ChatGPT reviewer handoff — finish CLI truth and supersede package provenance
 
 ## Reviewed state
 
-- Previous reviewer-owned handoff: exact `6ec460d64fc4ff6ecac1de95786b6e256cc122ae` (`docs(handoff): close source provenance and repair clean-chain integration`).
-- Developer state now reviewed through default-branch exact `34a43092e189687d1c1711b4f5fd9bb54e373e2a` (`docs: record clean package closure`).
-- New developer-owned sequence since that handoff:
-  - `30aa239e134a3468ec8e7509f84531d939386748` — isolates the invalid failover-server test identity in a temporary path and removes it, instead of allowing the default `crates/neko-cli/neko-server.identity` to dirty the source checkout.
-  - `0a81d99ceb9bd0f950f67e42fdc9e9ee6191c314` — moves the two-build reproducibility workflow outside the repository, adds `scripts/release/reproducibility-test.sh`, compares same-tree archive hashes, and requires the repository to remain clean.
-  - `34a43092e189687d1c1711b4f5fd9bb54e373e2a` — records developer-run local exact-tree validation of `0a81d99` and refreshes the release/item-4 factual anchors to that real tested tree.
-- Persisted developer local-CI evidence for exact `0a81d99` records `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh && git diff --check && test -z "$(git status --porcelain)"`, UTC start/end, exit `0`, Linux/x86_64 host, stable Rust version, clean initial/final tree, and equal package archive SHA-256. Treat this as **developer local CI**, not reviewer-executed CI and not hosted CI.
-- No hosted status is required for this closure. GitHub status lookup on the current docs head exposed no status records; do not poll Actions or wait for quota.
-- Work branches remain non-authoritative: `work/e1a-staged-accounting-20260907` is exact `f4404257` and main is 54 commits ahead with that branch as merge base; `work/continue-20260904` is exact `d271a99a`, diverged with main 138 commits ahead and the work branch carrying one old unique commit. Do not coordination-merge either merely to manufacture work.
+- Previous reviewer-owned handoff: exact `7765b8572b6343f3bde805aed6708c87c9fe4399` (`docs(handoff): close package chain and align CLI surface`).
+- Developer state reviewed through default-branch exact `44f612bb09b823ccf9b8eed0a9d24c4a6676e633` (`docs: bound compatibility review claims`).
+- New developer-owned sequence since the previous handoff:
+  - `5e68ad6ee20654e5e3b1c8d62857b72d129d1870` — expands `--help` and JSON capability inventory to the executable canonical command surface and adds a focused help/JSON/unknown-command regression;
+  - `ffa3916ed23d5bb4814566646192de06b869ded2` — records developer-local exact-`5e68ad6` native x86_64 package build/smoke evidence and refreshes release/item-4 anchors;
+  - `44f612bb09b823ccf9b8eed0a9d24c4a6676e633` — bounds compatibility claims to current/current candidate negotiation and explicit unsupported/future rejection, while stating that no previous frozen release interoperability exists.
+- GitHub combined-status lookup exposes no hosted status records for exact `5e68ad6` or current `44f612b`. Do not poll Actions or wait for quota. Local exact-tree verification is the normal closure path.
+- Work branches remain non-authoritative and stale: `work/e1a-staged-accounting-20260907` is still exact `f4404257`; `work/continue-20260904` is still exact `d271a99a`. Do not coordination-merge either merely to manufacture work.
 
 ## Review verdict
 
-### ACCEPT — local-CI identity residue is fixed
+### ACCEPT_WITH_REPAIR — CLI inventory alignment materially improved, but human `capabilities` is still incomplete
 
-Exact `30aa239` changes the concrete failing test path rather than weakening the source guard. The invalid failover-server regression now passes an explicit temporary `--identity` path and removes it. Production default identity semantics are not changed and `neko-server.identity` is not broadly ignored.
+Exact `5e68ad6` fixes the largest operator drift: canonical executable commands are now present in `USAGE`, JSON `capabilities --json` includes the canonical dispatch inventory, legacy `failover-server|failover-client` aliases are called out in help, and a focused process test checks help + JSON coverage and unknown-command failure.
 
-The later exact-`0a81d99` developer local gate reports an initially clean and finally clean checkout and explicitly notes repeated focused execution without recreating `crates/neko-cli/neko-server.identity`. This closes the prior `LOCAL_CI_RESIDUE` finding for the tested tree.
+However `capabilities` **without** `--json` still prints only:
 
-### ACCEPT — guarded package reproducibility workflow is repaired
+```text
+commands research=client,server,probe experimental=health-observe,failover,multistream fixtures=scheduler-fairness,key-update
+```
 
-Exact `0a81d99` moves the documented `dist-a` / `dist-b` outputs into an external temporary directory and adds a focused reproducibility test to `scripts/check.sh`. The test performs two same-tree package builds, compares archive SHA-256 values and requires the source repository to remain clean.
+while the same command's JSON report and actual dispatch also include `periodic-server`, `periodic-client`, `lab`, `workload`, `endpoint-rebind-server`, `endpoint-rebind-client`, `keygen`, and `capabilities`. Because `USAGE` describes `capabilities [--json]` as the secret-free build/command/default/limit report, the human report is still an operator-visible command-inventory contradiction.
 
-This preserves the strict clean-source invariant instead of adding an arbitrary untracked allowlist. The package builder still checks source identity before querying build metadata or creating output.
+Classify this as **MEDIUM / CLI_HUMAN_CAPABILITIES_DRIFT**. It is not a wire/Session/security architecture problem. Fix the existing surface rather than inventing a large CLI framework. The Agent may choose the smallest fail-closed shape: make human capabilities exhaustive over the intended canonical inventory, or use a compact shared descriptor if that reduces duplication without adding policy. Legacy aliases should remain clearly aliases rather than duplicate canonical capability entries.
 
-### ACCEPT_WITH_BOUNDS — clean local-CI -> reproducible package chain is proven, but current native package execution smoke is not yet retained
+Minimum regression: every intended canonical command must appear in `--help`, JSON capabilities, and human capabilities; retained aliases must be explicitly documented; unknown command must continue to fail.
 
-The persisted exact-`0a81d99` local note proves the stable gate completed, the checkout stayed clean, and the two produced archives were reproducible in that environment. That is a real local release-tool closure.
+### ACCEPT_WITH_BOUNDS — exact-current native package execution exists, but retained local-CI provenance is incomplete under the new local-CI-first policy
 
-However the previous handoff's whole-chain Slice C also required running `scripts/release/smoke-package.sh` on one archive **actually produced from the repaired exact implementation tree**. Current `scripts/release/smoke-package-test.sh` intentionally constructs a synthetic `aarch64-unknown-linux-gnu` archive and checks that native execution is skipped; it is excellent adversarial archive validation, but it is not execution of the exact-current native built package. Historical local/VPS package smokes predate the `0a81d99` CLI/package workflow and cannot substitute for exact-current artifact execution.
+Exact `ffa3916` records a real developer-local native x86_64 archive built from exact `5e68ad6`, archive/binary hashes, packaged `capabilities --json` execution under `smoke-package.sh`, exit `0`, host/arch/Rust, and clean source checkout before/after. This closes the earlier behavioral gap: a package actually produced from the current implementation was executed locally rather than only exercising the synthetic non-native fixture.
 
-Classify this as `MEDIUM / CURRENT_NATIVE_PACKAGE_SMOKE_NOT_RETAINED`, not a package implementation failure and not a reason to rerun VPS work. Close it once, locally, after the next CLI implementation commit so the evidence is not immediately stale.
+Do **not** discard that evidence, but do not describe it as fully retained local-CI provenance either. The note records only `start/end date: 2026-09-09 UTC`, not distinct start/end UTC timestamps, and its command chain does not explicitly retain `git diff --check` even though the later item-4 text says that command passed. There is no contradictory failure evidence; this is a provenance-retention gap, not a package implementation failure.
 
-### MEDIUM / CLI_COMMAND_INVENTORY_DRIFT — help, capability metadata and dispatch disagree
+Classify this as **MEDIUM / LOCAL_PACKAGE_CI_PROVENANCE_INCOMPLETE**. Do not fabricate timestamps from Git commit time and do not rerun VPS work. Because Slice A changes the CLI implementation anyway, supersede this evidence once on the new exact implementation SHA with the full local-CI-first record required below.
 
-Current `crates/neko-cli/src/main.rs` has three different views of the executable surface:
+### ACCEPT — bounded compatibility/negotiation wording is now truthful
 
-- `USAGE` advertises `server|client|probe|periodic-server|periodic-client|lab|failover-server|failover-client|endpoint-rebind-server|endpoint-rebind-client|workload|keygen|capabilities`;
-- `capabilities --json` reports `client`, `server`, `probe`, `health-observe`, `failover`, `multistream`, `scheduler-fairness`, and `key-update`;
-- `main()` actually dispatches all of those plus `lab`, `workload`, `periodic-server`, `periodic-client`, `endpoint-rebind-server`, `endpoint-rebind-client`, `keygen`, `capabilities`, and the `failover-server` / `failover-client` aliases.
+Exact `44f612b` correctly distinguishes current/current candidate negotiation from nonexistent previous-release interoperability. Current `neko-wire` code/tests support the bounded facts now stated: negotiation is required before `admit_data`; compatible peers select a common version; no-overlap/future-only offers reject terminally; an unsupported future selected response rejects; duplicate/late behavior is deterministic; and the exact accepted hello/response/selected version are retained in the authenticated binding. The distinct package A/B/A rehearsal is correctly not treated as protocol-version interoperability evidence.
 
-At minimum, valid canonical commands such as `health-observe`, `multistream`, `scheduler-fairness`, `key-update`, and `failover` are executable but absent from `--help`, while capability metadata is not obviously exhaustive of the executable surface. Because package smoke treats secret-free capabilities as an operator/build report, this is a concrete discoverability/operator-contract drift rather than cosmetic docs polish.
-
-Do not invent new security policy or maturity taxonomy merely to fix it. The external Agent may use the proposal protocol: compare 1-3 small shapes, then choose the one with the least duplicated command state and clearest canonical-vs-alias contract. A single typed/static descriptor table feeding help/capabilities/dispatch is acceptable if it stays small; a focused consistency regression without a refactor is also acceptable. Legacy aliases may remain aliases, but their status must be explicit enough that help/capabilities do not contradict actual dispatch.
-
-### LOW / RELEASE_SCOPE_WORDING_DRIFT — aarch64 absence is currently described too much like a first-RC blocker
-
-`IMPLEMENTATION_PLAN.md` N6 already states that the first RC target, if later approved, is `x86_64-unknown-linux-gnu` only and `aarch64` remains a candidate target. The current item-4 factual review nevertheless lists missing native aarch64 execution evidence among the remaining release boundaries without restating that scope.
-
-Do not add an aarch64 build/VPS task merely to satisfy that sentence. During the next factual reconciliation, state that native aarch64 evidence is absent/candidate evidence and is **not a first-RC blocker under the currently declared x86_64-only target scope** unless a later maintainer scope decision changes N6.
-
-### ACCEPT — bounded DeliveryLedger follow-through remains closed
-
-The prior reviewer pass already inspected current `insert`, transition and repaired `confirm_received` mutation ordering and found no second demonstrable mutation-before-error defect within the current Session semantics. Current code still supports that conclusion. Do not reopen this as a generic static-analysis/property-checker lane. A different interpretation of the confirmed watermark would be Session/ACK design and requires a concrete failure or architecture decision, not opportunistic cleanup.
+This is implementation/test review support only. It is not a protocol freeze, independent security review, or compatibility lifetime policy. Do not add a speculative previous/current checker until a prior frozen release exists.
 
 ## Current evidence/governance boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains bounded research-implementation status only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain unchanged.
-- Release item 3 remains incomplete. Item 4 remains incomplete: developer factual support exists, but full independent release/security closure and D019 policy closure do not.
-- `READY_LIVE: none` remains the current opportunity truth. Do not manufacture VPS work merely because the rental window is finite.
-- HY2 exact `13da094` remains `BLOCKED_HARNESS_CURRENT_LINE_HY2` at typed `unknown / client_started`, with no complete pair or performance conclusion. No unchanged retry.
-- repeated warm failover exact `f17b648` remains frozen at the primary `startup_setup` orchestration boundary. Periodic remains a pre-application/orchestration negative. No unchanged retry.
-- installed-package lifecycle and distinct-version A(old) -> B(current) -> A(old) already answered their bounded operator questions. Do not rerun them to repair local package/CLI evidence.
+- Release item 3 remains incomplete. Item 4 remains incomplete because independent review and D019 policy closure are absent even though developer factual support is increasingly complete.
+- `READY_LIVE: none` remains current opportunity truth. Do not manufacture VPS work merely because the rental window is finite.
+- HY2 exact `13da094` remains `BLOCKED_HARNESS_CURRENT_LINE_HY2` at typed `unknown / client_started`; no complete pair/performance conclusion and no same-class retry.
+- repeated warm failover exact `f17b648`, periodic current line, installed-package lifecycle, and distinct-package A->B->A already retain their bounded current-line answers/negatives. No unchanged retry.
 - IPv6 remains environment-blocked when no owned IPv6 path exists.
-- live PMTUD still requires its separate accepted authenticated wire/security design gate before live integration. Do not interpret the old `BLOCKED_IMPLEMENTATION` label as permission to invent wire semantics.
-- D019 remains `SOURCE_RETENTION_POLICY_BLOCKED`. Do not invent TTL/LRU/history capacity, retention authority, or weakened no-reset semantics.
-- Signing/key custody/publication trust also remain separate release concerns and may require maintainer credentials/value decisions; do not fabricate them as ordinary READY_LOCAL implementation.
+- live PMTUD still requires its separate accepted authenticated wire/security design gate before live integration. Do not infer permission from the old `BLOCKED_IMPLEMENTATION` label.
+- D019 remains `SOURCE_RETENTION_POLICY_BLOCKED`. Do not invent TTL/LRU/history capacity, retention authority, or weaker no-reset semantics.
+- Signing/key custody/SBOM/publication trust remain separate release concerns; do not fabricate credentials or policy as ordinary READY_LOCAL work.
 - Standing VPS authorization remains valid for genuinely new dependency-ready self-owned bounded questions. Authorization is not the current blocker.
 
 ## Local-CI-first rule
@@ -83,103 +69,103 @@ git diff --check
 git status --porcelain   # must be empty
 ```
 
-When persisting exact-tree/release evidence, retain only minimal non-secret provenance: exact SHA, command(s), UTC start/end, exit, host/OS/arch, stable Rust version and initial/final clean-tree state; archive/binary hashes when the package itself is the subject. A small sanitized log hash/path is optional. Label developer local CI, reviewer-executed checks and hosted CI separately.
+Persist minimal non-secret provenance when the result anchors release evidence: exact SHA, exact command(s), **distinct UTC start and end timestamps**, exit code(s), host/OS/arch, stable Rust version, initial/final clean-tree state, and archive/binary hashes when package identity is the subject. A small sanitized log hash/path is optional. Label developer-local CI, reviewer-executed checks, and hosted CI separately.
 
-Package/CLI metadata work does not require fuzz. If a later slice changes wire decoder/parser/crypto framing, use the pinned toolchain from `scripts/fuzz-toolchain.sh`, `cargo fuzz build decode`, then the 30-second / 8192-byte decode smoke required by repository policy.
+CLI/package metadata work does not require fuzz. If a later slice changes wire decoder/parser/crypto framing, use the pinned toolchain from `scripts/fuzz-toolchain.sh`, `cargo fuzz build decode`, then the 30-second / 8192-byte decode smoke required by repository policy.
 
 ## Rolling queue — execute continuously in dependency order
 
-There is no open correctness/security BLOCKER/HIGH. Finish A -> B -> C without waiting for another reviewer cycle. D is a bounded item-4 review/repair lane; E selects the next real output if D is clean. F is conditional live work only if repository truth opens a new question. G is the policy-blocked parallel lane. Do not enter watcher/polling mode merely because `READY_LIVE` is empty.
+There is no correctness/security BLOCKER/HIGH. Finish A -> B -> C without waiting for another reviewer cycle. D selects the next real local output; E is conditional live work only if repository truth opens a genuinely new question; F is the policy-blocked parallel lane. There are intentionally fewer than ten tickets because the current tree does not contain ten honest dependency-ready release tasks; do not invent checker/docs work to hit a count.
 
-### A. MEDIUM / READY_LOCAL — unify the truthful CLI command surface
+### A. MEDIUM / READY_LOCAL — finish the human + JSON CLI capability contract
 
-**Goal:** make operator-visible help, secret-free capability metadata, and actual dispatch describe a coherent command contract.
+**Goal:** remove the remaining contradiction between `--help`, human `capabilities`, JSON `capabilities --json`, and actual dispatch.
 
-**Why now:** this is a current executable/package operator defect, and the exact-current package smoke in B should exercise the repaired CLI rather than freeze evidence on the already-stale surface.
+**Why now:** exact `5e68ad6` fixed JSON/help but left the human capability report stale. The next package smoke should anchor a fully coherent operator surface.
 
-**Files/concepts:** primarily `crates/neko-cli/src/main.rs` plus focused CLI tests. Touch release docs only if the chosen command-inventory semantics need one sentence of explanation.
+**Files/concepts:** `crates/neko-cli/src/main.rs`, focused CLI process tests.
 
 **Protected invariants:**
 
 - no Session/Carrier/ACK/crypto/wire behavior change;
-- no new numeric security policy;
-- no previously hidden command becomes production-approved merely because it becomes discoverable;
-- `capabilities --json` remains secret-free and machine-readable;
-- legacy failover aliases may remain, but canonical commands and aliases must not silently contradict each other.
+- no new numeric security policy or maturity policy;
+- no hidden command becomes production-approved merely because it is discoverable;
+- JSON remains secret-free and machine-readable;
+- aliases remain aliases, not duplicate canonical commands.
 
-**Proposal protocol:** if more than one small shape is reasonable, compare 1-3 shapes. Prefer the least duplicated source of truth and the smallest new API/state. A compact command descriptor feeding both help and capabilities is acceptable; a smaller consistency repair is also acceptable if regression tests prevent drift.
+**Implementation shape:** the Agent may compare 1-3 small forms, then choose the least duplicated form. A minimal exhaustive human summary is sufficient; a compact descriptor shared by help/capabilities is acceptable if smaller overall. Do not build a generic CLI framework.
 
-**Minimum tests:** positive `--help` coverage for canonical executable commands; machine-readable capabilities coverage for the intended canonical inventory/scope; alias behavior where retained; unknown command still fails closed. Avoid a giant generic CLI framework.
+**Tests:** canonical commands covered in help + human capabilities + JSON capabilities; retained aliases documented/working; unknown command fails closed.
 
-**Validation/commit:** exact pushed implementation commit; developer local `scripts/check.sh`, `git diff --check`, final clean tree. Persist minimal local-CI provenance only if it will anchor B/C. Commit + push, then continue immediately to B.
+**Validation/commit:** commit the coherent implementation, push it, then run the exact pushed SHA through the normal local gate in a clean temporary checkout. Continue immediately to B.
 
-### B. READY_LOCAL / EXACT-CURRENT NATIVE PACKAGE CLOSURE — execute one produced package locally
+### B. READY_LOCAL / EXACT-TREE NATIVE PACKAGE + COMPLETE LOCAL PROVENANCE
 
-**Goal:** close the remaining exact-current local package evidence gap on the exact A implementation tree.
+**Goal:** supersede the coarse exact-`5e68ad6` package note with one complete local-CI-first record on the exact A implementation SHA.
 
-In a clean temporary worktree of that pushed SHA:
+In a clean temporary checkout of exact A:
 
-1. require the normal local gate and final clean tree (reuse A's exact-tree run if it is the same commit and already recorded truthfully);
-2. run the repaired external-temp two-build reproducibility workflow;
-3. require matching archive hashes under the existing same-source/toolchain/target/environment contract;
-4. run `scripts/release/smoke-package.sh` on one **actual produced native x86_64 archive**, so its packaged binary/capabilities path executes rather than taking the synthetic non-native `execution skipped` branch;
-5. record archive SHA-256, packaged binary SHA-256/capability success as available, exit status, target, and final clean source tree.
+1. capture UTC start timestamp;
+2. run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`;
+3. run `git diff --check` and require `git status --porcelain` empty;
+4. run the existing external-temp reproducibility workflow and require equal archive hashes under its existing contract;
+5. run `scripts/release/smoke-package.sh` on one **actual produced native x86_64 archive**, requiring packaged `capabilities --json` execution;
+6. require final source tree clean;
+7. capture UTC end timestamp and all exit statuses;
+8. persist exact SHA, commands, timestamps, host/OS/arch, stable Rust, archive SHA-256, packaged binary SHA-256/capability success, and initial/final clean state.
 
-This is developer local release-tool evidence only. It is not VPS/WAN, signing, security approval, RC, release or production authorization. Do not add another package checker just to record it, and do not rerun historical VPS package experiments.
+Do not rewrite `docs/local-package-smoke-5e68ad6-20260909.md` to invent precision it did not retain; keep it historical and add/supersede with the new exact-tree note.
 
-**Commit/push:** a small evidence note is appropriate if needed by the release packet. Continue immediately to C.
+This remains developer-local release-tool evidence only: no VPS/WAN, signing, independent review, RC, release, or production claim.
 
-### C. READY_LOCAL / FACTUAL RECONCILIATION — close the package/CLI lane on the real tested tree
+**Commit/push:** yes for the small evidence note. Continue immediately to C.
+
+### C. READY_LOCAL / FACTUAL RECONCILIATION — close the CLI/package lane
 
 Refresh only stale facts in:
 
 - `docs/release-engineering.md`;
 - `docs/release-security-review-packet.md`;
 - `docs/reviews/release-item4-subgates-20260909.md`;
-- `docs/status.md` / `IMPLEMENTATION_PLAN.md` only if their current wording is stale.
+- `docs/status.md` / `IMPLEMENTATION_PLAN.md` only if wording is actually stale.
 
-Anchor CLI/package facts to the real exact A/B implementation/test SHA, never to a later self-referential docs commit. Preserve the distinction between implementation/tests, developer local CI, historical bounded VPS evidence, hosted cross-evidence, and absent independent release/security approval.
+Anchor executable CLI/package facts to the real exact A implementation SHA and B local evidence, never to the later docs commit. State human + JSON capability coverage truthfully. Preserve the distinction between developer local CI, historical VPS operator evidence, hosted cross-evidence, and absent independent security/release approval.
 
-Also repair the aarch64 scope wording: current N6 makes x86_64 the first-RC target; missing native aarch64 execution remains candidate evidence, not a first-RC blocker unless that scope changes.
+The exact `44f612b` compatibility wording remains valid unless A changes negotiation code (it should not). Previous/current interoperability remains inapplicable until a prior frozen release exists. aarch64 remains candidate-target evidence and is not a blocker for the currently declared x86_64-only first-RC scope.
 
-After this, declare the package checker/source/reproducibility/native-smoke lane locally closed unless a **new concrete defect** exists. Stop package-checker growth.
+After C, declare this CLI/package inventory/provenance lane locally closed unless a **new concrete defect** exists. Stop package-checker growth.
 
 **Commit/push:** yes. Continue immediately to D.
 
-### D. BOUNDED ITEM-4 REVIEW / FIX-ONLY-IF-CONCRETE — compatibility and negotiation policy
+### D. LOCAL OUTPUT SELECTION — choose the next concrete runtime/operator/release output, not a watcher
 
-**Goal:** perform one bounded factual review of the release item-4 compatibility/negotiation subgate on the exact current tree, rather than creating another generic checker.
+Re-read exact-current `docs/status.md`, `IMPLEMENTATION_PLAN.md`, `ROADMAP.md`, release packet, and Era-4 opportunity ledger after C.
 
-Inspect current version negotiation, canonical-vector mapping and relevant executable negative tests. Confirm only repository-supported facts such as current/current candidate acceptance and fail-closed unsupported/future-version behavior. There is no prior frozen release, so previous-release interoperability must not be fabricated as a first-release fact.
+If a concrete READY_LOCAL defect/output is already named, implement it. Otherwise the coding Agent should propose 1-3 **specific** options grounded in current code/evidence, each including observed gap/output, API/file owner, protected invariant, risk, minimum positive/negative test, and whether it changes architecture/security policy.
 
-- If a **specific current implementation/test contradiction** is found, repair it with focused tests and the normal exact-tree local gate, then update the factual review.
-- If no concrete defect is found, do not add a speculative checker/TODO; at most tighten the factual review wording and continue immediately to E.
-- Do not freeze the global protocol, change negotiation wire bytes, or invent a compatibility lifetime policy in this lane.
+The Agent may autonomously select and implement the smallest option that:
 
-### E. LOCAL OUTPUT SELECTION — choose the next real milestone/release output, not a watcher
+- changes no core Session/Carrier/ACK/crypto/wire semantics;
+- invents no security numeric policy;
+- needs no destructive migration, new credentials, third-party permission, production mutation, or maintainer value decision;
+- is a real runtime/operator/release capability or correctness repair rather than another generic checker/parser/doc framework.
 
-After A-D, re-read exact-current `docs/status.md`, `IMPLEMENTATION_PLAN.md`, `ROADMAP.md`, the release packet and the Era-4 opportunity ledger.
+Prefer visible output/closure. Do not reopen DeliveryLedger generic auditing, package archive variants, FEC/0-RTT/striping/multipath/exotic carriers, or previous-release compatibility without an observed problem.
 
-If no ready defect is already named, the coding Agent should propose 1-3 **specific** local options grounded in current code/evidence, each with observed gap/output, invariant, files/API owner, risk, minimum positive/negative test, and whether it changes architecture/security policy. Classify each `ACCEPT`, `ACCEPT_WITH_BOUNDS`, `DEFER`, or `REJECT`, then autonomously implement the smallest accepted option if it needs no maintainer decision.
+If all defensible options require maintainer judgment, record the exact blocker rather than polling and continue any independent safe lane that still exists.
 
-Prefer a runtime/operator/release capability or closure over another checker/doc parser. Do not reopen DeliveryLedger auditing, package archive variants, FEC/0-RTT/striping/multipath, or other Experimental Track items without an observed problem.
+### E. CONDITIONAL VPS OUTPUT — only if a genuinely new live question opens
 
-If all 1-3 defensible options require a maintainer value/policy decision, record the exact blocker instead of polling; continue any independent safe lane that still exists.
+If D or later repository truth creates a **new concrete unresolved real-network question** whose dependencies are satisfied and whose code/config/instrumentation/path/hypothesis materially differs from retained evidence, execute it boundedly under standing authorization and preserve negative results.
 
-### F. CONDITIONAL VPS OUTPUT — only if a genuinely new live question opens
+If `READY_LIVE: none` remains true, run nothing merely to use rental time. In particular do not unchanged-rerun HY2, repeated failover, periodic, installed-package lifecycle, distinct A/B/A, generic soak, IPv6 without a real owned path, or live PMTUD before its authenticated wire/security design gate.
 
-If, after E, the exact-current ledger exposes a **new concrete unresolved real-network question** whose dependencies are satisfied and whose code/config/instrumentation/path/hypothesis materially differs from a retained negative, execute it boundedly under standing authorization and preserve negative results.
-
-If `READY_LIVE: none` remains true, run nothing merely to use rental time. In particular, do not unchanged-rerun HY2, repeated failover, periodic, installed-package lifecycle, distinct A/B/A, generic soak, IPv6 without a real owned path, or live PMTUD before its authenticated wire/security design gate.
-
-### G. POLICY-BLOCKED PARALLEL LANE — D019 source retention
+### F. POLICY-BLOCKED PARALLEL LANE — D019 source retention
 
 **Status:** `SOURCE_RETENTION_POLICY_BLOCKED`.
 
-Engineering controls remain useful and the non-policy controls have bounded factual review support, but terminal source-retention/no-reset semantics require maintainer/security-policy judgment. Do not invent TTL/LRU/history capacity, external retention authority, or weaker lifetime semantics. This does not block A-F.
+Non-policy engineering controls already have bounded factual review support. Terminal source-retention/no-reset semantics still require maintainer/security-policy judgment. Do not invent retention TTL, LRU/history capacity, external authority, or weaken the existing no-reset requirement. This blocker does not prevent independent A-E work.
 
-## Stop / escalation conditions
+## Stop / escalation
 
-Default behavior is continuous: implement -> exact-tree local validate -> commit -> push -> next READY slice. Do not wait for hourly review after each commit.
-
-Stop only for a real unresolved BLOCKER/HIGH, a core Session/Carrier/ACK/crypto/wire architecture choice, new security numeric policy, destructive/canonical migration, production impact, action outside standing authorization, new credential/server/third-party permission, benchmark-value judgment, actual repository/tool-budget breakage, D019 policy decision, or a genuinely new phase requiring maintainer scope. Otherwise propose/implement/review/repair continuously.
+Do not notify or stop for ordinary progress. Escalate only for a core Session/Carrier/ACK/crypto/wire architecture change; new security numeric policy; destructive/canonical-meaning migration; action outside standing authorization; production impact; new credentials/server/third-party permission; benchmark value judgment; unresolved major security issue; D019 policy decision; or entry into a genuinely new project stage.
