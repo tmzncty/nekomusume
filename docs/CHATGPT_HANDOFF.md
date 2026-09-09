@@ -2,15 +2,17 @@
 
 ## Reviewed state
 
-- Previous reviewer commit/handoff: exact `82030a6f9eef406a725c33befd6edba5d8855a7b` (`docs(handoff): challenge package gate provenance and modes`).
-- Current default `main` reviewed here: exact `d15a50a627720a638b4a532d4a82c04bf38dad95` (`docs: refresh package review provenance`).
-- Three developer-owned commits landed after the previous handoff:
+- Previous reviewer commit/handoff before this review cycle: exact `82030a6f9eef406a725c33befd6edba5d8855a7b` (`docs(handoff): challenge package gate provenance and modes`).
+- Developer-owned head actually reviewed through this cycle: exact `e5d1fa17163dd01f5c0780e3ec2ddb086b2f6be6` (`test: pin package regression umask`).
+- Four developer-owned commits landed after the previous handoff:
   - `54078364735976b472899decf2b456ec878c1739` — validate package root and checksum-manifest shape before extraction;
   - `8cbf3afa276f1fb2a4e991b3ad94daddc4d8cf64` — validate exact archive member types/modes before extraction and add umask-normalization regressions;
-  - `d15a50a627720a638b4a532d4a82c04bf38dad95` — refresh release packet/item-4 package provenance text.
+  - `d15a50a627720a638b4a532d4a82c04bf38dad95` — refresh release packet/item-4 package provenance text;
+  - `e5d1fa17163dd01f5c0780e3ec2ddb086b2f6be6` — force package regression tests to `umask 022`, making the permissive-mode normalization cases independent of the caller environment.
+- Reviewer note: a first handoff write in this cycle raced with the `e5d1fa1` push and therefore described `d15a50a` as the latest developer head. This corrected handoff incorporates `e5d1fa1`; no product/evidence conclusion is hidden by that race.
 - GitHub-hosted Rust CI run `34294307935` is green on exact `d15a50a`: stable checks ran `bash scripts/check.sh`, and the separate pinned nightly decode fuzz smoke also passed. This is **GitHub-hosted cross-evidence**, not developer local-CI provenance.
-- No GitHub-hosted workflow run exists for exact `8cbf3afa`; this is not a blocker under the local-CI-first policy because exact `d15a50a` contains the implementation and is independently green on GitHub. For all new READY_LOCAL slices below, local exact-tree verification is the required ordinary closure path; do not wait for GitHub Actions quota/runs.
-- This reviewer did not execute the developer's local CI and the repository currently does not retain a local-CI provenance record for `5407836` / `8cbf3af` / `d15a50a`. Do not retroactively label GitHub Actions as local CI.
+- There is no requirement to wait for a hosted run on `e5d1fa1`. Under the local-CI-first policy, all new READY_LOCAL slices below close through an exact pushed developer SHA verified locally; GitHub Actions is optional cross-evidence.
+- This reviewer did not execute the developer's local CI and the repository currently does not retain a local-CI provenance record for the package sequence through `e5d1fa1`. Do not retroactively label GitHub Actions as local CI.
 - `work/e1a-staged-accounting-20260907` remains at `f4404257`; `work/continue-20260904` remains at `d271a99a`. Both are stale relative to `main`; do not coordination-merge them merely to create work.
 
 ## Review verdict
@@ -21,7 +23,7 @@ Exact `5407836` closes the prior root/layout ambiguity without changing package 
 
 Keep this as release-tool correctness evidence only. It is not signing, publication trust, SBOM, security approval, RC or production evidence.
 
-### ACCEPT — archived member type/mode validation is now pre-extraction and umask-independent
+### ACCEPT — archived member type/mode validation is pre-extraction, exact and now regression-umask-stable
 
 Exact `8cbf3af` fixes the previous mode-provenance defect. `scripts/release/smoke-package.sh` now reads archive metadata before extraction and requires the existing builder contract exactly:
 
@@ -30,7 +32,7 @@ Exact `8cbf3af` fixes the previous mode-provenance defect. `scripts/release/smok
 - documentation and `SHA256SUMS`: `0644`;
 - only directory/regular-file member types at the exact expected paths.
 
-The regression fixture now includes permissive archive metadata that an ordinary umask could otherwise normalize after extraction (`0777` executable/directory and `0666` document/checksum cases). Existing path/link/special-member/layout/checksum/restrictive-mode cases remain in the gate.
+The regression fixture includes permissive archive metadata that an ordinary umask could otherwise normalize after extraction (`0777` executable/directory and `0666` document/checksum cases). Exact `e5d1fa1` then pins the regression process itself to `umask 022`, so those cases no longer depend on the invoking shell's umask. This is a test-determinism repair only; it changes no package/runtime semantics.
 
 Do not reopen this archived-mode gap absent a concrete new counterexample. The current package checker is already directly justified by an operator/release artifact; after the provenance work below, do not keep growing it speculatively.
 
@@ -40,9 +42,9 @@ Current `docs/release-security-review-packet.md` and `docs/reviews/release-item4
 
 `9d4c7e1e0fc41b46396fb635ee9ca413b4b1fc67`
 
-GitHub cannot resolve that SHA in this repository. Therefore the words **reachable exact commit** and the exact-tree gate claim are currently false. The substantive package implementation at `5407836` / `8cbf3af` remains accepted; the defect is the release-review provenance anchor, not the package behavior itself.
+GitHub cannot resolve that SHA in this repository. Therefore the words **reachable exact commit** and the exact-tree gate claim are currently false. The substantive package implementation through `e5d1fa1` remains accepted; the defect is the release-review provenance anchor, not the package behavior itself.
 
-Repair this first. Do not invent another SHA, do not use a local/unpushed object, and do not treat a future documentation commit as proof that an earlier tree contained future code. Prefer a real pushed exact implementation/test tree that already contains the package fixes. Under the local-CI-first policy, the coding agent should check out that exact SHA in a clean temporary worktree/clone, run the local stable gate there, retain minimal non-secret provenance, then make the separate review-text commit point to that real tested tree.
+Repair this first. Do not invent another SHA, do not use a local/unpushed object, and do not treat a future documentation commit as proof that an earlier tree contained future code. Prefer a real pushed exact implementation/test tree that contains all package fixes. Under the local-CI-first policy, the coding agent should check out that exact SHA in a clean temporary worktree/clone, run the local stable gate there, retain minimal non-secret provenance, then make the separate review-text commit point to that real tested tree.
 
 ### MEDIUM / RELEASE_BUILD_SOURCE_PROVENANCE_GAP — package builder can label a dirty build as exact HEAD
 
@@ -99,9 +101,9 @@ There is intentionally no READY live run at this checkpoint. The release packet 
 
 **Goal:** make the item-4 factual review and release packet tell the truth about the tree on which the current package gate was checked.
 
-**Why now:** `9d4c7e1...` is not a reachable GitHub commit, so current exact-tree provenance is invalid even though current GitHub-hosted CI is green.
+**Why now:** `9d4c7e1...` is not a reachable GitHub commit, so current exact-tree provenance is invalid even though earlier hosted cross-evidence is green.
 
-**Action:** use exact pushed `d15a50a627720a638b4a532d4a82c04bf38dad95` as the preferred tested tree unless a newer real developer implementation commit exists when work starts. In a clean temporary checkout/worktree of that exact SHA, run the local stable gate and clean-tree checks. Persist the minimum local-CI provenance. Then update `docs/release-security-review-packet.md` and `docs/reviews/release-item4-subgates-20260909.md` in a separate commit so title/body/gate statements point only at the real tested SHA. The already-successful GitHub-hosted run `34294307935` may be cited separately as cross-evidence, never as the local run.
+**Action:** use exact pushed `e5d1fa17163dd01f5c0780e3ec2ddb086b2f6be6` as the preferred tested tree unless a newer real developer implementation/test commit exists when work starts. In a clean temporary checkout/worktree of that exact SHA, run the local stable gate and clean-tree checks. Persist the minimum local-CI provenance. Then update `docs/release-security-review-packet.md` and `docs/reviews/release-item4-subgates-20260909.md` in a separate commit so title/body/gate statements point only at the real tested SHA. GitHub-hosted run `34294307935` on its actual `d15a50a` head may be cited separately as cross-evidence, never as the local `e5d1fa1` run.
 
 **Protected boundary:** developer-prepared factual support only; not independent review/security approval/RC/release/production authorization.
 
@@ -171,7 +173,7 @@ After the exact-tree and dirty-source provenance defects are closed, deliberatel
 
 ## Stagnation check
 
-This is **not** `STALLED_IMPLEMENTATION`: `5407836`, `8cbf3af`, and `d15a50a` landed after the last reviewer handoff, including two substantive package-tool/test repairs. The current HIGH is a new provenance defect in the developer's review text, not lack of implementation progress.
+This is **not** `STALLED_IMPLEMENTATION`: `5407836`, `8cbf3af`, `d15a50a`, and `e5d1fa1` landed after the last reviewer handoff, including substantive package-tool/test repairs. The current HIGH is a new provenance defect in the developer's review text, not lack of implementation progress.
 
 ## Maintainer/admin boundary
 
