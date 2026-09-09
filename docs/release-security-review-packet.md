@@ -2,9 +2,9 @@
 
 **Scope:** evidence index only. This is not an audit, security approval, production authorization, protocol freeze, or release decision.
 
-**Evidence indexed and gates rerun through reachable exact commit:** `9d4c7e1e0fc41b46396fb635ee9ca413b4b1fc67`
+**Evidence indexed and developer local gates rerun through reachable exact commit:** `b3bfe9709f2cff4ba5973a17b2a3b2f87775267b`
 
-The packet text is updated after that tested tree; it is not a self-referential commit attestation.
+The packet text is updated after that tested tree; it is not a self-referential commit attestation. Minimal developer local-CI provenance is retained in [`docs/local-ci-b3bfe97-20260909.md`](local-ci-b3bfe97-20260909.md); GitHub-hosted run `34298672407` is separate cross-evidence.
 
 This packet is an evidence index, not a self-referential commit attestation; later packet-text commits may update the index without changing the tested tree.
 

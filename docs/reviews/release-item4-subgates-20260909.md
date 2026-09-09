@@ -1,8 +1,8 @@
-# Release item-4 subgate factual review — exact `9d4c7e1`
+# Release item-4 subgate factual review — exact `b3bfe97`
 
 ## Scope
 
-Developer-prepared factual review support for reachable exact commit `9d4c7e1e0fc41b46396fb635ee9ca413b4b1fc67`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support for reachable exact commit `b3bfe9709f2cff4ba5973a17b2a3b2f87775267b`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
@@ -36,7 +36,7 @@ Developer-prepared factual review support for reachable exact commit `9d4c7e1e0f
 
 ## Exact-tree gates
 
-On reachable exact `9d4c7e1`, `scripts/check.sh` and `git diff --check` passed before this review-text update was committed. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
+On reachable exact `b3bfe97`, developer local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` and `git diff --check` passed before this review-text update was committed; minimal provenance is retained in [`../local-ci-b3bfe97-20260909.md`](../local-ci-b3bfe97-20260909.md). GitHub-hosted run `34298672407` is separate cross-evidence on the same exact tree. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
 
 ## Remaining release boundaries
 
