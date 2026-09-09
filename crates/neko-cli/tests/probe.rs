@@ -835,6 +835,60 @@ fn deterministic_invalid_configuration_does_not_create_identity() {
                 "00".repeat(33),
             ],
         ),
+        (
+            tmp("invalid-config-periodic-server-hex"),
+            vec![
+                "periodic-server".to_string(),
+                "--client-key".into(),
+                "zz".into(),
+            ],
+        ),
+        (
+            tmp("invalid-config-periodic-server-short-key"),
+            vec![
+                "periodic-server".to_string(),
+                "--client-key".into(),
+                "00".repeat(31),
+            ],
+        ),
+        (
+            tmp("invalid-config-periodic-server-long-key"),
+            vec![
+                "periodic-server".to_string(),
+                "--client-key".into(),
+                "00".repeat(33),
+            ],
+        ),
+        (
+            tmp("invalid-config-periodic-server-bind"),
+            vec![
+                "periodic-server".to_string(),
+                "--client-key".into(),
+                "00".repeat(32),
+                "--bind".into(),
+                "not-an-address".into(),
+            ],
+        ),
+        (
+            tmp("invalid-config-periodic-client-short-key"),
+            vec![
+                "periodic-client".to_string(),
+                "--addr".into(),
+                "127.0.0.1:40080".into(),
+                "--server-key".into(),
+                "00".repeat(31),
+            ],
+        ),
+        (
+            tmp("invalid-config-periodic-client-long-key"),
+            vec![
+                "periodic-client".to_string(),
+                "--addr".into(),
+                "127.0.0.1:40080".into(),
+                "--server-key".into(),
+                "00".repeat(33),
+            ],
+        ),
     ];
     for (identity, mut args) in cases {
         let _ = fs::remove_file(&identity);

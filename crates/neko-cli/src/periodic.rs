@@ -261,6 +261,13 @@ fn handshake_client(
 
 pub(super) fn server(args: &[String]) {
     let cfg = config(args).unwrap_or_else(|e| fail(e));
+    let client_key = peer_public_key(&parse(args, "--client-key", None));
+    let bind = parse(args, "--bind", Some(&format!("0.0.0.0:{}", cfg.port)))
+        .parse::<SocketAddr>()
+        .unwrap_or_else(|_| fail("bad bind address"));
+    if bind.port() != cfg.port {
+        fail("bind port must equal --port");
+    }
     let shutdown = install_shutdown();
     let id = load_or_generate(&PathBuf::from(parse(
         args,
@@ -268,19 +275,12 @@ pub(super) fn server(args: &[String]) {
         Some("neko-server.identity"),
     )));
     println!("server_public_key={}", hex(id.public_key()));
-    let client_key = unhex(&parse(args, "--client-key", None));
     let policy = TrustPolicy::new(vec![TrustRecord {
         version: 1,
         public_key: client_key,
         scope: b"probe".to_vec(),
         status: TrustStatus::Active,
     }]);
-    let bind = parse(args, "--bind", Some(&format!("0.0.0.0:{}", cfg.port)))
-        .parse::<SocketAddr>()
-        .unwrap_or_else(|_| fail("bad bind address"));
-    if bind.port() != cfg.port {
-        fail("bind port must equal --port");
-    }
     let listener = TcpListener::bind(bind).unwrap_or_else(|_| fail("bind failed"));
     listener.set_nonblocking(true).unwrap();
     println!(
@@ -478,7 +478,7 @@ pub(super) fn client(args: &[String]) {
     if addr.port() != cfg.port {
         fail("address port must equal --port");
     }
-    let server_key = unhex(&parse(args, "--server-key", None));
+    let server_key = peer_public_key(&parse(args, "--server-key", None));
     let id = load_or_generate(&PathBuf::from(parse(
         args,
         "--identity",
