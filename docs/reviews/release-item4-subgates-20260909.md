@@ -1,8 +1,8 @@
-# Release item-4 subgate factual review — exact `aefd49f`
+# Release item-4 subgate factual review — exact `1648dfd`
 
 ## Scope
 
-Developer-prepared factual review support for reachable exact commit `aefd49fed7414f1cb927ba55dac235e99c1db24a`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support for reachable exact commit `1648dfdbf6731f55bc31598a120bd42c1de1d8a7`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
@@ -38,7 +38,7 @@ Developer-prepared factual review support for reachable exact commit `aefd49fed7
 
 ## Exact-tree gates
 
-On reachable exact `f2d2e8c`, developer-local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, native x86_64 package build/smoke, and clean initial/final tree checks passed. The canonical `failover --role server|client` path completed the bounded controlled UDP-to-TCP loopback success; provenance is retained in [`../local-canonical-failover-f2d2e8c-20260909.md`](../local-canonical-failover-f2d2e8c-20260909.md). Exact `aefd49f` remains the preceding cross-command identity/config matrix evidence. Its table-driven process regression covers ordinary, failover, and endpoint-rebind peer/address/bind rejection before identity creation. Provenance is retained in [`../local-identity-config-aefd49f-20260909.md`](../local-identity-config-aefd49f-20260909.md). Exact `489c345` remains the prior ordinary-command/umask gate, exact `0e664d6` the descriptor-bound reload gate, and hosted runs remain separate evidence. A green gate is not a release/security decision.
+On reachable exact `1648dfd`, developer-local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, and clean initial/final tree checks passed. The advertised multistream command now reuses the descriptor-bound existing-identity reader, rejects insecure/symlink paths and deterministic config before network effects, and preserves its authenticated positive path; provenance is retained in [`../local-multistream-identity-1648dfd-20260909.md`](../local-multistream-identity-1648dfd-20260909.md). On prior exact `f2d2e8c`, native x86_64 package build/smoke and the canonical failover bounded controlled UDP-to-TCP loopback passed. The canonical `failover --role server|client` path completed the bounded controlled UDP-to-TCP loopback success; provenance is retained in [`../local-canonical-failover-f2d2e8c-20260909.md`](../local-canonical-failover-f2d2e8c-20260909.md). Exact `aefd49f` remains the preceding cross-command identity/config matrix evidence. Its table-driven process regression covers ordinary, failover, and endpoint-rebind peer/address/bind rejection before identity creation. Provenance is retained in [`../local-identity-config-aefd49f-20260909.md`](../local-identity-config-aefd49f-20260909.md). Exact `489c345` remains the prior ordinary-command/umask gate, exact `0e664d6` the descriptor-bound reload gate, and hosted runs remain separate evidence. A green gate is not a release/security decision.
 
 ## Remaining release boundaries
 
