@@ -2049,7 +2049,7 @@ mod preauth_tests {
         second.charge_input(second_id, 1, 1, 0).unwrap();
         let cross = first.charge_response(first_id, 1, 0).unwrap();
         assert_eq!(second.complete_response(cross, 0), Err(SessionRejected));
-        assert_eq!(second.charge_response(second_id, 1, 0).is_ok(), true);
+        assert!(second.charge_response(second_id, 1, 0).is_ok());
 
         let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
         let id = admission.admit_state(b"pending", 2, 0).unwrap();
