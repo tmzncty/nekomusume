@@ -1,8 +1,8 @@
-# Release item-4 subgate factual review — exact `e5aeef2`
+# Release item-4 subgate factual review — exact `0e664d6`
 
 ## Scope
 
-Developer-prepared factual review support for reachable exact commit `e5aeef23f21c3577bb5b273311382d704baf96c6`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support for reachable exact commit `0e664d63f21c3577bb5b273311382d704baf96c6`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
@@ -10,7 +10,7 @@ Developer-prepared factual review support for reachable exact commit `e5aeef23f2
 
 - Exact `a9928c8` package was built reproducibly in the recorded environment; packaged and installed VPS binary hashes matched, and bounded authenticated TCP/UDP package smokes completed with cleanup.
 - The package builder rejects staged, unstaged tracked, and non-ignored untracked source state before build/output mutation while allowing ignored generated output; focused regressions are exercised by `scripts/check.sh`.
-- Unix long-term identities are created with owner-only mode before private bytes are written. Existing identities are opened with `O_NOFOLLOW|O_CLOEXEC`, metadata and bytes are consumed from the same descriptor, and group/world-writable parent directories are rejected before creation. Reload rejects symlinks, special files, and group/world-accessible files without chmod-repairing them; focused process tests include rejection before server READY. The prior exact packaged `keygen` smoke confirms secure create/reload and unchanged permissive-file rejection.
+- Unix long-term identities are created with owner-only mode before private bytes are written. Existing identities are opened with `O_NOFOLLOW|O_CLOEXEC`, metadata and bytes are consumed from the same descriptor. Reload rejects symlinks, special files, and group/world-accessible files without chmod-repairing them; focused process tests include rejection before server READY. The prior exact packaged `keygen` smoke confirms secure create/reload and unchanged permissive-file rejection.
 - Current package smoke validates exact archive shape, member type and archived mode before extraction, rejects path escape, links, special members and unexpected layout, then enforces checksums/modes and native secret-free capabilities. Synthetic adversarial archives, including umask-normalization cases, are exercised by `scripts/check.sh`; this is release-tool validation, not signing or publication trust.
 - Exact `7cebe6b` installed-package lifecycle observation completed TCP and UDP `READY -> DRAINING -> STOPPED`, listener release, same-port restart/rebind, authenticated 32-byte post-restart exchanges, and cleanup.
 - Historical N5 remains the older distinct-version A→B→A rollback observation. The separate exact `91a735c -> dc90c5f -> 91a735c` rehearsal uses genuinely different package/binary hashes, retains an external temporary identity/state marker for the bounded probe contract, and returns the selected release to A; its retained sanitized phase anchor is five records with exit status `0` and SHA-256 `4e54f3205cf295ec82e9186eb6b6271558e6babddae819c5ef34e1595a0ddb09`, but experiment start/end timing was not retained. Neither observation establishes arbitrary state-schema compatibility, publication signing, SBOM/provenance service, service-manager hardening, or production deployment.
@@ -38,7 +38,7 @@ Developer-prepared factual review support for reachable exact commit `e5aeef23f2
 
 ## Exact-tree gates
 
-On reachable exact `e5aeef2`, developer local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, and clean-tree checks passed; provenance is retained in [`../local-identity-security-e5aeef2-20260909.md`](../local-identity-security-e5aeef2-20260909.md). Exact `749976f` remains the prior native packaged identity smoke, exact `b1b2552` remains the full CLI/package reproducibility evidence, and hosted runs remain separate evidence. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
+On reachable exact `0e664d6`, developer local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, and clean-tree checks passed; provenance is retained in [`../local-identity-security-0e664d6-20260909.md`](../local-identity-security-0e664d6-20260909.md). Exact `749976f` remains the prior native packaged identity smoke, exact `b1b2552` remains the full CLI/package reproducibility evidence, and hosted runs remain separate evidence. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
 
 ## Remaining release boundaries
 
