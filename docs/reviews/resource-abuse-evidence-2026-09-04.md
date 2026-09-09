@@ -14,7 +14,7 @@
 
 ## Findings
 
-### RSEC-001 — Pre-auth admission is integrated; adversarial-load and promotion evidence remain absent
+### RSEC-001 — Pre-auth admission is integrated; one bounded response observation exists, while adversarial-load suitability and promotion remain absent
 
 **Severity:** HIGH for release/security promotion; does not invalidate bounded authenticated research probes.
 
@@ -24,7 +24,9 @@
 
 This is implementation and deterministic/process-test evidence, not independent security review, adversarial load evidence, production-capacity validation, or proof that candidate numeric values are suitable for public deployment. The executable remains a bounded temporary research probe and must not be promoted to a public listener, RC, production-capacity or security-approved service.
 
-**Required evidence to close the promotion finding:** bounded adversarial-load evidence, suitability review of candidate limits, and a separate release/security decision. The exact-tree engineering review below does not change those requirements or candidate numeric limits.
+Exact `f74b823` adds one bounded deterministic response-accounting observation at the existing test limits: an abandoned charged attempt remains at 3 bytes / 1 packet, and the first max-plus-one operation rejects atomically without counters exceeding that ceiling. This is not adversarial-load capacity/suitability evidence and does not recommend candidate values.
+
+**Required evidence to close the promotion finding:** representative bounded adversarial-load evidence, suitability review of candidate limits, and a separate release/security decision. The exact-tree engineering review below does not change those requirements or candidate numeric limits.
 
 ## Evidence matrix
 
@@ -46,7 +48,7 @@ This is implementation and deterministic/process-test evidence, not independent 
 ## Verification
 
 - Focused preauth/inventory tests passed on exact `6952fa9`; full `scripts/check.sh` was also exercised, but its periodic process tests exposed an existing startup-scheduling failure boundary (EOF before `periodic_server_ready`) on this run. The exact-tree engineering review does not claim that flaky gate as green.
-- Exact-head GitHub Actions is the CI authority for the pushed commit; this review does not substitute an older run.
+- A clean exact-tree local `scripts/check.sh` run is the primary reproducible gate for the pushed implementation commit; hosted GitHub Actions, when available, is optional cross-evidence.
 - No protected identity, credential, private endpoint material or raw private diagnostics were read or added by this review.
 
 ## Promotion boundary
