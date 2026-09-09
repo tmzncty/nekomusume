@@ -870,6 +870,50 @@ fn deterministic_invalid_configuration_does_not_create_identity() {
             ],
         ),
         (
+            tmp("invalid-config-periodic-server-bind-port"),
+            vec![
+                "periodic-server".to_string(),
+                "--port".into(),
+                "40080".into(),
+                "--bind".into(),
+                "127.0.0.1:40081".into(),
+                "--client-key".into(),
+                "00".repeat(32),
+            ],
+        ),
+        (
+            tmp("invalid-config-periodic-client-hex"),
+            vec![
+                "periodic-client".to_string(),
+                "--addr".into(),
+                "127.0.0.1:40080".into(),
+                "--server-key".into(),
+                "zz".into(),
+            ],
+        ),
+        (
+            tmp("invalid-config-periodic-client-address"),
+            vec![
+                "periodic-client".to_string(),
+                "--addr".into(),
+                "not-an-address".into(),
+                "--server-key".into(),
+                "00".repeat(32),
+            ],
+        ),
+        (
+            tmp("invalid-config-periodic-client-address-port"),
+            vec![
+                "periodic-client".to_string(),
+                "--port".into(),
+                "40080".into(),
+                "--addr".into(),
+                "127.0.0.1:40081".into(),
+                "--server-key".into(),
+                "00".repeat(32),
+            ],
+        ),
+        (
             tmp("invalid-config-periodic-client-short-key"),
             vec![
                 "periodic-client".to_string(),
@@ -1595,8 +1639,7 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
     let cp = tmp("retry-client");
     let sk = key(bin, &sp);
     let ck = key(bin, &cp);
-    let udp = 40091u16;
-    let tcp = 40092u16;
+    let (udp, tcp) = available_tcp_udp_ports();
     let server = Command::new(bin)
         .args([
             "failover-server",
@@ -2290,8 +2333,26 @@ fn tcp_and_udp_reject_unsupported_selected_version_before_noise() {
 
 static TEST_PORT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+fn available_tcp_udp_ports() -> (u16, u16) {
+    let mut available = Vec::new();
+    for port in 40080..=40100 {
+        if let (Ok(tcp), Ok(udp)) = (
+            TcpListener::bind(("127.0.0.1", port)),
+            UdpSocket::bind(("127.0.0.1", port)),
+        ) {
+            drop(tcp);
+            drop(udp);
+            available.push(port);
+            if available.len() == 2 {
+                return (available[0], available[1]);
+            }
+        }
+    }
+    panic!("fewer than two test ports are locally available");
+}
+
 fn periodic_test_port() -> u16 {
-    40088
+    available_tcp_udp_ports().0
 }
 
 fn start_periodic_server(
