@@ -1859,8 +1859,8 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
     let log = server_log;
     assert!(log.contains("udp_selection_dropped"), "{log}");
     assert!(log.contains("udp_selection_retried"), "{log}");
-    // The duplicate pending hello and a late post-auth hello cannot restart
-    // negotiation or reset ResumeGuard/session/path/delivery state.
+    // The duplicate pending hello cannot restart negotiation or reset
+    // ResumeGuard/session/path/delivery state.
     assert_eq!(log.matches("carrier_event name=udp_negotiated").count(), 1);
     assert_eq!(
         log.matches("carrier_event name=udp_authenticated").count(),
@@ -1875,6 +1875,129 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
         log.contains("records=2 application_bytes_total=26"),
         "{log}"
     );
+}
+
+#[test]
+fn expired_preprogress_udp_session_cannot_ack_and_fresh_negotiation_recovers() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("expired-preprogress-server");
+    let cp = tmp("expired-preprogress-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "1",
+            "--bytes",
+            "16",
+            "--duration",
+            "8",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--diagnostic",
+            "--experiment-id",
+            "expired-preprogress-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let stale = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "1",
+            "--bytes",
+            "16",
+            "--duration",
+            "1",
+            "--test-first-data-delay-ms",
+            "1200",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !stale.status.success(),
+        "stale session unexpectedly obtained success: {}",
+        String::from_utf8_lossy(&stale.stdout)
+    );
+
+    let fresh = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "1",
+            "--bytes",
+            "16",
+            "--duration",
+            "3",
+        ])
+        .output()
+        .unwrap();
+    let (server_status, server_log) = finish_server(server);
+    assert!(
+        fresh.status.success(),
+        "fresh negotiation failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&fresh.stdout),
+        String::from_utf8_lossy(&fresh.stderr)
+    );
+    assert!(server_status.success(), "{server_log}");
+    assert!(
+        server_log.contains("udp_preprogress_expired"),
+        "{server_log}"
+    );
+    assert_eq!(
+        server_log.matches("udp_delivery_ack_sent").count(),
+        1,
+        "expired session must not produce an ACK: {server_log}"
+    );
+    assert_eq!(
+        server_log
+            .matches("carrier_event name=udp_authenticated")
+            .count(),
+        2,
+        "{server_log}"
+    );
+    fs::remove_file(&sp).unwrap();
+    fs::remove_file(&cp).unwrap();
 }
 
 #[test]

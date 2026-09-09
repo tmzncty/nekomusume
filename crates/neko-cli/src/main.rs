@@ -1099,6 +1099,15 @@ fn failover_server(args: &[String]) {
         {
             handshake_admission = None;
             handshake_cache = None;
+            secure = None;
+            guard = None;
+            emit_diagnostic(
+                args,
+                "server",
+                "udp_preprogress_expired",
+                0,
+                ",\"secure_retired\":true,\"resume_guard_retired\":true",
+            );
         }
         if secure.is_none() {
             if let Ok((n, peer)) = udp.recv_from(&mut buf) {
@@ -1765,6 +1774,12 @@ fn failover_client(args: &[String]) {
     if cold_health_failover && !automatic_health_failover {
         fail("--cold-health-failover requires --automatic-health-failover")
     }
+    let first_data_delay_ms = parse(args, "--test-first-data-delay-ms", Some("0"))
+        .parse::<u64>()
+        .unwrap_or_else(|_| fail("invalid first data delay"));
+    if first_data_delay_ms > 2000 {
+        fail("first data delay outside 0-2000 ms")
+    }
     let target = format!("{addr}:{up}")
         .parse::<SocketAddr>()
         .unwrap_or_else(|_| fail("bad UDP target"));
@@ -1888,6 +1903,9 @@ fn failover_client(args: &[String]) {
     .encode()
     .unwrap();
     let encrypted = us.seal_unreliable(&logical).unwrap();
+    if first_data_delay_ms > 0 {
+        std::thread::sleep(Duration::from_millis(first_data_delay_ms));
+    }
     u.send_to(&encrypted, target).unwrap();
     emit_diagnostic(
         args,
