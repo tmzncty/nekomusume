@@ -499,8 +499,27 @@ fn server(args: &[String]) {
     flag::register(SIGTERM, Arc::clone(&shutdown)).unwrap_or_else(|_| fail("signal setup failed"));
     flag::register(SIGINT, Arc::clone(&shutdown)).unwrap_or_else(|_| fail("signal setup failed"));
     let (t, p, max, d) = common(args);
-    lifecycle.satisfy(ReadinessPrerequisite::ConfigurationAccepted);
     let count = exchange_count(args);
+    let bind_addr = parse(args, "--bind", Some("0.0.0.0:0"));
+    let bind: SocketAddr = if bind_addr == "0.0.0.0:0" {
+        SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), p)
+    } else {
+        bind_addr
+            .parse()
+            .unwrap_or_else(|_| fail("bad bind address"))
+    };
+    if bind.port() != p {
+        fail("bind port must equal --port");
+    }
+    let client_key = unhex(&parse(args, "--client-key", None));
+    let policy = TrustPolicy::new(vec![TrustRecord {
+        version: 1,
+        public_key: client_key,
+        scope: b"probe".to_vec(),
+        status: TrustStatus::Active,
+    }]);
+    lifecycle.satisfy(ReadinessPrerequisite::TrustPolicyInitialized);
+    lifecycle.satisfy(ReadinessPrerequisite::ConfigurationAccepted);
     let idpath = PathBuf::from(parse(args, "--identity", Some("neko-server.identity")));
     let id = load_or_generate(&idpath);
     lifecycle.satisfy(ReadinessPrerequisite::IdentityInitialized);
@@ -509,27 +528,7 @@ fn server(args: &[String]) {
     }
     let start = Instant::now();
     let mut preauth = preauth::ListenerAdmission::new();
-    let client_hex = parse(args, "--client-key", None);
-    let client_key = unhex(&client_hex);
-    let policy = TrustPolicy::new(vec![TrustRecord {
-        version: 1,
-        public_key: client_key,
-        scope: b"probe".to_vec(),
-        status: TrustStatus::Active,
-    }]);
-    lifecycle.satisfy(ReadinessPrerequisite::TrustPolicyInitialized);
     if t == "tcp" {
-        let bind_addr = parse(args, "--bind", Some("0.0.0.0:0"));
-        let bind: SocketAddr = if bind_addr == "0.0.0.0:0" {
-            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), p)
-        } else {
-            bind_addr
-                .parse()
-                .unwrap_or_else(|_| fail("bad bind address"))
-        };
-        if bind.port() != p {
-            fail("bind port must equal --port");
-        }
         let l = TcpListener::bind(bind).unwrap_or_else(|_| fail("bind failed"));
         lifecycle.satisfy(ReadinessPrerequisite::SocketBound);
         l.set_nonblocking(true)
@@ -628,17 +627,6 @@ fn server(args: &[String]) {
             }
         }
     } else {
-        let bind_addr = parse(args, "--bind", Some("0.0.0.0:0"));
-        let bind: SocketAddr = if bind_addr == "0.0.0.0:0" {
-            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), p)
-        } else {
-            bind_addr
-                .parse()
-                .unwrap_or_else(|_| fail("bad bind address"))
-        };
-        if bind.port() != p {
-            fail("bind port must equal --port");
-        }
         let u = UdpSocket::bind(bind).unwrap_or_else(|_| fail("bind failed"));
         lifecycle.satisfy(ReadinessPrerequisite::SocketBound);
         u.set_read_timeout(Some(Duration::from_millis(100)))
@@ -741,13 +729,14 @@ fn client(args: &[String]) {
     let (t, _p, max, d) = common(args);
     let count = exchange_count(args);
     let addr = parse(args, "--addr", None);
+    let target: SocketAddr = addr.parse().unwrap_or_else(|_| fail("bad address"));
     let sk = unhex(&parse(args, "--server-key", None));
+    let benchmark = benchmark_payload(args, &t, max, count);
     let idpath = PathBuf::from(parse(args, "--identity", Some("neko-client.identity")));
     let id = load_or_generate(&idpath);
     if !json_mode(args) {
         println!("client_public_key={}", hex(id.public_key()));
     }
-    let benchmark = benchmark_payload(args, &t, max, count);
     let payload = benchmark
         .as_ref()
         .map(|(payload, _)| payload.clone())
@@ -755,8 +744,7 @@ fn client(args: &[String]) {
     let start = Instant::now();
     let cs = if t == "tcp" {
         let mut s =
-            TcpStream::connect_timeout(&addr.parse().unwrap_or_else(|_| fail("bad address")), d)
-                .unwrap_or_else(|_| fail("connect failed"));
+            TcpStream::connect_timeout(&target, d).unwrap_or_else(|_| fail("connect failed"));
         let mut negotiation = VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS)
             .unwrap_or_else(|_| fail("negotiation setup failed"));
         let hello = negotiation
@@ -792,7 +780,6 @@ fn client(args: &[String]) {
             .unwrap_or_else(|_| fail("data admission denied"));
         Some((s, session))
     } else {
-        let target: SocketAddr = addr.parse().unwrap_or_else(|_| fail("bad address"));
         let local = match target.ip() {
             IpAddr::V4(_) => SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0),
             IpAddr::V6(_) => SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), 0),

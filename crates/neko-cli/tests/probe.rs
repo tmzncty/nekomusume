@@ -487,6 +487,65 @@ fn identity_files_are_owner_only_regular_and_fail_closed() {
 }
 
 #[test]
+fn deterministic_invalid_configuration_does_not_create_identity() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let cases = [
+        (
+            tmp("invalid-config-server-key"),
+            vec![
+                "server".to_string(),
+                "--transport".into(),
+                "tcp".into(),
+                "--port".into(),
+                "40080".into(),
+                "--bind".into(),
+                "127.0.0.1:40080".into(),
+                "--client-key".into(),
+                "zz".into(),
+            ],
+        ),
+        (
+            tmp("invalid-config-server-bind"),
+            vec![
+                "server".to_string(),
+                "--transport".into(),
+                "tcp".into(),
+                "--port".into(),
+                "40080".into(),
+                "--bind".into(),
+                "not-an-address".into(),
+                "--client-key".into(),
+                "00".repeat(32),
+            ],
+        ),
+        (
+            tmp("invalid-config-client-address"),
+            vec![
+                "client".to_string(),
+                "--transport".into(),
+                "tcp".into(),
+                "--port".into(),
+                "40080".into(),
+                "--addr".into(),
+                "not-an-address".into(),
+                "--server-key".into(),
+                "00".repeat(32),
+            ],
+        ),
+    ];
+    for (identity, mut args) in cases {
+        let _ = fs::remove_file(&identity);
+        args.extend(["--identity".into(), identity.to_string_lossy().into_owned()]);
+        let output = Command::new(bin).args(args).output().unwrap();
+        assert!(!output.status.success());
+        assert!(
+            !identity.exists(),
+            "invalid configuration created {identity:?}"
+        );
+    }
+}
+
+#[test]
 fn invalid_bind_never_emits_ready() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
