@@ -6,10 +6,10 @@ Developer-run exact-tree validation of reachable implementation/test commit `21e
 
 - deterministic model coverage exercises the unchanged `ProcessPreauthLimits::default()` candidate boundaries: 8 same-source states, 1,024 global states, 256 queued states, and 2,048 response bytes / 4 response packets; each first excess operation rejects without exceeding accounting, and an abandoned fourth response remains charged
 - process observation launches one long-lived loopback failover server, sends exactly 8 malformed five-byte UDP negotiation datagrams, waits 100 ms, then completes one authenticated 16-byte / one-record failover exchange through the same process
-- each malformed datagram originates from a new ephemeral UDP source port, so this is bounded distinct-source process churn, not same-source saturation
+- this exact tree created one fresh UDP socket per attempt but did not retain all sockets or assert port uniqueness; exact `976f90b` supersedes the source-domain claim by pre-binding and retaining eight sockets and asserting eight unique source ports before sending. Neither tree is same-source saturation.
 - malformed attempts produce no successful authentication, Delivery, PathValidated or ACK evidence; the later valid exchange emits the expected bounded success
 - Linux `/proc` snapshots, when available, assert file-descriptor growth no greater than one and RSS growth no greater than 4,096 KiB across the malformed workload; these are regression bounds, not capacity recommendations
-- after process exit, both leased UDP and TCP listener ports rebind successfully and the temporary identity files are removed
+- after process exit, both leased UDP and TCP listener ports rebind successfully; this exact tree attempted temporary identity removal without asserting it, while exact `976f90b` adds asserted removal and absence checks
 
 ## Exact-tree gate
 
