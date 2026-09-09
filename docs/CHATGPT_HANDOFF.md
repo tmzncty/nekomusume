@@ -6,7 +6,7 @@
 - Developer state reviewed through default-branch exact `fc000fea5bf7c9da36471d31430fdb92325a805b` (`docs: close CLI package evidence lane`).
 - New developer-owned sequence since that review:
   - `342e65c684a0997ced3fb3036b8889bd4243b8f9` — makes human `capabilities` cover the canonical command inventory and keeps failover legacy names as aliases; focused process regression covers help + human + JSON inventories and unknown-command rejection.
-  - `b1b2552181a995d0d9b73def7bcde6d71418a344` — replaces a hard-coded loopback listener in a flow-control test with an OS-assigned port after the local exact-tree gate exposed a deterministic collision; production behavior is unchanged.
+  - `b1b2552181a995d0d9b73def7bcde6d71418a344` — after the first local exact-tree gate exposed a collision in preauth test `response_send_restores_socket_write_timeouts`, replaces its hard-coded `127.0.0.1:40080` listener with an OS-assigned loopback port; production behavior is unchanged.
   - `fc000fea5bf7c9da36471d31430fdb92325a805b` — records exact-`b1b2552` developer-local CI/native package provenance and reconciles release/item-4 wording, closing the CLI/package inventory/provenance lane locally.
 - GitHub combined-status lookup exposes no hosted status records for exact `b1b2552` or current `fc000fe`. Do not poll Actions or wait for quota; the repository-defined local exact-tree gate is the normal closure path.
 - Work branches `work/e1a-staged-accounting-20260907` (`f4404257`) and `work/continue-20260904` (`d271a99a`) remain stale/non-authoritative. Do not coordination-merge them merely to manufacture work.
@@ -15,7 +15,7 @@
 
 ### ACCEPT — CLI/package lane is locally closed
 
-The human/JSON/help command inventory contradiction is closed. Exact `b1b2552` also removes the local fixed-port collision without changing runtime semantics. The retained local record for exact `b1b2552` contains distinct UTC start/end times, `scripts/check.sh`, `git diff --check`, initial/final clean-tree state, reproducibility, an actual produced native x86_64 package smoke, and archive/binary hashes. Treat this as **developer-local CI/release-tool evidence**, not reviewer-executed CI, hosted CI, VPS/WAN evidence, independent security review, RC, release, or production authorization.
+The human/JSON/help command inventory contradiction is closed. Exact `b1b2552` also removes the preauth test's fixed-port collision without changing runtime semantics. The retained local record for exact `b1b2552` contains distinct UTC start/end times, `scripts/check.sh`, `git diff --check`, initial/final clean-tree state, reproducibility, an actual produced native x86_64 package smoke, and archive/binary hashes. Treat this as **developer-local CI/release-tool evidence**, not reviewer-executed CI, hosted CI, VPS/WAN evidence, independent security review, RC, release, or production authorization.
 
 Do not continue growing package archive/checker variants unless a new concrete defect appears.
 
