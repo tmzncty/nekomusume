@@ -201,6 +201,100 @@ fn unauthorized_client_is_rejected_by_allowlist() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn multistream_identity_and_config_fail_closed_before_network() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let (secure, server_key) = identity(bin, "secure-boundary");
+    let permissive = std::env::temp_dir().join(format!(
+        "neko-multistream-permissive-{}",
+        std::process::id()
+    ));
+    let link = std::env::temp_dir().join(format!("neko-multistream-link-{}", std::process::id()));
+    let absent =
+        std::env::temp_dir().join(format!("neko-multistream-absent-{}", std::process::id()));
+    for path in [&permissive, &link, &absent] {
+        let _ = fs::remove_file(path);
+    }
+    fs::copy(&secure, &permissive).unwrap();
+    fs::set_permissions(&permissive, fs::Permissions::from_mode(0o644)).unwrap();
+    let before = fs::read(&permissive).unwrap();
+    let rejected = Command::new(bin)
+        .args([
+            "multistream",
+            "--mode",
+            "client",
+            "--addr",
+            "127.0.0.1:40082",
+            "--identity",
+            permissive.to_str().unwrap(),
+            "--server-key",
+            &server_key,
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert_eq!(fs::read(&permissive).unwrap(), before);
+    assert_eq!(
+        fs::metadata(&permissive).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+
+    symlink(&secure, &link).unwrap();
+    let target_before = fs::read(&secure).unwrap();
+    let rejected = Command::new(bin)
+        .args([
+            "multistream",
+            "--mode",
+            "client",
+            "--addr",
+            "127.0.0.1:40082",
+            "--identity",
+            link.to_str().unwrap(),
+            "--server-key",
+            &server_key,
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert_eq!(fs::read(&secure).unwrap(), target_before);
+
+    for args in [
+        vec![
+            "multistream",
+            "--mode",
+            "client",
+            "--addr",
+            "not-an-address",
+            "--identity",
+            absent.to_str().unwrap(),
+            "--server-key",
+            &server_key,
+        ],
+        vec![
+            "multistream",
+            "--mode",
+            "client",
+            "--addr",
+            "127.0.0.1:40082",
+            "--identity",
+            absent.to_str().unwrap(),
+            "--server-key",
+            "00",
+        ],
+    ] {
+        let output = Command::new(bin).args(args).output().unwrap();
+        assert!(!output.status.success());
+        assert!(!absent.exists());
+    }
+
+    for path in [&secure, &permissive, &link, &absent] {
+        let _ = fs::remove_file(path);
+    }
+}
+
 #[test]
 fn multistream_rejects_unbounded_payload_before_connecting() {
     let out = Command::new(env!("CARGO_BIN_EXE_neko-cli"))

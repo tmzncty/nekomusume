@@ -314,7 +314,7 @@ fn context(direction: u8) -> RecordContext {
         direction,
     }
 }
-fn read_identity(path: &PathBuf) -> Option<LocalIdentity> {
+pub(crate) fn read_identity(path: &PathBuf) -> Option<LocalIdentity> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]

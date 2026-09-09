@@ -34,16 +34,7 @@ fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
 }
 fn identity(args: &[String]) -> LocalIdentity {
     let path = option(args, "--identity").unwrap_or_else(|| fail("--identity is required".into()));
-    let text =
-        std::fs::read_to_string(path).unwrap_or_else(|_| fail("identity read failed".into()));
-    let mut parts = text.trim().split(':');
-    let private = hex_decode(parts.next().unwrap_or("")).unwrap_or_else(|e| fail(e));
-    let public = hex_decode(parts.next().unwrap_or("")).unwrap_or_else(|e| fail(e));
-    if parts.next().is_some() {
-        fail("invalid identity file".into());
-    }
-    LocalIdentity::from_keypair(&private, &public)
-        .unwrap_or_else(|_| fail("invalid identity file".into()))
+    crate::read_identity(&path.into()).unwrap_or_else(|| fail("identity is required".into()))
 }
 fn context() -> RecordContext {
     RecordContext {
@@ -182,7 +173,10 @@ fn client_handshake(
 fn arg(args: &[String], name: &str, default: usize) -> usize {
     args.windows(2)
         .find(|x| x[0] == name)
-        .and_then(|x| x[1].parse().ok())
+        .map(|x| {
+            x[1].parse()
+                .unwrap_or_else(|_| fail(format!("invalid {name}")))
+        })
         .unwrap_or(default)
 }
 fn bounds(streams: usize, records: usize, bytes: usize) -> Result<(), &'static str> {
@@ -271,9 +265,26 @@ pub fn run(args: &[String]) {
         .find(|x| x[0] == "--addr")
         .map(|x| x[1].clone())
         .unwrap_or_else(|| format!("127.0.0.1:{port}"));
+    let addr = addr
+        .parse::<std::net::SocketAddr>()
+        .unwrap_or_else(|_| fail("invalid --addr".into()));
+    let peer_key = match mode {
+        "server" => hex_decode(
+            &option(args, "--client-key")
+                .unwrap_or_else(|| fail("--client-key is required".into())),
+        )
+        .unwrap_or_else(|e| fail(e)),
+        "client" => hex_decode(
+            &option(args, "--server-key")
+                .unwrap_or_else(|| fail("--server-key is required".into())),
+        )
+        .unwrap_or_else(|e| fail(e)),
+        _ => fail("mode must be server or client".into()),
+    };
+    let identity = identity(args);
     let total = streams * records * bytes;
     if mode == "server" {
-        let listener = TcpListener::bind(&addr).unwrap_or_else(|e| fail(format!("bind: {e}")));
+        let listener = TcpListener::bind(addr).unwrap_or_else(|e| fail(format!("bind: {e}")));
         let (mut socket, peer) = listener
             .accept()
             .unwrap_or_else(|e| fail(format!("accept: {e}")));
@@ -281,15 +292,10 @@ pub fn run(args: &[String]) {
         let mut admission = preauth
             .admit_carrier(crate::preauth::CarrierKind::Tcp, peer)
             .unwrap_or_else(|_| fail("pre-auth admission rejected".into()));
-        let client_key = hex_decode(
-            &option(args, "--client-key")
-                .unwrap_or_else(|| fail("--client-key is required".into())),
-        )
-        .unwrap_or_else(|e| fail(e));
         let mut secure = server_handshake(
             &mut socket,
-            identity(args),
-            client_key,
+            identity,
+            peer_key,
             &mut preauth,
             &mut admission,
         );
@@ -339,15 +345,9 @@ pub fn run(args: &[String]) {
             peer, streams, records, bytes, received, total
         );
         println!("{json}");
-    } else if mode == "client" {
-        let mut socket =
-            TcpStream::connect(&addr).unwrap_or_else(|e| fail(format!("connect: {e}")));
-        let server_key = hex_decode(
-            &option(args, "--server-key")
-                .unwrap_or_else(|| fail("--server-key is required".into())),
-        )
-        .unwrap_or_else(|e| fail(e));
-        let mut secure = client_handshake(&mut socket, identity(args), server_key);
+    } else {
+        let mut socket = TcpStream::connect(addr).unwrap_or_else(|e| fail(format!("connect: {e}")));
+        let mut secure = client_handshake(&mut socket, identity, peer_key);
         let mut runtime = SessionRuntime::new(
             SESSION,
             limits(streams, records, bytes, session_window, stream_window),
@@ -427,7 +427,5 @@ pub fn run(args: &[String]) {
             count("resumed"),
             events.join(",")
         );
-    } else {
-        fail("mode must be client or server".into());
     }
 }
