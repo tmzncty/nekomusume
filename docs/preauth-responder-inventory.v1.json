@@ -161,10 +161,10 @@
       "carrier": "udp",
       "pending_owner": false,
       "ordered": [
+        "if let Some(admission) = handshake_admission.as_mut()",
+        ".charge_input(admission, n, 4096)",
         "if let Some((first, response)) = handshake_cache.as_ref()",
         "buf[..n] == first[..]",
-        "handshake_admission",
-        ".charge_input(admission, n, 4096)",
         ".charge_response(admission, response.len())",
         ".send_udp_response(&udp, response",
         "ss.open_unreliable(&buf[..n])",

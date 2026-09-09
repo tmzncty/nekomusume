@@ -1238,14 +1238,23 @@ fn failover_server(args: &[String]) {
                 if datagram_peer != peer {
                     continue;
                 }
+                if let Some(admission) = handshake_admission.as_mut() {
+                    preauth
+                        .charge_input(admission, n, 4096)
+                        .unwrap_or_else(|_| fail("pre-auth retained-owner input rejected"));
+                    emit_diagnostic(
+                        args,
+                        "server",
+                        "udp_retained_input_charged",
+                        0,
+                        &format!(",\"ciphertext_bytes\":{}", n),
+                    );
+                }
                 if let Some((first, response)) = handshake_cache.as_ref() {
                     if buf[..n] == first[..] {
                         let admission = handshake_admission
                             .as_mut()
                             .unwrap_or_else(|| fail("pre-auth cached retry owner missing"));
-                        preauth
-                            .charge_input(admission, n, 4096)
-                            .unwrap_or_else(|_| fail("pre-auth cached retry input rejected"));
                         let permit = preauth
                             .charge_response(admission, response.len())
                             .unwrap_or_else(|_| fail("pre-auth cached retry response rejected"));
