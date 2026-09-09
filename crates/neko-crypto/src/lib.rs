@@ -2113,6 +2113,77 @@ mod preauth_tests {
     }
 
     #[test]
+    fn default_candidate_state_queue_and_response_boundaries_reject_first_excess() {
+        let limits = ProcessPreauthLimits::default();
+        let mut admission = ProcessPreauthAdmission::new(limits, 0).unwrap();
+        let mut states = Vec::new();
+        for index in 0..limits.max_states_global {
+            states.push(admission.admit_state(&index.to_be_bytes(), 1, 0).unwrap());
+        }
+        assert_eq!(admission.live_states(), limits.max_states_global);
+        assert_eq!(
+            admission.admit_state(b"global-excess", 1, 0),
+            Err(SessionRejected)
+        );
+        for state in states {
+            admission.release(state).unwrap();
+        }
+
+        let mut admission = ProcessPreauthAdmission::new(limits, 0).unwrap();
+        let mut same_source = Vec::new();
+        for _ in 0..limits.max_states_per_source {
+            same_source.push(admission.admit_state(b"same-source", 1, 0).unwrap());
+        }
+        assert_eq!(
+            admission.admit_state(b"same-source", 1, 0),
+            Err(SessionRejected)
+        );
+        for state in same_source {
+            admission.release(state).unwrap();
+        }
+
+        let mut admission = ProcessPreauthAdmission::new(limits, 0).unwrap();
+        let mut queued = Vec::new();
+        let mut queue_permits = Vec::new();
+        for index in 0..=limits.max_queue_global {
+            let source = (index as u64).to_be_bytes();
+            let state = admission.admit_state(&source, 1, 0).unwrap();
+            if index < limits.max_queue_global {
+                queue_permits.push(admission.enqueue(state, 0).unwrap());
+            } else {
+                assert!(matches!(admission.enqueue(state, 0), Err(SessionRejected)));
+            }
+            queued.push(state);
+        }
+        assert_eq!(admission.queued(), limits.max_queue_global);
+        for permit in queue_permits {
+            admission.dequeue(permit).unwrap();
+        }
+        for state in queued {
+            admission.release(state).unwrap();
+        }
+
+        let mut admission = ProcessPreauthAdmission::new(limits, 0).unwrap();
+        let first = admission.admit_state(b"responses", 1, 0).unwrap();
+        let excess = admission.admit_state(b"responses", 1, 0).unwrap();
+        admission.charge_input(first, 2048, 1, 0).unwrap();
+        for _ in 0..3 {
+            let permit = admission.charge_response(first, 512, 0).unwrap();
+            admission.complete_response(permit, 0).unwrap();
+        }
+        let abandoned = admission.charge_response(first, 512, 0).unwrap();
+        admission.abandon_response(abandoned).unwrap();
+        assert_eq!(admission.response_accounting(), (2048, 4));
+        assert!(matches!(
+            admission.charge_response(excess, 1, 0),
+            Err(SessionRejected)
+        ));
+        assert_eq!(admission.response_accounting(), (2048, 4));
+        admission.release(first).unwrap();
+        admission.release(excess).unwrap();
+    }
+
+    #[test]
     fn bounded_response_attempts_never_exceed_configured_accounting() {
         let limits = process_limits();
         let mut admission = ProcessPreauthAdmission::new(limits, 0).unwrap();

@@ -15,6 +15,19 @@ use std::{
 fn tmp(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("neko-cli-{name}-{}", std::process::id()))
 }
+fn process_resource_snapshot(pid: u32) -> Option<(usize, usize)> {
+    let fd_count = fs::read_dir(format!("/proc/{pid}/fd")).ok()?.count();
+    let status = fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    let rss_kib = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    Some((fd_count, rss_kib))
+}
+
 fn key(bin: &str, path: &std::path::Path) -> String {
     let out = Command::new(bin)
         .args(["keygen", "--identity", path.to_str().unwrap()])
@@ -1022,6 +1035,109 @@ fn sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings() {
             drop(UdpSocket::bind(("127.0.0.1", port)).unwrap());
         }
     }
+}
+
+#[test]
+fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("preauth-churn-server");
+    let cp = tmp("preauth-churn-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "1",
+            "--bytes",
+            "16",
+            "--duration",
+            "5",
+            "--diagnostic",
+            "--experiment-id",
+            "preauth-churn-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = server.id();
+    let server = ready_failover_server(server);
+    let before = process_resource_snapshot(pid);
+    let malformed = [b'N', b'1', 1, 1, 0];
+    const ATTEMPTS: usize = 8;
+    for _ in 0..ATTEMPTS {
+        UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .send_to(&malformed, ("127.0.0.1", udp))
+            .unwrap();
+    }
+    thread::sleep(Duration::from_millis(100));
+    let after = process_resource_snapshot(pid);
+    if let (Some((before_fd, before_rss)), Some((after_fd, after_rss))) = (before, after) {
+        assert!(
+            after_fd <= before_fd + 1,
+            "fd growth: {before_fd} -> {after_fd}"
+        );
+        assert!(
+            after_rss <= before_rss + 4096,
+            "rss growth KiB: {before_rss} -> {after_rss}"
+        );
+    }
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            cp.to_str().unwrap(),
+            "--server-key",
+            &sk,
+            "--count",
+            "1",
+            "--bytes",
+            "16",
+            "--duration",
+            "3",
+        ])
+        .output()
+        .unwrap();
+    let (status, log) = finish_server(server);
+    assert!(
+        out.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(status.success(), "{log}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("failover_client_ok"));
+    assert!(log.contains("failover_server_ok"));
+    drop(UdpSocket::bind(("127.0.0.1", udp)).unwrap());
+    drop(TcpListener::bind(("127.0.0.1", tcp)).unwrap());
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
 }
 
 #[test]
