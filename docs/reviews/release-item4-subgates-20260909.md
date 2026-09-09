@@ -1,8 +1,8 @@
-# Release item-4 subgate factual review — exact `3164030`
+# Release item-4 subgate factual review — exact `aefd49f`
 
 ## Scope
 
-Developer-prepared factual review support for reachable exact commit `3164030d428fb4b9ff8db90bd9ddd3fc49e473a0`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support for reachable exact commit `aefd49fed7414f1cb927ba55dac235e99c1db24a`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
@@ -38,7 +38,7 @@ Developer-prepared factual review support for reachable exact commit `3164030d42
 
 ## Exact-tree gates
 
-On reachable exact `489c345`, the serialized developer-local workspace test gate, `cargo fmt --all -- --check`, and `git diff --check` passed with clean initial/final trees. A native x86_64 package from the same tree passed archive smoke; packaged keygen created/reloaded an owner-only identity and rejected a valid-hex wrong-length peer key without creating the requested identity. Provenance is retained in [`../local-identity-config-489c345-20260909.md`](../local-identity-config-489c345-20260909.md). Exact `0e664d6` remains the prior descriptor-bound reload gate retained in [`../local-identity-security-0e664d6-20260909.md`](../local-identity-security-0e664d6-20260909.md); prior package evidence and hosted runs remain separate. A green gate is not a release/security decision.
+On reachable exact `aefd49f`, developer-local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, native x86_64 package build/smoke, and clean initial/final tree checks passed. Its table-driven process regression covers ordinary, failover, and endpoint-rebind peer/address/bind rejection before identity creation. Provenance is retained in [`../local-identity-config-aefd49f-20260909.md`](../local-identity-config-aefd49f-20260909.md). Exact `489c345` remains the prior ordinary-command/umask gate, exact `0e664d6` the descriptor-bound reload gate, and hosted runs remain separate evidence. A green gate is not a release/security decision.
 
 ## Remaining release boundaries
 
