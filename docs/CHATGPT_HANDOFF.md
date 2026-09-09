@@ -1,80 +1,86 @@
-# ChatGPT reviewer handoff — charge post-Noise pre-auth input before RSEC closure
+# ChatGPT reviewer handoff — tear down expired retained UDP pre-auth session before evidence
 
 ## Reviewed state
 
-- Previous reviewer-owned handoff: exact `4d23eb4e8e025d1c645bf42ca39007194831db9f` (`docs(handoff): bind cached preauth retries before RSEC closure`).
-- Previous reviewed developer implementation/test head: exact `21e42af49a9bbe639aefa3dca887e17b03cad07c` (`test: observe bounded preauth recovery`).
-- Previous reviewed developer documentation/evidence head: exact `f9511f33cc8a3f777026e5a7ab78a37142d303c4` (`docs: record bounded preauth process recovery`).
-- Current default-branch developer implementation/test head reviewed this cycle: exact `976f90b738315aa7d925b54282a000bcdb139007` (`test: close cached preauth retry ownership`).
-- Current default-branch developer documentation/evidence head reviewed this cycle: exact `8f7d5a39f4889c2a5fcde7af4fbc341174dc556b` (`docs: close cached preauth retry boundary`).
+- Previous reviewer-owned handoff: exact `c0b33de958e6eb77a295974852671ffbaa56cd81` (`docs(handoff): charge post-Noise preauth input before RSEC closure`).
+- Previous reviewed developer implementation/test head: exact `976f90b738315aa7d925b54282a000bcdb139007` (`test: close cached preauth retry ownership`).
+- Previous reviewed developer documentation/evidence head: exact `8f7d5a39f4889c2a5fcde7af4fbc341174dc556b` (`docs: close cached preauth retry boundary`).
+- Current default-branch developer implementation/test head reviewed this cycle: exact `5be8c6e38e2f70a8d6766eb7337e156640a5b565` (`test: isolate selection retry from post-Noise budget`).
+- Current default-branch developer documentation/evidence head reviewed this cycle: exact `a9aed3b9afcc0545518affad92e95dfb0281c9ef` (`docs: close retained UDP input boundary`).
 - Developer sequence since the previous reviewer handoff:
-  - `10e5d4cb147e8e6ea3cf7d612ed99fbe61052211` reconciles the legacy mutable fuzz-seed corpus with the separate frozen canonical-vector corpus and corrects negotiation-integration scope wording; it does not widen release/freeze claims.
-  - `cb00f5d1ba2804de7e041fb5039268ed30c12ebd` retains the original failover UDP admission after server-side Noise completion, exact-charges byte-identical cached first-Noise retries, sends them through the existing bounded UDP response helper, suppresses the old post-auth delayed duplicate seam, and releases/cache-clears on first valid authenticated application Data.
-  - `976f90b738315aa7d925b54282a000bcdb139007` adds same-owner cached-response ceiling evidence, extends the responder inventory to the cached failover UDP surface, makes the malformed-process source-domain claim executable by holding eight sender sockets simultaneously and asserting eight unique source ports, and asserts temporary identity cleanup.
-  - `8f7d5a39f4889c2a5fcde7af4fbc341174dc556b` persists exact-`976f90b` developer-local provenance and reconciles release/security evidence anchors.
+  - `17b39e34da87b671865a9749196f376d9b46d5af` moves retained-owner UDP input/work charging to the common owned-peer receive path before cached-message comparison or AEAD open and removes the cached-branch double charge.
+  - `e32a1138a746998ed9278b40d914b9dc185866fa` adds focused same-owner cached/non-matching accounting and first-excess refusal evidence. Its first exact-tree full gate was red because an independent selection-loss fixture mixed an unrelated late post-Noise hello into the deliberately small four-packet budget.
+  - `5be8c6e38e2f70a8d6766eb7337e156640a5b565` removes only that unrelated late-hello injection from the selection-loss fixture, preserving its selection retry/recovery purpose; this is the replacement green tested tree.
+  - `a9aed3b9afcc0545518affad92e95dfb0281c9ef` persists exact-`5be8c6e` developer-local provenance and re-anchors the resource review, release packet and item-4 factual support.
 - No new VPS/WAN experiment was performed in this sequence.
-- GitHub currently exposes no hosted combined-status records for exact `976f90b`. This is not a blocker and must not trigger Actions polling.
+- GitHub currently exposes no hosted combined-status records for exact `5be8c6e`. This is not a blocker and must not trigger Actions polling.
 
 ## Review verdict
 
-### ACCEPT WITH BOUNDS — cached response ownership, source-domain repair, and exact-tree developer-local gate
+### ACCEPT WITH BOUNDS — common retained-owner input charge and truthful exact-tree local closure
 
-The previous cached-response escape is materially repaired: the original source-owned admission is no longer released immediately after server-side Noise completion, byte-identical cached first-Noise retries exact-charge input and response under that same owner, the response goes through the bounded response permit/deadline helper, and the owner/cache are cleared on first valid authenticated application Data. The old opt-in delayed post-auth duplicate is now suppressed rather than emitting pre-auth material after authenticated progress.
+The previous post-Noise input/work charging HIGH is materially repaired for the live-owner path. While the retained failover UDP `handshake_admission` exists, every datagram from the owned peer is now charged once before cached first-Noise comparison or `open_unreliable`; a byte-identical cached retry performs only the response charge after that common input charge. The first valid authenticated application Data still releases the owner/cache, so later normal authenticated traffic remains outside pre-auth accounting.
 
-The focused model regression proves four charged/suppressed cached response attempts share one source-owned response packet ceiling and the next response is refused. The malformed-process observation now keeps eight local UDP senders alive simultaneously, asserts eight unique source ports before sending one five-byte malformed datagram from each, retains one later authenticated 16-byte recovery exchange, and asserts identity cleanup. These are bounded local engineering observations only, not same-source saturation, adversarial-load suitability, production-capacity evidence, security approval, or D019 policy closure.
+The focused model test now combines one cached retry plus non-matching datagrams under one four-packet input ceiling and proves the first excess input terminalizes the state. The process positive continues to prove first Noise-response loss/retry and records exactly one retained-input charge for the cached retry plus one for the first non-matching authenticated Data.
 
-`docs/local-cached-preauth-retry-976f90b-20260910.md` records developer-local exact-tree `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit `0`, `git diff --check` exit `0`, UTC `2026-09-09T20:24:29Z -> 20:26:22Z`, Linux/x86_64, Rust 1.98.0, and clean initial/final source tree. Reviewer did not execute this CI. Hosted CI is absent and is not required.
+`docs/local-retained-udp-input-5be8c6e-20260910.md` records developer-local exact-tree `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit `0`, `git diff --check` exit `0`, UTC `2026-09-09T21:18:07Z -> 21:19:59Z`, Linux/x86_64, Rust 1.98.0, and clean initial/final source tree. Exact `e32a113` is retained as the red integration attempt rather than being rewritten as green. Reviewer did not execute this CI. Hosted CI is absent and is not required.
 
-### HIGH / READY_LOCAL — non-matching post-Noise datagrams bypass input/work charging while the retained pre-auth owner is live
+These facts remain bounded engineering evidence only. They do not establish adversarial-load or production-capacity suitability, independent security approval, public-listener approval, RC/release/production readiness, or D019 source-retention policy closure.
 
-The previous HIGH is not fully closed because the newly retained admission is used only for the byte-identical cached first-Noise branch.
+### HIGH / READY_LOCAL — expiry drops the accounting owner but leaves the authenticated pre-progress UDP session able to produce DeliveryAck
 
-Current `failover_server` shape on `main` after `secure.is_some()`:
+The retained-owner repair still has a concrete terminal-lifecycle escape.
 
-1. receive a UDP datagram from the established peer;
-2. if it byte-matches the cached first Noise message, use `handshake_admission` to `charge_input`, then charge/send the cached response;
-3. otherwise, emit the diagnostic and call `ss.open_unreliable(&buf[..n])` directly;
-4. only after a valid `ProcessMessage::Data` is opened/accepted does the code release `handshake_admission` and clear `handshake_cache`.
+At the top of the failover-server loop, `preauth.expire()` removes expired process states. When the returned IDs contain `handshake_admission`, current code sets only:
 
-Therefore, while `handshake_admission` is still deliberately live and the peer has not yet demonstrated authenticated application progress, a non-matching datagram can reach AEAD open/classification without any `ListenerAdmission::charge_input` / source-lifetime work charge. Malformed, duplicate-but-not-byte-identical, random ciphertext, or valid encrypted non-Data input in this retained pre-auth ownership window can consume crypto/parser work outside the source/global input/work counters.
+- `handshake_admission = None`;
+- `handshake_cache = None`.
 
-This conflicts with the D019 candidate contract that input bytes/packets, including malformed and duplicate input, are charged before parse/work and that an operation unable to charge fails closed. It also makes the current broad resource-review wording that all inventoried pre-auth input/work is charge-before-parse too strong.
+It does **not** clear `secure` or the pre-progress `ResumeGuard`.
 
-Treat this as a correctness/security/evidence **HIGH / READY_LOCAL** for the bounded pre-auth accounting contract. It is not a new wire, Noise pattern, Session, Carrier, ACK, or crypto-design decision, and it is not a production exploit claim. Do not expand unrelated runtime work until it is closed.
+The same loop then skips fresh negotiation because `secure.is_none()` is false and enters the existing `if let Some((ref mut ss, peer)) = secure` receive path. Because `handshake_admission` is now `None`, the new common charge block is skipped. A later datagram from that peer can therefore reach `open_unreliable`; if it is a valid `ProcessMessage::Data`, current code can admit it into `SessionRuntime` and emit a DeliveryAck even though the pre-auth owner already expired.
+
+That directly conflicts with D019's existing candidate contract: idle/lifetime expiry tears down the bounded pre-auth state without response evidence, and timeout/exhaustion must produce no Delivery/PathValidated/ACK-equivalent evidence. It also means the current broad statement that pre-progress failover UDP input is charge-before-work until authenticated progress is too strong across the expiry transition.
+
+Treat this as a correctness/security/evidence **HIGH / READY_LOCAL** for the existing bounded contract. It is not a production exploit claim and does not require a new Session, Carrier, ACK, crypto, Noise-pattern or wire decision.
 
 #### Required invariant
 
-While the failover UDP `handshake_admission` owner remains live, every datagram from that owned peer must consume the applicable source/global input and work accounting exactly once **before** cached-message classification or `open_unreliable`. Only after the first valid authenticated application Data causes owner release may subsequent normal authenticated traffic leave the pre-auth accounting domain.
+If the retained failover UDP pre-auth owner expires before the first valid authenticated application Data, the associated pre-progress authenticated transport state must become terminal before any later peer datagram can reach AEAD/classification or create delivery/path/ACK evidence. Expiry must not turn `handshake_admission: Some` into an uncharged `secure: Some` path.
 
 #### Preferred minimal implementation shape
 
-Keep the current retained-owner design and move the input/work charge to the common top of the owned-peer receive path while `handshake_admission.is_some()`:
+Use current state and existing D019 deadlines; do not add a new timeout number.
 
-- after peer equality is checked, obtain the retained admission and exact-charge the datagram once before comparing it with `handshake_cache` or calling `ss.open_unreliable`;
-- the byte-identical cached retry then reuses that already-charged input and performs only the existing exact response charge/send; do not double-charge input;
-- non-matching input may proceed to AEAD open/classification only after the common charge succeeds;
-- first valid authenticated application Data still releases the owner exactly once and clears cached retry capability;
-- expiry, error, budget exhaustion and experiment termination remain fail-closed and must not silently fall back to an uncharged path;
-- do not migrate normal post-progress DeliveryAck traffic into pre-auth accounting.
+- when `preauth.expire()` reports the live `handshake_admission` ID, clear the complete pre-progress UDP handshake/session capability tied to that owner, not only the ticket/cache;
+- at minimum retire `handshake_admission`, `handshake_cache`, `secure`, and the pre-progress `guard` before the receive/classification path can run;
+- reset only clearly session-local test/diagnostic state needed to permit a fresh bounded negotiation; do not reset source-lifetime accounting or invent a new retention policy;
+- a datagram from the expired peer must require a fresh admitted negotiation rather than reuse the expired secure context;
+- no expired-session Data may cause `runtime.receive`, DeliveryAck, PathValidated, resume admission or equivalent success evidence;
+- if a nearby budget-exhaustion path can be made state-scoped with the same small teardown helper, that is acceptable, but do not create a generic lifecycle framework merely for this slice.
 
-An equivalent smaller shape is acceptable if it proves the same charge-once-before-work invariant without new policy numbers or new architecture.
+An equivalent smaller shape is acceptable if it proves the same terminal-before-evidence invariant and preserves ordinary first-Noise retry/recovery.
 
 #### Minimum focused evidence
 
-- preserve first UDP Noise-response loss/retry recovery;
-- prove the cached duplicate is input-charged exactly once, not twice;
-- prove at least one non-matching post-Noise/pre-Data datagram consumes the same retained owner’s input/work budget before AEAD open/classification;
-- prove the first operation beyond the configured input/work ceiling fails closed before `open_unreliable` work and produces no Delivery/PathValidated/ACK-equivalent evidence;
-- preserve owner/cache cleanup on first valid authenticated Data, expiry/error and normal experiment termination with zero orphan live state;
-- keep the responder inventory truthful after the call-order change.
+- deterministic or process evidence that establishes a failover UDP session through negotiation/Noise but delays first application Data past the current pre-auth idle deadline;
+- prove the expired session cannot obtain a DeliveryAck, cannot resume through the stale guard, and cannot continue through the old `secure` object;
+- prove cleanup leaves no orphan pre-auth state/cache/owner;
+- if the server is intentionally reusable during its bounded experiment window, prove a fresh admitted negotiation can still succeed after the expired pre-progress attempt; otherwise document the exact process-lifetime boundary without inflating the claim;
+- preserve first Noise-response loss/retry recovery and the exact-once retained-input charge positive;
+- preserve expiry/error cleanup and responder inventory truth.
 
-No fuzz is required unless the change actually touches wire decoder/parser/crypto framing rather than only call ordering/accounting.
+No fuzz is required unless the repair touches decoder/parser/crypto framing rather than only ownership/lifecycle ordering.
+
+### LOW / SAME-SLICE CLEANUP — stale selection-loss test comment
+
+The selection-loss fixture no longer enables the late post-auth UDP hello seam, but one nearby comment still says that both the duplicate pending hello and a late post-auth hello are being proved. Correct that comment when touching the test; do not create a standalone docs/test commit for it.
 
 ## Evidence boundary after the HIGH
 
-The exact-`976f90b` local green gate remains valid developer-local evidence for that tree, but it does not close this newly identified post-Noise input/work charging gap. `docs/reviews/resource-abuse-evidence-2026-09-04.md`, `docs/release-security-review-packet.md`, and `docs/reviews/release-item4-subgates-20260909.md` may continue to index exact `976f90b` historically, but their broad current engineering-control claims must be re-anchored/narrowed only after the replacement implementation/test SHA is green.
+Exact `5be8c6e` remains valid developer-local evidence for common charging while the owner is live. It does not prove the expiry transition is terminal. `docs/reviews/resource-abuse-evidence-2026-09-04.md`, `docs/release-security-review-packet.md`, and `docs/reviews/release-item4-subgates-20260909.md` may retain exact `5be8c6e` historically, but their broad current engineering-control wording must be narrowed or re-anchored only after the replacement implementation/test SHA is green.
 
-RSEC-001 remains open for adversarial-load/promotion suitability and independent review even after this engineering gap is repaired. D019 source-retention/no-reset policy remains separately blocked.
+RSEC-001 remains open for adversarial-load/promotion suitability and independent review even after this engineering defect is repaired. D019 source-retention/no-reset policy remains separately `SOURCE_RETENTION_POLICY_BLOCKED`.
 
 ## Local-CI-first rule
 
@@ -90,25 +96,25 @@ Persist minimum provenance only after the final replacement SHA is green: exact 
 
 ## Rolling queue — execute continuously in dependency order
 
-The coding agent must continue through every dependency-ready item below without waiting for the next reviewer hour. The HIGH is first and blocks expansion into unrelated runtime work, but it does not require maintainer approval because the accounting invariant and candidate numbers already exist.
+The coding agent must continue through every dependency-ready item below without waiting for the next reviewer hour. The HIGH is first and blocks expansion into unrelated runtime work, but it does not require maintainer approval because the expiry and evidence-barrier semantics already exist.
 
-### A. HIGH / READY_LOCAL — common-charge every retained-owner UDP datagram before work
+### A. HIGH / READY_LOCAL — retire the complete expired pre-progress UDP capability
 
-Implement the minimal current-main repair above. Use the existing `handshake_admission`, existing `charge_input` API, existing candidate limits and current release-on-authenticated-Data transition. No new capacity, TTL, LRU/history, wire field, crypto primitive, Session semantic or carrier architecture is authorized.
+Implement the minimal current-main repair above. Reuse the existing expiry result and current pre-auth owner/session variables. No new TTL, capacity, retention history, wire field, crypto primitive, Session semantic or carrier architecture is authorized.
 
 Continue immediately to B.
 
-### B. HIGH-CLOSURE / READY_LOCAL — exact-once and non-matching input regression
+### B. HIGH-CLOSURE / READY_LOCAL — expiry-before-first-Data regression
 
-Add focused tests that distinguish cached-match input from non-matching post-Noise/pre-Data input and prove common-owner exact-once charging, over-limit fail-closed behavior before AEAD work, and cleanup. Preserve the existing loss/retry positive and ordinary authenticated application success.
+Add the smallest stable evidence that makes the expiry transition executable. Prove stale secure/guard state cannot create application delivery or resume evidence after owner expiry, cleanup is complete, and the ordinary cached Noise retry/recovery positive remains intact. Correct the stale selection-loss comment in this same coherent test slice.
 
-Perform exactly one bounded source inspection of the final failover UDP pre-auth lifecycle for equivalent pre-progress input/work bypasses. Fix concrete equivalents only; do not create another generic checker framework.
+Perform exactly one bounded source inspection of the final failover UDP pre-progress terminal paths for an equivalent `owner gone, secure path still live` transition. Fix only a concrete equivalent; do not extend the checker/harness lane generically.
 
 Continue immediately to C.
 
 ### C. READY_LOCAL — final exact-tree gate and concise provenance
 
-After A-B land in the final pushed implementation/test SHA, run the exact-tree local gate. Persist one concise provenance note with exact SHA, commands, UTC interval, host/OS/arch, stable Rust, clean-tree state, focused charge-once tests and only sanitized aggregate observations. If red, repair the failure before closure. Do not wait for GitHub Actions.
+After A-B land in the final pushed implementation/test SHA, run the exact-tree local gate. Persist one concise provenance note with exact SHA, commands, UTC interval, host/OS/arch, stable Rust, clean-tree state and focused expiry/retained-owner positives. If red, repair the concrete failure before closure. Do not wait for GitHub Actions.
 
 Continue immediately to D.
 
@@ -119,23 +125,23 @@ Update together after the final green developer SHA:
 - `docs/reviews/resource-abuse-evidence-2026-09-04.md`;
 - `docs/release-security-review-packet.md`;
 - `docs/reviews/release-item4-subgates-20260909.md`;
-- the concise local provenance note and responder inventory if needed.
+- responder inventory / concise provenance only if their facts changed.
 
-Allowed claim: exact bounded local evidence exists that the retained failover UDP pre-auth owner charges every pre-progress peer datagram before classification/AEAD work and cached responses remain exact-charged under that owner.
+Allowed claim: exact bounded local evidence exists that retained failover UDP input is charged before work while ownership is live and owner expiry retires the associated pre-progress secure/resume capability before delivery evidence.
 
 Forbidden claims: D019 resolved, RSEC-001 fully closed, candidate limits production-suitable, independent review complete, public listener approved, RC/release/production ready.
 
 Continue immediately to E.
 
-### E. REVIEW-CLOSURE / READY_LOCAL — close this RSEC engineering lane and stop extending the harness
+### E. REVIEW-CLOSURE / READY_LOCAL — end this RSEC engineering inspection lane if clean
 
-Perform one bounded adjacent review of the repaired failover UDP pre-auth lifecycle for charge ordering, exact-once accounting, release/expiry/error cleanup, stale tested-tree claims and accidental policy invention. Fix concrete defects found. If no BLOCKER/HIGH remains, explicitly mark this bounded RSEC engineering package complete and **stop extending this checker/test lane unless a new demonstrated defect appears**.
+Perform one bounded adjacent review of the repaired failover UDP pre-progress lifecycle for charge ordering, expiry/error cleanup, stale secure/guard ownership, evidence production and stale tested-tree claims. Fix concrete defects found. If no BLOCKER/HIGH remains, explicitly mark this bounded RSEC engineering inspection package complete and **stop extending this checker/test lane unless a new demonstrated defect appears**.
 
 Continue immediately to F.
 
 ### F. LOCAL OUTPUT SELECTION — choose the next real runtime/operator/release output
 
-Re-read exact-current `README.md`, `AGENTS.md`, `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `SECURITY.md`, `docs/status.md`, release packet and relevant code. Produce 1-3 dependency-ready proposals and autonomously choose the smallest safe one. Prefer, in order, a demonstrated runtime/correctness/security defect with a concrete call site, an advertised operator/runtime behavior lacking direct executable evidence, or a named release-evidence question answerable locally without capacity/security claim inflation.
+Re-read exact-current `README.md`, `AGENTS.md`, `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `SECURITY.md`, `docs/status.md`, release packet and relevant code. Produce 1-3 dependency-ready proposals and autonomously choose the smallest safe one. Prefer, in order: a demonstrated runtime/correctness/security defect with a concrete call site; an advertised operator/runtime behavior lacking direct executable evidence; or a named release-evidence question answerable locally without capacity/security claim inflation.
 
 For each proposal state the observed contradiction/missing behavior, owner file/API, protected invariant, minimum positive/negative evidence and stop condition. Do not wait for reviewer selection when one option is clearly smallest and within existing architecture/authorization.
 
