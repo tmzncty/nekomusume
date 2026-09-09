@@ -205,6 +205,9 @@ fn help_and_capabilities_cover_dispatch_surface() {
     let help = Command::new(bin).arg("--help").output().unwrap();
     assert!(help.status.success());
     let help = String::from_utf8_lossy(&help.stdout);
+    let human_capabilities = Command::new(bin).arg("capabilities").output().unwrap();
+    assert!(human_capabilities.status.success());
+    let human_capabilities = String::from_utf8_lossy(&human_capabilities.stdout);
     let capabilities = Command::new(bin)
         .args(["capabilities", "--json"])
         .output()
@@ -231,11 +234,25 @@ fn help_and_capabilities_cover_dispatch_surface() {
     ] {
         assert!(help.contains(command), "help missing {command}: {help}");
         assert!(
+            human_capabilities.contains(command),
+            "human capabilities missing {command}: {human_capabilities}"
+        );
+        assert!(
             capabilities.contains(&format!("\"name\":\"{command}\"")),
-            "capabilities missing {command}: {capabilities}"
+            "JSON capabilities missing {command}: {capabilities}"
         );
     }
     assert!(help.contains("failover-server|failover-client"));
+    for alias in ["failover-server", "failover-client"] {
+        assert!(
+            human_capabilities.contains(alias),
+            "human capabilities missing alias {alias}: {human_capabilities}"
+        );
+        assert!(
+            !capabilities.contains(&format!("\"name\":\"{alias}\"")),
+            "JSON capabilities must keep {alias} as an alias, not a canonical command"
+        );
+    }
     let unknown = Command::new(bin).arg("not-a-command").output().unwrap();
     assert!(!unknown.status.success());
 }

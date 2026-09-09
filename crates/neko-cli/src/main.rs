@@ -113,7 +113,7 @@ fn capabilities(args: &[String]) {
             MAX_BYTES, MAX_DURATION, MAX_WORKLOAD_DURATION, MAX_PORT
         );
         println!(
-            "commands research=client,server,probe experimental=health-observe,failover,multistream fixtures=scheduler-fairness,key-update"
+            "commands research=client,server,probe,periodic-server,periodic-client experimental=health-observe,failover,multistream,endpoint-rebind-server,endpoint-rebind-client fixtures=scheduler-fairness,key-update,lab,workload utilities=keygen,capabilities aliases=failover-server,failover-client"
         );
         println!("report_secret_free=true");
     }
