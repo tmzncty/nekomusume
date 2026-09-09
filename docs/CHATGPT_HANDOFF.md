@@ -1,74 +1,70 @@
-# ChatGPT reviewer handoff — finish identity filesystem atomicity, then remove pre-validation secret side effects
+# ChatGPT reviewer handoff — finish identity/config boundary, then select the next visible local output
 
 ## Reviewed state
 
-- Previous reviewer-owned handoff: exact `cdb7b5462cdd69739a191fcc13c324ec0f9447b4` (`docs(handoff): correct preauth collision provenance`).
-- Default branch reviewed at exact `70e2a3f0043c1bd4592e8c7a6fc3712f81867e43` (`docs: close local identity boundary`).
-- Developer-owned sequence since the prior reviewer handoff:
-  - `749976f89056fd98e2295941471b185cce8b524f` — replaces write-then-chmod identity creation with `OpenOptions + create_new + mode(0600)`, rejects stable non-regular/group-world-accessible identity paths, and adds focused process coverage.
-  - `d4cab69bcf09cf7eea5a67eed27afab7a8f15a40` — adds a second overlapping identity-filesystem process test.
-  - `70e2a3f0043c1bd4592e8c7a6fc3712f81867e43` — records exact-`749976f` developer-local CI/native packaged-operator evidence and refreshes release/item-4 factual wording.
-- Retained developer-local gate for exact `749976f`: `2026-09-09T07:11:06Z` -> `07:12:57Z`, Linux x86_64, Rust `1.98.0`, `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, initial/final source tree clean. A native x86_64 package from the same tree also completed secure-create/reload/permissive-file rejection smoke outside the source checkout.
-- GitHub combined status exposes no hosted status records for exact `749976f`; do not poll or wait for Actions. Developer-local exact-tree CI remains the normal closure path.
-- `work/e1a-staged-accounting-20260907` remains fully behind main (`f4404257`, main +67 at this review). `work/continue-20260904` remains a stale diverged branch (`d271a99a`, main +151 / branch +1). Do not coordination-merge either merely to manufacture work.
+- Previous reviewer-owned handoff: exact `dd99c0c8c10e31d3d521687bdbf5c974bca44784` (`docs(handoff): close identity reload TOCTOU before next output`).
+- Developer-owned head reviewed this cycle: exact `e46c05658cd2202941ef2fd26ec547dcb20938b3` (`docs: close identity configuration ordering`).
+- `main` was exactly `e46c05658cd2202941ef2fd26ec547dcb20938b3` before this reviewer-only handoff update.
+- Developer sequence since the previous handoff:
+  - `03016dd84e7862b20ab422681c5da28ead15926f` — changes existing-identity reload to one `O_NOFOLLOW|O_CLOEXEC` open, validates metadata on that `File`, and reads bytes through the same descriptor; it also temporarily added an unrequested parent-directory policy.
+  - `67149e2d070595e96447931ac53e7978e9e42170` — initial factual/evidence closure, but it referred to a non-reachable `e5aeef2...` tested-tree identity.
+  - `e8f4fc70554df1bb0c11784d7a54e43a73726c3b` — removes the unrequested parent-directory ownership/writability policy and keeps only the reviewer-requested descriptor-bound final-component fix.
+  - `0e664d6ede8a93bcb377d31dd917ea3b94612c0f` — consolidates the duplicate identity filesystem process coverage.
+  - `d1d2d298dbfeca1cca7bfae4dcda96f26491484c` / `4b7291a973d9dc6236e5213d6aa3a707cd5a057f` — repair the descriptor-bound local-CI/tested-tree truth to real exact `0e664d6`; the evidence file basename still contains the obsolete `e5aeef2` token even though its contents now truthfully anchor `0e664d6`.
+  - `899b190379c7a1dd213bfb520eff221ef15cfe39` — moves server bind/trust parsing and client peer/address/payload parsing before automatic identity creation; adds deterministic invalid-config/no-identity process negatives.
+  - `e46c05658cd2202941ef2fd26ec547dcb20938b3` — records exact-`899b190` developer-local CI/native packaged invalid-config evidence and refreshes release/item-4 factual wording.
+- Developer-local exact-tree evidence retained for exact `0e664d6`: `2026-09-09T08:18:32Z` -> `08:20:22Z`, Linux x86_64, Rust `1.98.0`, `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, initial/final source tree clean.
+- Developer-local exact-tree evidence retained for exact `899b190`: `2026-09-09T08:28:09Z` -> `08:30:00Z`, Linux x86_64, Rust `1.98.0`, stable gate and `git diff --check` exit 0, source tree clean; one native x86_64 package rejected a deterministic malformed client address without creating the requested external identity.
+- GitHub combined status exposes no hosted status records for exact `899b190` or exact developer head `e46c056`; do not poll or wait for Actions. Local exact-tree CI remains the ordinary closure mechanism.
+- `work/e1a-staged-accounting-20260907` is still exactly `f4404257520e9a014ac4e785b0ab9a97f8aaf794`; `main` is now more than 70 commits ahead with no branch-only work. `work/continue-20260904` remains the stale diverged `d271a99a2ab26abbcb146c411ba0fde697395abe`. Do not coordination-merge either merely to manufacture work.
 
 ## Review verdict
 
-### ACCEPT_WITH_BOUNDS — original identity creation/steady-state path gap is materially improved
+### ACCEPT — descriptor-bound existing-identity reload closes the prior HIGH
 
-Exact `749976f` fixes the original write-before-chmod defect: on Unix the new file is created with restrictive mode before private bytes are written, `create_new(true)` avoids truncating/replacing an already-existing final path, and stable symlink/special-file/group-world-readable inputs fail before ordinary key use. The package-level smoke and exact-tree local gate are useful developer evidence.
+The current implementation opens an existing Unix identity with `O_NOFOLLOW|O_CLOEXEC`, obtains file metadata from that same open `File`, requires a regular file with no group/world permission bits, and reads identity bytes through that same descriptor. This removes the previous final-component `symlink_metadata(path) -> reopen(path)` race without changing Session/Carrier/ACK/crypto/wire semantics.
 
-Keep all existing maturity boundaries: this is not independent security review, signing/key custody, RC, release, public-listener approval, or production readiness.
+The later `e8f4fc7` correction was also appropriate: the prior reviewer contract did **not** establish a parent-directory ownership/writability policy, so the temporary extra policy added in `03016dd` should not have been promoted as a security requirement. Keep the descriptor-bound final-component contract; do not grow this into an `openat2`/directory-FD filesystem framework without a concrete new threat requirement.
 
-### HIGH / READY_LOCAL — existing-identity reload still has a final-component TOCTOU gap
+The prior **HIGH / IDENTITY_RELOAD_TOCTOU** is therefore closed.
 
-Current `read_identity` does:
+### ACCEPT_WITH_BOUNDS — deterministic server/client configuration is now mostly before identity creation
 
-```text
-symlink_metadata(path)
-  -> validate file type / mode
-  -> fs::read_to_string(path)
-```
+Exact `899b190` correctly moves bind syntax/port consistency, server peer-key hex parsing, client address parsing, and benchmark/payload parsing before `load_or_generate`. The process negatives prove malformed non-hex server trust input and malformed server/client addresses leave a nonexistent identity path absent. Network bind/connect failure remains a runtime boundary and is not required to precede identity creation.
 
-The metadata check and content open are separate path-based operations. A final path that is a regular owner-only file at the metadata check can be replaced with a symlink before `read_to_string`; the second operation follows that new path. Therefore current release-facing wording that reload “rejects symlinks” is only true for a stable path, not for concurrent final-component substitution.
+However, the release-facing sentence that deterministic trust configuration is fully validated before identity creation is still too strong.
 
-Classify this as **HIGH / IDENTITY_RELOAD_TOCTOU** because it sits exactly on the long-term private-key filesystem boundary and invalidates the stronger fail-closed claim. Do not open unrelated new runtime/release work until this is repaired and re-anchored.
+### MEDIUM / READY_LOCAL — valid-hex wrong-length peer keys still create identities before deterministic rejection
 
-This is automatically repairable without changing Session/Carrier/ACK/crypto/wire semantics and without inventing numeric security policy.
+`unhex()` validates hex syntax and even length, but it does **not** require a Noise/X25519 public key to be exactly 32 bytes. `TrustPolicy::new` simply stores the supplied `Vec<u8>` and performs no key-length validation. On the client, `InitiatorHandshake::new_with_prologue_binding` is the later layer that will reject an invalid remote-key length.
 
-**Preferred minimal implementation shape on Unix:** open the existing identity once with a no-follow open, then perform file-type/mode validation and all reads through that same open file descriptor. Rust stable `std::os::unix::fs::OpenOptionsExt::custom_flags` supports `O_NOFOLLOW`; adding the small `libc` dependency solely for the platform constant is acceptable if needed. A shape such as:
+Therefore values such as a valid-hex 31-byte or 33-byte `--client-key` / `--server-key` are already deterministically invalid configuration, yet current server/client code can still call `load_or_generate` first. This is the remaining concrete part of the earlier **IDENTITY_SIDE_EFFECT_BEFORE_CONFIG_VALIDATION** finding.
 
-```text
-OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(path)
-  -> file.metadata()
-  -> validate regular + owner-only
-  -> read identity bytes from that File handle
-```
+Repair shape is local and does not require a new policy:
 
-removes the check-then-reopen race for the final path component. Preserve the current `create_new(true) + mode(0600)` creation path. Do not replace this with a bigger directory-fd/openat2 framework unless a concrete parent-directory threat requirement is separately established.
+- introduce one small peer-public-key parser/helper that decodes hex and requires exactly 32 bytes before identity creation;
+- use it for both server `--client-key` and client `--server-key` so the contract cannot drift between directions;
+- do not move Noise/authentication semantics into CLI parsing; this is only the already-required static X25519 key-size check;
+- add focused server and client process negatives for syntactically valid but short/long peer keys, each with a previously nonexistent identity path and an assertion that the path remains absent;
+- keep the existing malformed-hex and malformed-address cases.
 
-**Rejected shape:** another `symlink_metadata(path)` / `metadata(path)` check followed by a fresh path open is not a fix.
+Do not claim the identity/config side-effect lane closed until this is fixed and exact-tree gated.
 
-### MEDIUM / TEST_PROVENANCE_AND_DUPLICATION — current main contains post-gate overlapping tests
+### MEDIUM / OPERATOR CORRECTNESS — requested `0600` creation is still umask-dependent
 
-Exact `749976f` is the retained locally gated implementation tree, but `d4cab69` added a second substantially overlapping identity-filesystem test after that exact gate. The current tree therefore contains additional test code not covered by the retained exact-`749976f` local-CI record. This does not invalidate the tested implementation, but it should not be treated as exact-current gate evidence.
+The current Unix creation path uses `OpenOptionsExt::mode(0o600)` before writing private bytes. That is secure against accidentally broad group/world permission because the process umask can only remove bits, but POSIX creation mode is still masked by the caller's umask. Under an unusually restrictive umask that removes owner read/write bits, first creation can succeed through the already-open descriptor while the resulting file is not reusable on the next process invocation.
 
-While repairing the HIGH, consolidate the two overlapping identity tests rather than growing a third variant. Prefer the existing `127.0.0.1:0` invalid-identity server form over a fixed `40080` in a path that is expected to fail before bind. Add one cheap non-regular negative (for example a directory) if needed to lock the file-type contract; do not build a generic filesystem-security test framework.
+This matters because release/operator wording currently describes a reusable exact `0600` identity and package smoke asserts `0600` under the ordinary environment.
 
-### MEDIUM / READY_LOCAL AFTER HIGH — deterministic invalid configuration can create a persistent identity before rejection
+Do **not** loosen security or add an umask policy. The minimal implementation shape is to create the new inode fail-closed as today, then set permissions on the already-open `File` descriptor to exact `0600` **before writing private bytes**, then write/sync. This preserves the security invariant while making the operator contract independent of an unusually restrictive caller umask.
 
-There is also one concrete adjacent mutation-before-error defect worth fixing after the HIGH. `server()` currently calls `load_or_generate` before parsing/validating `--client-key` and before validating the final bind address. A command that is deterministically invalid can therefore create a long-term private identity and then exit. `client()` likewise creates/loads its identity before all deterministic client argument validation is complete.
+A focused Unix process regression should exercise a restrictive child umask without changing the parent test process globally, then prove first create succeeds at exact `0600` and the next invocation reloads the same public key. Avoid a generic permissions framework.
 
-Classify this as **MEDIUM / IDENTITY_SIDE_EFFECT_BEFORE_CONFIG_VALIDATION**. The goal is not to redesign identity storage or remove auto-generation. It is to make deterministic CLI configuration errors fail before persistent secret creation.
+### LOW / FACTUAL HYGIENE — one evidence filename still carries the nonexistent `e5aeef2` token
 
-Minimal contract:
+`docs/local-identity-security-e5aeef2-20260909.md` now truthfully says its tested tree is exact `0e664d6`, and current release/item-4 text also names `0e664d6`. The basename alone is stale and can mislead future automated provenance readers.
 
-- parse and validate all deterministic, side-effect-free command configuration that can be checked without network I/O before `load_or_generate`;
-- malformed/missing peer key, malformed address/bind syntax, incompatible port arguments, invalid payload-mode options, etc. must not create a new identity;
-- do not require network reachability before identity generation; a connect/bind runtime failure is a separate boundary unless the implementation can cheaply avoid the persistent side effect without architectural churn;
-- preserve lifecycle truth: `ConfigurationAccepted` must not be satisfied before the configuration actually covered by that prerequisite has been accepted.
-
-Focused negative tests should use a previously nonexistent temp identity path and prove deterministic invalid commands exit nonzero with the identity path still absent.
+During the next factual reconciliation, rename it to an exact-`0e664d6` basename and update links. This is evidence hygiene, not a reason to rerun CI or VPS evidence.
 
 ## Local-CI-first rule
 
@@ -84,94 +80,125 @@ git status --porcelain   # must be empty
 
 Retain exact SHA, exact commands, distinct UTC start/end timestamps, exits, host/OS/arch, Rust stable version, and initial/final clean-tree state when the result anchors release evidence. Label developer-local CI, reviewer-executed checks, and hosted CI separately.
 
-The identity work does not change wire decode/parser/crypto framing, so no fuzz is required unless the implementation unexpectedly crosses that boundary.
+The identity/config work does not change wire decode/parser/crypto framing, so fuzz is not required unless an implementation unexpectedly crosses that boundary.
 
 ## Rolling queue — execute continuously in dependency order
 
-There is one unresolved HIGH. Finish A -> B -> C before unrelated work. Then continue D -> E -> F -> G without waiting for another reviewer cycle while dependencies remain satisfied. H is conditional live work; I remains policy-blocked. Do not enter watcher/polling mode merely because `READY_LIVE: none`.
+There is no unresolved HIGH. Execute A -> B -> C -> D -> E continuously. Then do F -> G -> H -> I without waiting for another reviewer cycle if the selected local output remains dependency-ready. J is conditional live work; K remains policy-blocked. Do not enter watcher/polling mode merely because `READY_LIVE: none`.
 
-### A. HIGH / READY_LOCAL — make existing-identity reload no-follow and handle-based
+### A. READY_LOCAL / OPERATOR CORRECTNESS — finish static peer-key validation before identity creation
 
-**Goal:** remove the final-component metadata/open TOCTOU while preserving current secure creation semantics.
+**Goal:** every deterministic server/client peer-key format/size error fails before persistent identity creation.
 
-**Files/concepts:** `crates/neko-cli/src/main.rs`, `crates/neko-cli/Cargo.toml` only if a Unix constant dependency is required, focused process/filesystem tests in `crates/neko-cli/tests/probe.rs`.
+**Files/concepts:** `crates/neko-cli/src/main.rs`, focused process coverage in `crates/neko-cli/tests/probe.rs`.
 
-**Protected invariants:** no private-key logging; no silent chmod repair; create races do not truncate/replace existing identities; stable symlink/special/insecure modes fail closed; no Session/Carrier/ACK/crypto/wire change.
+**Protected invariants:** no authentication/wire/session behavior change; no private-key logging; server/client still auto-generate on a valid execution path; network reachability remains a later runtime boundary.
 
-**Implementation:** use one no-follow open for an existing Unix identity, inspect metadata from the opened `File`, and read bytes from that same handle. Preserve the non-Unix path with the smallest behavior-compatible implementation. Consolidate the two current overlapping identity tests while touching this lane.
+**Behavior:** decode and require exactly 32 bytes for `--client-key` / `--server-key` before `load_or_generate`. Reuse one helper in both directions.
 
-**Minimum tests:** secure create/reload; `0644` unchanged rejection; stable symlink unchanged-target rejection; one non-regular input rejection; invalid identity never reaches server READY. Avoid a flaky race-loop test; the no-follow single-open implementation structure is the deterministic race closure.
+**Minimum tests:** existing invalid hex/address cases plus server short/long valid-hex key and client short/long valid-hex key; all rejected cases use absent temp identity paths and prove those paths remain absent.
 
 **Commit/push:** one coherent implementation/test commit. Continue immediately to B.
 
-### B. READY_LOCAL — exact-tree local gate and provenance for A
+### B. READY_LOCAL / OPERATOR CORRECTNESS — make newly generated identity exactly `0600` before private write under restrictive umask
 
-Validate the exact pushed A SHA in a clean temporary checkout with the normal local gate. Persist only a small non-secret CI note if release-facing evidence needs re-anchoring. Because A changes the packaged binary/dependency set, record host/Rust/UTC/clean-tree facts accurately; do not fabricate hosted CI.
+**Goal:** preserve the owner-only creation invariant while making the reusable identity mode independent of caller umask.
 
-Continue immediately to C.
+**Files/concepts:** new-file branch of `load_or_generate`, one focused Unix process test.
 
-### C. READY_LOCAL / FACTUAL RECONCILIATION — correct the symlink/fail-closed claims
+**Protected invariants:** `create_new(true)` remains; existing path is never truncated or silently chmod-repaired; no private bytes are written before the file descriptor is known to have exact `0600`; existing identity reload semantics remain unchanged.
 
-Refresh only facts made stale by A in:
+**Behavior:** after fail-closed new-file open, set permissions through the already-open `File` to exact `0600`, then write/sync. If permission-setting fails, fail before private bytes are written.
+
+**Minimum test:** isolated child with restrictive umask creates identity; resulting mode is `0600`; second invocation reloads same public key; ordinary create/reload/permissive/symlink/non-regular negatives stay green.
+
+**Commit/push:** coherent implementation/test commit. Continue immediately to C.
+
+### C. READY_LOCAL — exact-tree local gate and minimal provenance for A+B
+
+Validate the final pushed implementation SHA containing A+B in a clean temporary checkout with the normal local gate. Record distinct UTC start/end, host/OS/arch, stable Rust version, exact commands/exits and initial/final clean tree. No hosted-CI wait.
+
+Because A+B change the packaged binary/operator identity path, produce one native x86_64 package outside the source tree and smoke only the newly material facts: one valid create/reload and one valid-hex wrong-length no-identity-created case. If practical, include the restrictive-umask create/reload path; do not create a second package checker.
+
+Continue immediately to D.
+
+### D. READY_LOCAL / FACTUAL RECONCILIATION — make release/item-4 truth match the exact gated implementation
+
+Refresh only affected facts in:
 
 - `docs/release-engineering.md`;
 - `docs/release-security-review-packet.md`;
 - `docs/reviews/release-item4-subgates-20260909.md`;
-- the identity local-CI note if a superseding note is created.
+- the local identity/config evidence note.
 
-Anchor implementation claims to the real A exact SHA. Preserve `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, independent-review absence and D019 policy blockage.
+Rename the misleading `docs/local-identity-security-e5aeef2-20260909.md` to an exact-`0e664d6` basename and update all links; do not rewrite the validated facts or invent a new run.
 
-If an actual native package is needed to retain the packaged-operator claim after the binary-changing fix, run one local native package smoke outside the source tree: secure create/reload + permissive existing file + stable symlink rejection, cleanup, no key material retained. This is local operator evidence only; no VPS is needed.
+Preserve `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, independent-review absence, D019 blockage and all WAN claim boundaries.
 
-Continue immediately to D.
+Continue immediately to E.
 
-### D. READY_LOCAL / OPERATOR CORRECTNESS — validate configuration before persistent identity side effects
+### E. BOUNDED REVIEW CLOSURE — close the identity/config lane unless one concrete defect remains
 
-**Goal:** deterministic invalid CLI configuration must not create a new long-term identity.
+Perform exactly one bounded adjacent review of current server/client identity/config ordering for:
 
-**Files/concepts:** CLI argument parsing/config assembly and lifecycle prerequisite ordering in `crates/neko-cli/src/main.rs`; focused process tests.
+- deterministic parse/validation that still occurs after persistent secret creation;
+- secret material in stdout/stderr/logging;
+- readiness prerequisite inflation before validation;
+- mutation-before-error around the identity file.
 
-**Protected invariants:** no CLI surface invention unless required by the existing contract; no change to authentication/wire/session semantics; keygen remains the explicit command for intentionally creating an identity; server/client still auto-generate when their validated execution path legitimately needs an identity.
-
-**Tests:** at least malformed/missing peer key and malformed bind/address or payload-mode configuration with a nonexistent temp identity path; assert nonzero exit and path still absent. Ensure valid existing process tests remain green.
-
-**Commit/push:** coherent implementation/test commit, then continue to E.
-
-### E. READY_LOCAL — exact-tree gate for D and one produced-package operator smoke
-
-Run the normal exact-tree local gate on D. If D changes the packaged binary, produce one native x86_64 package outside the source tree and smoke one valid identity path plus one deterministic invalid-config/no-identity-created case. Retain only non-secret hashes/result/timing/cleanup facts if documentation needs them.
+If no additional concrete defect is demonstrable without inventing new local-filesystem policy, explicitly close this audit lane. Do not expand into parent-directory policy, hard-link threat frameworks, generic secret-memory hardening, or a new checker suite unless a current requirement supplies that threat model.
 
 Continue immediately to F.
 
-### F. READY_LOCAL / FACTUAL CLOSURE — close the identity/config lane and stop checker growth
+### F. LOCAL OUTPUT SELECTION — propose 1–3 concrete next outputs and choose one autonomously
 
-Reconcile release-engineering/item-4/release packet only where D/E changed facts. Then perform exactly one bounded adjacent identity/config review for secret leakage, mutation-before-error or readiness ordering. If no additional concrete defect is demonstrable without inventing policy, explicitly close this audit lane. Do not add more identity checker variants merely because more filesystem cases exist.
+Re-read exact-current `docs/status.md`, `IMPLEMENTATION_PLAN.md`, `ROADMAP.md`, release packet and implementation. Current release-evidence item 3 has `READY_LIVE: none`; item 4 still lacks independent review and D019 policy closure. Do not invent WAN work or a fake release gate.
 
-Continue immediately to G.
+If no already-named dependency-ready local output exists, propose 1–3 **specific** runtime/operator/release-correctness outputs grounded in an observed code/evidence gap. Each proposal must name:
 
-### G. LOCAL OUTPUT SELECTION — choose the next visible runtime/operator/release output
+- the exact output/problem;
+- owner file/API;
+- protected invariant;
+- minimum positive/negative test;
+- whether it changes core architecture, wire/crypto semantics or numeric security policy.
 
-Re-read exact-current `docs/status.md`, `IMPLEMENTATION_PLAN.md`, `ROADMAP.md`, release packet and code. If a named dependency-ready local output exists, take it. Otherwise propose 1-3 concrete options grounded in observed code/evidence; each proposal must name the gap/output, owner file/API, protected invariant, minimum positive/negative test, and whether it changes architecture/security policy. Autonomously choose the smallest option needing no maintainer value decision and implement it.
+Autonomously choose the smallest option needing no maintainer value decision. Record the short proposal/choice in the developer-owned implementation note or commit message; do not wait for reviewer pre-approval.
 
-Do not reopen package archive variants, generic DeliveryLedger auditing, previous-release compatibility, FEC/0-RTT/striping/multipath/exotic carriers, or generic checker/schema work without a new observed problem.
+### G. READY_LOCAL — implement the selected F output
 
-### H. CONDITIONAL VPS OUTPUT — only if a genuinely new live question opens
+Implement the chosen bounded output as one coherent slice. Prefer a visible runtime/operator/release behavior over another schema/checker/document-only refinement. Do not reopen package archive variants, generic DeliveryLedger auditing, previous-release compatibility, FEC/0-RTT/striping/multipath/exotic carriers, or generic evidence-schema work without a newly observed problem.
 
-Current repository truth remains `READY_LIVE: none`. Standing authorization is still valid, but authorization is not a reason to rerun already-answered/frozen rows.
+Continue immediately to H.
 
-If later work creates a new concrete unresolved real-network question with a materially changed implementation/configuration/instrumentation/path/hypothesis, execute it boundedly under standing authorization and retain cleanup/negative evidence. Otherwise do not unchanged-rerun HY2, repeated warm failover, periodic, installed-package lifecycle, distinct A->B->A, generic soak, IPv6 without a real owned IPv6 path, or live PMTUD before its separate authenticated wire/security design gate.
+### H. READY_LOCAL — exact-tree gate for G
 
-### I. POLICY-BLOCKED PARALLEL LANE — D019 source retention
+Run the normal exact-tree local gate on the pushed G implementation commit. Add fuzz only if G actually touches wire decoder/parser/crypto framing. Persist minimal provenance only if it supports a release-facing factual claim.
+
+Continue immediately to I.
+
+### I. READY_LOCAL / MILESTONE RECONCILIATION — record the visible output, then continue or select again
+
+Update `docs/status.md` / implementation plan / release packet only if G materially changes a status, acceptance boundary or release-facing fact. If G does not change those truths, avoid documentation churn. Then either proceed to another already-ready concrete output or repeat the bounded F proposal cycle; do not enter watcher mode solely because the reviewer interval has not arrived.
+
+### J. CONDITIONAL VPS OUTPUT — only if a genuinely new live question opens
+
+Current repository truth remains `READY_LIVE: none`. Standing authorization remains valid, but authorization is not a reason to rerun already-answered/frozen rows.
+
+Only execute live work when exact-current implementation/evidence opens a specific unresolved real-network question with materially changed code/config/instrumentation/path/hypothesis and satisfied dependencies. Otherwise do not unchanged-rerun HY2, repeated warm failover, periodic, installed-package lifecycle, distinct A->B->A, generic soak, IPv6 without a real owned IPv6 path, or live PMTUD before its separate authenticated wire/security design gate.
+
+### K. POLICY-BLOCKED PARALLEL LANE — D019 source retention
 
 **Status:** `SOURCE_RETENTION_POLICY_BLOCKED`.
 
-Non-policy engineering controls have bounded factual support. Terminal source-retention/no-reset semantics still require maintainer/security-policy judgment. Do not invent TTL, LRU/history capacity, external authority or weaker reset semantics. This does not block independent A-H work.
+Non-policy engineering controls have bounded factual support. Terminal source-retention/no-reset semantics still require maintainer/security-policy judgment. Do not invent TTL, LRU/history capacity, external authority or weaker reset semantics. This does not block independent A-J work.
 
 ## Governance boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains bounded research-implementation status only.
-- release item 3 remains incomplete; item 4 remains incomplete because independent review and D019 policy closure are absent.
-- release packet currently classifies the next live action as none; local correctness/release work continues.
+- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain authoritative.
+- release item 3 remains incomplete; machine-readable opportunity classification still says `READY_LIVE: none` for remaining unimplemented capabilities.
+- release item 4 remains incomplete because independent review, D019 policy closure and other release boundaries remain absent.
+- current x86_64-only first-RC scope does not turn missing native aarch64 evidence into a blocker unless N6 changes.
 - standing VPS authorization remains valid for genuinely new dependency-ready self-owned bounded questions.
 - HY2 current line and repeated warm-failover current line remain frozen against unchanged retries.
 - IPv6 remains environment-blocked when no owned path exists.
