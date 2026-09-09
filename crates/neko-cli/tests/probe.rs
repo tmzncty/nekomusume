@@ -2001,6 +2001,132 @@ fn expired_preprogress_udp_session_cannot_ack_and_fresh_negotiation_recovers() {
 }
 
 #[test]
+fn expired_preprogress_udp_session_is_retired_before_delivery_and_fresh_handshake_recovers() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("expired-preprogress-server");
+    let cp = tmp("expired-preprogress-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "1",
+            "--bytes",
+            "16",
+            "--duration",
+            "7",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--diagnostic",
+            "--experiment-id",
+            "expired-preprogress-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+
+    let expired = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "1",
+            "--bytes",
+            "16",
+            "--duration",
+            "2",
+            "--test-first-data-delay-ms",
+            "1200",
+        ])
+        .output()
+        .unwrap();
+    assert!(!expired.status.success());
+    assert!(!String::from_utf8_lossy(&expired.stdout).contains("udp_delivery_ack_validated"));
+
+    let recovered = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "1",
+            "--bytes",
+            "16",
+            "--duration",
+            "3",
+        ])
+        .output()
+        .unwrap();
+    let (server_status, server_log) = finish_server(server);
+    assert!(
+        recovered.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&recovered.stdout),
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    assert!(server_status.success(), "{server_log}");
+    assert!(
+        server_log.contains("udp_preprogress_expired"),
+        "{server_log}"
+    );
+    assert_eq!(
+        server_log.matches("udp_delivery_ack_sent").count(),
+        1,
+        "expired Data must not create an ACK; only the recovered exchange may: {server_log}"
+    );
+    let expiry = server_log.find("udp_preprogress_expired").unwrap();
+    let second_auth = server_log[expiry..]
+        .find("carrier_event name=udp_authenticated")
+        .map(|offset| expiry + offset)
+        .unwrap();
+    let resume = server_log.find("tcp_resume_validated").unwrap();
+    assert!(
+        expiry < second_auth && second_auth < resume,
+        "only the fresh post-expiry handshake may establish the guard used by resume: {server_log}"
+    );
+    assert!(String::from_utf8_lossy(&recovered.stdout).contains("failover_client_ok"));
+    assert!(server_log.contains("failover_server_ok"));
+    fs::remove_file(sp).unwrap();
+    fs::remove_file(cp).unwrap();
+}
+
+#[test]
 fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
