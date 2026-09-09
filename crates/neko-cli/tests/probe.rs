@@ -1961,11 +1961,11 @@ fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
         "{server_log}"
     );
     assert!(
-        server_log.contains("udp_noise_response_delayed_duplicate_sent"),
+        server_log.contains("udp_noise_response_delayed_duplicate_suppressed"),
         "{server_log}"
     );
     assert!(
-        client_log.contains("duplicate_noise_response"),
+        !client_log.contains("duplicate_noise_response"),
         "{client_log}"
     );
     // A duplicate Noise first-message must replay only the cached response. It

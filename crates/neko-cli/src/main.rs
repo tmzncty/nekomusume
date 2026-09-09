@@ -1057,6 +1057,7 @@ fn failover_server(args: &[String]) {
     let mut pending: Option<PendingUdpNegotiation> = None;
     let mut secure = None;
     let mut handshake_cache: Option<(Vec<u8>, Vec<u8>)> = None;
+    let mut handshake_admission: Option<preauth::AdmissionTicket> = None;
     let mut delayed_noise_duplicate_sent = false;
     let mut guard = None;
     let mut app = Vec::new();
@@ -1091,6 +1092,13 @@ fn failover_server(args: &[String]) {
                 // Process expiry atomically consumed both state and queue counts.
                 expired.queue.invalidate_after_process_expiry();
             }
+        }
+        if handshake_admission
+            .as_ref()
+            .is_some_and(|admission| admission.was_expired(&expired_states))
+        {
+            handshake_admission = None;
+            handshake_cache = None;
         }
         if secure.is_none() {
             if let Ok((n, peer)) = udp.recv_from(&mut buf) {
@@ -1160,7 +1168,7 @@ fn failover_server(args: &[String]) {
                     preauth
                         .dequeue(&mut authenticated.queue)
                         .unwrap_or_else(|_| fail("pre-auth queue release failed"));
-                    preauth.release(authenticated.admission);
+                    handshake_admission = Some(authenticated.admission);
                     println!(
                         "carrier_event name=udp_negotiated session=7001 generation=0 version=0"
                     );
@@ -1232,7 +1240,18 @@ fn failover_server(args: &[String]) {
                 }
                 if let Some((first, response)) = handshake_cache.as_ref() {
                     if buf[..n] == first[..] {
-                        udp.send_to(response, peer).unwrap();
+                        let admission = handshake_admission
+                            .as_mut()
+                            .unwrap_or_else(|| fail("pre-auth cached retry owner missing"));
+                        preauth
+                            .charge_input(admission, n, 4096)
+                            .unwrap_or_else(|_| fail("pre-auth cached retry input rejected"));
+                        let permit = preauth
+                            .charge_response(admission, response.len())
+                            .unwrap_or_else(|_| fail("pre-auth cached retry response rejected"));
+                        preauth
+                            .send_udp_response(&udp, response, peer, permit)
+                            .unwrap_or_else(|_| fail("pre-auth cached retry deadline elapsed"));
                         emit_diagnostic(args, "server", "udp_noise_response_retried", 0, "");
                         continue;
                     }
@@ -1277,18 +1296,19 @@ fn failover_server(args: &[String]) {
                                     .iter()
                                     .any(|a| a == "--delay-noise-duplicate-until-application")
                             {
-                                if let Some((_, response)) = handshake_cache.as_ref() {
-                                    udp.send_to(response, peer).unwrap();
-                                    delayed_noise_duplicate_sent = true;
-                                    emit_diagnostic(
-                                        args,
-                                        "server",
-                                        "udp_noise_response_delayed_duplicate_sent",
-                                        0,
-                                        "",
-                                    );
-                                }
+                                delayed_noise_duplicate_sent = true;
+                                emit_diagnostic(
+                                    args,
+                                    "server",
+                                    "udp_noise_response_delayed_duplicate_suppressed",
+                                    0,
+                                    ",\"reason\":\"authenticated_progress\"",
+                                );
                             }
+                            if let Some(admission) = handshake_admission.take() {
+                                preauth.release(admission);
+                            }
+                            handshake_cache = None;
                             if cease_udp_replies_after.is_none_or(|point| udp_replies < point) {
                                 udp.send_to(&ack, peer).unwrap();
                                 udp_replies += 1;
