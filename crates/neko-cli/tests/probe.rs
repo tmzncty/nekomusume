@@ -398,6 +398,94 @@ fn benchmark_payload_mode_fails_closed_outside_exact_contract() {
     let _ = fs::remove_file(identity_path);
 }
 
+#[cfg(unix)]
+#[test]
+fn identity_files_are_owner_only_regular_and_fail_closed() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let secure = tmp("identity-secure");
+    let permissive = tmp("identity-permissive");
+    let target = tmp("identity-symlink-target");
+    let link = tmp("identity-symlink");
+    for path in [&secure, &permissive, &target, &link] {
+        let _ = fs::remove_file(path);
+    }
+
+    let first = Command::new(bin)
+        .args(["keygen", "--identity", secure.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    assert_eq!(
+        fs::symlink_metadata(&secure).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let second = Command::new(bin)
+        .args(["keygen", "--identity", secure.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(second.status.success());
+    assert_eq!(first.stdout, second.stdout);
+
+    fs::copy(&secure, &permissive).unwrap();
+    fs::set_permissions(&permissive, fs::Permissions::from_mode(0o644)).unwrap();
+    let before = fs::read(&permissive).unwrap();
+    let rejected = Command::new(bin)
+        .args(["keygen", "--identity", permissive.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert_eq!(fs::read(&permissive).unwrap(), before);
+    assert_eq!(
+        fs::symlink_metadata(&permissive)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o644
+    );
+
+    fs::copy(&secure, &target).unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+    symlink(&target, &link).unwrap();
+    let target_before = fs::read(&target).unwrap();
+    let rejected = Command::new(bin)
+        .args(["keygen", "--identity", link.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert_eq!(fs::read(&target).unwrap(), target_before);
+
+    let client = tmp("identity-invalid-server-client");
+    let client_key = key(bin, &client);
+    let server = Command::new(bin)
+        .args([
+            "server",
+            "--transport",
+            "tcp",
+            "--bind",
+            "127.0.0.1:0",
+            "--identity",
+            permissive.to_str().unwrap(),
+            "--client-key",
+            &client_key,
+        ])
+        .output()
+        .unwrap();
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&server.stdout),
+        String::from_utf8_lossy(&server.stderr)
+    );
+    assert!(!server.status.success());
+    assert!(!log.contains("lifecycle_state=READY"), "{log}");
+
+    for path in [&secure, &permissive, &target, &link, &client] {
+        let _ = fs::remove_file(path);
+    }
+}
+
 #[test]
 fn invalid_bind_never_emits_ready() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());

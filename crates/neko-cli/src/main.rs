@@ -33,6 +33,7 @@ use signal_hook::{
 };
 use std::{
     env, fs,
+    fs::OpenOptions,
     io::{ErrorKind, Read, Write},
     net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket},
     path::PathBuf,
@@ -306,27 +307,55 @@ fn context(direction: u8) -> RecordContext {
         direction,
     }
 }
-fn load_or_generate(path: &PathBuf) -> LocalIdentity {
-    if let Ok(s) = fs::read_to_string(path) {
-        let p = s.trim().split(':').map(unhex).collect::<Vec<_>>();
-        if p.len() == 2 {
-            return LocalIdentity::from_keypair(&p[0], &p[1])
-                .unwrap_or_else(|_| fail("invalid identity file"));
-        }
-        fail("invalid identity file");
+fn read_identity(path: &PathBuf) -> Option<LocalIdentity> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return None,
+        Err(_) => fail("identity metadata failed"),
+    };
+    if !metadata.file_type().is_file() {
+        fail("identity must be a regular file");
     }
-    let id = LocalIdentity::generate().unwrap_or_else(|_| fail("identity generation failed"));
-    fs::write(
-        path,
-        format!("{}:{}\n", hex(id.private_key()), hex(id.public_key())),
-    )
-    .unwrap_or_else(|_| fail("identity write failed"));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-            .unwrap_or_else(|_| fail("identity permission failed"));
+        if metadata.permissions().mode() & 0o077 != 0 {
+            fail("identity permissions must be owner-only");
+        }
     }
+    let s = fs::read_to_string(path).unwrap_or_else(|_| fail("identity read failed"));
+    let p = s.trim().split(':').map(unhex).collect::<Vec<_>>();
+    if p.len() != 2 {
+        fail("invalid identity file");
+    }
+    Some(
+        LocalIdentity::from_keypair(&p[0], &p[1]).unwrap_or_else(|_| fail("invalid identity file")),
+    )
+}
+fn load_or_generate(path: &PathBuf) -> LocalIdentity {
+    if let Some(identity) = read_identity(path) {
+        return identity;
+    }
+    let id = LocalIdentity::generate().unwrap_or_else(|_| fail("identity generation failed"));
+    let material = format!("{}:{}\n", hex(id.private_key()), hex(id.public_key()));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            return read_identity(path).unwrap_or_else(|| fail("identity create race"));
+        }
+        Err(_) => fail("identity write failed"),
+    };
+    file.write_all(material.as_bytes())
+        .unwrap_or_else(|_| fail("identity write failed"));
+    file.sync_all()
+        .unwrap_or_else(|_| fail("identity sync failed"));
     id
 }
 fn parse(args: &[String], key: &str, default: Option<&str>) -> String {
