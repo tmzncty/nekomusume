@@ -1015,7 +1015,7 @@ pub struct PreauthInputRecordPermit {
 }
 
 /// One-shot ownership of a charged unauthenticated response send attempt.
-/// Dropping it abandons the response; charged accounting is intentionally retained.
+/// It must be explicitly completed or abandoned; charged accounting is intentionally retained.
 #[derive(Debug)]
 #[must_use = "a charged pre-auth response must be completed or explicitly abandoned"]
 pub struct PreauthResponsePermit {

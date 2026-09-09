@@ -409,12 +409,10 @@ impl ListenerAdmission {
                 return Err(());
             }
         };
-        let result = write_frame_until(stream, payload, frame_len, || self.now_ms(), deadline);
-        if result.is_err() {
-            let _ = self.process.abandon_response(permit);
-            return Err(());
-        }
-        if stream.set_write_timeout(previous_timeout).is_err() {
+        let write_result =
+            write_frame_until(stream, payload, frame_len, || self.now_ms(), deadline);
+        let restore_result = stream.set_write_timeout(previous_timeout);
+        if write_result.is_err() || restore_result.is_err() {
             let _ = self.process.abandon_response(permit);
             return Err(());
         }
