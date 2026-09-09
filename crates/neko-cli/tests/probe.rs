@@ -3,6 +3,9 @@ use neko_crypto::{
     TrustStatus,
 };
 use neko_wire::{NEGOTIATION_VERSION, NegotiationRole, VersionNegotiator};
+#[cfg(unix)]
+use std::os::unix::fs::{PermissionsExt, symlink};
+
 use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
@@ -27,6 +30,80 @@ fn key(bin: &str, path: &std::path::Path) -> String {
         .strip_prefix("client_public_key=")
         .unwrap()
         .to_string()
+}
+
+#[cfg(unix)]
+#[test]
+fn identity_files_are_created_and_reloaded_owner_only_and_invalid_paths_fail_closed() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let identity = tmp("identity-security");
+    let insecure = tmp("identity-insecure");
+    let link = tmp("identity-symlink");
+    for path in [&identity, &insecure, &link] {
+        let _ = fs::remove_file(path);
+    }
+
+    let first = Command::new(bin)
+        .args(["keygen", "--identity", identity.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    assert_eq!(
+        fs::metadata(&identity).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let second = Command::new(bin)
+        .args(["keygen", "--identity", identity.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(second.status.success());
+    assert_eq!(first.stdout, second.stdout);
+
+    fs::copy(&identity, &insecure).unwrap();
+    fs::set_permissions(&insecure, fs::Permissions::from_mode(0o644)).unwrap();
+    let insecure_before = fs::read(&insecure).unwrap();
+    let rejected = Command::new(bin)
+        .args(["keygen", "--identity", insecure.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert_eq!(fs::read(&insecure).unwrap(), insecure_before);
+    assert_eq!(
+        fs::metadata(&insecure).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+
+    symlink(&identity, &link).unwrap();
+    let target_before = fs::read(&identity).unwrap();
+    let rejected = Command::new(bin)
+        .args(["keygen", "--identity", link.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert_eq!(fs::read(&identity).unwrap(), target_before);
+
+    let server = Command::new(bin)
+        .args([
+            "server",
+            "--transport",
+            "tcp",
+            "--port",
+            "40080",
+            "--bind",
+            "127.0.0.1:40080",
+            "--identity",
+            insecure.to_str().unwrap(),
+            "--client-key",
+            &"00".repeat(32),
+        ])
+        .output()
+        .unwrap();
+    assert!(!server.status.success());
+    assert!(!String::from_utf8_lossy(&server.stdout).contains("readiness=true"));
+
+    for path in [&link, &insecure, &identity] {
+        let _ = fs::remove_file(path);
+    }
 }
 
 struct ReadyServer {
