@@ -1,8 +1,8 @@
-# Release item-4 subgate factual review — exact `5e68ad6`
+# Release item-4 subgate factual review — exact `b1b2552`
 
 ## Scope
 
-Developer-prepared factual review support for reachable exact commit `5e68ad6ee20654e5e3b1c8d62857b72d129d1870`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support for reachable exact commit `b1b2552181a995d0d9b73def7bcde6d71418a344`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
@@ -37,7 +37,7 @@ Developer-prepared factual review support for reachable exact commit `5e68ad6ee2
 
 ## Exact-tree gates
 
-On reachable exact `5e68ad6`, developer local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` and `git diff --check` passed with final clean-tree verification before this review-text update was committed. The same exact tree produced a native x86_64 archive whose packaged `capabilities --json` executed successfully under `smoke-package.sh`; provenance is retained in [`../local-package-smoke-5e68ad6-20260909.md`](../local-package-smoke-5e68ad6-20260909.md). Earlier local and GitHub-hosted runs remain separate evidence. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
+On reachable exact `b1b2552`, developer local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean-tree checks, the existing reproducibility workflow, and a native x86_64 package build/smoke all passed. The packaged `capabilities --json` executed successfully; complete local provenance is retained in [`../local-package-smoke-b1b2552-20260909.md`](../local-package-smoke-b1b2552-20260909.md). Exact `5e68ad6` remains a coarser historical local smoke, and hosted runs remain separate evidence. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
 
 ## Remaining release boundaries
 

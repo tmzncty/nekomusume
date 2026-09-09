@@ -49,7 +49,7 @@ For rollback, stop the explicitly managed process, atomically point `current` to
 
 ## Current-tree revalidation
 
-Exact `5e68ad6` aligns the executable help/capability inventory and was built and smoked locally as a native x86_64 package; its packaged `capabilities --json` executed successfully. See [`local-package-smoke-5e68ad6-20260909.md`](local-package-smoke-5e68ad6-20260909.md). This is developer local release-tool evidence, not independent review or release approval.
+Exact `b1b2552` aligns help, human capabilities and JSON capabilities with the canonical executable inventory, keeps failover aliases explicit, and removes a fixed-port collision from the stable local gate. Its complete local exact-tree chain passed stable checks, clean-tree validation, reproducibility, and native x86_64 package execution. See [`local-package-smoke-b1b2552-20260909.md`](local-package-smoke-b1b2552-20260909.md); exact `5e68ad6` remains coarser historical evidence. This is developer local release-tool evidence, not independent review or release approval.
 
 Exact `f19ad28` was rebuilt twice with identical archive identity and exercised through isolated authenticated TCP/UDP package smokes plus a same-tree immutable-directory symlink switch/rollback. See [`package-operator-current-tree-f19ad28-20260909.md`](package-operator-current-tree-f19ad28-20260909.md). This supplements rather than replaces the historical distinct-version N5 A→B→A evidence.
 
