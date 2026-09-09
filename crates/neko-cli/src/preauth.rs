@@ -661,6 +661,26 @@ mod tests {
     }
 
     #[test]
+    fn cached_response_retries_share_one_source_owned_packet_ceiling() {
+        let mut admission = ListenerAdmission::new();
+        let peer: SocketAddr = "127.0.0.1:40080".parse().unwrap();
+        let mut ticket = admission.admit_carrier(CarrierKind::Udp, peer).unwrap();
+        for _ in 0..4 {
+            admission.charge_input(&mut ticket, 64, 16).unwrap();
+        }
+        for attempt in 0..4 {
+            let permit = admission
+                .charge_response(&mut ticket, 64)
+                .unwrap_or_else(|_| panic!("response attempt {attempt} rejected"));
+            admission.suppress_charged_response(permit).unwrap();
+        }
+        assert!(admission.charge_response(&mut ticket, 1).is_err());
+        assert!(admission.charge_input(&mut ticket, 1, 1).is_err());
+        admission.release(ticket);
+        assert_eq!(admission.process.live_states(), 0);
+    }
+
+    #[test]
     fn response_deadline_preserves_an_earlier_socket_timeout() {
         let mut admission = ListenerAdmission::new();
         let peer: SocketAddr = "127.0.0.1:40080".parse().unwrap();

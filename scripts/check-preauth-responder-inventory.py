@@ -125,6 +125,7 @@ expected = {
     "multistream_tcp",
     "failover_udp_pending",
     "failover_udp_new",
+    "failover_udp_cached",
     "failover_tcp",
     "endpoint_rebind_udp",
 }

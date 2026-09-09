@@ -112,7 +112,7 @@
         ".send_udp_response(&udp, &resp",
         "pending.take()",
         ".dequeue(&mut authenticated.queue)",
-        "preauth.release(authenticated.admission)",
+        "handshake_admission = Some(authenticated.admission)",
         "udp_authenticated"
       ],
       "expiry_cleanup_anchor": "expired.queue.invalidate_after_process_expiry()",
@@ -152,6 +152,27 @@
       "pending_consumer_end": "} else {\n                    let mut admission = match preauth.admit_carrier",
       "pending_expiry_begin": "let expired_states = preauth.expire();",
       "pending_expiry_end": "if secure.is_none() {"
+    },
+    {
+      "id": "failover_udp_cached",
+      "file": "crates/neko-cli/src/main.rs",
+      "begin": "if let Some((ref mut ss, peer)) = secure {",
+      "end": "if let Ok((mut stream, peer)) = tcp.accept() {",
+      "carrier": "udp",
+      "pending_owner": false,
+      "ordered": [
+        "if let Some((first, response)) = handshake_cache.as_ref()",
+        "buf[..n] == first[..]",
+        "handshake_admission",
+        ".charge_input(admission, n, 4096)",
+        ".charge_response(admission, response.len())",
+        ".send_udp_response(&udp, response",
+        "ss.open_unreliable(&buf[..n])",
+        "ProcessMessage::Data",
+        "handshake_admission.take()",
+        "preauth.release(admission)",
+        "handshake_cache = None"
+      ]
     },
     {
       "id": "failover_tcp",

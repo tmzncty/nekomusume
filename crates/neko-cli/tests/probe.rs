@@ -1084,11 +1084,16 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     let before = process_resource_snapshot(pid);
     let malformed = [b'N', b'1', 1, 1, 0];
     const ATTEMPTS: usize = 8;
-    for _ in 0..ATTEMPTS {
-        UdpSocket::bind("127.0.0.1:0")
-            .unwrap()
-            .send_to(&malformed, ("127.0.0.1", udp))
-            .unwrap();
+    let senders: Vec<_> = (0..ATTEMPTS)
+        .map(|_| UdpSocket::bind("127.0.0.1:0").unwrap())
+        .collect();
+    let source_ports: std::collections::BTreeSet<_> = senders
+        .iter()
+        .map(|socket| socket.local_addr().unwrap().port())
+        .collect();
+    assert_eq!(source_ports.len(), ATTEMPTS);
+    for sender in &senders {
+        sender.send_to(&malformed, ("127.0.0.1", udp)).unwrap();
     }
     thread::sleep(Duration::from_millis(100));
     let after = process_resource_snapshot(pid);
@@ -1136,8 +1141,10 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     assert!(log.contains("failover_server_ok"));
     drop(UdpSocket::bind(("127.0.0.1", udp)).unwrap());
     drop(TcpListener::bind(("127.0.0.1", tcp)).unwrap());
-    let _ = fs::remove_file(sp);
-    let _ = fs::remove_file(cp);
+    fs::remove_file(&sp).unwrap();
+    fs::remove_file(&cp).unwrap();
+    assert!(!sp.exists());
+    assert!(!cp.exists());
 }
 
 #[test]
