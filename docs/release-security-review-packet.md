@@ -2,7 +2,7 @@
 
 **Scope:** evidence index only. This is not an audit, security approval, production authorization, protocol freeze, or release decision.
 
-**Evidence indexed and developer local gates rerun through reachable exact commit:** `9695621049acc22f3556c04f1d92f08b7548e514`
+**Evidence indexed and developer local gates rerun through reachable exact commit:** `fe4c85a2213cd57f7ca6d1d3a6cd1b7a48bfc4ee`
 
 The packet text is updated after that tested tree; it is not a self-referential commit attestation. Developer local-CI provenance for the package source-state guard and reproducibility workflow is retained in [`docs/local-ci-0a81d99-20260909.md`](local-ci-0a81d99-20260909.md). Complete exact-current CLI/package validation, including distinct UTC timestamps, clean-tree checks, reproducibility, and native execution of the produced package, is retained in [`docs/local-package-smoke-b1b2552-20260909.md`](local-package-smoke-b1b2552-20260909.md); exact `5e68ad6` remains a coarser historical local smoke, and hosted runs remain separate evidence.
 

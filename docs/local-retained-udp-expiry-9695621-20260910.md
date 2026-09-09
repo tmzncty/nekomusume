@@ -1,6 +1,6 @@
 # Local retained UDP expiry closure — `9695621`
 
-Developer-run exact-tree validation of reachable implementation/test commit `9695621049acc22f3556c04f1d92f08b7548e514`.
+Developer-run exact-tree validation first passed at reachable implementation/test commit `9695621049acc22f3556c04f1d92f08b7548e514`. After a concurrent equivalent process regression was retained and the duplicate test removed, replacement exact `fe4c85a2213cd57f7ca6d1d3a6cd1b7a48bfc4ee` passed the same full gate.
 
 ## Terminal expiry evidence
 
@@ -18,7 +18,7 @@ The `--test-first-data-delay-ms` option is a bounded test seam (`0..=2000` ms); 
 
 - `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`: exit `0`
 - `git diff --check`: exit `0`
-- gate: `2026-09-09T22:13:58Z` -> `2026-09-09T22:15:52Z`
+- final replacement gate: `2026-09-09T22:20:14Z` -> `2026-09-09T22:22:10Z`
 - host: `Linux 6.8.0-137-generic x86_64`
 - Rust: `rustc 1.98.0 (88d9e12ae 2026-08-18)`
 - initial/final source tree: clean
