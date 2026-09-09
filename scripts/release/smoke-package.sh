@@ -27,8 +27,32 @@ done
 EXPECTED=$(printf '%s\n' "$ROOT_NAME" "$ROOT_NAME/bin" "$ROOT_NAME/bin/neko-cli" "$ROOT_NAME/share" "$ROOT_NAME/share/doc" "$ROOT_NAME/share/doc/nekomusume" "$ROOT_NAME/share/doc/nekomusume/LICENSE-APACHE" "$ROOT_NAME/share/doc/nekomusume/LICENSE-MIT" "$ROOT_NAME/share/doc/nekomusume/README.txt" "$ROOT_NAME/SHA256SUMS" | sort)
 ACTUAL=$(printf '%s\n' "${MEMBERS[@]}" | sort)
 [ "$EXPECTED" = "$ACTUAL" ] || { echo "unexpected package layout" >&2; exit 1; }
-# GNU tar's mode column starts with the member kind: only directories and regular files are allowed.
-tar -tvzf "$ARCHIVE" | awk '$1 !~ /^[-d]/ {bad=1} END {exit bad}' || { echo "non-regular archive member" >&2; exit 1; }
+# Validate archive kinds and exact builder modes before extraction; umask must not normalize bad metadata into acceptance.
+python3 - "$ARCHIVE" "$ROOT_NAME" <<'PY'
+import stat, sys, tarfile
+archive, root = sys.argv[1:]
+expected = {
+    root: (stat.S_IFDIR, 0o755),
+    f"{root}/bin": (stat.S_IFDIR, 0o755),
+    f"{root}/bin/neko-cli": (stat.S_IFREG, 0o755),
+    f"{root}/share": (stat.S_IFDIR, 0o755),
+    f"{root}/share/doc": (stat.S_IFDIR, 0o755),
+    f"{root}/share/doc/nekomusume": (stat.S_IFDIR, 0o755),
+    f"{root}/share/doc/nekomusume/LICENSE-APACHE": (stat.S_IFREG, 0o644),
+    f"{root}/share/doc/nekomusume/LICENSE-MIT": (stat.S_IFREG, 0o644),
+    f"{root}/share/doc/nekomusume/README.txt": (stat.S_IFREG, 0o644),
+    f"{root}/SHA256SUMS": (stat.S_IFREG, 0o644),
+}
+with tarfile.open(archive, "r:gz") as stream:
+    members = stream.getmembers()
+    if len(members) != len(expected) or {item.name for item in members} != set(expected):
+        raise SystemExit("archive member set changed during metadata validation")
+    for item in members:
+        kind, mode = expected[item.name]
+        expected_type = tarfile.DIRTYPE if kind == stat.S_IFDIR else tarfile.REGTYPE
+        if item.mode != mode or item.type != expected_type:
+            raise SystemExit(f"unexpected archive mode or type: {item.name}")
+PY
 tar -xzf "$ARCHIVE" -C "$TMP" --no-same-owner --no-same-permissions
 ROOT="$TMP/$ROOT_NAME"
 [ -d "$ROOT" ] && [ "$(find "$TMP" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]

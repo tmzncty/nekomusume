@@ -30,10 +30,15 @@ elif variant == "checksum-unexpected":
 files["SHA256SUMS"] = checksums.encode()
 dirs = [root, f"{root}/bin", f"{root}/share", f"{root}/share/doc", f"{root}/share/doc/nekomusume"]
 with tarfile.open(out, "w:gz") as archive:
-    for name in dirs:
+    if variant == "bad-dir-mode":
+        dirs[1] = (dirs[1], 0o777)
+    else:
+        dirs = [(name, 0o755) for name in dirs]
+    for entry in dirs:
+        name, mode = entry if isinstance(entry, tuple) else (entry, 0o755)
         info = tarfile.TarInfo(name)
         info.type = tarfile.DIRTYPE
-        info.mode = 0o755
+        info.mode = mode
         archive.addfile(info)
     for relative, data in files.items():
         name = f"{root}/{relative}"
@@ -41,6 +46,14 @@ with tarfile.open(out, "w:gz") as archive:
         info.mode = 0o755 if relative == "bin/neko-cli" else 0o644
         if variant == "bad-mode" and relative == "share/doc/nekomusume/README.txt":
             info.mode = 0o600
+        if variant == "bad-exec-mode" and relative == "bin/neko-cli":
+            info.mode = 0o777
+        if variant == "bad-doc-mode" and relative == "share/doc/nekomusume/README.txt":
+            info.mode = 0o666
+        if variant == "bad-checksum-mode" and relative == "SHA256SUMS":
+            info.mode = 0o666
+        if variant == "bad-dir-mode" and relative == "share/doc/nekomusume/LICENSE-MIT":
+            pass
         if variant == "symlink" and relative == "share/doc/nekomusume/README.txt":
             info.type = tarfile.SYMTYPE
             info.linkname = "/etc/passwd"
@@ -80,7 +93,7 @@ expect_reject() {
 }
 make_archive valid
 "$ROOT/scripts/release/smoke-package.sh" "$TMP/valid.tar.gz" | grep -q 'execution skipped'
-for case in root-traversal root-slash root-prefix traversal symlink hardlink fifo unexpected bad-checksum bad-mode checksum-traversal checksum-absolute checksum-duplicate checksum-unexpected; do
+for case in root-traversal root-slash root-prefix traversal symlink hardlink fifo unexpected bad-checksum bad-mode bad-exec-mode bad-doc-mode bad-checksum-mode bad-dir-mode checksum-traversal checksum-absolute checksum-duplicate checksum-unexpected; do
   expect_reject "$case"
 done
 echo package-smoke-regressions-ok
