@@ -2,7 +2,7 @@
 
 ## Current exact-tree reconciliation — `6952fa9` lineage
 
-**Engineering evidence state:** `ENGINEERING_CONTROLS_REVIEWED` for the bounded non-policy pre-auth controls through exact `81edd7ba358562e5e6013f889b76e3243dff44fe`: source tuple projection, charge-before-parse and exact response charging, all eight inventoried responder surfaces/seven admission sites, sibling-scoped pending-owner inventory, controller/state/attempt-bound one-pending response permits, atomic rollback and terminalization, source/global concurrency ceilings, expiry/release/error cleanup, earliest-bound response deadlines, and aggregate-only secret-safe diagnostics. This is a bounded exact-tree engineering review, not an independent security audit or adversarial-load/capacity approval.
+**Engineering evidence state:** `ENGINEERING_CONTROLS_REVIEWED` for the bounded non-policy pre-auth controls and model/process observation through exact `21e42af49a9bbe639aefa3dca887e17b03cad07c`: source tuple projection, charge-before-parse and exact response charging, all eight inventoried responder surfaces/seven admission sites, sibling-scoped pending-owner inventory, controller/state/attempt-bound one-pending response permits, atomic rollback and terminalization, source/global concurrency ceilings, expiry/release/error cleanup, earliest-bound response deadlines, and aggregate-only secret-safe diagnostics. This is a bounded exact-tree engineering review, not an independent security audit or adversarial-load/capacity approval.
 
 **Policy state:** `SOURCE_RETENTION_POLICY_BLOCKED`. D019 terminal source-accounting retention after the last live state disappears remains unresolved; the current release/reopen behavior is retained as evidence of that conflict, not compliance. No TTL/LRU/history bound, external authority, or D019 weakening is selected here.
 
@@ -14,7 +14,7 @@
 
 ## Findings
 
-### RSEC-001 — Pre-auth admission is integrated; one bounded response observation exists, while adversarial-load suitability and promotion remain absent
+### RSEC-001 — Pre-auth admission and bounded model/process recovery observations exist; adversarial-load suitability and promotion remain absent
 
 **Severity:** HIGH for release/security promotion; does not invalidate bounded authenticated research probes.
 
@@ -24,7 +24,7 @@
 
 This is implementation and deterministic/process-test evidence, not independent security review, adversarial load evidence, production-capacity validation, or proof that candidate numeric values are suitable for public deployment. The executable remains a bounded temporary research probe and must not be promoted to a public listener, RC, production-capacity or security-approved service.
 
-Exact `f74b823` adds one bounded deterministic response-accounting observation at the existing test limits: an abandoned charged attempt remains at 3 bytes / 1 packet, and the first max-plus-one operation rejects atomically without counters exceeding that ceiling. This is not adversarial-load capacity/suitability evidence and does not recommend candidate values.
+Exact `f74b823` adds one bounded deterministic response-accounting observation at the small test limits. Exact `21e42af` adds compact checks at the unchanged default candidate boundaries (8 same-source states, 1,024 global states, 256 queued states and 2,048 response bytes / 4 packets) plus one real-process recovery observation: eight five-byte malformed UDP attempts from truthful distinct ephemeral source ports, followed by one successful authenticated 16-byte exchange in the same long-lived server process, bounded Linux FD/RSS observations where `/proc` exists, and listener/identity cleanup. These are not adversarial-load capacity/suitability evidence and do not recommend candidate values.
 
 **Required evidence to close the promotion finding:** representative bounded adversarial-load evidence, suitability review of candidate limits, and a separate release/security decision. The exact-tree engineering review below does not change those requirements or candidate numeric limits.
 
