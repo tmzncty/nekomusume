@@ -1,68 +1,72 @@
-# ChatGPT reviewer handoff — finish identity/config validation across all persistent-key command paths
+# ChatGPT reviewer handoff — close cross-command identity evidence, then repair canonical failover CLI
 
 ## Reviewed state
 
-- Previous reviewer-owned handoff: exact `f2a4ba021dd36260d86f710eb6a20dc68b5e2773` (`docs(handoff): finish identity config boundary before next output`).
-- Current developer-owned head reviewed this cycle: exact `489c345542414aebc726bea6dc5e7e714478061f` (`fix: finish identity configuration validation`).
-- `main` was exactly `489c345542414aebc726bea6dc5e7e714478061f` before this reviewer-only handoff update.
-- New developer commit since the previous handoff:
-  - `489c345542414aebc726bea6dc5e7e714478061f` — adds one `peer_public_key()` helper that requires exactly 32 decoded bytes, uses it on ordinary `server`/`client` and `failover_client`, makes new identity creation set exact `0600` on the already-open file before writing private bytes, and adds ordinary server/client short/long-key plus restrictive-umask regressions.
-- GitHub-hosted cross-evidence exists for exact `489c345`: Rust CI run `34333768173` completed successfully. Its `stable checks` job ran `bash scripts/check.sh` successfully; its pinned nightly decode fuzz-smoke job also completed successfully. This is hosted cross-evidence only, not developer-local exact-tree CI and not reviewer-executed CI.
-- No developer-local exact-`489c345` provenance note exists yet. Do not treat the hosted run as a substitute for the local-CI-first closure requested below.
+- Previous reviewer-owned handoff: exact `c03b69d1579d80e8719e4eec2f7c4f30e2c9f651` (`docs(handoff): finish identity validation across command paths`).
+- Current developer-owned docs head reviewed this cycle: exact `29f2132cf75cf1234021467505e0c75fea51ef66` (`docs: close cross-command identity provenance`).
+- Developer sequence since the previous reviewer handoff:
+  - `ad3059c9e31434adfb1b94e5dfa899cc4851c3ef` — persists local exact-`489c345` identity/config evidence and renames the stale exact-`0e664d6` identity-security note.
+  - `3164030d428fb4b9ff8db90bd9ddd3fc49e473a0` — reorders deterministic failover/endpoint-rebind bind/address and peer-key validation before persistent identity creation, and routes those peer keys through the shared exact-32-byte parser.
+  - `29f2132cf75cf1234021467505e0c75fea51ef66` — re-anchors release-facing identity prose to exact `3164030`.
+- Exact `3164030` has GitHub-hosted Rust CI run `34345047449` with successful `stable checks` (`bash scripts/check.sh`) and successful pinned nightly decode fuzz smoke. This is **hosted cross-evidence only**. It is not developer-local exact-tree provenance and is not reviewer-executed CI.
 - Work branches remain stale coordination artifacts:
-  - `work/e1a-staged-accounting-20260907` = `f4404257520e9a014ac4e785b0ab9a97f8aaf794`; current main is 78 commits ahead and the branch has no unique work.
-  - `work/continue-20260904` = `d271a99a2ab26abbcb146c411ba0fde697395abe`; it is a diverged historical branch with current main 162 commits ahead and one old branch-only commit. Do not merge either merely to manufacture work.
+  - `work/e1a-staged-accounting-20260907` = `f4404257520e9a014ac4e785b0ab9a97f8aaf794`; current main contains it and is 82 commits ahead.
+  - `work/continue-20260904` = `d271a99a2ab26abbcb146c411ba0fde697395abe`; current main is 166 commits ahead while the branch retains one old unique commit. Do not merge either merely to manufacture work.
 
 ## Review verdict
 
-### ACCEPT — exact 32-byte peer-key parsing for ordinary `server` / `client`
+### ACCEPT — cross-command implementation ordering at exact `3164030`
 
-Exact `489c345` correctly centralizes static peer-key decoding in `peer_public_key()` and requires exactly 32 bytes after hex decoding. Ordinary `server` validates `--client-key` before `load_or_generate`; ordinary `client` validates address, peer key and bounded payload configuration before identity creation. The new process negatives for 31/33-byte valid-hex keys therefore close the specific ordinary server/client side-effect gap described by the previous handoff.
+The implementation repair is the intended minimal shape and does not change Session, Carrier, ACK, Noise, crypto framing, or wire semantics:
 
-### ACCEPT — exact `0600` before private-byte write under restrictive umask
+- `failover_server` now parses both bind addresses and validates `--client-key` with the shared exact-32-byte peer-key helper before `load_or_generate`;
+- `failover_client` parses the target address and validates `--server-key` before identity creation;
+- `endpoint_rebind_server` parses its bind address and validates `--client-key` before identity creation;
+- `endpoint_rebind_client` validates the already-address-parsed `--server-key` before identity creation.
 
-The new-file branch retains `create_new(true)`, then sets permissions through the already-open `File` descriptor to exact `0600` before `write_all(material)`. If the permission operation fails, private bytes have not yet been written. The isolated `umask 0777` process regression proves first creation ends at exact `0600` and a second invocation reloads the same identity. This is the intended minimal repair; do not add a broader parent-directory or filesystem policy without a concrete threat requirement.
+The adjacent source review now finds ordinary server/client, failover server/client, and endpoint-rebind server/client performing deterministic peer-key/address/bind validation before persistent identity creation. `keygen` has no remote peer/address configuration to prevalidate. If focused process tests below remain green, the identity/config audit lane should be closed rather than expanded into new filesystem policy.
 
-### HIGH / READY_LOCAL — persistent-key validation is still incomplete on `failover` and `endpoint-rebind` command paths
+### HIGH / READY_LOCAL — exact-tree local provenance and focused cross-command regression claims are not yet closed
 
-The identity/config lane must **not** be declared closed yet. The bounded adjacent review found the same persistent-side-effect invariant still violated by other real CLI paths:
+Do **not** treat `29f2132` as a completed release-facing closure yet.
 
-- `failover_server` calls `load_or_generate(...)` **before** parsing `--client-key`; it still uses raw `unhex()` rather than `peer_public_key()`. It also parses `--udp-bind` / `--tcp-bind` only after identity creation. Therefore malformed hex, valid-hex wrong-length trust keys, or malformed bind addresses can create a long-term identity before deterministic local configuration rejection.
-- `failover_client` now uses `peer_public_key()`, but still calls `load_or_generate(...)` first and only afterwards validates the peer-key size and formats the target `SocketAddr`. A short/long valid-hex key or malformed `--addr` can therefore still leave a persistent identity behind before deterministic failure.
-- `endpoint_rebind_server` calls `load_or_generate(...)` before parsing/validating `--client-key` and before its UDP bind is validated. It still uses raw `unhex()` for the trust key.
-- `endpoint_rebind_client` parses the remote target before identity creation, which is good, but still calls `load_or_generate(...)` before parsing/validating `--server-key`, and still uses raw `unhex()`.
+Current release-facing docs say their reviewed/tested tree is exact `3164030`, but the repository does not retain a developer-local exact-`3164030` CI/provenance note. The existing `docs/local-identity-config-489c345-20260909.md` predates the cross-command implementation repair and therefore cannot attest the changed failover/endpoint-rebind code.
 
-This is not a new wire/crypto/session policy. It is the same already-established operator invariant: purely deterministic local configuration failure must not create a persistent long-term secret as a side effect. Because the current release packet indexes the local identity boundary as a release/security-review subgate, this cross-command gap is a **HIGH release-correctness finding** even though it is not a remote exploit claim.
+There is also an internal exact-tree inconsistency in `docs/reviews/release-item4-subgates-20260909.md`: its title/scope say exact `3164030`, while its `Exact-tree gates` paragraph still says the developer-local gate was run on exact `489c345` and cites the `489c345` evidence note. Hosted run `34345047449` does not repair that local-provenance mismatch.
 
-Minimal repair shape:
+Finally, exact `3164030` changed only `crates/neko-cli/src/main.rs`; it did not add the focused failover/endpoint-rebind process-negative matrix requested by the previous handoff. Existing generic invalid-configuration coverage is not a substitute for proving every newly reordered command family.
 
-- before every `load_or_generate` in `failover_server`, `failover_client`, `endpoint_rebind_server`, and `endpoint_rebind_client`, parse and validate all peer public keys and all deterministic socket-address/bind syntax that can be rejected without network I/O;
-- use `peer_public_key()` for all long-term remote public-key inputs; do not keep a parallel raw-`unhex()` trust path;
-- a small prevalidated config struct is acceptable if it reduces ordering drift, but a simple reorder is preferred if it stays clearer and smaller;
-- do not change Noise/authentication, Session, Carrier, ACK, failover or wire semantics;
-- do not move actual bind/connect/network-reachability failure before identity creation unless doing so is required by the local parse contract. The requirement is deterministic **parse/validation**, not pre-performing network I/O.
+This is a **HIGH release/evidence correctness finding**, not a claim that the implementation logic itself is currently wrong. The fix is tests + exact-tree local evidence + factual reconciliation, not another security framework.
 
-Minimum process negatives, all with previously nonexistent temp identity paths and assertions that the paths remain absent:
+Minimum focused regression matrix, preferably table-driven to avoid duplication. Every case starts with a nonexistent temp identity path, exits nonzero, and asserts that the identity remains absent:
 
-1. `failover` server: malformed hex and valid-hex 31/33-byte `--client-key`;
-2. `failover` client: valid-hex 31/33-byte `--server-key` and malformed address syntax;
-3. `endpoint-rebind-server`: valid-hex 31/33-byte `--client-key` and malformed bind syntax;
-4. `endpoint-rebind-client`: valid-hex 31/33-byte `--server-key`;
-5. keep ordinary server/client invalid-config and restrictive-umask coverage green.
+1. `failover-server`: malformed hex and valid-hex 31/33-byte `--client-key`; malformed `--udp-bind`; malformed `--tcp-bind`.
+2. `failover-client`: valid-hex 31/33-byte `--server-key`; malformed address/target syntax.
+3. `endpoint-rebind-server`: valid-hex 31/33-byte `--client-key`; malformed bind syntax.
+4. `endpoint-rebind-client`: valid-hex 31/33-byte `--server-key`.
+5. Keep ordinary server/client invalid-config, restrictive-umask exact-0600, descriptor-bound reload, symlink/special/insecure-mode rejection, and valid command paths green.
 
-Do not continue to an unrelated output until this HIGH is closed.
+If these tests expose a missed ordering defect, repair it in the same coherent developer slice. Otherwise do not churn the already-correct implementation.
 
-### MEDIUM / FACTUAL PROVENANCE — exact `489c345` still lacks developer-local exact-tree closure
+### MEDIUM / READY_LOCAL / VISIBLE OUTPUT — advertised canonical `failover` command is not actually executable
 
-Hosted run `34333768173` is useful cross-evidence, but the repository's local-CI-first policy requires the final coherent implementation SHA to be validated in a clean local exact-tree checkout and to retain minimum provenance when used for release-facing factual closure. Because the HIGH above requires another implementation commit, do **not** spend time creating a standalone local-evidence note for `489c345`; gate the final replacement implementation SHA once after the cross-command repair.
+After the HIGH above closes, switch away from identity auditing to a visible operator/runtime output.
 
-### LOW / FACTUAL HYGIENE — stale identity evidence filename remains
+Current CLI help and both human/JSON capability reports advertise `failover` as the canonical command and describe `failover-server|failover-client` as legacy aliases. Dispatch also sends `failover` into `failover_gate`. But `failover_gate` only accepts `failover-server` or `failover-client`; the canonical `neko failover ...` path always fails with `use failover-server or failover-client`.
 
-`docs/local-identity-security-e5aeef2-20260909.md` still carries an obsolete/non-reachable token in its basename even though its contents now anchor real exact `0e664d6`. Rename it during the factual reconciliation and update links. Do not rerun CI or VPS evidence merely to rename the file.
+This is a concrete CLI contract drift, not a wire/protocol design issue. The coding agent should run a short proposal cycle and autonomously choose the smallest fail-closed repair. Acceptable shapes include:
+
+1. `neko failover --role server|client` delegating to the existing implementations;
+2. `neko failover server|client` as a subcommand form;
+3. if strictly smaller and clearer, stop pretending `failover` is canonical and make the two role-specific commands canonical everywhere.
+
+Choose the option with the least new parsing/state/API and clearest compatibility behavior. No maintainer approval is needed unless the proposed shape unexpectedly changes core protocol semantics or introduces a value/policy decision.
+
+Minimum tests: the canonical surface must route to the intended existing role behavior; missing/unknown role must fail before persistent identity side effects; help/human capabilities/JSON capabilities/dispatch must describe the same canonical-vs-alias contract. Do not add a new command-registry framework unless the minimal repair genuinely needs it.
 
 ## Local-CI-first rule
 
-For coherent READY_LOCAL implementation/test commits, do not poll or wait for GitHub Actions. Validate the **exact pushed implementation SHA** in a clean temporary worktree/clone.
+For coherent READY_LOCAL implementation/test commits, do not poll or wait for GitHub Actions. Validate the **exact pushed developer SHA** in a clean temporary worktree/clone.
 
 Minimum default gate:
 
@@ -72,31 +76,29 @@ git diff --check
 git status --porcelain   # must be empty
 ```
 
-Retain exact SHA, exact commands, distinct UTC start/end timestamps, exits, host/OS/arch, Rust stable version, and initial/final clean-tree state when the result anchors release evidence. Label developer-local CI, reviewer-executed checks and hosted CI separately.
+When the result anchors release-facing facts, retain exact SHA, commands, distinct UTC start/end timestamps, exits, host/OS/arch, stable Rust version, and initial/final clean-tree state. Label developer-local CI, persisted local provenance, reviewer-executed checks, and GitHub-hosted CI separately.
 
-The identity/config repair does not change wire decode/parser/crypto framing, so no additional fuzz requirement is introduced by this handoff. The successful hosted fuzz job for `489c345` remains only supplemental cross-evidence.
+The identity ordering/test slice and canonical-failover CLI dispatch slice do not touch wire decoder/parser/crypto framing, so this handoff introduces no extra fuzz requirement. Existing hosted fuzz success is supplemental only.
 
 ## Rolling queue — execute continuously in dependency order
 
-There is one unresolved HIGH. Execute A -> B -> C -> D -> E continuously. After E, execute F -> G -> H without waiting for another reviewer cycle if the selected local output remains dependency-ready. I is conditional live work; J remains policy-blocked. Do not enter watcher/polling mode merely because `READY_LIVE: none`.
+There is one unresolved HIGH. Execute A -> B -> C -> D continuously. Then execute E -> F -> G -> H -> I without waiting for another reviewer cycle when dependencies remain satisfied. J is conditional live work; K remains policy-blocked. Do not enter watcher/polling mode merely because the reviewer interval has not arrived.
 
-### A. HIGH / READY_LOCAL — make deterministic identity side effects consistent across all network command families
+### A. HIGH / READY_LOCAL — add the missing cross-command identity/config regression matrix
 
-**Goal:** no deterministic peer-key/address/bind parse failure in ordinary, failover, or endpoint-rebind command paths may create a persistent identity.
+**Goal:** prove the exact `3164030` ordering behavior across every changed command family, and repair only if a focused test exposes a real defect.
 
-**Files/concepts:** `crates/neko-cli/src/main.rs`, focused process coverage in `crates/neko-cli/tests/probe.rs`.
+**Files/concepts:** `crates/neko-cli/tests/probe.rs`; `crates/neko-cli/src/main.rs` only if a test fails for a real ordering reason.
 
-**Protected invariants:** no Session/Carrier/ACK/crypto/wire semantic change; no private-key logging; valid command paths still auto-generate identities; actual network reachability/bind/connect remains a later runtime boundary.
+**Protected invariants:** deterministic local parse failures create no persistent identity; valid paths still auto-generate identities; actual bind/connect/reachability remains a later runtime boundary; no Session/Carrier/ACK/crypto/wire change.
 
-**Implementation:** prevalidate peer public keys with `peer_public_key()` and deterministic address/bind syntax before `load_or_generate` in `failover_server`, `failover_client`, `endpoint_rebind_server`, and `endpoint_rebind_client`. Prefer the smallest ordering/config abstraction that avoids another command-family drift.
+**Tests:** use the matrix in the HIGH finding. Prefer one table-driven process test over many near-duplicates.
 
-**Tests:** the negative matrix listed in the HIGH finding plus all existing identity filesystem/config tests.
+**Commit/push:** one coherent developer-owned test/repair commit. Continue immediately to B.
 
-**Commit/push:** one coherent implementation/test commit. Continue immediately to B.
+### B. READY_LOCAL — exact-tree local gate and minimal packaged operator smoke
 
-### B. READY_LOCAL — exact-tree local gate and minimal operator smoke for A + exact-0600 creation
-
-Validate the exact pushed A implementation SHA in a clean temporary checkout with:
+On the exact pushed A SHA, in a clean temporary checkout, run:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
@@ -104,97 +106,95 @@ git diff --check
 git status --porcelain
 ```
 
-Record distinct UTC start/end, host/OS/arch, stable Rust version, exact exits and clean-tree state. No hosted-CI wait.
+Persist minimum provenance with distinct UTC start/end, host/OS/arch, stable Rust, exact exits and initial/final clean state. Do not wait for Actions.
 
-Because this changes packaged CLI/operator behavior, build one native x86_64 package outside the source tree and smoke only materially relevant facts:
+Because this is release-facing CLI behavior, build one native x86_64 package outside the source tree and smoke only materially relevant facts:
 
-- restrictive-umask keygen creates exact `0600` and stable reload;
-- one ordinary wrong-length peer-key invocation leaves no identity;
+- restrictive-umask keygen still creates exact `0600` and stable reload;
+- one ordinary wrong-length peer key leaves no identity;
 - one failover or endpoint-rebind wrong-length/malformed deterministic invocation leaves no identity.
 
 Do not create another generic package checker. Continue immediately to C.
 
-### C. READY_LOCAL / FACTUAL RECONCILIATION — re-anchor identity/release review facts
+### C. READY_LOCAL / FACTUAL RECONCILIATION — repair exact-tree claims
 
 Refresh only affected facts in:
 
 - `docs/release-engineering.md`;
 - `docs/release-security-review-packet.md`;
 - `docs/reviews/release-item4-subgates-20260909.md`;
-- the local identity/config evidence note(s).
+- the local identity/config evidence note.
 
-Re-anchor the tested implementation tree to the real exact SHA from A/B and cite the retained local-CI/operator evidence. Preserve the distinction between developer-local CI, hosted cross-evidence and independent review.
+The header/scope and `Exact-tree gates` paragraph must point to the same real tested developer SHA from A/B. Cite the persisted local evidence. Keep hosted run `34345047449` separate if mentioned. Do not describe exact `3164030` as developer-local CI unless an actual exact-316 local record is retained; normally the A test commit will supersede it as the tested tree.
 
-Rename `docs/local-identity-security-e5aeef2-20260909.md` to an exact-`0e664d6` basename and update links. Do not invent a rerun for the renamed historical evidence.
-
-Preserve `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, independent-review absence, D019 blockage and all WAN claim boundaries.
+Preserve `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, item-3 incompleteness, independent-review absence, D019 blockage, and all WAN/performance boundaries.
 
 Continue immediately to D.
 
-### D. BOUNDED REVIEW CLOSURE — close the identity/config lane unless one concrete defect remains
+### D. BOUNDED REVIEW CLOSURE — close the identity/config lane
 
-Perform exactly one bounded adjacent review over **all** `load_or_generate` call sites and their immediately preceding deterministic argument parsing for:
+Perform exactly one final bounded inspection of all `load_or_generate` call sites and their immediately preceding deterministic argument parsing. Check only:
 
-- parse/validation still occurring after persistent secret creation;
-- raw remote-key parsing bypassing the shared exact-32-byte helper;
-- secret material in stdout/stderr/logging;
-- mutation-before-error on identity files;
-- readiness state being announced before configuration/identity prerequisites.
+- peer/address/bind validation after secret creation;
+- raw remote-key parsing bypassing the exact-32-byte helper;
+- secret material in output/logging;
+- identity mutation before a deterministic error;
+- readiness announced before configuration/identity prerequisites.
 
-If no additional concrete defect is demonstrable without inventing new filesystem/security policy, explicitly close the identity/config audit lane. Do not expand into parent-directory policy, hard-link frameworks, generic secret-memory hardening or a new checker suite.
+If A/B pass and no concrete defect remains, explicitly close the identity/config lane. Do **not** expand into parent-directory policy, hard-link frameworks, generic in-memory secret hardening, or another checker suite.
 
 Continue immediately to E.
 
-### E. LOCAL OUTPUT SELECTION — propose 1–3 concrete next visible outputs and choose one autonomously
+### E. READY_LOCAL / PROPOSAL — choose the canonical `failover` CLI repair
 
-Re-read exact-current `docs/status.md`, `IMPLEMENTATION_PLAN.md`, `ROADMAP.md`, release packet and implementation. Current release-evidence item 3 still classifies `READY_LIVE: none`; item 4 still lacks independent review and D019 policy closure. Do not invent WAN work or a fake release gate.
+Record a short 1–3-option proposal in a developer-owned implementation note or commit message. State canonical shape, legacy alias behavior, side-effect ordering, and minimum tests. Autonomously select the smallest fail-closed option; do not wait for reviewer approval.
 
-If no already-named dependency-ready local output exists, propose 1–3 **specific** runtime/operator/release-correctness outputs grounded in an observed code/evidence gap. For each proposal name:
+Continue immediately to F.
 
-- exact output/problem;
-- owner file/API;
-- protected invariant;
-- minimum positive/negative test;
-- whether it changes core architecture, wire/crypto semantics or numeric security policy.
+### F. READY_LOCAL / VISIBLE OUTPUT — make canonical failover CLI truthful and usable
 
-Autonomously choose the smallest option requiring no maintainer value decision. Record the short proposal/choice in a developer-owned implementation note or commit message; do not wait for reviewer pre-approval.
+Implement the selected E shape by reusing existing `failover_server` / `failover_client` behavior rather than forking the runtime. Preserve all current failover, negotiation, authentication, resume, accounting and diagnostic semantics.
 
-### F. READY_LOCAL — implement the selected visible output
+Tests must cover canonical routing, legacy compatibility (if retained), missing/invalid role failure before identity creation, and help/human/JSON capability consistency.
 
-Implement the chosen bounded output as one coherent slice. Prefer a visible runtime/operator/release behavior over another schema/checker/document-only refinement. Do not reopen package archive variants, generic DeliveryLedger auditing, previous-release compatibility, FEC/0-RTT/striping/multipath/exotic carriers, or generic evidence-schema work without a newly observed problem.
+Commit/push one coherent slice. Continue immediately to G.
 
-Continue immediately to G.
+### G. READY_LOCAL — exact-tree local gate for F
 
-### G. READY_LOCAL — exact-tree gate for F
-
-Run the normal exact-tree local gate on the pushed F implementation commit. Add pinned decode fuzz only if F actually touches wire decoder/parser/crypto framing. Persist minimal provenance only when it supports a release-facing factual claim.
+Run the normal exact-tree local gate on the pushed F SHA. No extra fuzz unless the implementation unexpectedly touches wire/parser/crypto framing. Persist provenance only when used to support release-facing facts.
 
 Continue immediately to H.
 
-### H. READY_LOCAL / MILESTONE RECONCILIATION — record the visible output and keep moving
+### H. READY_LOCAL / MILESTONE RECONCILIATION — record the visible output without claim inflation
 
-Update `docs/status.md` / implementation plan / release packet only if F materially changes a status, acceptance boundary or release-facing fact. Avoid documentation churn when it does not.
+Update CLI/release/status documentation only if F materially changes an operator contract or release-facing fact. Do not change release/governance flags. Do not turn a local CLI repair into WAN, failover-performance, interoperability or security approval.
 
-Then either proceed to another already-ready concrete output or repeat the bounded E proposal cycle. Do not enter watcher mode solely because the reviewer interval has not arrived.
+Continue immediately to I.
 
-### I. CONDITIONAL VPS OUTPUT — only if a genuinely new live question opens
+### I. LOCAL OUTPUT SELECTION — keep a real queue, not a watcher
+
+Re-read exact-current status/plan/release packet and implementation. If another named dependency-ready local output exists, take it. Otherwise propose 1–3 concrete runtime/operator/release-correctness gaps grounded in current code/evidence, state owner/invariant/minimum tests, and autonomously choose the smallest non-policy option.
+
+Prefer visible runtime/operator/release behavior over checker/schema/document-only refinement. Do not reopen package archive variants, generic DeliveryLedger auditing, previous-release compatibility, FEC/0-RTT/striping/multipath/exotic carriers, or generic evidence-schema work without a newly observed problem.
+
+### J. CONDITIONAL VPS OUTPUT — only when a genuinely new live question opens
 
 Current repository truth remains `READY_LIVE: none`. Standing authorization remains valid, but authorization alone is not a reason to rerun answered/frozen rows.
 
-Only execute live work when exact-current implementation/evidence opens a specific unresolved real-network question with materially changed code/config/instrumentation/path/hypothesis and satisfied dependencies. Otherwise do not unchanged-rerun HY2, repeated warm failover, periodic, installed-package lifecycle, distinct A->B->A, generic soak, IPv6 without a real owned IPv6 path, or live PMTUD before its separate authenticated wire/security design gate.
+Only execute live work if exact-current code/evidence opens a specific unresolved real-network question with materially changed code/config/instrumentation/path/hypothesis and satisfied dependencies. Otherwise do not unchanged-rerun HY2, repeated warm failover, periodic, installed-package lifecycle, distinct A->B->A, generic soak, IPv6 without a real owned IPv6 path, or live PMTUD before its separate authenticated wire/security design gate.
 
-### J. POLICY-BLOCKED PARALLEL LANE — D019 source retention
+### K. POLICY-BLOCKED PARALLEL LANE — D019 source retention
 
 **Status:** `SOURCE_RETENTION_POLICY_BLOCKED`.
 
-Non-policy engineering controls have bounded factual support. Terminal source-retention/no-reset semantics still require maintainer/security-policy judgment. Do not invent TTL, LRU/history capacity, external authority or weaker reset semantics. This does not block independent A-I work.
+Bounded non-policy engineering controls remain available for review, but terminal source-retention/no-reset semantics still require maintainer/security-policy judgment. Do not invent TTL, LRU/history capacity, external authority or weaker reset semantics. This does not block A-J.
 
 ## Governance boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains bounded research-implementation status only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain authoritative.
-- release item 3 remains incomplete; current opportunity classification still says `READY_LIVE: none` for remaining unimplemented capabilities.
-- item 4 remains independent-review incomplete; developer factual review support is not an audit/security approval.
-- canonical corpus freeze is corpus-specific and does not freeze the global protocol.
-- standing VPS authorization remains valid, but no current dependency-ready live row exists.
+- release item 3 remains incomplete; current opportunity classification remains `READY_LIVE: none` for remaining unimplemented capabilities.
+- item 4 remains independent-review incomplete; developer-prepared factual support is not an audit/security approval.
+- canonical corpus freeze remains corpus-specific and does not freeze the global protocol.
+- standing VPS authorization remains valid, but no dependency-ready live row currently exists.
 - D019 remains a maintainer/security-policy checkpoint and must not be silently invented by the coding agent.
