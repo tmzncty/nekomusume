@@ -242,6 +242,7 @@ fn help_and_capabilities_cover_dispatch_surface() {
             "JSON capabilities missing {command}: {capabilities}"
         );
     }
+    assert!(help.contains("failover --role server|client"));
     assert!(help.contains("failover-server|failover-client"));
     for alias in ["failover-server", "failover-client"] {
         assert!(
@@ -255,6 +256,25 @@ fn help_and_capabilities_cover_dispatch_surface() {
     }
     let unknown = Command::new(bin).arg("not-a-command").output().unwrap();
     assert!(!unknown.status.success());
+    for args in [vec!["failover"], vec!["failover", "--role", "unknown"]] {
+        let identity = tmp("canonical-failover-invalid-role");
+        let _ = fs::remove_file(&identity);
+        let output = Command::new(bin)
+            .args(args)
+            .args(["--identity", identity.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(!identity.exists());
+    }
+    for (role, expected) in [("server", "client-key"), ("client", "server-key")] {
+        let output = Command::new(bin)
+            .args(["failover", "--role", role])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains(expected));
+    }
 }
 #[test]
 fn authenticated_tcp_and_udp_loopback_probe_starts_after_ready() {

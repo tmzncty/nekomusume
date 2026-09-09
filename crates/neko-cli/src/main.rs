@@ -45,7 +45,7 @@ use std::{
 };
 const USAGE: &str = "Usage: neko <server|client|probe|health-observe|failover|multistream|scheduler-fairness|key-update|periodic-server|periodic-client|lab|workload|endpoint-rebind-server|endpoint-rebind-client|keygen|capabilities> [bounded options]
 
-  --count N: bounded authenticated exchanges (1-64; periodic 1-600)\n  periodic-*: one TCP Session, duration 1-600s, interval 100-5000ms, <=1MiB app data; reconnect unsupported\n  failover-server|failover-client: legacy failover aliases for failover\n  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
+  --count N: bounded authenticated exchanges (1-64; periodic 1-600)\n  periodic-*: one TCP Session, duration 1-600s, interval 100-5000ms, <=1MiB app data; reconnect unsupported\n  failover --role server|client: canonical bounded failover command\n  failover-server|failover-client: legacy aliases for failover\n  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
 const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
 const MAX_DURATION: u64 = 30;
@@ -3361,7 +3361,12 @@ fn failover_gate(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("failover-server") => failover_server(args),
         Some("failover-client") => failover_client(args),
-        _ => fail("use failover-server or failover-client"),
+        Some("failover") => match parse(args, "--role", None).as_str() {
+            "server" => failover_server(args),
+            "client" => failover_client(args),
+            _ => fail("failover --role must be server or client"),
+        },
+        _ => fail("use failover --role server|client"),
     }
 }
 
