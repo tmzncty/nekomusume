@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -eu
+# Keep the normalization regression independent of the caller's umask.
+umask 022
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
