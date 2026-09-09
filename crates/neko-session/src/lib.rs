@@ -219,9 +219,7 @@ impl DeliveryLedger {
                 .checked_add(s.data.len())
                 .ok_or(LedgerError::ByteCountOverflow)?;
         }
-        // Never synthesize bytes across a hole. A new fragment may merge only
-        // when the existing ranges plus the new range cover the whole result.
-        let mut ranges: Vec<(u64, u64)> = overlaps
+        let mut existing_ranges: Vec<(u64, u64)> = overlaps
             .iter()
             .map(|key| {
                 let s = &self.segments[key];
@@ -231,6 +229,30 @@ impl DeliveryLedger {
                     .ok_or(LedgerError::OffsetOverflow)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        existing_ranges.sort_unstable();
+        let mut existing_coverage = offset;
+        for (range_start, range_end) in &existing_ranges {
+            if *range_end <= existing_coverage {
+                continue;
+            }
+            if *range_start > existing_coverage {
+                break;
+            }
+            existing_coverage = (*range_end).min(end);
+            if existing_coverage == end {
+                break;
+            }
+        }
+        // Fully contained exact duplicates preserve advanced evidence. Any
+        // novel bytes must begin Unsent; reject an advanced-state extension
+        // rather than manufacturing InFlight/Uncertain/Confirmed evidence.
+        if state != Some(DeliveryState::Unsent) && existing_coverage < end {
+            return Err(LedgerError::InvalidMigration);
+        }
+
+        // Never synthesize bytes across a hole. A new fragment may merge only
+        // when the existing ranges plus the new range cover the whole result.
+        let mut ranges = existing_ranges;
         ranges.push((offset, end));
         ranges.sort_unstable();
         let mut covered = start;
@@ -568,14 +590,59 @@ mod tests {
     }
 
     #[test]
-    fn overlap_preserves_delivered_bytes() {
+    fn advanced_overlap_extensions_cannot_manufacture_delivery_state() {
+        for state in [
+            DeliveryState::InFlight,
+            DeliveryState::Uncertain,
+            DeliveryState::Confirmed,
+        ] {
+            for (offset, data) in [(1, b"bc".as_slice()), (0, b"zab".as_slice())] {
+                let mut x = l();
+                let initial_offset = if offset == 0 { 1 } else { 0 };
+                x.insert(1, initial_offset, b"ab", c(1, 0, 1)).unwrap();
+                x.mark_in_flight(1, initial_offset).unwrap();
+                if matches!(state, DeliveryState::Uncertain | DeliveryState::Confirmed) {
+                    x.mark_uncertain(1, initial_offset).unwrap();
+                }
+                if state == DeliveryState::Confirmed {
+                    x.confirm_received(1, initial_offset, c(1, 0, 1)).unwrap();
+                }
+                let before_context = x.context;
+                assert_eq!(
+                    x.insert(1, offset, data, c(1, 0, 1)),
+                    Err(LedgerError::InvalidMigration)
+                );
+                let segment = x.segments().next().unwrap();
+                assert_eq!(x.segments().count(), 1);
+                assert_eq!(segment.offset, initial_offset);
+                assert_eq!(segment.data, b"ab");
+                assert_eq!(segment.state, state);
+                assert_eq!(x.bytes, 2);
+                assert_eq!(x.context, before_context);
+                let expected_watermark = if state == DeliveryState::Confirmed {
+                    initial_offset + 2
+                } else {
+                    0
+                };
+                assert_eq!(x.watermark(1), expected_watermark);
+            }
+        }
+    }
+
+    #[test]
+    fn advanced_ranges_cannot_promote_new_bridge_bytes() {
         let mut x = l();
         x.insert(1, 0, b"ab", c(1, 0, 1)).unwrap();
+        x.insert(1, 3, b"de", c(1, 0, 1)).unwrap();
         x.mark_in_flight(1, 0).unwrap();
-        x.confirm_received(1, 0, c(1, 0, 1)).unwrap();
-        x.insert(1, 1, b"bc", c(1, 0, 1)).unwrap();
-        assert_eq!(x.segments().next().unwrap().data, b"abc");
-        assert_eq!(x.segments().next().unwrap().state, DeliveryState::Confirmed);
+        x.mark_in_flight(1, 3).unwrap();
+        assert_eq!(
+            x.insert(1, 1, b"bcd", c(1, 0, 1)),
+            Err(LedgerError::InvalidMigration)
+        );
+        assert_eq!(x.segments().count(), 2);
+        assert_eq!(x.bytes, 4);
+        assert_eq!(x.watermark(1), 0);
     }
 
     #[test]
