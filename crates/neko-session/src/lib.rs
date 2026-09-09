@@ -307,6 +307,14 @@ impl DeliveryLedger {
             .segments
             .get_mut(&(s, o))
             .ok_or(LedgerError::RangeNotFound)?;
+        // Validate the delivery state before applying a newer context. A rejected
+        // confirmation must be atomic: it cannot advance the segment's context.
+        if !matches!(
+            x.state,
+            DeliveryState::InFlight | DeliveryState::Uncertain | DeliveryState::Confirmed
+        ) {
+            return Err(LedgerError::InvalidTransition);
+        }
         if context.delivery_epoch.0 < x.context.delivery_epoch.0
             || context.key_phase.0 < x.context.key_phase.0
             || context.path_generation.0 < x.context.path_generation.0
@@ -324,12 +332,6 @@ impl DeliveryLedger {
             return Err(LedgerError::InvalidMigration);
         } else {
             x.context = context;
-        }
-        if !matches!(
-            x.state,
-            DeliveryState::InFlight | DeliveryState::Uncertain | DeliveryState::Confirmed
-        ) {
-            return Err(LedgerError::InvalidTransition);
         }
         x.state = DeliveryState::Confirmed;
         let end = o
@@ -531,6 +533,21 @@ mod tests {
             x.confirm_received(1, 0, c(1, 0, 1)),
             Err(LedgerError::InvalidTransition)
         );
+        assert_eq!(x.segments().next().unwrap().context, c(1, 0, 1));
+    }
+
+    #[test]
+    fn invalid_confirmation_does_not_advance_context() {
+        let mut x = l();
+        x.insert(1, 0, b"x", c(1, 0, 1)).unwrap();
+        assert_eq!(
+            x.confirm_received(1, 0, c(1, 1, 2)),
+            Err(LedgerError::InvalidTransition)
+        );
+        let segment = x.segments().next().unwrap();
+        assert_eq!(segment.state, DeliveryState::Unsent);
+        assert_eq!(segment.context, c(1, 0, 1));
+        assert_eq!(x.watermark(1), 0);
     }
 
     #[test]
