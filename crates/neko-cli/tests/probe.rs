@@ -1032,8 +1032,11 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
     let cp = tmp("failover-client");
     let sk = key(bin, &sp);
     let ck = key(bin, &cp);
-    let udp = 40089u16;
-    let tcp = 40090u16;
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
     let server = Command::new(bin)
         .args([
             "failover",
@@ -1135,8 +1138,8 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
     assert!(server_log.contains("controlled_udp_stop=true"));
     assert!(server_log.contains("\"count\":3"));
     assert!(server_log.contains("\"record_payload_bytes\":16"));
-    assert!(server_log.contains("\"udp_port\":40089"));
-    assert!(server_log.contains("\"tcp_port\":40090"));
+    assert!(server_log.contains(&format!("\"udp_port\":{udp}")));
+    assert!(server_log.contains(&format!("\"tcp_port\":{tcp}")));
     assert!(server_log.contains("\"max_seconds\":5"));
     assert!(client_log.contains("\"application_bytes_total\":48"));
     assert!(
@@ -1153,8 +1156,11 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
     let cp = tmp("health-failover-client");
     let sk = key(bin, &sp);
     let ck = key(bin, &cp);
-    let udp = 40086u16;
-    let tcp = 40087u16;
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
     let server = Command::new(bin)
         .args([
             "failover-server",
@@ -1304,8 +1310,11 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
     let cp = tmp("warm-failover-client");
     let sk = key(bin, &sp);
     let ck = key(bin, &cp);
-    let udp = 40084u16;
-    let tcp = 40085u16;
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
     let server = Command::new(bin)
         .args([
             "failover-server",
@@ -1514,8 +1523,11 @@ fn migration_back_tamper_fails_closed_before_return() {
     let cp = tmp("migration-tamper-client");
     let sk = key(bin, &sp);
     let ck = key(bin, &cp);
-    let udp = 40086u16;
-    let tcp = 40087u16;
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
     let server = Command::new(bin)
         .args([
             "failover-server",
@@ -1751,8 +1763,11 @@ fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
     let cp = tmp("noise-retry-client");
     let sk = key(bin, &sp);
     let ck = key(bin, &cp);
-    let udp = 40093u16;
-    let tcp = 40094u16;
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
     let server = Command::new(bin)
         .args([
             "failover-server",
@@ -2368,6 +2383,12 @@ impl PortLease {
         drop(self.tcp);
         drop(self.udp);
     }
+}
+
+fn failover_port_leases() -> (PortLease, PortLease) {
+    let udp = PortLease::acquire(&[]);
+    let tcp = PortLease::acquire(&[udp.port()]);
+    (udp, tcp)
 }
 
 fn periodic_test_port() -> PortLease {
@@ -3103,8 +3124,11 @@ fn warm_readiness_failures_close_before_admission_or_application_data() {
         let cp = tmp(&format!("negative-{name}-client"));
         let sk = key(bin, &sp);
         let ck = key(bin, &cp);
-        let udp = 40084u16;
-        let tcp = 40085u16;
+        let (udp_lease, tcp_lease) = failover_port_leases();
+        let udp = udp_lease.port();
+        let tcp = tcp_lease.port();
+        udp_lease.release();
+        tcp_lease.release();
         let started = Instant::now();
         let server = Command::new(bin)
             .args([
