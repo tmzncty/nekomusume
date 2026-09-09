@@ -1,180 +1,215 @@
-# ChatGPT reviewer handoff — accept package hardening, repair exact-tree provenance
+# ChatGPT reviewer handoff — close exact-tree provenance before more lateral runtime work
 
 ## Reviewed state
 
-- Previous reviewer commit/handoff before this review cycle: exact `82030a6f9eef406a725c33befd6edba5d8855a7b` (`docs(handoff): challenge package gate provenance and modes`).
-- Developer-owned head actually reviewed through this cycle: exact `e5d1fa17163dd01f5c0780e3ec2ddb086b2f6be6` (`test: pin package regression umask`).
-- Four developer-owned commits landed after the previous handoff:
-  - `54078364735976b472899decf2b456ec878c1739` — validate package root and checksum-manifest shape before extraction;
-  - `8cbf3afa276f1fb2a4e991b3ad94daddc4d8cf64` — validate exact archive member types/modes before extraction and add umask-normalization regressions;
-  - `d15a50a627720a638b4a532d4a82c04bf38dad95` — refresh release packet/item-4 package provenance text;
-  - `e5d1fa17163dd01f5c0780e3ec2ddb086b2f6be6` — force package regression tests to `umask 022`, making the permissive-mode normalization cases independent of the caller environment.
-- Reviewer note: a first handoff write in this cycle raced with the `e5d1fa1` push and therefore described `d15a50a` as the latest developer head. This corrected handoff incorporates `e5d1fa1`; no product/evidence conclusion is hidden by that race.
-- GitHub-hosted Rust CI run `34294307935` is green on exact `d15a50a`: stable checks ran `bash scripts/check.sh`, and the separate pinned nightly decode fuzz smoke also passed. This is **GitHub-hosted cross-evidence**, not developer local-CI provenance.
-- There is no requirement to wait for a hosted run on `e5d1fa1`. Under the local-CI-first policy, all new READY_LOCAL slices below close through an exact pushed developer SHA verified locally; GitHub Actions is optional cross-evidence.
-- This reviewer did not execute the developer's local CI and the repository currently does not retain a local-CI provenance record for the package sequence through `e5d1fa1`. Do not retroactively label GitHub Actions as local CI.
-- `work/e1a-staged-accounting-20260907` remains at `f4404257`; `work/continue-20260904` remains at `d271a99a`. Both are stale relative to `main`; do not coordination-merge them merely to create work.
+- Previous reviewer-owned handoff commit: exact `7812d9f223e11b9687f40157414cf354311f7ccc` (`docs(handoff): include latest package test commit`).
+- Previous developer-owned head reviewed by that handoff: exact `e5d1fa17163dd01f5c0780e3ec2ddb086b2f6be6` (`test: pin package regression umask`).
+- Current default-branch developer head reviewed in this cycle: exact `b3bfe9709f2cff4ba5973a17b2a3b2f87775267b` (`fix: keep rejected confirmations atomic`).
+- New developer-owned commit since the last handoff:
+  - `b3bfe9709f2cff4ba5973a17b2a3b2f87775267b` — moves `DeliveryLedger::confirm_received` delivery-state validation before context mutation and adds a regression proving an invalid confirmation cannot advance the segment context or delivery watermark.
+- Current default branch is `main` at exact `b3bfe9709f2cff4ba5973a17b2a3b2f87775267b` before this reviewer-only handoff update.
+- GitHub-hosted Rust CI run `34298672407` completed successfully on exact `b3bfe9709f2cff4ba5973a17b2a3b2f87775267b`; its `stable checks` job ran `bash scripts/check.sh`, and the separate pinned nightly decode fuzz-smoke job also passed. This is **GitHub-hosted cross-evidence only**, not developer local-CI provenance.
+- No repository-persisted exact-tree local-CI provenance was added with `b3bfe97`. Under the current local-CI-first policy, do not wait for another hosted run; use a clean exact-tree local worktree for the closure package below and label the evidence accurately.
+- `work/e1a-staged-accounting-20260907` remains at `f4404257`; `work/continue-20260904` remains at `d271a99a`. No work branch points beyond current `main`; do not coordination-merge stale branches to manufacture work.
 
 ## Review verdict
 
-### ACCEPT — package-root and checksum-manifest pre-extraction validation
+### ACCEPT_WITH_BOUNDS — rejected confirmation is now mutation-atomic
 
-Exact `5407836` closes the prior root/layout ambiguity without changing package format, runtime protocol semantics or security policy. The smoke now accepts only the declared Nekomusume target-root forms, rejects wrapper/prefix/traversal root shapes, and checks the checksum manifest against the exact expected payload paths. New regressions cover traversal, absolute, duplicate and unexpected checksum entries.
+Exact `b3bfe97` fixes a real local Session-model correctness defect. Before the change, `confirm_received` could apply a newer per-segment `SessionContext` and only afterward reject an invalid delivery state. The new ordering validates that the segment is `InFlight`, `Uncertain`, or `Confirmed` before any context advance. The regression exercises an `Unsent` segment with a newer key/path context and verifies `InvalidTransition`, unchanged segment state/context, and unchanged watermark.
 
-Keep this as release-tool correctness evidence only. It is not signing, publication trust, SBOM, security approval, RC or production evidence.
+This is a bounded candidate Session-state correctness repair. It does not add WAN evidence, application-delivery proof, a wire change, a new ACK semantic, crypto change, release approval, security approval, protocol freeze, RC, or production claim. D055's monotonic context-migration direction remains intact.
 
-### ACCEPT — archived member type/mode validation is pre-extraction, exact and now regression-umask-stable
+The implementation is acceptable; do **not** revert it merely because it landed out of queue order. However, its landing while the unresolved HIGH exact-tree provenance defect remained at queue head is a coordination failure. Do not continue with more lateral runtime/correctness exploration until the HIGH below is repaired.
 
-Exact `8cbf3af` fixes the previous mode-provenance defect. `scripts/release/smoke-package.sh` now reads archive metadata before extraction and requires the existing builder contract exactly:
+### HIGH / EXACT_TREE_PROVENANCE_INVALID — still open and was skipped
 
-- package directories: `0755`;
-- `bin/neko-cli`: `0755`;
-- documentation and `SHA256SUMS`: `0644`;
-- only directory/regular-file member types at the exact expected paths.
+Both current:
 
-The regression fixture includes permissive archive metadata that an ordinary umask could otherwise normalize after extraction (`0777` executable/directory and `0666` document/checksum cases). Exact `e5d1fa1` then pins the regression process itself to `umask 022`, so those cases no longer depend on the invoking shell's umask. This is a test-determinism repair only; it changes no package/runtime semantics.
+- `docs/release-security-review-packet.md`, and
+- `docs/reviews/release-item4-subgates-20260909.md`
 
-Do not reopen this archived-mode gap absent a concrete new counterexample. The current package checker is already directly justified by an operator/release artifact; after the provenance work below, do not keep growing it speculatively.
-
-### HIGH / EXACT_TREE_PROVENANCE_INVALID — `d15a50a` names a nonexistent tested tree
-
-Current `docs/release-security-review-packet.md` and `docs/reviews/release-item4-subgates-20260909.md` state that evidence/gates were rerun on reachable exact commit:
+still claim that package/release gates were rerun through reachable exact commit:
 
 `9d4c7e1e0fc41b46396fb635ee9ca413b4b1fc67`
 
-GitHub cannot resolve that SHA in this repository. Therefore the words **reachable exact commit** and the exact-tree gate claim are currently false. The substantive package implementation through `e5d1fa1` remains accepted; the defect is the release-review provenance anchor, not the package behavior itself.
+GitHub cannot resolve that SHA in this repository. Therefore the words `reachable exact commit` and the associated exact-tree attestation remain false. This HIGH was already the first READY_LOCAL slice in the prior handoff and was not repaired before `b3bfe97` changed runtime code.
 
-Repair this first. Do not invent another SHA, do not use a local/unpushed object, and do not treat a future documentation commit as proof that an earlier tree contained future code. Prefer a real pushed exact implementation/test tree that contains all package fixes. Under the local-CI-first policy, the coding agent should check out that exact SHA in a clean temporary worktree/clone, run the local stable gate there, retain minimal non-secret provenance, then make the separate review-text commit point to that real tested tree.
+The package hardening itself remains accepted; this is a provenance/claim defect. Repair it before any further unrelated implementation. If the current real exact developer tree fails its local gate, fix that failure and use the resulting real pushed implementation/test commit instead of inventing or guessing a SHA.
 
-### MEDIUM / RELEASE_BUILD_SOURCE_PROVENANCE_GAP — package builder can label a dirty build as exact HEAD
+### MEDIUM / RELEASE_BUILD_SOURCE_PROVENANCE_GAP — still open
 
-Current `scripts/release/build-package.sh` emits `git_commit=$(git rev-parse HEAD)` in build evidence but does not first prove that the repository source state is clean. A staged/unstaged tracked edit, or an untracked non-ignored build-affecting file, can therefore influence the produced binary/archive while the JSON still names the unchanged HEAD.
+`scripts/release/build-package.sh` still emits `git_commit=$(git rev-parse HEAD)` while lacking a fail-closed source-state check before `mkdir -p "$OUT"`, Cargo build, or output mutation. Staged edits, unstaged tracked edits, or non-ignored untracked files can therefore coexist with evidence naming only HEAD.
 
-This is a release-tool provenance/correctness gap; there is no evidence that the already-recorded package experiments were actually built dirty, so do not retroactively invalidate them without such evidence.
+This does not retroactively prove any historical package experiment was dirty. It is a present release-tool provenance defect that must be repaired after the HIGH.
 
-The smallest repair is a fail-closed source-state guard **before** build/output mutation. The agent may choose the exact implementation shape, but the invariant is:
+Implementation note: the repository currently ignores `target/` but not the builder's default `dist/`. A strict `git ls-files --others --exclude-standard` guard may therefore make a second default package build reject its own prior generated `dist/`. Prefer the smallest truthful design: if `dist/` is purely generated output, making repository-root `/dist/` an ignored generated path is cleaner than inventing a broad untracked-file allowlist. The agent may choose another equally small fail-closed shape if it can prove the invariant with isolated tests.
 
-- exact-tree package evidence must not be emitted from staged or unstaged tracked changes;
-- non-ignored untracked repository files must not silently become build inputs while the evidence still claims only HEAD;
-- ignored build output such as `target/` must not make a clean source checkout impossible to package;
-- the guard must run before `mkdir -p "$OUT"`, Cargo build, or other commands that themselves may create non-ignored output.
+### LOW/MEDIUM / SPEC_ALIGNMENT — `confirm_received` rejection atomicity is stronger than the current Session-v0 prose
 
-Add focused negative tests for dirty tracked/staged/untracked state and a clean-tree positive. Do not turn this into a generic CI framework, signing system or source-transparency service.
+`docs/specs/nekomusume-session-v0.md` currently records a rejection-atomic **insert** context invariant but does not state the corresponding candidate invariant for `confirm_received`. Exact `b3bfe97` intentionally creates that behavior and names it atomic in code/comment/commit.
 
-### ACCEPTED CONTINUING EVIDENCE BOUNDARIES
+After the provenance/package closure is finished, align the provisional Session-v0 text with the implemented candidate fact: a rejected delivery confirmation must not advance segment context, delivery state, or watermark. This is documentation of existing candidate behavior, not a new wire/ACK architecture or protocol freeze. Add only focused regression detail if needed; do not start a new Session redesign.
 
-- The exact `91a735c -> dc90c5f -> 91a735c` distinct-package rehearsal retains its five sanitized phase records, result hash, count and exit status. Release-facing text now truthfully says experiment start/end timing was **not retained**. This qualifies the provenance gap without manufacturing timestamps; do not rerun that VPS scenario for timing polish.
-- RSEC bounded non-policy engineering controls remain reviewed; full D019 remains `SOURCE_RETENTION_POLICY_BLOCKED`. Do not invent TTL/LRU/history capacity, external retention authority, or a weaker no-reset policy.
-- HY2 exact `13da094` remains frozen at typed `unknown / client_started` with no complete pair or performance result. No unchanged retry.
-- repeated warm failover exact `f17b648` remains frozen at primary `startup_setup`; periodic remains an orchestration negative. No unchanged retry.
-- installed-package lifecycle and the distinct A/B/A package scenario are already answered bounded operator questions; no same-class VPS rerun for documentation polish.
-- IPv6 remains environment-blocked when the owned environment does not actually provide the address family/path.
-- live PMTUD still requires its separately reviewed authenticated wire/security design gate; old `BLOCKED_IMPLEMENTATION` wording is not permission to alter wire semantics.
-- release flags remain `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`.
+## Current release/evidence boundaries that remain unchanged
 
-## Local-CI-first execution rule for the queue below
+- `IMPLEMENTATION_COMPLETE=true` remains a bounded research-implementation fact only.
+- `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
+- Current release item 3 remains incomplete and item 4 still lacks actual independent review/security approval.
+- `READY_LIVE: none` remains the current repository truth for unimplemented/live follow-up. VPS rental priority does not justify duplicate live runs.
+- HY2 exact `13da094` remains frozen at `BLOCKED_HARNESS_CURRENT_LINE_HY2`, typed `unknown / client_started`, no complete pair and no performance conclusion. No unchanged retry.
+- repeated warm failover exact `f17b648` remains frozen at primary `startup_setup`; periodic remains an orchestration/pre-application negative. No unchanged retry.
+- installed-package lifecycle and distinct-version A(old)->B(current)->A(old) have already answered their bounded operator questions. Do not rerun them for documentation/provenance polish.
+- IPv6 remains environment-blocked when no owned IPv6 path exists.
+- live PMTUD still requires its separate accepted authenticated wire/security design gate before live implementation changes.
+- D019 remains `SOURCE_RETENTION_POLICY_BLOCKED`; do not invent TTL/LRU/history capacity, an external retention authority, or weakened no-reset semantics.
+- standing VPS authorization remains valid for genuinely new, dependency-ready self-owned bounded questions; it is not the blocker in the queue below.
 
-For ordinary READY_LOCAL implementation/test/docs-evidence work, **do not wait for GitHub Actions** after a coherent developer commit. Use a clean checkout/worktree of the exact pushed developer SHA and run:
+## Local-CI-first rule for all READY_LOCAL slices below
+
+Do not wait or poll for GitHub Actions. For a coherent developer implementation/test commit, verify the **exact pushed SHA** in a clean temporary worktree/clone.
+
+Minimum default gate:
 
 ```text
 bash scripts/check.sh
 git diff --check
 ```
 
-For an already committed exact tree also record that the tree is clean. Persist only minimal provenance when the slice makes an exact-tree/release-evidence claim: exact SHA, commands, UTC start/end, exit code, host/OS/arch, `rustc --version`, clean-tree state, and optionally a sanitized log path/SHA-256. Do not store secrets, endpoint topology or credentials. Fuzz is not required for the package-only slices below unless they unexpectedly touch wire/parser/crypto framing.
+For an already committed tree also record/verify a clean tree (`git status --porcelain` or equivalent). Persist the minimum provenance whenever an exact-tree/release-evidence claim is made:
 
-A developer-reported local run, a persisted local-CI provenance record, this reviewer's own inspection, and GitHub-hosted CI are four different evidence sources. Keep them labeled accurately.
+- exact SHA;
+- commands;
+- UTC start/end;
+- exit code;
+- host / OS / arch;
+- `rustc --version` on stable;
+- clean-tree state;
+- optional sanitized log path/SHA-256 only when useful.
 
-Reviewer-only handoff commits do not need a new GitHub Actions wait loop. Once a developer exact tree has the required local gate, the coding agent may continue through the dependency-ready queue without waiting for another hourly review or hosted CI run.
+Do not store secrets, endpoint topology, credentials, or large logs. Fuzz is not required for the package/source-state or Session-state slices below because they do not touch wire decoder/parser/crypto framing; if such code is unexpectedly changed, use the pinned local fuzz toolchain and 30-second decode smoke required by repository policy.
 
-## Design / proposal protocol
+Developer-reported local CI, repository-persisted local-CI provenance, reviewer inspection, and GitHub-hosted CI are distinct evidence sources. Never substitute one label for another.
 
-No administrator approval is needed for A–F below. These slices do not change Session/Carrier/ACK/crypto/wire architecture, introduce a new security numeric policy, perform destructive migration, or exceed standing authorization.
+## Rolling queue — execute continuously in dependency order
 
-Where an API/helper shape is underspecified, the coding agent should compare at most 1–3 small options and choose the one with the least new state/API/policy and the clearest fail-closed tests. Implement it rather than waiting for a reviewer to dictate a function signature.
+The first HIGH is a real stop for widening the implementation surface, but not a reason to enter watcher/polling mode. Fix A, then continue B->C->D->E without waiting for the next reviewer cycle. F/G/H are conditional as written. There is intentionally no READY live run now.
 
-## Rolling queue
+### A. HIGH / READY_LOCAL — repair the false exact-tree attestation
 
-There is intentionally no READY live run at this checkpoint. The release packet and implementation plan both classify the current live actionable row as none. Complete A–F continuously; do not wait at commit or hourly boundaries when the next slice is dependency-ready.
+**Goal:** remove the nonexistent `9d4c7e1...` tested-tree claim from the current release packet and item-4 factual review.
 
-### A. HIGH / READY_LOCAL — replace the nonexistent exact-tree review anchor with a real locally tested tree
+**Why now:** this is a known HIGH evidence/claim defect and it was skipped once while a lateral runtime fix landed.
 
-**Goal:** make the item-4 factual review and release packet tell the truth about the tree on which the current package gate was checked.
+**Action:**
 
-**Why now:** `9d4c7e1...` is not a reachable GitHub commit, so current exact-tree provenance is invalid even though earlier hosted cross-evidence is green.
+1. Prefer current real pushed exact `b3bfe9709f2cff4ba5973a17b2a3b2f87775267b` as the tested tree unless a newer corrective implementation/test commit exists when work starts.
+2. In a clean exact-tree worktree, run the local stable gate and clean-tree checks under the local-CI-first policy.
+3. Persist the minimum non-secret local-CI provenance in the smallest existing review/evidence location or one small focused note.
+4. In a **separate documentation commit**, replace the nonexistent SHA in `docs/release-security-review-packet.md` and `docs/reviews/release-item4-subgates-20260909.md` with the real tested exact SHA and truthful evidence labels.
+5. GitHub-hosted run `34298672407` may be cited separately as cross-evidence on exact `b3bfe97`; it is not the local run.
+6. Explicitly keep the dirty-source builder gap below open; do not make the packet imply the package-source provenance issue is already closed.
 
-**Action:** use exact pushed `e5d1fa17163dd01f5c0780e3ec2ddb086b2f6be6` as the preferred tested tree unless a newer real developer implementation/test commit exists when work starts. In a clean temporary checkout/worktree of that exact SHA, run the local stable gate and clean-tree checks. Persist the minimum local-CI provenance. Then update `docs/release-security-review-packet.md` and `docs/reviews/release-item4-subgates-20260909.md` in a separate commit so title/body/gate statements point only at the real tested SHA. GitHub-hosted run `34294307935` on its actual `d15a50a` head may be cited separately as cross-evidence, never as the local `e5d1fa1` run.
+**Protected boundary:** developer-prepared factual support only; not independent security review, RC, release, freeze, production authorization, or proof of future code.
 
-**Protected boundary:** developer-prepared factual support only; not independent review/security approval/RC/release/production authorization.
+**Commit/push:** yes. Continue immediately to B.
 
-**Commit/push:** yes. After local closure, continue immediately to B without waiting for GitHub Actions.
+### B. MEDIUM / READY_LOCAL — fail closed on dirty package source state
 
-### B. MEDIUM / READY_LOCAL — make `build-package.sh` fail closed on dirty source provenance
+**Goal:** a build-evidence JSON naming commit X must not be emitted from a source tree that differs from X.
 
-**Goal:** ensure a release-build evidence JSON naming commit X actually comes from source state equal to X.
+**Files/concepts:** `scripts/release/build-package.sh`, focused release-script tests, and `.gitignore` only if needed for the generated default `dist/` path.
 
-**Files/concepts:** `scripts/release/build-package.sh`, focused release-script regression; a tiny helper is allowed only if simpler than duplicating shell plumbing.
+**Required behavior before any build/output mutation:**
 
-**Required behavior:** before build/output mutation, reject staged changes, unstaged tracked changes, and non-ignored untracked repository files. Do not reject ordinary ignored `target/` build output merely for existing. Preserve current `--locked`, target restrictions, deterministic tar/gzip behavior, builder modes, hashes and build-evidence schema unless a schema change is strictly necessary.
+- reject unstaged tracked changes;
+- reject staged changes;
+- reject non-ignored untracked repository files that could make the source state differ from HEAD;
+- allow ordinary ignored build outputs such as `target/`;
+- preserve current target restrictions, `--locked`, deterministic tar/gzip behavior, modes, hashes and evidence schema unless a schema change is strictly necessary.
 
-**Required tests:** clean-tree positive; dirty tracked negative; staged negative; untracked non-ignored negative; ensure rejection occurs before a package/evidence success can be emitted. Keep the tests bounded/local and avoid modifying the developer's primary worktree destructively.
+**Recommended minimal shapes:** compare at most 1-3 options and choose the smallest fail-closed one. A direct combination of tracked/staged diff checks plus `git ls-files --others --exclude-standard` is preferred. If default generated `dist/` would self-poison the next build, prefer treating repository-root `/dist/` as generated ignored output rather than creating a broad arbitrary-source exception.
 
-**Gates:** focused release tests, then exact-commit local `bash scripts/check.sh`; clean tree and diff checks. No fuzz needed unless the slice unexpectedly touches parser/wire/crypto framing.
+**Required tests:** clean-tree positive; dirty tracked negative; staged negative; non-ignored untracked negative; ignored `target/` positive; and, if `/dist/` handling changes, a repeated/default-output positive proving the builder does not reject only because of its own prior generated archive. Verify rejection occurs before package/evidence success is emitted. Use isolated temporary repo/worktree fixtures; do not destructively dirty the primary developer checkout.
+
+**Gates:** focused release tests, then exact-commit local `bash scripts/check.sh`, diff check, clean tree. No local fuzz required absent parser/wire/crypto changes.
 
 **Commit/push:** yes. Continue immediately to C.
 
-### C. READY_LOCAL / EVIDENCE CLOSURE — persist exact-commit local-CI provenance for the package-source guard
+### C. READY_LOCAL / EVIDENCE CLOSURE — verify and persist the exact B implementation tree
 
-**Goal:** make the local-CI-first policy auditable without creating another CI system.
+**Goal:** establish an auditable local-CI anchor for the package-source guard without building a new CI framework.
 
-**Action:** after B is pushed, verify the exact B commit from a clean worktree/clone. Record exact SHA, commands, UTC start/end, exit, host/OS/arch, Rust stable version and clean-tree state in the smallest existing release/review evidence location or one small focused note. If a sanitized log is retained, record only its path/hash; do not commit large logs.
+**Action:** after B is pushed, check out the exact B implementation/test commit cleanly and run the required local stable gate. Record exact SHA, commands, UTC start/end, exit, host/OS/arch, Rust stable version and clean-tree state. If the gate fails, treat it as a real failure, repair, push a new implementation commit, and verify that exact replacement SHA.
 
-**Failure rule:** a local gate failure is a real failure. Repair and rerun before claiming closure. Do not wait for GitHub-hosted CI to substitute for this step.
+**Commit/push:** only the small provenance delta if it is not already safely recorded by B. Continue immediately to D.
 
-**Commit/push:** only for the real provenance/evidence delta. Continue immediately to D.
+### D. READY_LOCAL / FACTUAL CLOSURE — refresh the package/item-4 packet against the real post-B tree
 
-### D. READY_LOCAL / FACTUAL CLOSURE — refresh item-4/package review against the actual post-fix tested tree
+**Goal:** leave one internally consistent release/package factual packet after the source-provenance repair.
 
-**Goal:** leave one internally consistent package/release subgate packet after the dirty-source repair.
+**Action:** point package validation and source-build provenance statements at the actual reachable exact B/C implementation/test tree that passed the local gate. Preserve distinctions among:
 
-**Action:** point the package validation/build-provenance statements at the real reachable exact B/C implementation/test tree that was locally verified. Preserve the distinction between package-tool correctness, bounded operator evidence, and signing/publication/security approval. Keep the distinct A/B/A timing qualification as `not retained` unless already-existing local sanitized material supplies real experiment timestamps; never invent them or use commit time as experiment time.
+- implementation/tests;
+- local exact-tree validation;
+- historical bounded VPS/operator observations;
+- GitHub-hosted cross-evidence;
+- absent independent review/security/release approval.
 
-**Commit/push:** yes for factual closure. Do not wait for hosted CI merely because this is a reviewer-facing doc update.
+Keep the distinct A/B/A timing qualification as `not retained`; do not rerun that VPS scenario and do not use commit timestamps as experiment timestamps.
 
-### E. CONDITIONAL / READY_LOCAL — one concrete release correctness defect, not another framework
+**Commit/push:** yes. Continue immediately to E.
 
-After A–D, re-read the exact-current item-4 packet plus current release scripts/code/tests. If **one specific claim** is materially stronger than its implementation/evidence and the repair stays within existing architecture/policy, implement the smallest repair plus negative test. If no concrete defect exists, skip E. Do not create generic checker/parser/harness scaffolding or signing/SBOM/key-custody machinery just to keep the queue busy.
+### E. READY_LOCAL / SPEC ALIGNMENT — close the `confirm_received` rejection-atomicity wording
 
-A useful candidate may come from build/package provenance or operator lifecycle, but it must be demonstrated from current code before becoming a ticket.
+**Goal:** align provisional Session-v0 prose with the already-implemented exact-`b3bfe97` candidate behavior without expanding semantics.
 
-### F. LOCAL CLOSURE / MILESTONE RECONCILIATION — stop package-checker growth when the concrete gates are closed
+**Files/concepts:** `docs/specs/nekomusume-session-v0.md`, `crates/neko-session/src/lib.rs` tests only if a focused assertion is genuinely missing.
 
-**Goal:** reconcile `docs/status.md`, `IMPLEMENTATION_PLAN.md`, release packet and item-4 review so the exact-current package/tooling capability and remaining boundaries match. If all package-specific correctness claims now have direct tests/evidence, mark that local package closure complete and move on; do not keep adding archive/checker variants without a new finding.
+**Required wording boundary:** rejected `confirm_received` operations must not advance the segment's context, delivery state, or delivery watermark. Keep the existing evidence boundary: confirmation means peer acceptance for transport delivery, not application delivery/effect.
 
-**Boundary:** item 3 release evidence and item 4 independent review remain open where their actual external/independent requirements remain unmet. `IMPLEMENTATION_COMPLETE=true` does not promote RC/release/production/freeze flags.
+**Tests:** the existing invalid-state/new-context regression already proves the essential mutation-atomic case. Add at most a focused missing assertion (for example, context preservation on an existing rejection path) if needed; do not redesign error precedence or invent new ACK/wire fields.
 
-### G. CONDITIONAL VPS / OUTPUT SELECTION — currently `READY_LIVE: none`
+**Gate:** exact-commit local `bash scripts/check.sh` + diff/clean-tree checks. No fuzz unless parser/wire/crypto changes unexpectedly enter the diff.
 
-After A–F, re-read `docs/status.md`, `IMPLEMENTATION_PLAN.md`, the Era-4 ledger, release packet, standing authorization and VPS rental policy. Execute a VPS task only if a **new concrete unresolved real-network question** now has satisfied dependencies and a material code/config/instrumentation/path hypothesis.
+**Commit/push:** yes if documentation/test delta exists. Continue to F.
 
-Do not select unchanged HY2, repeated warm failover, periodic, installed-package lifecycle, distinct A/B/A, generic extra soak, IPv6 without an actual environment, or live PMTUD before its authenticated wire/security design gate. If no new live question exists, leave the VPS queue empty. A time-limited VPS is a reason to maximize evidence value, not to manufacture duplicate evidence.
+### F. CONDITIONAL / READY_LOCAL — one bounded mutation-before-error follow-through, then stop
 
-### H. POLICY-BLOCKED PARALLEL LANE — D019 source retention
+The `b3bfe97` defect is evidence that mutation ordering deserves one bounded review, not a new audit framework. Inspect only current `DeliveryLedger` mutating APIs for a concrete path that changes ledger state before returning an error. If one demonstrable defect exists within current semantics, repair it with an atomicity regression and local gate. If none exists, record no speculative ticket and skip directly to G.
+
+Do not broaden this into generic static analysis, property-checker infrastructure, wire changes, ACK redesign, or performance work.
+
+### G. LOCAL CLOSURE / MILESTONE RECONCILIATION — stop package-checker growth
+
+After A-F, reconcile `docs/status.md`, `IMPLEMENTATION_PLAN.md`, `docs/release-security-review-packet.md`, and the item-4 factual review so package/source provenance, Session atomicity, evidence labels and remaining blockers match the exact current tree.
+
+If package-specific correctness claims now have direct tests/evidence, declare that local package-tool closure complete and stop adding archive/checker variants absent a concrete new finding. Item 3 remains incomplete where real matrix evidence is absent; item 4 remains open where independent review/security policy is absent. Do not promote release flags.
+
+### H. CONDITIONAL OUTPUT SELECTION — no polling and currently no READY live run
+
+Re-read the exact-current status/plan/ledger/rental-priority documents after G.
+
+- If a **new concrete unresolved real-network question** now exists with satisfied dependencies and a material changed code/config/instrumentation/path hypothesis, standing authorization applies and it may be executed boundedly.
+- If `READY_LIVE: none` remains true, do **not** rerun HY2, repeated failover, periodic, installed-package lifecycle, distinct A/B/A, generic soak, IPv6 without an actual environment, or PMTUD before its authenticated wire/security design gate.
+- Instead of watcher/polling, inspect current release/security/runtime code and propose 1-3 small concrete local options. Classify each by invariant, risk and minimum test, then autonomously choose the smallest READY option that introduces no new architecture/security policy. If no concrete defect or output exists, leave the queue honestly short rather than manufacturing checker work.
+
+### I. POLICY-BLOCKED PARALLEL LANE — D019 source retention
 
 **Status:** `SOURCE_RETENTION_POLICY_BLOCKED`.
 
-Current engineering controls remain useful, but terminal source-retention/no-reset semantics still require a maintainer/security-policy decision. Do not invent TTL/LRU/history capacity, an external retention authority or weakened lifetime semantics. This policy blocker does not stop A–G.
+Engineering controls remain useful, but terminal source-retention/no-reset semantics still require maintainer/security-policy judgment. Do not invent TTL/LRU/history capacity, external retention authority, or weaker lifetime semantics. This does not block A-H.
+
+## VPS / experiment rule
+
+Current `READY_LIVE: none` means there is no reason to use VPS time this cycle merely because the rental window is finite. Preserve existing negative/positive observations. A live run becomes READY only when it answers a new concrete question and differs materially in instrumentation/code/configuration/hypothesis/capture coverage/protocol state/path condition. All live work must remain within `docs/standing-vps-lab-authorization.md`; third-party targets, production network changes, privileged/exotic carriers, >10-minute/high-volume/high-concurrency work, new credentials or destructive non-dedicated package actions still require maintainer approval.
 
 ## Visible-output check
 
-This is not an audit-only period. The last 24–48 hours includes current-package build/install evidence, externally visible shutdown/restart behavior, a real distinct-binary A/B/A rehearsal, and substantive package archive fail-closed implementation/tests. The package work remains justified because it directly protects an operator/release artifact already indexed in item-4.
+The recent period is not audit-only: package archive/root/mode validation became executable and adversarially tested; current package install/lifecycle and distinct-binary rollback have bounded operator evidence; and exact `b3bfe97` fixes a concrete Session-state mutation-on-rejection defect. The reason to focus the next few slices on provenance is that the release packet currently contains a known false exact-tree attestation, not because checker/document growth is itself the project goal.
 
-After the exact-tree and dirty-source provenance defects are closed, deliberately stop expanding package validation unless another concrete defect is demonstrated. The next outward work should come from a real remaining release/runtime/evidence question, not from checker self-proliferation.
+Once A-D close, move out of package provenance unless a new concrete correctness defect is demonstrated.
 
-## Stagnation check
+## Stagnation / queue-discipline check
 
-This is **not** `STALLED_IMPLEMENTATION`: `5407836`, `8cbf3af`, `d15a50a`, and `e5d1fa1` landed after the last reviewer handoff, including substantive package-tool/test repairs. The current HIGH is a new provenance defect in the developer's review text, not lack of implementation progress.
-
-## Maintainer/admin boundary
-
-No administrator action is required for A–G within the constraints above. Do not rewrite published Git history autonomously. D019 remains the known maintainer/security-policy checkpoint. Signing key custody/publication trust, new security numeric policy, core wire/session/crypto changes, production/service-manager mutation outside the standing experimental boundary, third-party access, destructive migration, or a genuinely new phase still require explicit maintainer action.
+This cycle is **not yet** `STALLED_IMPLEMENTATION`: exact `b3bfe97` is a substantive developer implementation/test commit and its hosted cross-check is green. But the first HIGH from the previous handoff was skipped. Treat that as a queue-order warning: A must be the next developer-owned closure. If the same HIGH is still unresolved at the next reviewer cycle with no external blocker, mark it `STALLED_IMPLEMENTATION` and deepen the implementation/provenance contract rather than allowing more lateral work.
