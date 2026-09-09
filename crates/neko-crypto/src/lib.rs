@@ -1722,6 +1722,10 @@ impl ProcessPreauthAdmission {
     pub fn queued(&self) -> usize {
         self.queued
     }
+
+    pub fn response_accounting(&self) -> (usize, usize) {
+        (self.response_bytes, self.response_packets)
+    }
 }
 
 #[cfg(test)]
@@ -2105,6 +2109,30 @@ mod preauth_tests {
         assert_eq!(admission.charge_input(id, 1, 1, 1), Err(SessionRejected));
         assert_eq!(admission.charge_input(id, 1, 1, 10), Err(SessionRejected));
         admission.release(id).unwrap();
+    }
+
+    #[test]
+    fn bounded_response_attempts_never_exceed_configured_accounting() {
+        let limits = process_limits();
+        let mut admission = ProcessPreauthAdmission::new(limits.clone(), 0).unwrap();
+        let first = admission.admit_state(b"first", 2, 0).unwrap();
+        admission.charge_input(first, 1, 1, 0).unwrap();
+        let permit = admission.charge_response(first, 3, 0).unwrap();
+        assert_eq!(admission.response_accounting(), (3, 1));
+        admission.abandon_response(permit).unwrap();
+        assert_eq!(admission.response_accounting(), (3, 1));
+        admission.release(first).unwrap();
+
+        let second = admission.admit_state(b"second", 2, 0).unwrap();
+        admission.charge_input(second, 1, 1, 0).unwrap();
+        assert!(matches!(
+            admission.charge_response(second, 1, 0),
+            Err(SessionRejected)
+        ));
+        assert_eq!(admission.response_accounting(), (3, 1));
+        assert!(admission.response_accounting().0 <= limits.max_response_bytes_per_window);
+        assert!(admission.response_accounting().1 <= limits.max_response_packets_per_window);
+        admission.release(second).unwrap();
     }
 
     #[test]
