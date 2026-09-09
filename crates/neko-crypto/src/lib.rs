@@ -6,6 +6,9 @@
 
 use snow::params::NoiseParams;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_PREAUTH_CONTROLLER_ID: AtomicU64 = AtomicU64::new(1);
 
 pub const SNOW_VERSION: &str = "0.10.0";
 pub const MAX_REPLAY_WINDOW: u64 = 64;
@@ -1016,6 +1019,8 @@ pub struct PreauthInputRecordPermit {
 #[derive(Debug)]
 #[must_use = "a charged pre-auth response must be completed or explicitly abandoned"]
 pub struct PreauthResponsePermit {
+    controller_id: u64,
+    attempt_id: u64,
     state_id: PreauthStateId,
     admitted_at_ms: u64,
     deadline_ms: u64,
@@ -1045,6 +1050,7 @@ struct ProcessPreauthState {
     queued: usize,
     created_at_ms: u64,
     last_progress_ms: u64,
+    pending_response: Option<u64>,
     rejected: bool,
 }
 
@@ -1064,7 +1070,9 @@ struct ProcessPreauthSource {
 /// retained. Charges are atomic and happen before the protected operation.
 pub struct ProcessPreauthAdmission {
     limits: ProcessPreauthLimits,
+    controller_id: u64,
     next_id: u64,
+    next_response_attempt: u64,
     states: BTreeMap<PreauthStateId, ProcessPreauthState>,
     sources: BTreeMap<Vec<u8>, ProcessPreauthSource>,
     memory_bytes: usize,
@@ -1125,9 +1133,14 @@ impl ProcessPreauthAdmission {
         {
             return Err(SessionRejected);
         }
+        let controller_id = NEXT_PREAUTH_CONTROLLER_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map_err(|_| SessionRejected)?;
         Ok(Self {
             limits,
+            controller_id,
             next_id: 0,
+            next_response_attempt: 0,
             states: BTreeMap::new(),
             sources: BTreeMap::new(),
             memory_bytes: 0,
@@ -1216,6 +1229,7 @@ impl ProcessPreauthAdmission {
                 queued: 0,
                 created_at_ms: now_ms,
                 last_progress_ms: now_ms,
+                pending_response: None,
                 rejected: false,
             },
         );
@@ -1534,7 +1548,21 @@ impl ProcessPreauthAdmission {
         now_ms: u64,
     ) -> Result<PreauthResponsePermit, SessionRejected> {
         self.refresh_window(now_ms)?;
-        let source = self.live(id, now_ms)?.source.clone();
+        let state = self.live(id, now_ms)?;
+        if state.pending_response.is_some() {
+            return Err(SessionRejected);
+        }
+        let source = state.source.clone();
+        let idle_deadline_ms = state
+            .last_progress_ms
+            .checked_add(self.limits.idle_timeout_ms)
+            .ok_or(SessionRejected)?;
+        let lifetime_deadline_ms = state
+            .created_at_ms
+            .checked_add(self.limits.max_lifetime_ms)
+            .ok_or(SessionRejected)?;
+        let attempt_id = self.next_response_attempt;
+        let next_attempt = attempt_id.checked_add(1).ok_or(SessionRejected)?;
         let usage = self.sources.get(&source).ok_or(SessionRejected)?;
         let source_bytes = usage
             .response_bytes
@@ -1560,15 +1588,25 @@ impl ProcessPreauthAdmission {
             self.reject(id);
             return Err(SessionRejected);
         }
-        let deadline_ms = now_ms
+        let response_deadline_ms = now_ms
             .checked_add(self.limits.response_send_deadline_ms)
             .ok_or(SessionRejected)?;
+        let deadline_ms = response_deadline_ms
+            .min(idle_deadline_ms)
+            .min(lifetime_deadline_ms);
         let usage = self.sources.get_mut(&source).ok_or(SessionRejected)?;
         usage.response_bytes = source_bytes;
         usage.response_packets = source_packets;
         self.response_bytes = response_bytes;
         self.response_packets = response_packets;
+        self.next_response_attempt = next_attempt;
+        self.states
+            .get_mut(&id)
+            .ok_or(SessionRejected)?
+            .pending_response = Some(attempt_id);
         Ok(PreauthResponsePermit {
+            controller_id: self.controller_id,
+            attempt_id,
             state_id: id,
             admitted_at_ms: now_ms,
             deadline_ms,
@@ -1577,8 +1615,23 @@ impl ProcessPreauthAdmission {
 
     /// Permanently abandons a charged response attempt. Accounting remains
     /// charged and the logical pre-auth state cannot be reused.
-    pub fn abandon_response(&mut self, permit: PreauthResponsePermit) {
-        self.reject(permit.state_id);
+    pub fn abandon_response(
+        &mut self,
+        permit: PreauthResponsePermit,
+    ) -> Result<(), SessionRejected> {
+        if permit.controller_id != self.controller_id {
+            return Err(SessionRejected);
+        }
+        let state = self
+            .states
+            .get_mut(&permit.state_id)
+            .ok_or(SessionRejected)?;
+        if state.pending_response != Some(permit.attempt_id) {
+            return Err(SessionRejected);
+        }
+        state.pending_response = None;
+        state.rejected = true;
+        Ok(())
     }
 
     /// Completes one bounded send attempt. The D019 deadline is inclusive: an
@@ -1589,22 +1642,33 @@ impl ProcessPreauthAdmission {
         now_ms: u64,
     ) -> Result<(), SessionRejected> {
         let id = permit.state_id;
+        let controller_matches = permit.controller_id == self.controller_id;
         let result = self.complete_response_checked(permit, now_ms);
-        if result.is_err() {
+        if result.is_err() && controller_matches {
             self.reject(id);
         }
         result
     }
 
     fn complete_response_checked(
-        &self,
+        &mut self,
         permit: PreauthResponsePermit,
         now_ms: u64,
     ) -> Result<(), SessionRejected> {
-        self.live(permit.state_id, now_ms)?;
-        if now_ms < permit.admitted_at_ms || now_ms > permit.deadline_ms {
+        if permit.controller_id != self.controller_id {
             return Err(SessionRejected);
         }
+        let state = self.live(permit.state_id, now_ms)?;
+        if state.pending_response != Some(permit.attempt_id)
+            || now_ms < permit.admitted_at_ms
+            || now_ms > permit.deadline_ms
+        {
+            return Err(SessionRejected);
+        }
+        self.states
+            .get_mut(&permit.state_id)
+            .ok_or(SessionRejected)?
+            .pending_response = None;
         Ok(())
     }
 
@@ -1970,6 +2034,48 @@ mod preauth_tests {
         ));
         assert_eq!(
             admission.enqueue(overflow, u64::MAX - 40),
+            Err(SessionRejected)
+        );
+    }
+
+    #[test]
+    fn response_permit_is_controller_bound_and_one_pending_per_state() {
+        let mut first = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let mut second = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let first_id = first.admit_state(b"first", 2, 0).unwrap();
+        let second_id = second.admit_state(b"second", 2, 0).unwrap();
+        assert_eq!(first_id, second_id);
+        first.charge_input(first_id, 1, 1, 0).unwrap();
+        second.charge_input(second_id, 1, 1, 0).unwrap();
+        let cross = first.charge_response(first_id, 1, 0).unwrap();
+        assert_eq!(second.complete_response(cross, 0), Err(SessionRejected));
+        assert_eq!(second.charge_response(second_id, 1, 0).is_ok(), true);
+
+        let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = admission.admit_state(b"pending", 2, 0).unwrap();
+        admission.charge_input(id, 1, 1, 0).unwrap();
+        let permit = admission.charge_response(id, 1, 0).unwrap();
+        assert!(matches!(
+            admission.charge_response(id, 1, 0),
+            Err(SessionRejected)
+        ));
+        assert_eq!(admission.complete_response(permit, 0), Err(SessionRejected));
+    }
+
+    #[test]
+    fn response_permit_deadline_is_capped_by_state_boundaries() {
+        let mut limits = process_limits();
+        limits.idle_timeout_ms = 50;
+        limits.max_lifetime_ms = 100;
+        limits.response_send_deadline_ms = 100;
+        limits.response_send_deadline_ms = 60;
+        let mut admission = ProcessPreauthAdmission::new(limits, 0).unwrap();
+        let id = admission.admit_state(b"source", 2, 0).unwrap();
+        admission.charge_input(id, 1, 1, 0).unwrap();
+        let permit = admission.charge_response(id, 1, 0).unwrap();
+        assert_eq!(permit.deadline_ms(), 50);
+        assert_eq!(
+            admission.complete_response(permit, 50),
             Err(SessionRejected)
         );
     }

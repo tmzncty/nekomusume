@@ -359,8 +359,18 @@ impl ListenerAdmission {
         }
     }
 
-    fn remaining_response_budget(&self, permit: &PreauthResponsePermit) -> Result<Duration, ()> {
-        remaining_budget(self.now_ms(), permit.deadline_ms()).map_err(|_| ())
+    fn effective_response_deadline(
+        &self,
+        permit: &PreauthResponsePermit,
+        existing_timeout: Option<Duration>,
+    ) -> Result<u64, ()> {
+        let now = self.now_ms();
+        remaining_budget(now, permit.deadline_ms()).map_err(|_| ())?;
+        existing_timeout.map_or(Ok(permit.deadline_ms()), |timeout| {
+            let millis: u64 = timeout.as_millis().try_into().map_err(|_| ())?;
+            let caller_deadline = now.checked_add(millis).ok_or(())?;
+            Ok(permit.deadline_ms().min(caller_deadline))
+        })
     }
 
     pub(crate) fn send_tcp_response(
@@ -372,34 +382,31 @@ impl ListenerAdmission {
         let previous_timeout = match stream.write_timeout() {
             Ok(timeout) => timeout,
             Err(_) => {
-                self.process.abandon_response(permit);
+                let _ = self.process.abandon_response(permit);
                 return Err(());
             }
         };
-        if self.remaining_response_budget(&permit).is_err() {
-            self.process.abandon_response(permit);
-            return Err(());
-        }
+        let deadline = match self.effective_response_deadline(&permit, previous_timeout) {
+            Ok(deadline) => deadline,
+            Err(()) => {
+                let _ = self.process.abandon_response(permit);
+                return Err(());
+            }
+        };
         let frame_len: u32 = match payload.len().try_into() {
             Ok(len) => len,
             Err(_) => {
-                self.process.abandon_response(permit);
+                let _ = self.process.abandon_response(permit);
                 return Err(());
             }
         };
-        let result = write_frame_until(
-            stream,
-            payload,
-            frame_len,
-            || self.now_ms(),
-            permit.deadline_ms(),
-        );
+        let result = write_frame_until(stream, payload, frame_len, || self.now_ms(), deadline);
         if result.is_err() {
-            self.process.abandon_response(permit);
+            let _ = self.process.abandon_response(permit);
             return Err(());
         }
         if stream.set_write_timeout(previous_timeout).is_err() {
-            self.process.abandon_response(permit);
+            let _ = self.process.abandon_response(permit);
             return Err(());
         }
         self.process
@@ -417,24 +424,31 @@ impl ListenerAdmission {
         let previous_timeout = match socket.write_timeout() {
             Ok(timeout) => timeout,
             Err(_) => {
-                self.process.abandon_response(permit);
+                let _ = self.process.abandon_response(permit);
                 return Err(());
             }
         };
-        let budget = match self.remaining_response_budget(&permit) {
-            Ok(budget) => budget,
+        let deadline = match self.effective_response_deadline(&permit, previous_timeout) {
+            Ok(deadline) => deadline,
             Err(()) => {
-                self.process.abandon_response(permit);
+                let _ = self.process.abandon_response(permit);
+                return Err(());
+            }
+        };
+        let budget = match remaining_budget(self.now_ms(), deadline) {
+            Ok(budget) => budget,
+            Err(_) => {
+                let _ = self.process.abandon_response(permit);
                 return Err(());
             }
         };
         if socket.set_write_timeout(Some(budget)).is_err() {
-            self.process.abandon_response(permit);
+            let _ = self.process.abandon_response(permit);
             return Err(());
         }
         let sent = socket.send_to(payload, peer);
         if socket.set_write_timeout(previous_timeout).is_err() {
-            self.process.abandon_response(permit);
+            let _ = self.process.abandon_response(permit);
             return Err(());
         }
         match sent {
@@ -443,7 +457,7 @@ impl ListenerAdmission {
                 .complete_response(permit, self.now_ms())
                 .map_err(|_| ()),
             _ => {
-                self.process.abandon_response(permit);
+                let _ = self.process.abandon_response(permit);
                 Err(())
             }
         }
@@ -610,6 +624,22 @@ mod tests {
             io::ErrorKind::TimedOut
         );
         assert_ne!(writer.bytes, [0, 0, 0, 4, b'a', b'b', b'c', b'd']);
+    }
+
+    #[test]
+    fn response_deadline_preserves_an_earlier_socket_timeout() {
+        let mut admission = ListenerAdmission::new();
+        let peer: SocketAddr = "127.0.0.1:40080".parse().unwrap();
+        let mut ticket = admission.admit(peer).unwrap();
+        admission.charge_input(&mut ticket, 64, 16).unwrap();
+        let permit = admission.charge_response(&mut ticket, 8).unwrap();
+        let now = admission.now_ms();
+        let deadline = admission
+            .effective_response_deadline(&permit, Some(Duration::from_millis(20)))
+            .unwrap();
+        assert!(deadline <= now + 20);
+        admission.process.abandon_response(permit).unwrap();
+        admission.release(ticket);
     }
 
     #[test]
