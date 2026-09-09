@@ -321,18 +321,21 @@ impl DeliveryLedger {
         {
             return Err(LedgerError::OldEpoch);
         }
-        if context.delivery_epoch.0 == x.context.delivery_epoch.0
-            && context.key_phase.0 == x.context.key_phase.0
-            && context.path_generation.0 == x.context.path_generation.0
-        {
-        } else if context.delivery_epoch.0 > x.context.delivery_epoch.0
+        if context.delivery_epoch.0 > x.context.delivery_epoch.0
             && (context.key_phase.0 != x.context.key_phase.0
                 || context.path_generation.0 != x.context.path_generation.0)
         {
             return Err(LedgerError::InvalidMigration);
-        } else {
-            x.context = context;
         }
+        // Validate and commit the ledger-wide context before mutating the
+        // segment. Otherwise a confirmation can advance only this segment and
+        // a later insert can be admitted against stale global context.
+        self.context_ok(context)?;
+        let x = self
+            .segments
+            .get_mut(&(s, o))
+            .ok_or(LedgerError::RangeNotFound)?;
+        x.context = context;
         x.state = DeliveryState::Confirmed;
         let end = o
             .checked_add(x.data.len() as u64)
@@ -548,6 +551,20 @@ mod tests {
         assert_eq!(segment.state, DeliveryState::Unsent);
         assert_eq!(segment.context, c(1, 0, 1));
         assert_eq!(x.watermark(1), 0);
+    }
+
+    #[test]
+    fn confirmation_context_advance_prevents_later_insert_rollback() {
+        let mut x = l();
+        x.insert(1, 0, b"a", c(1, 0, 1)).unwrap();
+        x.mark_in_flight(1, 0).unwrap();
+        x.confirm_received(1, 0, c(1, 1, 2)).unwrap();
+        assert_eq!(x.context, Some(c(1, 1, 2)));
+        assert_eq!(x.segments().next().unwrap().context, c(1, 1, 2));
+        assert_eq!(x.insert(1, 1, b"b", c(1, 0, 1)), Err(LedgerError::OldEpoch));
+        assert_eq!(x.segments().count(), 1);
+        assert_eq!(x.bytes, 1);
+        assert_eq!(x.watermark(1), 1);
     }
 
     #[test]
