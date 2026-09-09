@@ -851,7 +851,9 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
     let tcp = 40090u16;
     let server = Command::new(bin)
         .args([
-            "failover-server",
+            "failover",
+            "--role",
+            "server",
             "--udp-port",
             &udp.to_string(),
             "--tcp-port",
@@ -881,7 +883,9 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
     let server = ready_failover_server(server);
     let out = Command::new(bin)
         .args([
-            "failover-client",
+            "failover",
+            "--role",
+            "client",
             "--addr",
             "127.0.0.1",
             "--udp-port",
