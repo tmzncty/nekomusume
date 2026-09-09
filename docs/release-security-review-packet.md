@@ -2,9 +2,9 @@
 
 **Scope:** evidence index only. This is not an audit, security approval, production authorization, protocol freeze, or release decision.
 
-**Evidence indexed and developer local gates rerun through reachable exact commit:** `188d5a5d7c0f87c5554b6673ad56284dfc7d7138`
+**Evidence indexed and developer local gates rerun through reachable exact commit:** `0a81d99ceb9bd0f950f67e42fdc9e9ee6191c314`
 
-The packet text is updated after that tested tree; it is not a self-referential commit attestation. Minimal developer local-CI provenance for the package source-state guard is retained in [`docs/local-ci-188d5a5-20260909.md`](local-ci-188d5a5-20260909.md); the earlier exact-`b3bfe97` local run is retained separately, and GitHub-hosted run `34298672407` is separate cross-evidence.
+The packet text is updated after that tested tree; it is not a self-referential commit attestation. Minimal developer local-CI provenance for the package source-state guard and reproducibility workflow is retained in [`docs/local-ci-0a81d99-20260909.md`](local-ci-0a81d99-20260909.md); the earlier exact-`188d5a5` local run is retained separately, and GitHub-hosted run `34298672407` is separate cross-evidence.
 
 This packet is an evidence index, not a self-referential commit attestation; later packet-text commits may update the index without changing the tested tree.
 

@@ -1,8 +1,8 @@
-# Release item-4 subgate factual review — exact `188d5a5`
+# Release item-4 subgate factual review — exact `0a81d99`
 
 ## Scope
 
-Developer-prepared factual review support for reachable exact commit `188d5a5d7c0f87c5554b6673ad56284dfc7d7138`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support for reachable exact commit `0a81d99ceb9bd0f950f67e42fdc9e9ee6191c314`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
@@ -37,7 +37,7 @@ Developer-prepared factual review support for reachable exact commit `188d5a5d7c
 
 ## Exact-tree gates
 
-On reachable exact `188d5a5`, developer local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` and `git diff --check` passed before this review-text update was committed; minimal provenance is retained in [`../local-ci-188d5a5-20260909.md`](../local-ci-188d5a5-20260909.md). The earlier exact-`b3bfe97` local run and GitHub-hosted run `34298672407` are separate evidence. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
+On reachable exact `0a81d99`, developer local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` and `git diff --check` passed with final clean-tree verification before this review-text update was committed; minimal provenance is retained in [`../local-ci-0a81d99-20260909.md`](../local-ci-0a81d99-20260909.md). The earlier exact-`188d5a5` local run and GitHub-hosted run `34298672407` are separate evidence. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
 
 ## Remaining release boundaries
 
