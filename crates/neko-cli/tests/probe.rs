@@ -276,6 +276,93 @@ fn help_and_capabilities_cover_dispatch_surface() {
         assert!(String::from_utf8_lossy(&output.stderr).contains(expected));
     }
 }
+
+#[test]
+fn advertised_socket_free_fixtures_execute_and_reject_bounds() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let positives = [
+        (
+            vec![
+                "health-observe",
+                "--path",
+                "7",
+                "--rtt-us",
+                "1200",
+                "--loss-per-mille",
+                "5",
+                "--pto",
+                "1",
+                "--count",
+                "2",
+                "--json",
+            ],
+            "\"samples\"",
+        ),
+        (
+            vec![
+                "scheduler-fairness",
+                "--rounds",
+                "2",
+                "--bytes",
+                "8",
+                "--json",
+            ],
+            "\"fixture\":\"scheduler-fairness\"",
+        ),
+        (
+            vec![
+                "workload",
+                "--duration",
+                "1",
+                "--concurrency",
+                "2",
+                "--records",
+                "3",
+                "--bytes",
+                "8",
+                "--json",
+            ],
+            "\"fixture\":\"session-workload\"",
+        ),
+        (
+            vec!["key-update", "--json"],
+            "\"fixture\":\"secure-session-key-update\"",
+        ),
+        (vec!["lab", "--json"], "\"demo\":\"failover\""),
+    ];
+    for (args, expected) in positives {
+        let output = Command::new(bin).args(&args).output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "args={args:?} stdout={stdout}");
+        if args[0] != "health-observe" {
+            assert!(
+                stdout.contains("\"ok\":true"),
+                "args={args:?} stdout={stdout}"
+            );
+        }
+        assert!(stdout.contains(expected), "args={args:?} stdout={stdout}");
+    }
+
+    for args in [
+        vec![
+            "health-observe",
+            "--path",
+            "7",
+            "--rtt-us",
+            "1200",
+            "--loss-per-mille",
+            "1001",
+            "--pto",
+            "1",
+        ],
+        vec!["scheduler-fairness", "--rounds", "65"],
+        vec!["workload", "--duration", "0"],
+    ] {
+        let output = Command::new(bin).args(&args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "args={args:?}");
+    }
+}
+
 #[test]
 fn authenticated_tcp_and_udp_loopback_probe_starts_after_ready() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
