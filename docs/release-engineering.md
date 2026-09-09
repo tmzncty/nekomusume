@@ -9,9 +9,11 @@ The package contract declares Linux GNU targets `x86_64-unknown-linux-gnu` and `
 Requirements are Rust/Cargo from the locked workspace plus GNU `tar`, `gzip`, and `sha256sum`. Build from a clean, exact commit:
 
 ```sh
-SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) OUT="$PWD/dist-a" scripts/release/build-package.sh
-SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) OUT="$PWD/dist-b" scripts/release/build-package.sh
-sha256sum dist-a/*.tar.gz dist-b/*.tar.gz
+BUILD_OUTPUT=$(mktemp -d)
+trap 'rm -rf "$BUILD_OUTPUT"' EXIT
+SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) OUT="$BUILD_OUTPUT/dist-a" scripts/release/build-package.sh
+SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) OUT="$BUILD_OUTPUT/dist-b" scripts/release/build-package.sh
+sha256sum "$BUILD_OUTPUT"/dist-a/*.tar.gz "$BUILD_OUTPUT"/dist-b/*.tar.gz
 ```
 
 Before querying build metadata or creating output, the script rejects staged changes, unstaged tracked changes, and non-ignored untracked files, so emitted `git_commit` provenance names source state equal to HEAD. Ignored generated paths such as `target/` and repository-root `dist/` do not make a clean checkout unbuildable. The script then uses `Cargo.lock`, disables incremental compilation, normalizes archive order/owner/group/mtime, suppresses gzip timestamps, and emits `*.build.json`. Equal archive hashes are evidence for the same source, toolchain, target and environment—not a promise across different compiler/linker versions.

@@ -24,6 +24,7 @@ bash scripts/check-status-coverage.sh
 bash scripts/check-status-coverage-test.sh
 bash scripts/check-shell-syntax.sh
 bash scripts/release/check-clean-source-test.sh
+bash scripts/release/reproducibility-test.sh
 bash scripts/release/smoke-package-test.sh
 python3 scripts/bench/process-resource-sampler-test.py
 python3 scripts/bench/echo-payload-test.py
