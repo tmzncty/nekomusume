@@ -308,11 +308,19 @@ fn context(direction: u8) -> RecordContext {
     }
 }
 fn read_identity(path: &PathBuf) -> Option<LocalIdentity> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = match options.open(path) {
+        Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::NotFound => return None,
-        Err(_) => fail("identity metadata failed"),
+        Err(_) => fail("identity open failed"),
     };
+    let metadata = file.metadata().unwrap_or_else(|_| fail("identity metadata failed"));
     if !metadata.file_type().is_file() {
         fail("identity must be a regular file");
     }
@@ -323,7 +331,9 @@ fn read_identity(path: &PathBuf) -> Option<LocalIdentity> {
             fail("identity permissions must be owner-only");
         }
     }
-    let s = fs::read_to_string(path).unwrap_or_else(|_| fail("identity read failed"));
+    let mut s = String::new();
+    file.read_to_string(&mut s)
+        .unwrap_or_else(|_| fail("identity read failed"));
     let p = s.trim().split(':').map(unhex).collect::<Vec<_>>();
     if p.len() != 2 {
         fail("invalid identity file");
@@ -332,7 +342,23 @@ fn read_identity(path: &PathBuf) -> Option<LocalIdentity> {
         LocalIdentity::from_keypair(&p[0], &p[1]).unwrap_or_else(|_| fail("invalid identity file")),
     )
 }
+fn secure_identity_parent(path: &PathBuf) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| std::path::Path::new("."));
+        let metadata = fs::metadata(parent).unwrap_or_else(|_| fail("identity parent metadata failed"));
+        if !metadata.is_dir() || metadata.permissions().mode() & 0o022 != 0 {
+            fail("identity parent must not be group/world writable");
+        }
+        let uid = unsafe { libc::geteuid() };
+        if metadata.uid() != uid && metadata.uid() != 0 {
+            fail("identity parent owner mismatch");
+        }
+    }
+}
 fn load_or_generate(path: &PathBuf) -> LocalIdentity {
+    secure_identity_parent(path);
     if let Some(identity) = read_identity(path) {
         return identity;
     }
