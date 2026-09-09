@@ -18,5 +18,6 @@ logs/
 *.pem
 !*.example.pem
 
-# Rust build output
+# Generated build/package output
 target/
+/dist/

@@ -3,6 +3,8 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$ROOT"
+# Check source identity before querying build metadata or creating output.
+"$ROOT/scripts/release/check-clean-source.sh" "$ROOT"
 TARGET=${TARGET:-$(rustc -vV | sed -n 's/^host: //p')}
 OUT=${OUT:-$ROOT/dist}
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct HEAD)}
