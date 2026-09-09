@@ -428,6 +428,34 @@ fn identity_files_are_owner_only_regular_and_fail_closed() {
     assert!(second.status.success());
     assert_eq!(first.stdout, second.stdout);
 
+    let restrictive = tmp("identity-restrictive-umask");
+    let _ = fs::remove_file(&restrictive);
+    let created = Command::new("sh")
+        .args([
+            "-c",
+            "umask 0777; exec \"$1\" keygen --identity \"$2\"",
+            "sh",
+            bin,
+            restrictive.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(created.status.success());
+    assert_eq!(
+        fs::symlink_metadata(&restrictive)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    let reloaded = Command::new(bin)
+        .args(["keygen", "--identity", restrictive.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(reloaded.status.success());
+    assert_eq!(created.stdout, reloaded.stdout);
+
     fs::copy(&secure, &permissive).unwrap();
     fs::set_permissions(&permissive, fs::Permissions::from_mode(0o644)).unwrap();
     let before = fs::read(&permissive).unwrap();
@@ -481,7 +509,7 @@ fn identity_files_are_owner_only_regular_and_fail_closed() {
     assert!(!server.status.success());
     assert!(!log.contains("lifecycle_state=READY"), "{log}");
 
-    for path in [&secure, &permissive, &target, &link, &client] {
+    for path in [&secure, &restrictive, &permissive, &target, &link, &client] {
         let _ = fs::remove_file(path);
     }
 }
@@ -502,6 +530,62 @@ fn deterministic_invalid_configuration_does_not_create_identity() {
                 "127.0.0.1:40080".into(),
                 "--client-key".into(),
                 "zz".into(),
+            ],
+        ),
+        (
+            tmp("invalid-config-server-short-key"),
+            vec![
+                "server".to_string(),
+                "--transport".into(),
+                "tcp".into(),
+                "--port".into(),
+                "40080".into(),
+                "--bind".into(),
+                "127.0.0.1:40080".into(),
+                "--client-key".into(),
+                "00".repeat(31),
+            ],
+        ),
+        (
+            tmp("invalid-config-server-long-key"),
+            vec![
+                "server".to_string(),
+                "--transport".into(),
+                "tcp".into(),
+                "--port".into(),
+                "40080".into(),
+                "--bind".into(),
+                "127.0.0.1:40080".into(),
+                "--client-key".into(),
+                "00".repeat(33),
+            ],
+        ),
+        (
+            tmp("invalid-config-client-short-key"),
+            vec![
+                "client".to_string(),
+                "--transport".into(),
+                "tcp".into(),
+                "--port".into(),
+                "40080".into(),
+                "--addr".into(),
+                "127.0.0.1:40080".into(),
+                "--server-key".into(),
+                "00".repeat(31),
+            ],
+        ),
+        (
+            tmp("invalid-config-client-long-key"),
+            vec![
+                "client".to_string(),
+                "--transport".into(),
+                "tcp".into(),
+                "--port".into(),
+                "40080".into(),
+                "--addr".into(),
+                "127.0.0.1:40080".into(),
+                "--server-key".into(),
+                "00".repeat(33),
             ],
         ),
         (

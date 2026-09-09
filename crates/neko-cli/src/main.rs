@@ -298,6 +298,13 @@ fn unhex(s: &str) -> Vec<u8> {
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap_or_else(|_| fail("invalid hex")))
         .collect()
 }
+fn peer_public_key(value: &str) -> Vec<u8> {
+    let key = unhex(value);
+    if key.len() != 32 {
+        fail("peer public key must be 32 bytes");
+    }
+    key
+}
 fn context(direction: u8) -> RecordContext {
     RecordContext {
         delivery_epoch: 1,
@@ -364,6 +371,12 @@ fn load_or_generate(path: &PathBuf) -> LocalIdentity {
         }
         Err(_) => fail("identity write failed"),
     };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .unwrap_or_else(|_| fail("identity permission failed"));
+    }
     file.write_all(material.as_bytes())
         .unwrap_or_else(|_| fail("identity write failed"));
     file.sync_all()
@@ -511,7 +524,7 @@ fn server(args: &[String]) {
     if bind.port() != p {
         fail("bind port must equal --port");
     }
-    let client_key = unhex(&parse(args, "--client-key", None));
+    let client_key = peer_public_key(&parse(args, "--client-key", None));
     let policy = TrustPolicy::new(vec![TrustRecord {
         version: 1,
         public_key: client_key,
@@ -730,7 +743,7 @@ fn client(args: &[String]) {
     let count = exchange_count(args);
     let addr = parse(args, "--addr", None);
     let target: SocketAddr = addr.parse().unwrap_or_else(|_| fail("bad address"));
-    let sk = unhex(&parse(args, "--server-key", None));
+    let sk = peer_public_key(&parse(args, "--server-key", None));
     let benchmark = benchmark_payload(args, &t, max, count);
     let idpath = PathBuf::from(parse(args, "--identity", Some("neko-client.identity")));
     let id = load_or_generate(&idpath);
@@ -1728,7 +1741,7 @@ fn failover_client(args: &[String]) {
         "--identity",
         Some("neko-client.identity"),
     )));
-    let sk = unhex(&parse(args, "--server-key", None));
+    let sk = peer_public_key(&parse(args, "--server-key", None));
     let target = format!("{addr}:{up}")
         .parse::<SocketAddr>()
         .unwrap_or_else(|_| fail("bad UDP target"));
