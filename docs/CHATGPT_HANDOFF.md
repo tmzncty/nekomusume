@@ -1,216 +1,223 @@
-# ChatGPT reviewer handoff — repair the red exact-tree gate before periodic/identity closure
+# ChatGPT reviewer handoff — close the repaired local gate, then bind pre-auth response ownership
 
 ## Reviewed state
 
-- Previous reviewer-owned handoff: exact `9036877706290d08ef3c5dbd51058096be5b1a23` (`docs(handoff): close periodic identity ordering next`).
-- Previous reviewed developer implementation/test head: exact `1648dfdbf6731f55bc31598a120bd42c1de1d8a7` (`fix: secure multistream identity loading`).
-- Previous reviewed developer documentation/evidence head: exact `a4dbe72d54b8f51e2734bb0be83c7b90eea8d8c7` (`docs: close multistream identity boundary`).
-- Current developer implementation/test head reviewed this cycle: exact `363177c18773d52cfa9edc114ed380117e03b562` (`fix: validate periodic configuration before identity`).
-- Current developer documentation/evidence head reviewed this cycle: exact `34f24f7af5e595214b870e27c43204abfb1bb7d7` (`docs: record periodic identity gate result`).
+- Previous reviewer-owned handoff: exact `ff352b2f96ac57b5a9cc1a66973d2ceec62c344e` (`docs(handoff): repair red local gate before identity closure`).
+- Previous reviewed developer implementation/test head: exact `363177c18773d52cfa9edc114ed380117e03b562` (`fix: validate periodic configuration before identity`).
+- Previous reviewed developer documentation/evidence head: exact `34f24f7af5e595214b870e27c43204abfb1bb7d7` (`docs: record periodic identity gate result`).
+- Current developer implementation/test head reviewed this cycle: exact `acbd4bf44a9a7c13e615cd9266aa3caf897e8417` (`test: lease all failover process ports`).
+- Current developer documentation/evidence head reviewed this cycle: exact `f329e4966daf949aedc0433ac9b1ab0a529e252b` (`docs: correct port lease tested tree`).
 - Developer sequence since the previous reviewer handoff:
-  - `363177c18773d52cfa9edc114ed380117e03b562` moves periodic-server peer-key and bind/port validation before automatic identity creation, routes periodic-client peer-key parsing through the shared exact-32-byte helper before identity creation, and adds focused deterministic no-identity-side-effect negatives.
-  - `34f24f7af5e595214b870e27c43204abfb1bb7d7` truthfully retains the exact-`363177c` local validation result: focused periodic rejection and authenticated positive tests pass, `git diff --check` passes and the source tree is clean, but the full stable gate exits `101` in an existing failover process test.
+  - `7f0b9a326a90254b4e37810012a37186880dd997` replaces the original fixed failover pair in the reproduced failure and completes the missing periodic deterministic no-identity-side-effect negatives.
+  - `ca4a6beb6f45d2167e5e111f330e7a72b8ed9633` retains the exact-`7f0b9a3` diagnosis/provenance and periodic closure.
+  - `7d263307cedc994d72311bfb82af8266030df17a` introduces a TCP+UDP `PortLease` test fixture and starts using lease-to-spawn handoff.
+  - `21778691d5a54e5a5a00b4dad1f744392c2835ef` records the first lease attempt, but its tested-tree identifier was later shown to be wrong and is superseded by the correction below.
+  - `acbd4bf44a9a7c13e615cd9266aa3caf897e8417` applies the lease helper to all dual-port failover process fixtures after the intermediate exact `7d26330` gate still exposed another fixed-port failure.
+  - `f329e4966daf949aedc0433ac9b1ab0a529e252b` corrects the retained lease evidence to the actually tested reachable exact `acbd4bf` and re-anchors the release packet/item-4 factual support.
 - No new VPS/WAN experiment was performed in this sequence.
-- GitHub exposes no combined hosted status records for exact `363177c`. This is not a blocker and must not trigger Actions polling.
+- GitHub currently exposes no hosted combined-status records for exact `acbd4bf`. This is not a blocker and must not trigger Actions polling.
 
 ## Review verdict
 
-### ACCEPT_WITH_BOUNDS — periodic deterministic-config / persistent-identity implementation shape is correct, but closure is not green yet
+### ACCEPT — the previous red exact-tree gate BLOCKER is closed
 
-The previous periodic HIGH is fixed at the code-ordering level:
+The earlier full local gate failure is no longer merely attributed to a guessed race. The retained exact-`7f0b9a3` note records the concrete failing class: the failover server failed its TCP bind before the diagnostic start event, and local socket inspection observed the old fixed TCP port in `TIME-WAIT`.
 
-- periodic-server validates the bounded periodic config, exact-32-byte `--client-key`, parsed `--bind`, and bind-port equality before `load_or_generate()`;
-- periodic-client validates its address/port and exact-32-byte `--server-key` before `load_or_generate()`;
-- the change does not alter Session/Carrier/ACK/Noise/wire semantics, periodic setup/ACK deadlines, key update, reconnect behavior, or authenticated DeliveryAck semantics.
-
-Focused developer-run tests on exact `363177c` show the table-driven deterministic rejection test and an existing authenticated periodic positive passing. This is useful implementation evidence, but it is **not closure** because the authoritative stable local gate is red.
-
-### BLOCKER / READY_LOCAL — exact-`363177c` stable local gate is red
-
-The retained developer-local note records:
+The first dynamic-port repair was not treated as magically final. Exact `7d26330` subsequently remained red because another failover process fixture still used a fixed pair. Exact `acbd4bf` then moved every dual-port failover process fixture onto the same bounded lease helper, and its developer-local exact-tree gate is retained green:
 
 ```text
-PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh -> exit 101
+PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh -> exit 0
+git diff --check                              -> exit 0
+initial/final source tree                    -> clean
 ```
 
-The failing test is:
+The retained provenance records distinct UTC start/end timestamps, Linux/x86_64 and Rust `1.98.0`. This is **developer-local test-fixture/CI evidence**, not reviewer-executed CI, hosted CI, WAN/failover reliability evidence, independent security review, RC, release or production approval.
 
-```text
-first_udp_selection_loss_recovers_from_same_peer_duplicate_hello
-```
+The `PortLease` handoff is intentionally not claimed atomic: it owns both TCP and UDP bindings during selection and releases them immediately before child spawn. That removes the earlier unbounded probe/use gap while preserving the production `40080..=40100` policy. There is no current demonstrated residual failure that justifies another port-allocation framework. Do not keep expanding this test-harness lane unless a new exact-tree failure identifies a concrete remaining fixture defect.
 
-The note labels this a known fixed-port/process-start race. Treat that as a **developer hypothesis, not an established root cause**: the retained note does not preserve the failing stderr/test transcript needed to prove the attribution.
+### ACCEPT — the periodic deterministic-config matrix is complete
 
-Repository inspection does show that this test uses fixed UDP/TCP ports `40091`/`40092`, and `failover_server` emits its diagnostic `start` event only after both sockets bind. A bind/start race is therefore plausible. However, the same test already participates in the shared `TEST_PORT_LOCK`, and many other process/socket tests also use that lock; do not blindly add another mutex or assert that fixed ports alone explain the failure.
+The previous periodic MEDIUM is closed. Exact `7f0b9a3` adds the previously missing cases:
 
-Because local CI is first-class and failed, no release/security/operator closure may claim exact `363177c` as a green tested tree. Do not paper over the failure with GitHub Actions absence, retries-until-lucky, sleeps, or a docs-only reclassification.
-
-**Required repair contract:**
-
-1. reproduce the failing focused test and, if needed, the full-suite-only failure on an exact clean tree;
-2. retain enough sanitized diagnostics to distinguish bind collision, stale child/listener cleanup, startup synchronization, or another concrete failure class;
-3. make the smallest hermetic test/process-fixture repair that addresses the observed class;
-4. preserve product port policy (`40080..=40100`) and existing failover/negotiation/runtime semantics;
-5. if the actual issue is test port ownership, repair test-only allocation/reservation or duplicate same-protocol port reuse rather than changing production CLI semantics;
-6. if the actual issue is startup/process cleanup, fix the readiness/child lifecycle fixture rather than hiding it with arbitrary sleeps;
-7. after repair, run the full exact-tree local gate once as the closure test. If it is red, continue repairing before any closure claim.
-
-This BLOCKER is an evidence/release-gate blocker. It does **not yet establish a product runtime correctness defect**.
-
-### MEDIUM / READY_LOCAL — periodic focused negative matrix is still incomplete
-
-The implementation ordering is present, but the focused table does not yet cover all cases that the previous handoff explicitly required. Add the missing process negatives, each beginning with an absent identity path and proving that it remains absent after deterministic rejection:
-
-- periodic-server bind/`--port` mismatch;
+- periodic-server bind / `--port` mismatch;
 - periodic-client malformed peer-key hex;
 - periodic-client malformed address;
-- periodic-client address/`--port` mismatch.
+- periodic-client address / `--port` mismatch.
 
-The table already covers periodic-server malformed hex, 31-byte and 33-byte keys, malformed bind, plus periodic-client 31-byte and 33-byte keys. Keep at least one existing authenticated periodic positive; do not duplicate the substantial periodic runtime suite.
+The table continues to start with an absent identity path and verifies that deterministic rejection leaves it absent. The authenticated periodic positive remains green. No Session/Carrier/ACK/Noise/wire semantic change was introduced.
 
-This MEDIUM may be folded into the same coherent test commit as the BLOCKER repair because both are owned by `crates/neko-cli/tests/probe.rs`, provided the actual root-cause repair remains clear in the diff and evidence.
+### ACCEPT_WITH_HISTORY — the transient wrong tested-tree reference is corrected
 
-### ACCEPT — current evidence note is honest about the red gate
+The intermediate lease documentation referred to an unreachable/non-current tested identifier `20396f9`. Current exact `f329e49` corrects the evidence filename, body, release packet and item-4 factual anchor to reachable exact `acbd4bf`, and explicitly records that exact `7d26330` was still red before the all-failover-fixture repair.
 
-`docs/local-periodic-identity-363177c-20260909.md` correctly records the red full gate rather than calling it green. Preserve it as historical evidence even after a replacement implementation/test SHA passes. Do not rewrite this artifact to pretend exact `363177c` later passed.
+Treat the intermediate document state as superseded evidence drift, not as a reason to rewrite older history. Current release-facing anchors are factual again. Do not generate another docs-only correction unless a new tested tree actually supersedes `acbd4bf`.
 
-The current release packet and item-4 factual support still anchor the last retained green developer-local security gate at exact `1648dfd`; that is conservative and correct until a replacement periodic/failover test tree is green.
+### CLOSE — identity/config consumer audit lane
+
+No production identity-consumer code changed in this developer sequence. The preceding reviewed sequence already brought ordinary server/client, failover, endpoint-rebind, periodic server/client and advertised multistream onto the established deterministic-config-before-secret and secure existing-identity boundaries, with exact-tree local evidence. The final periodic matrix is now present and the current green gate includes it.
+
+Close this audit lane. Do **not** continue into parent-directory policy, hard-link policy, generic secret-memory frameworks or another identity checker suite without a newly demonstrated defect.
+
+## New finding
+
+### HIGH / READY_LOCAL — pre-auth response permits are not bound to the issuing controller/state attempt strongly enough
+
+This is the next release/security correctness slice. It is an engineering HIGH for the pre-auth ownership/deadline subgate; it does **not** establish a remotely exploitable production vulnerability in the current bounded command call sites.
+
+Current exact-main code shows three related ownership/deadline gaps:
+
+1. `PreauthResponsePermit` carries only `state_id`, `admitted_at_ms` and `deadline_ms`. Every `ProcessPreauthAdmission` starts `next_id` from zero. `complete_response` / `abandon_response` identify ownership only through that state ID. A permit issued by one controller can therefore collide with a live same-numbered state in another controller; the type is one-shot by move, but it is not controller-bound.
+2. `ProcessPreauthState` has no pending-response owner. The API can charge multiple response permits for one state before the first attempt is completed or abandoned. The current production wrappers normally charge/send sequentially, but the resource-ownership type does not enforce the invariant it claims to represent.
+3. The permit send deadline is currently `charge_time + response_send_deadline_ms`. Completion later checks whether the state is still live, but the socket write itself is not capped by the earlier remaining idle/lifetime boundary. Near a state deadline, bytes may therefore be attempted after the state should have expired before `complete_response` rejects the late result. The TCP/UDP wrappers also replace an existing socket write timeout with the permit budget rather than preserving an earlier stricter caller deadline.
+
+An external open PR (`#3`, based on old exact `01c876c`) independently describes the same controller-bound/one-shot/deadline concern and contains one possible implementation shape. **Do not merge or cherry-pick that stale branch wholesale.** Main has moved substantially and already contains later pre-auth ownership work. It may be used as review/research input only; implement against exact current main and retain current semantics/tests.
+
+Protected boundary:
+
+- no change to Session, Carrier, ACK, Noise, wire format or negotiation semantics;
+- no new TTL/LRU/history/source-retention policy and no D019 policy decision;
+- no weakening or increase of existing candidate pre-auth numeric limits;
+- failed/abandoned/expired response attempts remain charged and fail closed;
+- the 100 ms configured response-send ceiling remains an inclusive maximum, while any already-earlier state/caller deadline must win;
+- no production/WAN listener or benchmark work is needed for this local correctness slice.
 
 ## Local-CI-first rule
 
-For the BLOCKER/MEDIUM repair, commit/push one coherent implementation/test SHA first. Validate that exact developer SHA in a clean temporary worktree/clone:
+For any implementation/test commit below, push the coherent developer SHA first, then validate that exact SHA in a clean temporary worktree/clone:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
 git diff --check
-git status --porcelain   # must be empty
+git status --porcelain   # empty
 ```
 
-Persist minimum provenance only after the final replacement SHA is green:
+Persist only the minimum useful provenance after the final replacement SHA is green: exact SHA, exact commands, distinct UTC start/end timestamps, exits, host/OS/arch, stable Rust version and initial/final clean-tree state. Preserve any red intermediate result honestly; do not retry unchanged until lucky.
 
-- exact SHA;
-- exact commands;
-- distinct UTC start/end timestamps;
-- all exit codes;
-- host/OS/arch;
-- stable Rust version;
-- initial/final clean-tree state;
-- sanitized failure/repair diagnostic only where needed to explain the previously red gate.
+No fuzz is required if the response-permit repair remains in typed pre-auth ownership/socket deadline code and does not modify wire decoder/parser/crypto framing. If it unexpectedly crosses that boundary, use the repository pinned fuzz contract before closure.
 
-Do not wait for GitHub Actions. Hosted CI, if it happens to run, is only additional cross-evidence. Do not label developer-local CI as reviewer-executed or hosted CI.
-
-No fuzz is required for the planned test/config-ordering repair because it does not touch wire decode/parser/crypto framing. If the repair unexpectedly crosses that boundary, use the repository's pinned fuzz toolchain contract before closure.
+Hosted CI remains optional cross-evidence. Do not wait for it and do not label developer-local CI as hosted or reviewer-executed CI.
 
 ## Rolling queue — execute continuously in dependency order
 
-There is one unresolved BLOCKER, so A must finish before unrelated horizontal expansion. The queue below is intentionally closure-oriented rather than an artificial collection of tiny checker tickets. Complete A -> B -> C -> D -> E continuously, then enter F -> G -> H as the rolling visible-output loop.
+The new HIGH must close before unrelated horizontal expansion. The developer has been completing coherent slices quickly without lowering evidence quality, so the queue below intentionally includes the full ownership -> callsite -> release-factual closure rather than another one-commit watcher cycle.
 
-### A. BLOCKER / READY_LOCAL — diagnose and remove the exact-tree failover process-test failure
+### A. HIGH / READY_LOCAL — choose the minimal controller-bound response-permit shape and implement it
 
-**Goal:** make the stable local gate deterministically green again without weakening product semantics or hiding a real failure.
+Run a short autonomous proposal cycle (1–3 implementation shapes) against current `crates/neko-crypto/src/lib.rs`; choose the smallest fail-closed design with the least new state/API.
 
-**Files/concepts:** `crates/neko-cli/tests/probe.rs`, existing `TEST_PORT_LOCK`, failover process startup/readiness helpers, child/listener cleanup, fixed test ports only as evidence indicates; production `failover_server` only if diagnostics prove a product issue.
+Required semantics:
 
-**Protected invariants:** no change to Session/Carrier/ACK/Noise/wire semantics; no widening of operator port policy; no sleeps/retries used merely to mask nondeterminism; negative evidence remains honest.
+- a response permit is bound to exactly one `ProcessPreauthAdmission` controller and one state;
+- a state has at most one pending response attempt;
+- controller/permit identity cannot collide merely because two controllers both have `PreauthStateId(0)`;
+- duplicate completion, completion after abandon/expire, cross-controller completion and stale permit reuse fail closed;
+- release/expiry/rejection invalidate pending ownership without refunding charged response accounting;
+- any new controller/permit identifiers are internal ownership tokens, not a new security-capacity policy.
 
-**Validation:** focused failing test, nearby negotiation/failover positives/negatives as relevant, then the full stable local gate on the final commit.
+A checked process-local monotonic identity is acceptable if it is the smallest shape; overflow must fail closed rather than wrap.
 
-Continue immediately to B. If B is naturally part of the same small `probe.rs` repair, combine the commit and continue to C.
+Continue immediately to B.
 
-### B. READY_LOCAL — complete the periodic no-secret-side-effect regression matrix
+### B. HIGH / READY_LOCAL — make the effective send deadline the earliest applicable boundary
 
-**Goal:** lock the already-implemented deterministic configuration ordering across the missing periodic cases.
+Keep the existing configured response-send ceiling but make the actual attempt deadline no later than:
 
-**Files/concepts:** `crates/neko-cli/tests/probe.rs`; no new harness framework.
+- the response-send ceiling;
+- the state's remaining idle deadline;
+- the state's remaining lifetime deadline;
+- any already-earlier caller/socket write deadline that the wrapper can observe without inventing policy.
 
-**Required cases:** server bind/port mismatch; client malformed key hex; client malformed address; client address/port mismatch. All must fail with an initially absent identity still absent. Keep one authenticated periodic positive.
+Preserve the existing inclusive boundary semantics. A send that cannot begin with positive remaining time fails before writing. Failed/late attempts remain charged and terminal for that permit.
+
+Do not turn this into a general async timeout framework.
 
 Continue immediately to C.
 
-### C. READY_LOCAL — replacement exact-tree local gate and retained provenance
+### C. READY_LOCAL — integrate TCP/UDP send wrappers and focused ownership/deadline regressions
 
-On the final pushed A/B implementation/test SHA, run:
+Update the existing `ListenerAdmission` wrapper and current responder call sites to the new ownership API. Preserve exact pre-auth response charging before send.
 
-```text
-PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
-git diff --check
-git status --porcelain
-```
+Minimum focused tests should cover:
 
-A red result is a failure and returns to A/B. Do not rerun unchanged merely hoping for a pass. Once green, persist the minimal provenance described above.
+- permit from controller A rejected by controller B even when both have the same numeric state ID;
+- second pending permit for the same state rejected;
+- completion/abandon/expiry are one-shot;
+- state idle/lifetime boundaries cap the effective response attempt;
+- exact configured boundary remains accepted while the first instant past it is rejected;
+- an earlier existing socket timeout is not widened and is restored where the socket remains usable;
+- failed/abandoned sends retain response charge and cannot reopen the same rejected attempt;
+- ordinary TCP and UDP authenticated positives still pass.
+
+Do not duplicate the full process suite or add a new checker framework.
 
 Continue immediately to D.
 
-### D. READY_LOCAL / FACTUAL RECONCILIATION — re-anchor release-facing identity facts once
+### D. READY_LOCAL — exact-tree green gate and retained provenance
 
-Only after C is green:
+On the final pushed A/B/C implementation/test SHA, run the exact-tree local gate described above. A red result returns to A/B/C based on the concrete failure; do not paper it over with docs or hosted-CI absence.
 
-- update `docs/release-security-review-packet.md` to the actual C-tested implementation/test SHA;
-- update `docs/reviews/release-item4-subgates-20260909.md` to the same tested-tree anchor;
-- update `docs/release-engineering.md` only if its broad CLI identity statement is otherwise stale;
-- preserve exact `363177c`'s red local-CI note unchanged as historical evidence;
-- preserve all older green records rather than rewriting history.
+Once green, persist one small local evidence note. Continue immediately to E.
 
-Do not change release flags, item-3/item-4 completion, D019, WAN, performance, interoperability, or production claims.
+### E. BOUNDED RELEASE/SECURITY RECONCILIATION — review all live pre-auth response call sites once
 
-Continue immediately to E.
+Inspect the actual current responder inventory (ordinary TCP/UDP, failover/resume, periodic and multistream surfaces that still send unauthenticated negotiation/handshake/readiness responses). Confirm every pre-auth response:
 
-### E. BOUNDED IDENTITY-CONSUMER CLOSURE — finish this audit lane and stop expanding it
+- charges the exact framed/datagram bytes before I/O;
+- uses the controller-bound permit and bounded send wrapper;
+- settles completion/abandon/expiry exactly once;
+- does not silently fall back to raw unbounded write/send for pre-auth response material.
 
-Inspect only actual long-term identity consumers reachable from advertised CLI commands:
-
-- automatic-generation commands perform deterministic local config validation before `load_or_generate()` where possible;
-- read-existing-only multistream remains on the descriptor-bound secure reader and does not auto-generate;
-- operator-supplied authenticated peer keys use exact length before secret/network side effects;
-- no second raw long-term identity reader remains.
-
-If aligned, explicitly close the identity/config lane. Do **not** expand into parent-directory policy, hard-link policy, secret-memory frameworks, generic filesystem hardening, or another checker suite without a newly demonstrated defect.
+If one call site is missing, fix it in one coherent commit and rerun the exact-tree gate. If aligned, explicitly close this ownership lane; do not start another broad pre-auth audit by default.
 
 Continue immediately to F.
 
-### F. LOCAL OUTPUT SELECTION / PROPOSAL — choose the next real visible gap
+### F. READY_LOCAL / FACTUAL RECONCILIATION — update release-facing facts only after E is green
 
-Re-read exact-current `docs/status.md`, `IMPLEMENTATION_PLAN.md`, release packet, command help/capabilities, operator/runtime code, and tests. Produce 1–3 concrete dependency-ready proposals grounded in an observed executable behavior/evidence contradiction, then autonomously choose the smallest fail-closed option that does not hit a stop condition.
+Update only the facts actually changed:
 
-For each proposal record:
+- `docs/reviews/resource-abuse-evidence-2026-09-04.md` engineering-control mapping;
+- `docs/release-security-review-packet.md` tested-tree anchor / pre-auth boundary;
+- `docs/reviews/release-item4-subgates-20260909.md` exact-tree factual support if needed.
 
-- the actual user/operator/runtime/release behavior that is missing or contradictory;
-- file/API ownership;
-- protected invariant/evidence boundary;
-- minimum positive/negative tests;
-- why it creates more value than another checker/doc-only refinement.
+Do **not** mark RSEC-001 fully closed, D019 resolved, item 4 independently approved, RC/release/production ready, or adversarial-load suitability proven. D019 source retention remains a maintainer/security-policy checkpoint.
 
-Prefer a real advertised runtime/operator behavior lacking direct executable coverage, then release correctness, then a bounded lifecycle/recovery output lacking truthful exact-current local evidence. Do not select speculative FEC/0-RTT/concurrent striping/multipath/exotic carriers, previous-release interoperability without a prior release, broad audits, or evidence-schema work without an observed defect.
+Continue immediately to G.
 
-Continue immediately to G after selecting a safe proposal.
+### G. LOCAL OUTPUT SELECTION — choose the next real release/runtime/operator output
 
-### G. READY_LOCAL / VISIBLE OUTPUT — implement the selected F option
+Re-read exact-current status/plan/release packet after F and produce 1–3 concrete dependency-ready proposals. Prefer, in order:
 
-Implement one coherent output with focused tests, preserving core architecture and established security/resource policy. Commit/push and continue immediately to H.
+1. a remaining **demonstrated** release/security correctness gap that can be closed without policy invention;
+2. a real advertised runtime/operator behavior lacking direct executable evidence;
+3. a bounded local adversarial/resource observation that answers a named RSEC-001 evidence question without selecting new capacity values.
 
-### H. READY_LOCAL / ROLLING CLOSURE — exact-tree gate, factual closure, repeat
+For each proposal state the observed contradiction/missing behavior, file/API owner, protected boundary and minimum positive/negative evidence. Autonomously choose the smallest safe proposal and continue; do not wait for the next reviewer hour.
 
-Run the exact-tree local gate on G. Add the pinned decode fuzz smoke only if wire decoder/parser/crypto framing changed. Reconcile docs only where actual behavior/evidence changed. Then repeat F -> G -> H while concrete safe local work remains; do not enter watcher mode merely because the reviewer interval has not arrived.
+Do not choose signing/key-custody policy, SBOM publication policy, D019 retention numbers, speculative experimental carriers, previous-release interoperability without a prior frozen release, or another generic checker/audit merely to fill the queue.
 
-If a genuine proposal cycle finds no dependency-ready safe local output, state that truth explicitly rather than manufacturing checker work. A later reviewer can re-evaluate new repository facts.
+Continue immediately to H.
 
-### I. CONDITIONAL VPS OUTPUT — only if exact-current truth opens a genuinely new live question
+### H. READY_LOCAL / ROLLING VISIBLE OUTPUT — implement, exact-tree close, repeat
 
-Current repository truth remains `READY_LIVE: none`. Standing authorization remains valid, but the VPS rental window does not justify duplicate evidence.
+Implement the chosen G output, run the exact-tree local gate, reconcile only changed facts, then repeat G -> H while concrete safe work remains. If a proposal cycle genuinely finds no dependency-ready safe local output, state that truth explicitly rather than entering a polling watcher or manufacturing documentation work.
 
-Only execute a live task if a new exact-current implementation/instrumentation change creates a named unresolved real-network question with satisfied dependencies. Otherwise do not unchanged-rerun HY2, repeated warm failover, periodic, package lifecycle, distinct A -> B -> A, already-answered migration-back/key-update, IPv6 without a real owned IPv6 path, or live PMTUD before its separate authenticated wire/security design gate.
+### I. CONDITIONAL VPS OUTPUT — only if exact-current truth creates a new live question
+
+Repository truth remains `READY_LIVE: none`. Standing authorization remains valid, but it is not a reason to duplicate old evidence.
+
+Only execute a VPS run if a new implementation/instrumentation change creates a named unresolved real-network question with satisfied dependencies. Otherwise do not unchanged-rerun HY2, repeated warm failover, periodic/soak, package lifecycle, distinct A -> B -> A, already-answered endpoint migration/key update, IPv6 without a real owned IPv6 path, or live PMTUD before its separate authenticated wire/security design gate.
 
 ### J. POLICY-BLOCKED PARALLEL LANE — D019 source retention
 
 **Status:** `SOURCE_RETENTION_POLICY_BLOCKED`.
 
-Bounded non-policy pre-auth engineering may continue, but terminal source-retention/no-reset semantics require maintainer/security-policy judgment. Do not invent TTL, LRU/history capacity, external authority, or weaker reset semantics. This does not block A-I.
+Bounded non-policy pre-auth engineering may continue, including A-H. Terminal source-retention/no-reset semantics still require maintainer/security-policy judgment. Do not invent TTL, LRU/history capacity, external authority or weaker reset semantics.
 
 ## Stop conditions
 
 Stop continuous coding only for a real condition:
 
-- unresolved BLOCKER/HIGH correctness/security/evidence finding;
+- unresolved BLOCKER/HIGH correctness/security/evidence finding outside the already-authorized repair path;
 - core Session/Carrier/ACK/crypto/wire architecture change;
 - destructive/canonical-meaning migration;
 - action outside standing authorization;
@@ -221,7 +228,7 @@ Stop continuous coding only for a real condition:
 - actual runtime/tool-budget exhaustion;
 - or a genuinely exhausted rolling queue after the required proposal cycle finds no concrete safe work.
 
-Do not stop because the handoff becomes older than a developer commit, because GitHub Actions does not run, or because one slice finishes before the next reviewer hour.
+Do not stop because GitHub Actions does not run, because the handoff becomes older than a developer commit, or because one coherent slice finishes before the next reviewer hour.
 
 ## Governance boundaries
 
