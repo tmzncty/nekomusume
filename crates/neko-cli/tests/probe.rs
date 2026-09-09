@@ -1830,7 +1830,6 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
             "13",
             "--duration",
             "4",
-            "--send-late-udp-hello",
             "--diagnostic",
             "--experiment-id",
             "selection-retry-client",
