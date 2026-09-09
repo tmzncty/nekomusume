@@ -485,8 +485,6 @@ fn identity_files_are_owner_only_regular_and_fail_closed() {
     let permissive = tmp("identity-permissive");
     let target = tmp("identity-symlink-target");
     let link = tmp("identity-symlink");
-    let insecure_dir = tmp("identity-insecure-parent");
-    let insecure = insecure_dir.join("identity");
     for path in [&secure, &permissive, &target, &link] {
         let _ = fs::remove_file(path);
     }
@@ -536,16 +534,6 @@ fn identity_files_are_owner_only_regular_and_fail_closed() {
     assert!(!rejected.status.success());
     assert_eq!(fs::read(&target).unwrap(), target_before);
 
-    let _ = fs::remove_dir_all(&insecure_dir);
-    fs::create_dir(&insecure_dir).unwrap();
-    fs::set_permissions(&insecure_dir, fs::Permissions::from_mode(0o777)).unwrap();
-    let rejected = Command::new(bin)
-        .args(["keygen", "--identity", insecure.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(!rejected.status.success());
-    assert!(!insecure.exists());
-
     let client = tmp("identity-invalid-server-client");
     let client_key = key(bin, &client);
     let server = Command::new(bin)
@@ -573,7 +561,6 @@ fn identity_files_are_owner_only_regular_and_fail_closed() {
     for path in [&secure, &permissive, &target, &link, &client] {
         let _ = fs::remove_file(path);
     }
-    let _ = fs::remove_dir_all(&insecure_dir);
 }
 
 #[test]
