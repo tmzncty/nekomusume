@@ -995,6 +995,7 @@ fn migration_back_tamper_fails_closed_before_return() {
 #[test]
 fn udp_reply_cessation_seam_is_bounded_and_off_by_default() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let identity = tmp("udp-cessation-invalid-server");
     let output = Command::new(bin)
         .args([
             "failover-server",
@@ -1008,6 +1009,8 @@ fn udp_reply_cessation_seam_is_bounded_and_off_by_default() {
             "40082",
             "--tcp-port",
             "40083",
+            "--identity",
+            identity.to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -1016,6 +1019,7 @@ fn udp_reply_cessation_seam_is_bounded_and_off_by_default() {
         String::from_utf8_lossy(&output.stderr)
             .contains("UDP reply cessation point outside 1..count")
     );
+    let _ = fs::remove_file(identity);
 }
 
 #[test]
