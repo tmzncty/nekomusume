@@ -1970,11 +1970,6 @@ fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
     assert_eq!(
         server_log.matches("udp_retained_input_charged").count(),
         2,
-        "cached retry and first non-matching application datagram must each charge exactly once: {server_log}"
-    );
-    assert_eq!(
-        server_log.matches("udp_retained_input_charged").count(),
-        2,
         "one cached first-Noise retry and the first non-matching authenticated Data must each be charged exactly once before classification; later post-progress Data is outside pre-auth ownership: {server_log}"
     );
     assert!(
