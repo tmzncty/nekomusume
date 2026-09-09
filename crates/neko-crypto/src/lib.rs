@@ -1015,7 +1015,8 @@ pub struct PreauthInputRecordPermit {
 }
 
 /// One-shot ownership of a charged unauthenticated response send attempt.
-/// It must be explicitly completed or abandoned; charged accounting is intentionally retained.
+/// It must be explicitly completed, suppressed, or abandoned through its issuing
+/// controller; dropping it leaves pending ownership until release or expiry.
 #[derive(Debug)]
 #[must_use = "a charged pre-auth response must be completed or explicitly abandoned"]
 pub struct PreauthResponsePermit {
@@ -2114,7 +2115,7 @@ mod preauth_tests {
     #[test]
     fn bounded_response_attempts_never_exceed_configured_accounting() {
         let limits = process_limits();
-        let mut admission = ProcessPreauthAdmission::new(limits.clone(), 0).unwrap();
+        let mut admission = ProcessPreauthAdmission::new(limits, 0).unwrap();
         let first = admission.admit_state(b"first", 2, 0).unwrap();
         admission.charge_input(first, 1, 1, 0).unwrap();
         let permit = admission.charge_response(first, 3, 0).unwrap();

@@ -59,6 +59,7 @@ impl QueueReservation {
 trait BoundedWrite {
     fn write_with_budget(&mut self, bytes: &[u8], budget: Duration) -> io::Result<usize>;
     fn flush_with_budget(&mut self, budget: Duration) -> io::Result<()>;
+    fn restore_write_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()>;
 }
 
 impl BoundedWrite for TcpStream {
@@ -70,6 +71,10 @@ impl BoundedWrite for TcpStream {
     fn flush_with_budget(&mut self, budget: Duration) -> io::Result<()> {
         self.set_write_timeout(Some(budget))?;
         self.flush()
+    }
+
+    fn restore_write_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
+        self.set_write_timeout(timeout)
     }
 }
 
@@ -120,6 +125,19 @@ fn write_frame_until<W: BoundedWrite, N: FnMut() -> u64>(
     write_all_until(writer, payload, &mut now, deadline_ms)?;
     let budget = remaining_budget(now(), deadline_ms)?;
     writer.flush_with_budget(budget)
+}
+
+fn write_frame_restoring_timeout<W: BoundedWrite, N: FnMut() -> u64>(
+    writer: &mut W,
+    payload: &[u8],
+    frame_len: u32,
+    now: N,
+    deadline_ms: u64,
+    previous_timeout: Option<Duration>,
+) -> io::Result<()> {
+    let write_result = write_frame_until(writer, payload, frame_len, now, deadline_ms);
+    let restore_result = writer.restore_write_timeout(previous_timeout);
+    write_result.and(restore_result)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -409,10 +427,16 @@ impl ListenerAdmission {
                 return Err(());
             }
         };
-        let write_result =
-            write_frame_until(stream, payload, frame_len, || self.now_ms(), deadline);
-        let restore_result = stream.set_write_timeout(previous_timeout);
-        if write_result.is_err() || restore_result.is_err() {
+        if write_frame_restoring_timeout(
+            stream,
+            payload,
+            frame_len,
+            || self.now_ms(),
+            deadline,
+            previous_timeout,
+        )
+        .is_err()
+        {
             let _ = self.process.abandon_response(permit);
             return Err(());
         }
@@ -587,6 +611,9 @@ mod tests {
             fn flush_with_budget(&mut self, _budget: Duration) -> io::Result<()> {
                 Ok(())
             }
+            fn restore_write_timeout(&mut self, _timeout: Option<Duration>) -> io::Result<()> {
+                Ok(())
+            }
         }
         let ticks = [0, 10, 20, 30, 99];
         let mut index = 0;
@@ -647,6 +674,41 @@ mod tests {
         assert!(deadline <= now + 20);
         admission.process.abandon_response(permit).unwrap();
         admission.release(ticket);
+    }
+
+    #[test]
+    fn framed_response_restores_timeout_after_write_error() {
+        struct FailingWriter {
+            restored: bool,
+        }
+        impl BoundedWrite for FailingWriter {
+            fn write_with_budget(&mut self, _bytes: &[u8], _budget: Duration) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "injected"))
+            }
+            fn flush_with_budget(&mut self, _budget: Duration) -> io::Result<()> {
+                unreachable!()
+            }
+            fn restore_write_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
+                assert_eq!(timeout, Some(Duration::from_secs(2)));
+                self.restored = true;
+                Ok(())
+            }
+        }
+        let mut writer = FailingWriter { restored: false };
+        assert_eq!(
+            write_frame_restoring_timeout(
+                &mut writer,
+                b"test",
+                4,
+                || 0,
+                100,
+                Some(Duration::from_secs(2)),
+            )
+            .unwrap_err()
+            .kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert!(writer.restored);
     }
 
     #[test]
