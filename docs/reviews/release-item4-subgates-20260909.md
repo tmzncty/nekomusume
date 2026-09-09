@@ -1,8 +1,8 @@
-# Release item-4 subgate factual review — exact `0a81d99`
+# Release item-4 subgate factual review — exact `5e68ad6`
 
 ## Scope
 
-Developer-prepared factual review support for reachable exact commit `0a81d99ceb9bd0f950f67e42fdc9e9ee6191c314`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support for reachable exact commit `5e68ad6ee20654e5e3b1c8d62857b72d129d1870`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
@@ -37,8 +37,8 @@ Developer-prepared factual review support for reachable exact commit `0a81d99ceb
 
 ## Exact-tree gates
 
-On reachable exact `0a81d99`, developer local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` and `git diff --check` passed with final clean-tree verification before this review-text update was committed; minimal provenance is retained in [`../local-ci-0a81d99-20260909.md`](../local-ci-0a81d99-20260909.md). The earlier exact-`188d5a5` local run and GitHub-hosted run `34298672407` are separate evidence. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
+On reachable exact `5e68ad6`, developer local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` and `git diff --check` passed with final clean-tree verification before this review-text update was committed. The same exact tree produced a native x86_64 archive whose packaged `capabilities --json` executed successfully under `smoke-package.sh`; provenance is retained in [`../local-package-smoke-5e68ad6-20260909.md`](../local-package-smoke-5e68ad6-20260909.md). Earlier local and GitHub-hosted runs remain separate evidence. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
 
 ## Remaining release boundaries
 
-The repository still lacks formal independent security/release approval, full D019 policy closure, signed publication/key-custody/SBOM workflow, native aarch64 execution evidence, sustained/public/general reachability evidence, natural-loss evidence, and production/service-manager hardening. HY2 and repeated-failover same-class runs remain frozen. Live PMTUD requires an explicitly accepted authenticated wire/security design gate. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain unchanged.
+The repository still lacks formal independent security/release approval, full D019 policy closure, signed publication/key-custody/SBOM workflow, native aarch64 execution evidence (candidate-target evidence, not a blocker for the currently declared x86_64-only first-RC scope unless N6 changes), sustained/public/general reachability evidence, natural-loss evidence, and production/service-manager hardening. HY2 and repeated-failover same-class runs remain frozen. Live PMTUD requires an explicitly accepted authenticated wire/security design gate. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain unchanged.
