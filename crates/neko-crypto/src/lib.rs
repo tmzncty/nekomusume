@@ -2067,7 +2067,6 @@ mod preauth_tests {
         let mut limits = process_limits();
         limits.idle_timeout_ms = 50;
         limits.max_lifetime_ms = 100;
-        limits.response_send_deadline_ms = 100;
         limits.response_send_deadline_ms = 60;
         let mut admission = ProcessPreauthAdmission::new(limits, 0).unwrap();
         let id = admission.admit_state(b"source", 2, 0).unwrap();
