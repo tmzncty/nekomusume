@@ -53,5 +53,7 @@ late messages fail closed. After establishment, an exact byte-for-byte duplicate
 of the accepted hello replays the exact prior response; contradictory, malformed,
 unsupported, and other late messages remain rejected without changing state; received invalid input makes that negotiator
 terminal. `admit_data` cannot succeed until selection has completed. This is a
-bounded standalone wire/session-boundary primitive, not integration into the
-current live carrier/handshake and not a security-closure claim.
+bounded wire/session-boundary primitive integrated by the current bounded
+ordinary TCP/UDP, failover, periodic, multistream, and endpoint-rebind CLI
+handshakes before authenticated data admission. That integration remains a
+research candidate and is not a security-closure, release, or production claim.

@@ -1,15 +1,22 @@
 # M0 candidate wire golden corpus
 
-**Status: candidate audit asset, not a frozen normative vector set.**
+**Status: legacy fuzz-seed audit asset, distinct from the frozen canonical vector corpus v1.**
 
 `fuzz/corpus/decode/` contains 22 binary seed files corresponding to the 22
 candidate record shapes previously exercised by `neko-wire`'s embedded golden
 round-trip test. Each file is named with its record kind and payload length.
 The nine-byte header is `NK`, version `0`, type, zero flags, and a big-endian
-`u32` payload length. The corpus is seed input for `cargo fuzz`; it does not
-replace the deterministic unit test or claim that the candidate format is
-frozen. The 4096-byte entry is intentionally retained to exercise the current
-payload limit.
+`u32` payload length. This directory is mutable seed input for `cargo fuzz`; it
+does not replace deterministic tests and carries no freeze claim. The 4096-byte
+entry is intentionally retained to exercise the current payload limit.
+
+The separate [`../../fixtures/canonical-vectors.v1.json`](../../fixtures/canonical-vectors.v1.json)
+is the content-addressed frozen canonical corpus v1. Its 42 rows cover ten
+required domains and execute declared real implementation oracles. That freeze
+is corpus-specific: it does not make this fuzz-seed directory immutable, freeze
+the entire protocol, or grant interoperability, release, security, or
+production approval. See
+[`canonical-vector-corpus-scope.md`](canonical-vector-corpus-scope.md).
 
 
 ## Boundary evidence update
