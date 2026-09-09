@@ -1639,7 +1639,12 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
     let cp = tmp("retry-client");
     let sk = key(bin, &sp);
     let ck = key(bin, &cp);
-    let (udp, tcp) = available_tcp_udp_ports();
+    let udp_lease = PortLease::acquire(&[]);
+    let tcp_lease = PortLease::acquire(&[udp_lease.port()]);
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
     let server = Command::new(bin)
         .args([
             "failover-server",
@@ -2333,26 +2338,40 @@ fn tcp_and_udp_reject_unsupported_selected_version_before_noise() {
 
 static TEST_PORT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn available_tcp_udp_ports() -> (u16, u16) {
-    let mut available = Vec::new();
-    for port in 40080..=40100 {
-        if let (Ok(tcp), Ok(udp)) = (
-            TcpListener::bind(("127.0.0.1", port)),
-            UdpSocket::bind(("127.0.0.1", port)),
-        ) {
-            drop(tcp);
-            drop(udp);
-            available.push(port);
-            if available.len() == 2 {
-                return (available[0], available[1]);
-            }
-        }
-    }
-    panic!("fewer than two test ports are locally available");
+struct PortLease {
+    tcp: TcpListener,
+    udp: UdpSocket,
+    port: u16,
 }
 
-fn periodic_test_port() -> u16 {
-    available_tcp_udp_ports().0
+impl PortLease {
+    fn acquire(excluded: &[u16]) -> Self {
+        for port in 40080..=40100 {
+            if excluded.contains(&port) {
+                continue;
+            }
+            if let (Ok(tcp), Ok(udp)) = (
+                TcpListener::bind(("127.0.0.1", port)),
+                UdpSocket::bind(("127.0.0.1", port)),
+            ) {
+                return Self { tcp, udp, port };
+            }
+        }
+        panic!("no test port is locally available");
+    }
+
+    fn port(&self) -> u16 {
+        self.port
+    }
+
+    fn release(self) {
+        drop(self.tcp);
+        drop(self.udp);
+    }
+}
+
+fn periodic_test_port() -> PortLease {
+    PortLease::acquire(&[])
 }
 
 fn start_periodic_server(
@@ -2414,7 +2433,9 @@ fn periodic_session_delayed_confirmations_are_counted_on_one_session() {
     let cp = tmp("periodic-delay-client");
     let ck = key(bin, &cp);
     let sk = key(bin, &sp);
-    let port = periodic_test_port();
+    let port_lease = periodic_test_port();
+    let port = port_lease.port();
+    port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--test-ack-delay-ms", "150"]);
     let out = Command::new(bin)
         .args([
@@ -2466,7 +2487,9 @@ fn periodic_session_synchronized_key_update_crosses_authenticated_socket() {
     let cp = tmp("periodic-key-update-client");
     let ck = key(bin, &cp);
     let sk = key(bin, &sp);
-    let port = periodic_test_port();
+    let port_lease = periodic_test_port();
+    let port = port_lease.port();
+    port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--key-update-after", "1"]);
     let out = Command::new(bin)
         .args([
@@ -2530,7 +2553,9 @@ fn periodic_session_mismatched_key_update_schedule_fails_closed() {
     let cp = tmp("periodic-key-update-mismatch-client");
     let ck = key(bin, &cp);
     let sk = key(bin, &sp);
-    let port = periodic_test_port();
+    let port_lease = periodic_test_port();
+    let port = port_lease.port();
+    port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--key-update-after", "1"]);
     let out = Command::new(bin)
         .args([
@@ -2586,7 +2611,9 @@ fn periodic_session_accounts_missing_ack_and_fails_closed() {
     let cp = tmp("periodic-missing-client");
     let ck = key(bin, &cp);
     let sk = key(bin, &sp);
-    let port = periodic_test_port();
+    let port_lease = periodic_test_port();
+    let port = port_lease.port();
+    port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--test-drop-ack", "3"]);
     let out = Command::new(bin)
         .args([
@@ -2629,7 +2656,9 @@ fn periodic_session_duplicate_ack_is_authenticated_and_idempotent() {
     let cp = tmp("periodic-duplicate-client");
     let ck = key(bin, &cp);
     let sk = key(bin, &sp);
-    let port = periodic_test_port();
+    let port_lease = periodic_test_port();
+    let port = port_lease.port();
+    port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--test-duplicate-ack"]);
     let out = Command::new(bin)
         .args([
@@ -2679,7 +2708,9 @@ fn periodic_setup_timeout_is_separate_from_ack_timeout() {
     let cp = tmp("periodic-setup-separated-client");
     let ck = key(bin, &cp);
     let sk = key(bin, &sp);
-    let port = periodic_test_port();
+    let port_lease = periodic_test_port();
+    let port = port_lease.port();
+    port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--test-setup-delay-ms", "300"]);
     let out = Command::new(bin)
         .args([
@@ -2727,7 +2758,9 @@ fn periodic_setup_timeout_fails_before_application_records() {
     let cp = tmp("periodic-setup-timeout-client");
     let ck = key(bin, &cp);
     let sk = key(bin, &sp);
-    let port = periodic_test_port();
+    let port_lease = periodic_test_port();
+    let port = port_lease.port();
+    port_lease.release();
     let server = start_periodic_server(
         bin,
         port,
@@ -2783,7 +2816,9 @@ fn periodic_malformed_setup_fails_unauthenticated() {
     let sp = tmp("periodic-malformed-server");
     let cp = tmp("periodic-malformed-client");
     let ck = key(bin, &cp);
-    let port = periodic_test_port();
+    let port_lease = periodic_test_port();
+    let port = port_lease.port();
+    port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--setup-timeout-ms", "500"]);
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
     stream.write_all(&[0, 0, 0, 1, 0xff]).unwrap();
@@ -2809,7 +2844,9 @@ fn periodic_server_signal_cleanup_is_bounded() {
     let sp = tmp("periodic-signal-server");
     let cp = tmp("periodic-signal-client");
     let ck = key(bin, &cp);
-    let port = periodic_test_port();
+    let port_lease = periodic_test_port();
+    let port = port_lease.port();
+    port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &[]);
     signal_term(&server.child);
     let (status, log) = finish_server(server);
