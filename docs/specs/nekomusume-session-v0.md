@@ -35,9 +35,10 @@ and byte-identical overlaps are idempotent.
 `insert` validates all bounds, stream, offset, reorder, overlap, and byte-limit
 conditions before committing `SessionContext`. A rejected insertion leaves the
 ledger context and delivery state unchanged. `confirm_received` likewise
-validates the delivery transition before applying a newer segment context; a
-rejected confirmation leaves the segment context, delivery state, and confirmed
-watermark unchanged. These remain bounded state-model invariants, not a claim of
+validates the delivery transition and the ledger-wide component-wise monotonic
+context rule before atomically applying the same newer context to the ledger and
+segment; a rejected confirmation leaves both contexts, delivery state, and
+confirmed watermark unchanged. These remain bounded state-model invariants, not a claim of
 complete protocol validation.
 
 ## Governance boundary (G0)
