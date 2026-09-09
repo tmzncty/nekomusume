@@ -1,14 +1,15 @@
-# Release item-4 subgate factual review — exact `b3bfe97`
+# Release item-4 subgate factual review — exact `188d5a5`
 
 ## Scope
 
-Developer-prepared factual review support for reachable exact commit `b3bfe9709f2cff4ba5973a17b2a3b2f87775267b`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support for reachable exact commit `188d5a5d7c0f87c5554b6673ad56284dfc7d7138`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
 ### Package provenance and rollback
 
 - Exact `a9928c8` package was built reproducibly in the recorded environment; packaged and installed VPS binary hashes matched, and bounded authenticated TCP/UDP package smokes completed with cleanup.
+- The package builder rejects staged, unstaged tracked, and non-ignored untracked source state before build/output mutation while allowing ignored generated output; focused regressions are exercised by `scripts/check.sh`.
 - Current package smoke validates exact archive shape, member type and archived mode before extraction, rejects path escape, links, special members and unexpected layout, then enforces checksums/modes and native secret-free capabilities. Synthetic adversarial archives, including umask-normalization cases, are exercised by `scripts/check.sh`; this is release-tool validation, not signing or publication trust.
 - Exact `7cebe6b` installed-package lifecycle observation completed TCP and UDP `READY -> DRAINING -> STOPPED`, listener release, same-port restart/rebind, authenticated 32-byte post-restart exchanges, and cleanup.
 - Historical N5 remains the older distinct-version A→B→A rollback observation. The separate exact `91a735c -> dc90c5f -> 91a735c` rehearsal uses genuinely different package/binary hashes, retains an external temporary identity/state marker for the bounded probe contract, and returns the selected release to A; its retained sanitized phase anchor is five records with exit status `0` and SHA-256 `4e54f3205cf295ec82e9186eb6b6271558e6babddae819c5ef34e1595a0ddb09`, but experiment start/end timing was not retained. Neither observation establishes arbitrary state-schema compatibility, publication signing, SBOM/provenance service, service-manager hardening, or production deployment.
@@ -36,7 +37,7 @@ Developer-prepared factual review support for reachable exact commit `b3bfe9709f
 
 ## Exact-tree gates
 
-On reachable exact `b3bfe97`, developer local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` and `git diff --check` passed before this review-text update was committed; minimal provenance is retained in [`../local-ci-b3bfe97-20260909.md`](../local-ci-b3bfe97-20260909.md). GitHub-hosted run `34298672407` is separate cross-evidence on the same exact tree. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
+On reachable exact `188d5a5`, developer local `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` and `git diff --check` passed before this review-text update was committed; minimal provenance is retained in [`../local-ci-188d5a5-20260909.md`](../local-ci-188d5a5-20260909.md). The earlier exact-`b3bfe97` local run and GitHub-hosted run `34298672407` are separate evidence. This includes workspace tests, clippy/fmt, status/evidence/governance checks, canonical vector validation, package/HY2/repeated-failover harness regressions, and release-boundary checks. A green gate is not a release/security decision.
 
 ## Remaining release boundaries
 
