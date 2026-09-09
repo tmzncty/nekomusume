@@ -1,8 +1,8 @@
-# Release item-4 subgate factual review — exact `489c345`
+# Release item-4 subgate factual review — exact `3164030`
 
 ## Scope
 
-Developer-prepared factual review support for reachable exact commit `489c345542414aebc726bea6dc5e7e714478061f`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support for reachable exact commit `3164030d428fb4b9ff8db90bd9ddd3fc49e473a0`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
