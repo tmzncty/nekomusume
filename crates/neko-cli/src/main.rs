@@ -1003,30 +1003,26 @@ fn failover_server(args: &[String]) {
     if !(40080..=MAX_PORT).contains(&up) || !(40080..=MAX_PORT).contains(&tp) {
         fail("ports outside 40080-40100")
     }
+    let udp_bind = parse(args, "--udp-bind", Some(&format!("0.0.0.0:{up}")))
+        .parse::<SocketAddr>()
+        .unwrap_or_else(|_| fail("bad UDP bind"));
+    let tcp_bind = parse(args, "--tcp-bind", Some(&format!("0.0.0.0:{tp}")))
+        .parse::<SocketAddr>()
+        .unwrap_or_else(|_| fail("bad TCP bind"));
+    let client = peer_public_key(&parse(args, "--client-key", None));
     let id = load_or_generate(&PathBuf::from(parse(
         args,
         "--identity",
         Some("neko-server.identity"),
     )));
-    let client = unhex(&parse(args, "--client-key", None));
     let policy = TrustPolicy::new(vec![TrustRecord {
         version: 1,
         public_key: client.clone(),
         scope: b"failover".to_vec(),
         status: TrustStatus::Active,
     }]);
-    let udp = UdpSocket::bind(
-        parse(args, "--udp-bind", Some(&format!("0.0.0.0:{up}")))
-            .parse::<SocketAddr>()
-            .unwrap_or_else(|_| fail("bad UDP bind")),
-    )
-    .unwrap_or_else(|_| fail("UDP bind failed"));
-    let tcp = TcpListener::bind(
-        parse(args, "--tcp-bind", Some(&format!("0.0.0.0:{tp}")))
-            .parse::<SocketAddr>()
-            .unwrap_or_else(|_| fail("bad TCP bind")),
-    )
-    .unwrap_or_else(|_| fail("TCP bind failed"));
+    let udp = UdpSocket::bind(udp_bind).unwrap_or_else(|_| fail("UDP bind failed"));
+    let tcp = TcpListener::bind(tcp_bind).unwrap_or_else(|_| fail("TCP bind failed"));
     udp.set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap();
     tcp.set_nonblocking(true).unwrap();
@@ -1736,15 +1732,15 @@ fn failover_client(args: &[String]) {
     if cold_health_failover && !automatic_health_failover {
         fail("--cold-health-failover requires --automatic-health-failover")
     }
+    let target = format!("{addr}:{up}")
+        .parse::<SocketAddr>()
+        .unwrap_or_else(|_| fail("bad UDP target"));
+    let sk = peer_public_key(&parse(args, "--server-key", None));
     let id = load_or_generate(&PathBuf::from(parse(
         args,
         "--identity",
         Some("neko-client.identity"),
     )));
-    let sk = peer_public_key(&parse(args, "--server-key", None));
-    let target = format!("{addr}:{up}")
-        .parse::<SocketAddr>()
-        .unwrap_or_else(|_| fail("bad UDP target"));
     let mut negotiation =
         VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
     let negotiation_hello = negotiation.client_hello().unwrap();
@@ -2737,20 +2733,22 @@ fn endpoint_rebind_server(args: &[String]) {
     if !(40080..=MAX_PORT).contains(&port) {
         fail("port outside 40080-40100")
     }
+    let bind = parse(args, "--udp-bind", Some(&format!("0.0.0.0:{port}")))
+        .parse::<SocketAddr>()
+        .unwrap_or_else(|_| fail("bad UDP bind"));
+    let client = peer_public_key(&parse(args, "--client-key", None));
     let id = load_or_generate(&PathBuf::from(parse(
         args,
         "--identity",
         Some("neko-server.identity"),
     )));
-    let client = unhex(&parse(args, "--client-key", None));
     let policy = TrustPolicy::new(vec![TrustRecord {
         version: 1,
         public_key: client,
         scope: b"failover".to_vec(),
         status: TrustStatus::Active,
     }]);
-    let socket = UdpSocket::bind(parse(args, "--udp-bind", Some(&format!("0.0.0.0:{port}"))))
-        .unwrap_or_else(|_| fail("UDP bind failed"));
+    let socket = UdpSocket::bind(bind).unwrap_or_else(|_| fail("UDP bind failed"));
     socket
         .set_read_timeout(Some(Duration::from_secs(secs)))
         .unwrap();
@@ -3099,12 +3097,12 @@ fn endpoint_rebind_client(args: &[String]) {
     let target = format!("{addr}:{port}")
         .parse::<SocketAddr>()
         .unwrap_or_else(|_| fail("bad UDP target"));
+    let server_key = peer_public_key(&parse(args, "--server-key", None));
     let id = load_or_generate(&PathBuf::from(parse(
         args,
         "--identity",
         Some("neko-client.identity"),
     )));
-    let server_key = unhex(&parse(args, "--server-key", None));
     let endpoint_a = UdpSocket::bind("0.0.0.0:0").unwrap();
     endpoint_a
         .set_read_timeout(Some(Duration::from_secs(secs)))
