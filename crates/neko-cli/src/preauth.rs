@@ -373,6 +373,15 @@ impl ListenerAdmission {
         })
     }
 
+    pub(crate) fn suppress_charged_response(
+        &mut self,
+        permit: PreauthResponsePermit,
+    ) -> Result<(), ()> {
+        self.process
+            .complete_response(permit, self.now_ms())
+            .map_err(|_| ())
+    }
+
     pub(crate) fn send_tcp_response(
         &mut self,
         stream: &mut TcpStream,

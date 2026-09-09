@@ -1141,7 +1141,9 @@ fn failover_server(args: &[String]) {
                             .send_udp_response(&udp, &resp, peer, response_permit)
                             .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
                     } else {
-                        drop(response_permit);
+                        preauth
+                            .suppress_charged_response(response_permit)
+                            .unwrap_or_else(|_| fail("pre-auth response suppression failed"));
                         emit_diagnostic(args, "server", "udp_noise_response_dropped", 0, "");
                     }
                     guard = Some(
@@ -1197,7 +1199,9 @@ fn failover_server(args: &[String]) {
                                 .send_udp_response(&udp, &selection, peer, response_permit)
                                 .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
                         } else {
-                            drop(response_permit);
+                            preauth
+                                .suppress_charged_response(response_permit)
+                                .unwrap_or_else(|_| fail("pre-auth response suppression failed"));
                             emit_diagnostic(args, "server", "udp_selection_dropped", 0, "");
                         }
                         let queue = match preauth.enqueue(&mut admission) {
