@@ -26,7 +26,7 @@ Developer-prepared factual review support for reachable exact commit `5e68ad6ee2
 
 ### Negotiation, Noise, trust, and parser boundaries
 
-- Current deterministic gates cover canonical version negotiation before data admission, exact negotiation/transcript binding into Noise, allowlist/trust rejection, tamper/replay rejection, bounded framing, malformed/truncated/oversize rejection, and fuzz-smoke.
+- Current deterministic gates cover current/current candidate negotiation and data admission, fail-closed unsupported/future-only offers and future selected responses, canonical negotiation before data admission, exact negotiation/transcript binding into Noise, allowlist/trust rejection, tamper/replay rejection, bounded framing, malformed/truncated/oversize rejection, and fuzz-smoke. Previous/current interoperability is not claimed because the repository has no prior frozen release; the distinct-package A/B/A operator rehearsal is not protocol-version interoperability evidence.
 - These are implementation/test facts, not an independent cryptographic/security approval or frozen public protocol claim.
 
 ### Pre-auth resource controls and D019
