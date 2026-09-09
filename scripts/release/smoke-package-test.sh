@@ -7,7 +7,11 @@ make_archive() {
   python3 - "$TMP/$1.tar.gz" "$1" <<'PY'
 import hashlib, io, sys, tarfile
 out, variant = sys.argv[1:]
-root = "nekomusume-0.1.0-aarch64-unknown-linux-gnu"
+root = {
+    "root-traversal": "nekomusume-0.1.0-aarch64-unknown-linux-gnu/..",
+    "root-slash": "wrapper/nekomusume-0.1.0-aarch64-unknown-linux-gnu",
+    "root-prefix": "nekomusume-0.1.0-aarch64-unknown-linux-gnu.evil",
+}.get(variant, "nekomusume-0.1.0-aarch64-unknown-linux-gnu")
 files = {
     "bin/neko-cli": b"not executed on a non-native target\n",
     "share/doc/nekomusume/LICENSE-APACHE": b"apache\n",
@@ -15,6 +19,14 @@ files = {
     "share/doc/nekomusume/README.txt": b"readme\n",
 }
 checksums = "".join(f"{hashlib.sha256(data).hexdigest()}  ./{name}\n" for name, data in sorted(files.items()))
+if variant == "checksum-traversal":
+    checksums += f"{hashlib.sha256(b'escape').hexdigest()}  ../escape\n"
+elif variant == "checksum-absolute":
+    checksums += f"{hashlib.sha256(b'escape').hexdigest()}  /tmp/escape\n"
+elif variant == "checksum-duplicate":
+    checksums += checksums.splitlines(keepends=True)[0]
+elif variant == "checksum-unexpected":
+    checksums += f"{hashlib.sha256(b'extra').hexdigest()}  ./extra.txt\n"
 files["SHA256SUMS"] = checksums.encode()
 dirs = [root, f"{root}/bin", f"{root}/share", f"{root}/share/doc", f"{root}/share/doc/nekomusume"]
 with tarfile.open(out, "w:gz") as archive:
@@ -68,7 +80,7 @@ expect_reject() {
 }
 make_archive valid
 "$ROOT/scripts/release/smoke-package.sh" "$TMP/valid.tar.gz" | grep -q 'execution skipped'
-for case in traversal symlink hardlink fifo unexpected bad-checksum bad-mode; do
+for case in root-traversal root-slash root-prefix traversal symlink hardlink fifo unexpected bad-checksum bad-mode checksum-traversal checksum-absolute checksum-duplicate checksum-unexpected; do
   expect_reject "$case"
 done
 echo package-smoke-regressions-ok

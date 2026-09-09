@@ -11,7 +11,11 @@ mapfile -t MEMBERS < <(tar -tzf "$ARCHIVE" | sed 's:/$::')
 [ "${#MEMBERS[@]}" -gt 0 ] || { echo "empty archive" >&2; exit 1; }
 ROOT_NAME=${MEMBERS[0]}
 case "$ROOT_NAME" in
-  /*|..|../*|*/..|*/../*) echo "unsafe archive path" >&2; exit 1 ;;
+  nekomusume-*-x86_64-unknown-linux-gnu|nekomusume-*-aarch64-unknown-linux-gnu) ;;
+  *) echo "unsupported or unsafe package root" >&2; exit 1 ;;
+esac
+case "$ROOT_NAME" in
+  */*|.|..|*'/./'*|*'/../'*) echo "unsafe package root" >&2; exit 1 ;;
 esac
 for member in "${MEMBERS[@]}"; do
   case "$member" in
@@ -32,6 +36,12 @@ ROOT="$TMP/$ROOT_NAME"
 while IFS= read -r file; do
   [ "$(stat -c %a "$file")" = 644 ] || { echo "insecure document mode: $file" >&2; exit 1; }
 done < <(find "$ROOT/share/doc/nekomusume" -type f -print)
+EXPECTED_SUM_PATHS=$(printf '%s\n' './bin/neko-cli' './share/doc/nekomusume/LICENSE-APACHE' './share/doc/nekomusume/LICENSE-MIT' './share/doc/nekomusume/README.txt' | sort)
+ACTUAL_SUM_PATHS=$(awk '
+  length($1) != 64 || $1 !~ /^[0-9A-Fa-f]+$/ || $2 !~ /^\*?\.\// {exit 1}
+  {path=$2; sub(/^\*/, "", path); print path}
+' "$ROOT/SHA256SUMS" | sort) || { echo "malformed checksum manifest" >&2; exit 1; }
+[ "$EXPECTED_SUM_PATHS" = "$ACTUAL_SUM_PATHS" ] || { echo "unexpected checksum manifest layout" >&2; exit 1; }
 (cd "$ROOT" && sha256sum -c SHA256SUMS)
 case $(basename "$ROOT") in
   *-x86_64-unknown-linux-gnu) TARGET=x86_64-unknown-linux-gnu ;;
