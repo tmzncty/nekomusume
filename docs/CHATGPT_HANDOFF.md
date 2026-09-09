@@ -1,76 +1,81 @@
-# ChatGPT reviewer handoff — close canonical failover with a real positive path, then continue visible local output
+# ChatGPT reviewer handoff — close multistream identity bypass before next visible output
 
 ## Reviewed state
 
-- Previous reviewer-owned handoff: exact `eacd3a1e87cf6cc48e0efafc7add9956798b2e31` (`docs(handoff): close identity evidence before canonical failover CLI`).
-- Previous reviewed developer head: exact `29f2132cf75cf1234021467505e0c75fea51ef66` (`docs: close cross-command identity provenance`).
-- Current developer head reviewed this cycle: exact `71e85f59d453450e5065311b60eebd570d182a48` (`feat: route canonical failover roles`).
+- Previous reviewer-owned handoff: exact `b2aa019c1e35e06cd56d850efd5f19e817909ce1` (`docs(handoff): validate canonical failover positive path`).
+- Previous reviewed developer implementation head: exact `71e85f59d453450e5065311b60eebd570d182a48` (`feat: route canonical failover roles`).
+- Current developer implementation/test head reviewed this cycle: exact `f2d2e8cb8c0bd15a47e673e143fadede7d39ea7c` (`test: prove canonical failover end to end`).
+- Current developer documentation/evidence head reviewed this cycle: exact `9603de373d7521012e47d28fb8da50103d6aebde` (`docs: record canonical failover validation`).
 - Developer sequence since the previous review:
-  - `aefd49fed7414f1cb927ba55dac235e99c1db24a` — adds the missing table-driven ordinary/failover/endpoint-rebind deterministic rejection matrix and proves invalid peer-key/address/bind input leaves an absent identity path absent.
-  - `c5803b96fcfe6034818b167ce3a7978284ed918d` — persists developer-local exact-`aefd49f` CI/package provenance and reconciles release-engineering, release packet and item-4 factual anchors to that real tested tree.
-  - `71e85f59d453450e5065311b60eebd570d182a48` — makes `failover --role server|client` route to the existing failover implementations, updates help, and adds missing/invalid-role and role-routing negative checks.
+  - `f2d2e8cb8c0bd15a47e673e143fadede7d39ea7c` changes the existing controlled UDP-stop -> TCP-resume executable regression to launch the advertised canonical `failover --role server` / `failover --role client` forms rather than the legacy aliases.
+  - `9603de373d7521012e47d28fb8da50103d6aebde` retains exact-`f2d2e8c` developer-local CI and native-package provenance and links the canonical path into release-facing factual material.
 - No new VPS/WAN experiment was performed in this sequence.
-- GitHub currently exposes no combined hosted status records for exact `71e85f5`. This is **not a blocker** and must not create polling/waiting; local exact-tree CI remains the primary gate.
+- GitHub exposes no combined hosted status records for exact `f2d2e8c`. This is not a blocker; the retained local exact-tree gate is the primary evidence class.
 
 ## Review verdict
 
-### ACCEPT — previous HIGH identity/config evidence gap is closed at exact `aefd49f`
+### ACCEPT — canonical failover positive-path gap is closed at exact `f2d2e8c`
 
-The prior release/evidence correctness finding is closed.
+The previous MEDIUM is closed. The existing bounded executable loopback test now drives the canonical server and client command forms through the real authenticated UDP -> TCP resume implementation instead of merely proving parser/error routing. It keeps the existing ordered-record and authenticated DeliveryAck assertions; no duplicate runtime implementation was introduced.
 
-`aefd49f` adds the focused cross-command process matrix requested by the previous handoff. The retained developer-local note records distinct UTC start/end times, Linux/x86_64 host information, stable Rust, `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, native x86_64 package smoke, archive SHA-256, and clean initial/final source trees. The release packet and item-4 factual review now consistently anchor that developer-local evidence to exact `aefd49f` rather than mixing `3164030` and `489c345`.
+The retained note records developer-run local exact-tree validation of `f2d2e8c`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, distinct UTC start/end timestamps, Linux/x86_64 and stable Rust provenance, clean initial/final source trees, and a native x86_64 package smoke. Treat this strictly as **developer-local executable/package evidence**. It is not reviewer-executed CI, hosted CI, VPS/WAN evidence, failover-performance evidence, independent security review, RC, release or production authorization.
 
-This evidence is **developer-run local CI/package evidence**, not reviewer-executed CI, independent security review, VPS/WAN evidence, RC, release, protocol freeze or production authorization.
+### ACCEPT — bounded command-surface closure
 
-The bounded identity/config audit lane is therefore closed unless a new concrete defect appears. Do not reopen parent-directory policy, hard-link frameworks, generic secret-memory hardening, or another identity checker suite merely because more hardening is imaginable.
+One bounded command-surface inspection now aligns:
 
-### ACCEPT_WITH_BOUNDS — canonical `failover --role server|client` implementation shape
+- help advertises the current canonical command set;
+- human capabilities reports the same canonical set and identifies `failover-server` / `failover-client` as aliases;
+- JSON capabilities contains canonical commands and does not promote the two aliases into canonical entries;
+- top-level dispatch routes the advertised commands;
+- canonical `failover --role server|client` delegates to the existing role implementations;
+- missing/unknown role and unknown command remain fail closed;
+- exact `f2d2e8c` supplies a direct canonical positive path.
 
-Exact `71e85f5` chooses the smallest previously accepted CLI shape:
+Close the generic CLI-inventory lane. Do not introduce a registry/refactor merely because the command table could be represented more elegantly.
 
-```text
-neko failover --role server
-neko failover --role client
-```
+### HIGH / READY_LOCAL — advertised `multistream` bypasses the secure long-term identity loader
 
-`failover-server` and `failover-client` remain legacy aliases. The canonical dispatcher delegates to the existing `failover_server` / `failover_client` implementations rather than forking runtime behavior, so no Session, Carrier, ACK, negotiation, Noise, resume, accounting or wire semantic was intentionally changed.
+A new concrete security/evidence defect was found while selecting the next real output.
 
-Current source ordering remains fail closed for persistent identity side effects:
+`crates/neko-cli/src/multistream.rs` has its own `identity()` implementation that directly calls `std::fs::read_to_string(path)` and parses `private:public`. It therefore bypasses the Unix long-term identity invariants already established for the main CLI loader:
 
-- canonical missing/unknown `--role` fails inside `failover_gate` before either role implementation and before identity creation;
-- the server role validates count/bytes/duration, ports, UDP/TCP bind syntax and exact-32-byte peer key before `load_or_generate`;
-- the client role validates bounded mode prerequisites, target syntax and exact-32-byte peer key before `load_or_generate`.
+- no `O_NOFOLLOW` final-component protection;
+- no same-descriptor metadata/read binding;
+- no regular-file check;
+- no owner-only permission check;
+- a symlink or group/world-readable private-key file can be accepted by an advertised experimental CLI command.
 
-Help, human capabilities and JSON capabilities continue to advertise `failover` as canonical and keep the two role-specific names as aliases.
+This is not speculative hardening. `multistream` is listed in help/human/JSON capabilities, performs Noise-authenticated TCP Session work, and consumes long-term private key material. Release-facing material currently uses broad wording that “the CLI” opens existing identities no-follow and rejects insecure paths, so the implementation and evidence boundary disagree.
 
-### MEDIUM / READY_LOCAL — canonical failover has no direct positive executable regression yet
+This HIGH is the queue head. Do not expand into another runtime feature until it is closed.
 
-The current `71e85f5` test proves that canonical dispatch reaches role-specific **error** behavior: missing/unknown role is rejected without identity creation, `--role server` reaches the missing `--client-key` failure, and `--role client` reaches the missing `--server-key` failure.
+**Preferred minimal implementation shape:** reuse the existing descriptor-bound **read-existing-identity** logic from the crate root for multistream. Do not call a generating helper when `multistream --identity` is absent; multistream currently requires an existing identity and should continue to fail rather than silently create one. A tiny shared/helper extraction is acceptable if needed for ownership/visibility. Do not create a generic secret-storage framework.
 
-That is useful routing evidence, but it does **not** directly prove that the advertised canonical forms complete the intended bounded authenticated failover runtime. The substantial positive loopback tests still invoke `failover-server` / `failover-client` legacy aliases.
+While touching the same path, move deterministic multistream local configuration validation before network side effects where practical: parse/validate mode, bounded counts/windows, address, exact-32-byte peer key, and securely load the existing identity before `bind/accept` or `connect`. This is the same fail-closed operator boundary, not a new protocol design.
 
-This is not a claim that the implementation is known broken. It is a focused visible-CLI regression gap. Close it without duplicating the entire failover suite:
+**Minimum tests:**
 
-- adapt one existing bounded positive loopback failover test, or add one small focused test, so the server is launched as `failover --role server` and the client as `failover --role client`;
-- prove one existing success contract end-to-end (prefer the controlled UDP stop -> TCP resume path because it is short and already stable);
-- retain one legacy-alias positive test so compatibility remains exercised;
-- keep missing/unknown-role no-identity negatives green.
+- secure owner-only regular identity is accepted far enough to reach the expected next bounded network/runtime boundary or completes an existing loopback positive;
+- Unix `0644` multistream identity is rejected without modifying its bytes or mode;
+- Unix symlink identity is rejected and the target remains unchanged;
+- malformed/short/long peer key and malformed address fail before a listener/connect attempt where a deterministic process test can prove it without adding a harness framework;
+- existing multistream positive behavior remains green.
 
-Do not introduce a command registry/framework merely for this test.
+No Session/Carrier/ACK/Noise/wire semantic is to be changed. This slice does not require decode fuzz unless implementation unexpectedly touches wire/parser/crypto framing.
 
-### MEDIUM / READY_LOCAL — latest canonical implementation lacks retained developer-local exact-tree closure
+### MEDIUM / READY_LOCAL — release-facing exact-tree scope anchors are internally stale
 
-The retained exact-tree local CI/package evidence currently ends at `aefd49f`, before the canonical CLI implementation commit. There is no persisted developer-local exact-`71e85f5` gate, and no hosted status is currently exposed for that SHA.
+`9603de3` correctly adds the exact-`f2d2e8c` local canonical-failover evidence and updates the later exact-tree gate text, but two release-facing scope anchors still describe the older tree:
 
-After the positive canonical regression is committed, validate the **final pushed implementation/test SHA**, not `71e85f5` by historical implication. Use a clean temporary checkout/worktree and the local-CI-first gate below. Persist provenance if it is used for release/operator factual claims.
+- `docs/release-security-review-packet.md` still says at the top that developer local gates were rerun through exact `aefd49f`;
+- `docs/reviews/release-item4-subgates-20260909.md` still has an `aefd49f` title/scope while its exact-tree gate section now describes `f2d2e8c`.
 
-This is a closure requirement, not an instruction to wait for GitHub Actions.
+Do not rewrite historical evidence or infer that later docs commits were tested trees. After the multistream HIGH is repaired and its final implementation/test SHA receives a clean developer-local gate, reconcile these scope anchors once to that actual tested tree (or explicitly split “review scope” from “latest retained gate” if that is the truthful intent). Avoid another chain of one-commit evidence churn.
 
 ## Local-CI-first rule
 
-For coherent READY_LOCAL implementation/test commits, do not poll or wait for GitHub Actions. Validate the exact pushed developer SHA in a clean temporary worktree/clone.
-
-Minimum default gate:
+For the HIGH repair, commit/push the coherent implementation + focused tests first, then validate that exact developer SHA in a clean temporary worktree/clone:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
@@ -78,34 +83,36 @@ git diff --check
 git status --porcelain   # must be empty
 ```
 
-When the result anchors release-facing facts, retain exact SHA, commands, distinct UTC start/end timestamps, exits, host/OS/arch, stable Rust version, and initial/final clean-tree state. Keep these evidence classes distinct:
+If release-facing facts are anchored to it, retain exact SHA, commands, distinct UTC start/end timestamps, exits, host/OS/arch, stable Rust version, and initial/final clean-tree state. Keep evidence classes separate:
 
 1. developer-reported local CI;
-2. repository-persisted local-CI provenance;
+2. repository-persisted developer local-CI provenance;
 3. reviewer-executed checks;
 4. GitHub-hosted CI.
 
-The canonical CLI dispatch/test slice does not touch wire decoder/parser/crypto framing, so no additional fuzz requirement is introduced. If a future selected slice does touch those boundaries, use the pinned fuzz toolchain and required decode smoke.
+Do not wait for Actions. A docs-only reviewer/developer reconciliation after a validated exact implementation tree does not need another hosted-CI wait loop.
 
 ## Rolling queue — execute continuously in dependency order
 
-There is no unresolved BLOCKER/HIGH. The real dependency-ready queue is smaller than 6–12 hours of pre-enumerable work, so do not invent fake slices. Execute A -> B -> C -> D continuously, then E -> F -> G -> H. At H, if no concrete local output exists, run the required 1–3-option proposal cycle and immediately implement the selected smallest safe option instead of entering watcher mode. I is conditional live work; J remains policy-blocked.
+There is one unresolved HIGH, so A is mandatory before horizontal expansion. The real pre-enumerable queue is smaller than an artificial 6–12-hour package; do not invent fake work. Execute A -> B -> C -> D -> E continuously, then use F -> G -> H as the autonomous rolling-output loop. I is conditional live work; J remains policy-blocked.
 
-### A. READY_LOCAL / VISIBLE OUTPUT — prove canonical failover positive routing
+### A. HIGH / READY_LOCAL — secure multistream existing-identity loading and local config ordering
 
-**Goal:** demonstrate that the canonical command is not merely parseable but actually drives the existing bounded failover runtime.
+**Goal:** make the advertised multistream command obey the same long-term private-key file boundary already claimed for the CLI.
 
-**Files/concepts:** `crates/neko-cli/tests/probe.rs`; `crates/neko-cli/src/main.rs` only if the positive regression exposes a real routing defect.
+**Files/concepts:** `crates/neko-cli/src/multistream.rs`; the existing secure identity read helper in `crates/neko-cli/src/main.rs` or a minimal shared extraction; focused tests in existing CLI test ownership.
 
-**Protected invariants:** canonical dispatch reuses existing failover runtime; Session/Carrier/ACK/Noise/resume semantics unchanged; aliases remain compatible; deterministic invalid role/config still has no persistent identity side effect.
+**Protected invariants:** existing identity must be regular/owner-only on Unix, final symlink must fail closed, metadata and bytes come from the same opened file, no silent identity generation for multistream, peer key is exact 32 bytes, no Session/Carrier/ACK/Noise/wire change.
 
-**Minimum validation:** one end-to-end loopback success using `failover --role server` and `failover --role client`, plus existing alias coverage and existing role/config negatives.
+**Implementation behavior:** reuse one secure existing-identity reader; prevalidate deterministic local config before bind/connect where practical; do not create a second hardening framework.
 
-**Commit/push:** one coherent developer-owned test/repair commit. Continue immediately to B.
+**Validation:** focused secure/insecure/symlink/peer-key/address negatives plus existing multistream positive; then commit/push one coherent developer implementation/test SHA.
+
+Continue immediately to B.
 
 ### B. READY_LOCAL — exact-tree local gate for A
 
-On the exact pushed A SHA in a clean temporary checkout:
+On exact pushed A SHA, clean temporary checkout:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
@@ -113,54 +120,51 @@ git diff --check
 git status --porcelain
 ```
 
-If all pass, record the exact tested SHA and clean-tree state. Do not wait for Actions. If the gate fails, repair and rerun before any closure claim.
+If red, repair and rerun before any closure claim. If green, retain minimal provenance because the result will repair a release-facing security fact. Do not wait for GitHub Actions.
 
 Continue immediately to C.
 
-### C. READY_LOCAL / OPERATOR EVIDENCE — minimal packaged canonical smoke only if needed for a release-facing claim
+### C. READY_LOCAL / FACTUAL RECONCILIATION — repair release scope anchors once
 
-If the CLI/release docs are going to state that the canonical command is exact-current package behavior, build one native x86_64 package outside the source tree and run a **minimal** smoke that proves the packaged binary exposes the same `failover --role server|client` contract. Do not rerun a full VPS failover or create a generic checker.
+Update only the facts made truthful by A/B:
 
-If release-facing docs do not need a new packaged assertion, this slice may be skipped honestly; the local exact-tree executable regression from A/B is sufficient for code correctness.
+- `docs/release-security-review-packet.md`;
+- `docs/reviews/release-item4-subgates-20260909.md`;
+- `docs/release-engineering.md` only if its broad CLI identity wording needs the multistream inclusion spelled out.
 
-Continue immediately to D.
+Anchor the latest developer-local gate to the actual B-tested implementation SHA. Keep historical `aefd49f`, `f2d2e8c`, identity, package and VPS evidence as historical exact-tree records; do not rewrite them.
 
-### D. READY_LOCAL / MILESTONE RECONCILIATION — close canonical CLI contract without claim inflation
-
-Update only facts materially changed by A-C. Suitable locations are `docs/release-engineering.md`, `docs/release-security-review-packet.md`, `docs/reviews/release-item4-subgates-20260909.md`, or a small local CLI provenance note **only if** those documents actually need the new canonical command as release-facing evidence.
-
-Preserve all governance boundaries:
+Preserve governance:
 
 - `RELEASE_CANDIDATE=false`;
 - `PRODUCTION_READY=false`;
 - `FREEZE=false`;
 - `RELEASED=false`;
-- release item 3 remains incomplete;
+- item 3 remains incomplete;
 - independent item 4 remains incomplete;
 - D019 remains policy-blocked;
-- no WAN, failover-performance, interoperability or production claim follows from a local CLI command repair.
+- a local multistream security repair creates no WAN/performance/interoperability/production claim.
 
-After this, explicitly close the canonical CLI contract lane and continue immediately to E.
+Continue immediately to D.
 
-### E. BOUNDED REVIEW CLOSURE — one final command-surface check
+### D. BOUNDED REVIEW CLOSURE — close the identity/CLI-adjacent lane
 
-Perform one bounded inspection only of:
+Inspect only the adjacent concrete surfaces:
 
-- help vs human capabilities vs JSON capability inventory;
-- canonical `failover` vs legacy aliases;
-- missing/unknown role side-effect ordering;
-- canonical positive route to the existing role runtime;
-- unknown command failure.
+- all current long-term identity-file consumers in `neko-cli` use the intended secure existing/create boundary;
+- multistream deterministic peer key/address/config validation occurs before avoidable network side effects;
+- canonical command inventory remains aligned after the repair;
+- no broad release wording exceeds actual command coverage.
 
-If these align, close this lane. Do not expand into a generic parser/registry refactor unless a concrete defect requires it.
+If aligned, close this lane. Do not expand into parent-directory policy, hard-link policy, generic secret-memory hardening, or a new identity checker suite without a newly demonstrated defect.
 
-Continue immediately to F.
+Continue immediately to E.
 
-### F. LOCAL OUTPUT SELECTION / PROPOSAL — identify the next real visible gap
+### E. LOCAL OUTPUT SELECTION / PROPOSAL — select the next real visible gap
 
-Re-read exact-current `docs/status.md`, `IMPLEMENTATION_PLAN.md`, release packet and code. Propose 1–3 **specific** dependency-ready non-policy outputs grounded in an observed code/evidence gap. Each proposal must name:
+Re-read exact-current `docs/status.md`, `IMPLEMENTATION_PLAN.md`, release packet and current CLI/runtime code. Propose 1–3 specific dependency-ready non-policy outputs grounded in an observed behavior/evidence gap. For each proposal name:
 
-- the operator/runtime/release behavior;
+- operator/runtime/release behavior;
 - files/API ownership;
 - protected invariant/evidence boundary;
 - minimum positive/negative tests;
@@ -168,72 +172,63 @@ Re-read exact-current `docs/status.md`, `IMPLEMENTATION_PLAN.md`, release packet
 
 Prefer, in order:
 
-1. a real runtime/operator behavior that is advertised but lacks a direct executable path/test;
-2. release correctness where package/operator behavior and documented contract disagree;
-3. a bounded lifecycle/recovery behavior already implemented but lacking a truthful exact-current local output.
+1. an advertised runtime/operator behavior lacking a direct executable positive path;
+2. a release-correctness mismatch between actual package/operator behavior and documented contract;
+3. an implemented lifecycle/recovery behavior lacking truthful exact-current local output.
 
-Do not select speculative FEC/0-RTT/striping/multipath/exotic carriers, previous-release compatibility without a prior release, generic evidence schemas, or another broad DeliveryLedger audit without a newly observed problem.
+Do not select speculative FEC/0-RTT/concurrent striping/multipath/exotic carriers, previous-release interoperability without a prior release, generic evidence schemas, or broad audits with no newly observed problem.
 
-Autonomously select the smallest fail-closed option and continue immediately to G. Do not wait for reviewer approval unless the selected shape hits a true stop condition.
+Autonomously choose the smallest fail-closed option that does not hit a stop condition and continue immediately to F.
 
-### G. READY_LOCAL / VISIBLE OUTPUT — implement the selected F option
+### F. READY_LOCAL / VISIBLE OUTPUT — implement selected E option
 
-Implement one coherent slice with focused tests. Preserve Session/Carrier/ACK/crypto/wire architecture unless the task is explicitly escalated for design review. Do not add new policy numbers.
+Implement one coherent output with focused tests. Preserve core architecture and do not invent new policy numbers. Commit/push, then continue immediately to G.
 
-Run relevant focused tests during implementation, commit/push, then continue immediately to H.
+### G. READY_LOCAL — exact-tree gate and factual closure for F
 
-### H. READY_LOCAL — exact-tree gate and factual closure for G
+Run the normal exact-tree local gate on the pushed F SHA. If F touches wire decoder/parser/crypto framing, also run the pinned decode fuzz smoke. Persist provenance only where needed for release-facing facts. Reconcile status/docs only if actual behavior/evidence changed.
 
-Run the normal exact-tree local gate on the pushed G SHA. If G touches wire decoder/parser/crypto framing, also run the pinned decode fuzz smoke required by repository policy. Persist provenance only when needed for release-facing facts.
+Continue immediately to H.
 
-Reconcile status/docs only where the actual behavior/evidence changed. Then repeat F -> G -> H with the next concrete dependency-ready local output while safe work remains; do not enter watcher mode merely because the reviewer interval has not arrived.
+### H. ROLLING OUTPUT — repeat proposal -> implementation -> exact-tree closure
 
-### I. CONDITIONAL VPS OUTPUT — only when exact-current truth opens a genuinely new live question
+Repeat E -> F -> G while concrete dependency-ready local output remains. Do not enter watcher mode merely because the reviewer interval has not arrived. If a proposal cycle genuinely finds no concrete safe local work, record the exhausted options rather than fabricating tasks.
 
-Current repository truth remains `READY_LIVE: none`. Standing authorization is valid, but authorization alone is not a reason to consume the VPS rental window with duplicate evidence.
+### I. CONDITIONAL VPS OUTPUT — only if exact-current truth opens a genuinely new live question
 
-Only execute a live task when exact-current code/evidence creates a named unresolved real-network question with satisfied dependencies and materially changed code/config/instrumentation/path/hypothesis. Otherwise do not unchanged-rerun:
+Current repository truth remains `READY_LIVE: none`. Standing authorization is valid, but authorization and VPS rental pressure do not justify duplicate evidence.
 
-- HY2 current line;
-- repeated warm failover current line;
-- periodic current line;
-- installed-package lifecycle;
-- distinct A -> B -> A package rehearsal;
-- migration-back or live key-update bounded questions already answered;
-- IPv6 without a real owned IPv6 path;
-- live PMTUD before its separate authenticated wire/security design gate.
-
-If a new READY live row appears, obey `docs/standing-vps-lab-authorization.md`, retain exact parameters/evidence/cleanup, and keep negative results.
+Only execute a live task when exact-current implementation/evidence creates a named unresolved real-network question with satisfied dependencies and materially changed code/config/instrumentation/path/hypothesis. Otherwise do not unchanged-rerun current HY2, repeated warm failover, periodic, installed-package lifecycle, distinct A -> B -> A rehearsal, already-answered migration-back/key-update, IPv6 without an owned IPv6 path, or live PMTUD before its separate authenticated wire/security design gate.
 
 ### J. POLICY-BLOCKED PARALLEL LANE — D019 source retention
 
 **Status:** `SOURCE_RETENTION_POLICY_BLOCKED`.
 
-Bounded non-policy pre-auth engineering controls may continue to be reviewed, but terminal source-retention/no-reset semantics require maintainer/security-policy judgment. Do not invent TTL, LRU/history capacity, external authority or weaker reset semantics. This does not block A-I.
+Bounded non-policy pre-auth engineering work may continue, but terminal source-retention/no-reset semantics require maintainer/security-policy judgment. Do not invent TTL, LRU/history capacity, external authority or weaker reset semantics. This does not block A-I.
 
 ## Stop conditions
 
 Stop continuous coding only for a real condition:
 
 - unresolved BLOCKER/HIGH correctness/security/evidence finding;
-- a change to core Session/Carrier/ACK/crypto/wire architecture;
+- core Session/Carrier/ACK/crypto/wire architecture change;
 - destructive/canonical-meaning migration;
 - action outside standing authorization;
 - production impact;
-- new credentials/server/third-party permission required;
+- new credentials/server/third-party permission;
 - benchmark conditions requiring maintainer value judgment;
-- repository/tool/runtime breakage that prevents safe progress;
+- repository/tool/runtime breakage preventing safe progress;
 - actual runtime/tool-budget exhaustion;
-- or a genuinely exhausted rolling queue after the required local proposal cycle finds no concrete safe work.
+- or a genuinely exhausted rolling queue after the required proposal cycle finds no concrete safe work.
 
-Do not stop because `docs/CHATGPT_HANDOFF.md` is older than the newest implementation commit, because GitHub Actions did not run, or because one coherent slice finished before the next reviewer hour.
+Do not stop because the handoff becomes older than a developer commit, because Actions does not run, or because one slice finishes before the next reviewer hour.
 
 ## Governance boundaries
 
 - `IMPLEMENTATION_COMPLETE=true` remains bounded research-implementation status only.
 - `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain authoritative.
-- Release item 3 remains incomplete; current opportunity classification remains `READY_LIVE: none`.
-- Item 4 remains independent-review incomplete; developer-prepared factual support is not an audit/security approval.
+- Release item 3 remains incomplete; opportunity classification remains `READY_LIVE: none`.
+- Item 4 remains independent-review incomplete; developer-prepared factual support is not independent audit/security approval.
 - Canonical corpus freeze remains corpus-specific and does not freeze the global protocol.
 - Standing VPS authorization remains valid, but no dependency-ready live row currently exists.
-- D019 remains a maintainer/security-policy checkpoint and must not be silently invented by the coding agent.
+- D019 remains a maintainer/security-policy checkpoint and must not be invented by the coding agent.
