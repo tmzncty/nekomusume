@@ -2763,18 +2763,30 @@ fn endpoint_rebind_server(args: &[String]) {
         fail("promotion delay outside 0-1000 ms")
     }
     let mut buf = [0u8; 65536];
+    let mut preauth = preauth::ListenerAdmission::new();
     emit_diagnostic(args, "server", "start", 0, ",\"mode\":\"endpoint_rebind\"");
     println!("endpoint_rebind_server_ready");
 
     let (n, endpoint_a) = socket
         .recv_from(&mut buf)
         .unwrap_or_else(|_| fail("endpoint A negotiation timeout"));
+    let mut admission = preauth
+        .admit_carrier(preauth::CarrierKind::Udp, endpoint_a)
+        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
+    preauth
+        .charge_input(&mut admission, n, 64)
+        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
     let mut negotiation =
         VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS).unwrap();
     let selection = negotiation
         .server_accept_hello(&buf[..n])
         .unwrap_or_else(|_| fail("endpoint A negotiation rejected"));
-    socket.send_to(&selection, endpoint_a).unwrap();
+    let selection_permit = preauth
+        .charge_response(&mut admission, selection.len())
+        .unwrap_or_else(|_| fail("pre-auth response rejected"));
+    preauth
+        .send_udp_response(&socket, &selection, endpoint_a, selection_permit)
+        .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
     let binding = negotiation.authenticated_binding().unwrap();
     let (n, source) = socket
         .recv_from(&mut buf)
@@ -2782,12 +2794,21 @@ fn endpoint_rebind_server(args: &[String]) {
     if source != endpoint_a {
         fail("endpoint A changed before authentication")
     }
+    preauth
+        .charge_input(&mut admission, n, 4096)
+        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
     let (response, mut secure) =
         ResponderHandshake::new_with_prologue_binding(&id, policy, DOMAIN, binding.as_bytes())
             .unwrap()
             .receive_first(&buf[..n], context(1))
             .unwrap_or_else(|_| fail("endpoint A authentication rejected"));
-    socket.send_to(&response, endpoint_a).unwrap();
+    let response_permit = preauth
+        .charge_response(&mut admission, response.len())
+        .unwrap_or_else(|_| fail("pre-auth response rejected"));
+    preauth
+        .send_udp_response(&socket, &response, endpoint_a, response_permit)
+        .unwrap_or_else(|_| fail("pre-auth response deadline elapsed"));
+    preauth.release(admission);
 
     let mut runtime = SessionRuntime::new(SessionId(7001), runtime_limits(bytes, 2), 0).unwrap();
     runtime.open_stream(StreamId(1), 0).unwrap();

@@ -173,6 +173,27 @@
         "preauth.release(admission)",
         "tcp_authenticated"
       ]
+    },
+    {
+      "id": "endpoint_rebind_udp",
+      "file": "crates/neko-cli/src/main.rs",
+      "begin": "fn endpoint_rebind_server(args: &[String]) {",
+      "end": "fn endpoint_rebind_client(args: &[String]) {",
+      "carrier": "udp",
+      "pending_owner": false,
+      "ordered": [
+        ".recv_from(&mut buf)",
+        ".admit_carrier(preauth::CarrierKind::Udp, endpoint_a)",
+        ".charge_input(&mut admission, n, 64)",
+        ".server_accept_hello(&buf[..n])",
+        ".charge_response(&mut admission, selection.len())",
+        ".send_udp_response(&socket, &selection",
+        ".charge_input(&mut admission, n, 4096)",
+        ".receive_first(&buf[..n], context(1))",
+        ".charge_response(&mut admission, response.len())",
+        ".send_udp_response(&socket, &response",
+        "preauth.release(admission)"
+      ]
     }
   ]
 }
