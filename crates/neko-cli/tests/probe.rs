@@ -200,6 +200,46 @@ fn rejects_unbounded_arguments() {
     assert_eq!(out.status.code(), Some(2));
 }
 #[test]
+fn help_and_capabilities_cover_dispatch_surface() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let help = Command::new(bin).arg("--help").output().unwrap();
+    assert!(help.status.success());
+    let help = String::from_utf8_lossy(&help.stdout);
+    let capabilities = Command::new(bin)
+        .args(["capabilities", "--json"])
+        .output()
+        .unwrap();
+    assert!(capabilities.status.success());
+    let capabilities = String::from_utf8_lossy(&capabilities.stdout);
+    for command in [
+        "server",
+        "client",
+        "probe",
+        "health-observe",
+        "failover",
+        "multistream",
+        "scheduler-fairness",
+        "key-update",
+        "periodic-server",
+        "periodic-client",
+        "lab",
+        "workload",
+        "endpoint-rebind-server",
+        "endpoint-rebind-client",
+        "keygen",
+        "capabilities",
+    ] {
+        assert!(help.contains(command), "help missing {command}: {help}");
+        assert!(
+            capabilities.contains(&format!("\"name\":\"{command}\"")),
+            "capabilities missing {command}: {capabilities}"
+        );
+    }
+    assert!(help.contains("failover-server|failover-client"));
+    let unknown = Command::new(bin).arg("not-a-command").output().unwrap();
+    assert!(!unknown.status.success());
+}
+#[test]
 fn authenticated_tcp_and_udp_loopback_probe_starts_after_ready() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
