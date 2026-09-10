@@ -109,29 +109,27 @@ impl DeliveryLedger {
     /// phases may advance only (never regress); a path generation may advance
     /// independently for a Carrier change. A single operation cannot advance
     /// delivery epoch while regressing either crypto or path context.
-    fn context_ok(&mut self, context: SessionContext) -> Result<(), LedgerError> {
-        match self.context {
-            None => {
-                self.context = Some(context);
-                Ok(())
+    fn validate_context(&self, context: SessionContext) -> Result<(), LedgerError> {
+        if let Some(old) = self.context {
+            if context.delivery_epoch.0 < old.delivery_epoch.0
+                || context.key_phase.0 < old.key_phase.0
+                || context.path_generation.0 < old.path_generation.0
+            {
+                return Err(LedgerError::OldEpoch);
             }
-            Some(old) => {
-                if context.delivery_epoch.0 < old.delivery_epoch.0
-                    || context.key_phase.0 < old.key_phase.0
-                    || context.path_generation.0 < old.path_generation.0
-                {
-                    return Err(LedgerError::OldEpoch);
-                }
-                if context.delivery_epoch.0 > old.delivery_epoch.0
-                    && (context.key_phase.0 != old.key_phase.0
-                        || context.path_generation.0 != old.path_generation.0)
-                {
-                    return Err(LedgerError::InvalidMigration);
-                }
-                self.context = Some(context);
-                Ok(())
+            if context.delivery_epoch.0 > old.delivery_epoch.0
+                && (context.key_phase.0 != old.key_phase.0
+                    || context.path_generation.0 != old.path_generation.0)
+            {
+                return Err(LedgerError::InvalidMigration);
             }
         }
+        Ok(())
+    }
+    fn context_ok(&mut self, context: SessionContext) -> Result<(), LedgerError> {
+        self.validate_context(context)?;
+        self.context = Some(context);
+        Ok(())
     }
     pub fn insert(
         &mut self,
@@ -250,21 +248,14 @@ impl DeliveryLedger {
             if existing_coverage < end {
                 return Err(LedgerError::InvalidMigration);
             }
-            // An advanced duplicate is idempotent only in the context that
-            // produced its existing evidence. Validate rollback against the
-            // ledger, but never let insert rebind advanced bytes to a newer
-            // context; that requires the explicit evidence transition.
+            // An advanced duplicate is idempotent only when its context is
+            // current ledger-wide and exactly matches the evidence attached to
+            // every covered segment. Validation here is deliberately pure.
+            self.validate_context(context)?;
             if overlaps
                 .iter()
                 .any(|key| self.segments[key].context != context)
             {
-                if self.context.is_some_and(|old| {
-                    context.delivery_epoch.0 < old.delivery_epoch.0
-                        || context.key_phase.0 < old.key_phase.0
-                        || context.path_generation.0 < old.path_generation.0
-                }) {
-                    return Err(LedgerError::OldEpoch);
-                }
                 return Err(LedgerError::InvalidMigration);
             }
             return Ok(state.expect("overlaps is non-empty"));
@@ -687,6 +678,50 @@ mod tests {
             assert_eq!(segment.state, state);
             assert_eq!(segment.context, c(1, 0, 1));
             assert_eq!(x.context, before_context);
+            assert_eq!(x.watermark(1), before_watermark);
+        }
+    }
+
+    #[test]
+    fn ledger_global_context_blocks_stale_advanced_duplicates() {
+        for state in [
+            DeliveryState::InFlight,
+            DeliveryState::Uncertain,
+            DeliveryState::Confirmed,
+        ] {
+            let mut x = l();
+            x.insert(1, 0, b"abc", c(1, 0, 1)).unwrap();
+            x.mark_in_flight(1, 0).unwrap();
+            if matches!(state, DeliveryState::Uncertain | DeliveryState::Confirmed) {
+                x.mark_uncertain(1, 0).unwrap();
+            }
+            if state == DeliveryState::Confirmed {
+                x.confirm_received(1, 0, c(1, 0, 1)).unwrap();
+            }
+            // Advance only the ledger-wide context through disjoint Unsent
+            // bytes; A deliberately retains its older evidence context.
+            x.insert(2, 0, b"z", c(1, 1, 2)).unwrap();
+            let before_segments: Vec<_> = x.segments().cloned().collect();
+            let before_context = x.context;
+            let before_bytes = x.bytes;
+            let before_watermark = x.watermark(1);
+
+            assert_eq!(
+                x.insert(1, 0, b"abc", c(1, 0, 1)),
+                Err(LedgerError::OldEpoch)
+            );
+            assert_eq!(x.segments().cloned().collect::<Vec<_>>(), before_segments);
+            assert_eq!(x.context, before_context);
+            assert_eq!(x.bytes, before_bytes);
+            assert_eq!(x.watermark(1), before_watermark);
+
+            assert_eq!(
+                x.insert(1, 0, b"abc", c(1, 1, 2)),
+                Err(LedgerError::InvalidMigration)
+            );
+            assert_eq!(x.segments().cloned().collect::<Vec<_>>(), before_segments);
+            assert_eq!(x.context, before_context);
+            assert_eq!(x.bytes, before_bytes);
             assert_eq!(x.watermark(1), before_watermark);
         }
     }
