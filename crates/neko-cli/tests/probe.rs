@@ -213,11 +213,199 @@ fn rejects_unbounded_arguments() {
     assert_eq!(out.status.code(), Some(2));
 }
 #[test]
+fn matrix_probe_distinguishes_invalid_failed_and_reachable_outcomes() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let run = |args: &[&str]| Command::new(bin).args(args).output().unwrap();
+
+    for args in [
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "192.0.2.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv6",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:0",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--timeout-ms",
+            "0",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--timeout-ms",
+            "5001",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--bytes",
+            "0",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--bytes",
+            "1201",
+            "--json",
+        ],
+    ] {
+        let out = run(&args);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "args={args:?} stdout={} stderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            out.stdout.is_empty(),
+            "invalid input must not emit a reachability result"
+        );
+    }
+
+    let refused = TcpListener::bind("127.0.0.1:0").unwrap();
+    let refused_addr = refused.local_addr().unwrap();
+    drop(refused);
+    let refused_out = run(&[
+        "probe",
+        "--matrix",
+        "--target",
+        &refused_addr.to_string(),
+        "--transport",
+        "tcp",
+        "--ip-version",
+        "ipv4",
+        "--timeout-ms",
+        "100",
+        "--json",
+    ]);
+    assert_eq!(refused_out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&refused_out.stdout).contains("\"reachable\":false"));
+
+    let tcp = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp_addr = tcp.local_addr().unwrap();
+    let tcp_peer = thread::spawn(move || tcp.accept().unwrap());
+    let tcp_out = run(&[
+        "probe",
+        "--matrix",
+        "--target",
+        &tcp_addr.to_string(),
+        "--transport",
+        "tcp",
+        "--ip-version",
+        "ipv4",
+        "--json",
+    ]);
+    let _ = tcp_peer.join().unwrap();
+    assert_eq!(tcp_out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&tcp_out.stdout).contains("\"reachable\":true"));
+
+    let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let udp_addr = udp.local_addr().unwrap();
+    let udp_peer = thread::spawn(move || {
+        let mut buf = [0u8; 1200];
+        let (n, peer) = udp.recv_from(&mut buf).unwrap();
+        udp.send_to(&buf[..n], peer).unwrap();
+    });
+    let udp_out = run(&[
+        "probe",
+        "--matrix",
+        "--target",
+        &udp_addr.to_string(),
+        "--transport",
+        "udp",
+        "--ip-version",
+        "ipv4",
+        "--bytes",
+        "17",
+        "--json",
+    ]);
+    udp_peer.join().unwrap();
+    assert_eq!(udp_out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&udp_out.stdout).contains("\"reachable\":true"));
+
+    let failed_human = run(&[
+        "probe",
+        "--matrix",
+        "--target",
+        &refused_addr.to_string(),
+        "--transport",
+        "tcp",
+        "--ip-version",
+        "ipv4",
+        "--timeout-ms",
+        "100",
+    ]);
+    assert_eq!(failed_human.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&failed_human.stdout).trim(),
+        "fail: 喵呜呜呜呜…"
+    );
+}
+
+#[test]
 fn help_and_capabilities_cover_dispatch_surface() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let help = Command::new(bin).arg("--help").output().unwrap();
     assert!(help.status.success());
     let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("probe --matrix"));
+    assert!(help.contains("local-loopback only"));
     let human_capabilities = Command::new(bin).arg("capabilities").output().unwrap();
     assert!(human_capabilities.status.success());
     let human_capabilities = String::from_utf8_lossy(&human_capabilities.stdout);

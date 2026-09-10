@@ -45,6 +45,7 @@ use std::{
 };
 const USAGE: &str = "Usage: neko <server|client|probe|health-observe|failover|multistream|scheduler-fairness|key-update|periodic-server|periodic-client|lab|workload|endpoint-rebind-server|endpoint-rebind-client|keygen|capabilities> [bounded options]
 
+  probe --matrix --target LOOPBACK:PORT --transport tcp|udp --ip-version ipv4|ipv6 [--timeout-ms 1-5000] [--bytes 1-1200] [--json]: local-loopback only
   --count N: bounded authenticated exchanges (1-64; periodic 1-600)\n  periodic-*: one TCP Session, duration 1-600s, interval 100-5000ms, <=1MiB app data; reconnect unsupported\n  failover --role server|client: canonical bounded failover command\n  failover-server|failover-client: legacy aliases for failover\n  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
 const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
@@ -3673,9 +3674,20 @@ fn matrix_probe(args: &[String]) -> ! {
         _ => fail("--ip-version must be ipv4 or ipv6"),
     };
     let timeout = get("--timeout-ms")
-        .and_then(|v| v.parse().ok())
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .unwrap_or_else(|_| fail("invalid --timeout-ms"))
+        })
         .unwrap_or(500);
-    let bytes = get("--bytes").and_then(|v| v.parse().ok()).unwrap_or(32);
+    let bytes = get("--bytes")
+        .map(|value| {
+            value
+                .parse::<usize>()
+                .unwrap_or_else(|_| fail("invalid --bytes"))
+        })
+        .unwrap_or(32);
+    reachability::validate(target, version, timeout, bytes).unwrap_or_else(|error| fail(error));
     let artifact = reachability::run(transport, version, target, timeout, bytes);
     if json_mode(args) {
         println!("{artifact}");

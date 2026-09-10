@@ -1,7 +1,7 @@
 //! Local-only reachability artifact support. This module deliberately refuses
 //! non-loopback targets and has no raw/privileged protocol implementation.
 use std::net::{IpAddr, SocketAddr, TcpStream, UdpSocket};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const SCHEMA_VERSION: &str = "reachability-matrix.v1";
 pub const MAX_TIMEOUT_MS: u64 = 5_000;
@@ -97,8 +97,13 @@ pub fn run(
     let target_json = json_string(&target.to_string());
     let error_json = error.as_deref().map_or("null".to_owned(), json_string);
     let rtt_json = rtt_ms.map_or("null".to_owned(), |v| format!("{v:.3}"));
+    let observed_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+        .map_or("null".to_owned(), |value| value.to_string());
     format!(
-        "{{\"schema_version\":\"{SCHEMA_VERSION}\",\"observed_at_unix_ms\":null,\"scope\":\"local-loopback\",\"metadata\":{{\"privileged\":false,\"raw_protocol\":false,\"third_party_scan\":false}},\"cases\":[{{\"transport\":\"{}\",\"ip_version\":\"{}\",\"target\":{},\"reachable\":{},\"rtt_ms\":{},\"payload_bytes\":{},\"error\":{}}}]}}",
+        "{{\"schema_version\":\"{SCHEMA_VERSION}\",\"observed_at_unix_ms\":{observed_at},\"scope\":\"local-loopback\",\"metadata\":{{\"privileged\":false,\"raw_protocol\":false,\"third_party_scan\":false}},\"cases\":[{{\"transport\":\"{}\",\"ip_version\":\"{}\",\"target\":{},\"reachable\":{},\"rtt_ms\":{},\"payload_bytes\":{},\"error\":{}}}]}}",
         transport.as_str(),
         version.as_str(),
         target_json,
@@ -143,6 +148,10 @@ mod tests {
     }
     #[test]
     fn artifact_is_stable_except_explicit_observation_time() {
+        let before = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
         let s = run(
             Transport::Tcp,
             IpVersion::V4,
@@ -150,8 +159,22 @@ mod tests {
             1,
             1,
         );
+        let after = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
         assert!(s.contains("reachability-matrix.v1"));
         assert!(s.contains("local-loopback"));
         assert!(s.contains("\"reachable\":false"));
+        let observed = s
+            .split("\"observed_at_unix_ms\":")
+            .nth(1)
+            .unwrap()
+            .split(',')
+            .next()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        assert!((before..=after).contains(&observed));
     }
 }
