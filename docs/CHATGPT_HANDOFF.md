@@ -1,95 +1,101 @@
-# ChatGPT reviewer handoff — keep advanced Session duplicates context-idempotent
+# ChatGPT reviewer handoff — reject globally stale advanced duplicates
 
 ## Reviewed state
 
-- Previous reviewer-owned handoff: exact `4ea103ba98931aa7f579a362d21a4a0d1a2331d8` (`docs(handoff): prevent overlap delivery-state promotion`).
-- Previous reviewed developer implementation/test head: exact `6a458ffa9e133cece2b2dbd4e382948d19df698c` (`fix: commit confirmed delivery context globally`).
-- Previous reviewed developer documentation/evidence head: exact `bedc79982226dad566dcd3d9a2461f00f65bf8dd` (`docs: record Session confirmation context closure`).
-- Current developer implementation/test head reviewed this cycle: exact `1a562ef61ca7293575e9ae85fa6d758d32c3740e` (`fix: reject advanced overlap extensions`).
-- Current developer documentation/evidence head reviewed this cycle: exact `019021a5a6b5667e5b4a3aabc25ee22910d32e5b` (`docs: record Session overlap-state closure`).
-- Default `main` before this reviewer update was exact `019021a5a6b5667e5b4a3aabc25ee22910d32e5b`, exactly two commits ahead of the previous reviewer handoff.
-- Developer sequence since the previous reviewer handoff:
-  - `1a562ef61ca7293575e9ae85fa6d758d32c3740e` chooses the minimum fail-closed overlap shape: byte-identical overlap that would introduce novel bytes into an `InFlight`, `Uncertain`, or `Confirmed` range rejects with `InvalidMigration`; contained duplicates and `Unsent` merges remain supported. Focused tests cover left/right extensions and an advanced same-state bridge.
-  - `019021a5a6b5667e5b4a3aabc25ee22910d32e5b` records developer-local exact-tree provenance, updates the provisional Session overlap invariant, and re-anchors the release packet/item-4 factual support to exact `1a562ef`.
-- No new VPS/WAN experiment was performed in this sequence.
-- GitHub exposes no hosted combined-status records for exact `1a562ef`. This is not a blocker and must not trigger Actions polling.
+- Previous reviewer-owned handoff: exact `318460442e00fe1ac094b9276cf1c7b8c17a03cf` (`docs(handoff): keep advanced duplicates context-idempotent`).
+- Previous reviewed developer implementation/test head: exact `1a562ef61ca7293575e9ae85fa6d758d32c3740e` (`fix: reject advanced overlap extensions`).
+- Previous reviewed developer documentation/evidence head: exact `019021a5a6b5667e5b4a3aabc25ee22910d32e5b` (`docs: record Session overlap-state closure`).
+- Current developer implementation/test head reviewed this cycle: exact `5270ea17af297ae43683dbe46201f755bbbae48a` (`fix: keep advanced duplicate context evidence idempotent`).
+- Current developer documentation/evidence head remains exact `019021a5a6b5667e5b4a3aabc25ee22910d32e5b`; no new exact-tree provenance/release reconciliation has landed for `5270ea17` yet.
+- Default `main` before this reviewer update was exact `5270ea17af297ae43683dbe46201f755bbbae48a`, exactly one developer commit ahead of the previous reviewer handoff.
+- No VPS/WAN experiment was performed in this sequence.
+- GitHub exposes no hosted combined-status records for exact `5270ea17`. This is not a blocker and must not trigger Actions polling.
 
 ## Review verdict
 
-### ACCEPT WITH BOUNDS — the previous novel-byte delivery-state promotion HIGH is closed
+### ACCEPT WITH BOUNDS — `5270ea17` closes the silent advanced-segment context rewrite in the ordinary case
 
-Exact `1a562ef` materially fixes the prior contradiction. `DeliveryLedger::insert` now computes whether the requested interval is already covered by existing same-state bytes. When the overlapping state is `InFlight`, `Uncertain`, or `Confirmed`, any insertion that would add a novel byte rejects before `context_ok`, segment replacement, byte accounting, or watermark mutation. `Unsent` overlap/extension keeps the existing merge behavior.
+The developer selected the minimum fail-closed/equality shape for fully covered advanced duplicates. For `InFlight`, `Uncertain`, or `Confirmed` bytes:
 
-The focused tests cover right and left extension for all three advanced states and a same-state advanced bridge; rejection preserves segment count, bytes, global context and confirmed watermark. The selected repair is deliberately representationally conservative: it rejects advanced-state extension rather than splitting state intervals, and it does not change wire, ACK format, Carrier, crypto, capacity, or migration policy.
+- a same-context, fully contained byte-identical duplicate returns the existing state without replacing segments or mutating ledger/segment context;
+- a newer/different context that does not match the advanced segment evidence rejects with `InvalidMigration`;
+- the prior novel-byte advanced extension/bridge rejection remains intact;
+- compact tests now cover the three advanced states, a multi-segment duplicate, old/newer-context cases, and confirmation-owned context.
 
-`docs/local-session-overlap-state-1a562ef-20260910.md` records developer-local exact-tree `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit `0`, `git diff --check` exit `0`, UTC `2026-09-09T23:11:35Z -> 23:13:31Z`, Linux/x86_64, Rust 1.98.0, and clean initial/final source tree. Reviewer did not execute this CI. Hosted CI is absent and not required.
+This is directionally correct and removes the prior path where a duplicate could directly relabel an advanced segment to the caller-supplied newer context.
 
-This closes only the **novel bytes inherit advanced state** defect. It is bounded candidate Session-state evidence, not a protocol freeze, independent review, RC/release, interoperability proof, public-listener approval, or production evidence.
+However, this commit has only developer-reported focused `cargo test -p neko-session` evidence in the commit message. There is **no persisted exact-tree `scripts/check.sh` provenance for `5270ea17`**, and the release packet/item-4 factual review remain anchored to exact `1a562ef`. Do not claim full closure from `5270ea17`; produce the replacement green SHA below first.
 
-### HIGH / READY_LOCAL — a fully contained advanced duplicate can still rewrite delivery context without the evidence-producing transition
+### HIGH / READY_LOCAL — same-segment context equality can bypass a newer ledger-global context
 
-The bounded adjacent review found one concrete Session evidence mutation that remains in exact-current `DeliveryLedger::insert`.
+The final bounded adjacent review found one concrete rollback escape in exact-current `DeliveryLedger::insert`.
 
-The new advanced-extension guard only rejects when `existing_coverage < end`. A fully contained byte-identical duplicate therefore proceeds through the ordinary merge path. That path then calls `self.context_ok(context)?`, removes the existing segment(s), and inserts the merged segment with **the caller-supplied `context`** while preserving the old advanced `state`.
+Current advanced-duplicate logic performs the ledger-global rollback check only inside the branch where an overlapped advanced segment's stored context differs from the requested context. If every overlapped segment context equals the requested context, the function returns success immediately.
 
-Consequently, a segment that is already `Confirmed` at context `(delivery_epoch=1,key_phase=0,path_generation=1)` can receive an exact duplicate insertion at `(1,1,2)`: the insertion can advance the ledger-wide context and replace the still-`Confirmed` segment with the newer context even though `confirm_received` was never called for that newer context. The same shape can rebind `InFlight` or `Uncertain` bytes without an explicit delivery-state transition.
+That is insufficient because a segment can legitimately retain an older context while the **ledger-wide** context has advanced due to a disjoint segment or a confirmation elsewhere.
 
-That conflicts with current repository truth:
+Concrete model:
 
-- provisional Session v0 says fully contained exact duplicates are idempotent;
-- `docs/spec/m0-session-state.md` likewise describes same-byte duplicates as idempotent;
-- the current confirmation-context invariant specifically makes `confirm_received` validate and atomically commit a newer confirmation context to the ledger and segment.
+1. segment A exists at context `(delivery_epoch=1,key_phase=0,path_generation=1)` and is moved to `InFlight`, `Uncertain`, or `Confirmed`;
+2. disjoint segment B advances the ledger-wide context to `(1,1,2)` without rewriting A's stored evidence context;
+3. an exact byte-identical duplicate of A arrives carrying A's old `(1,0,1)` context;
+4. every overlapped segment context equals the request, so exact-current code returns success before validating that the request regresses relative to the ledger-global `(1,1,2)` context.
 
-`insert` must not become a second implicit evidence-producing context transition merely because bytes are duplicates. Treat this as **HIGH / READY_LOCAL** because Session delivery/context state is the cross-Carrier failover/replay source of truth. It is a local state-model repair; it does not require a new wire field, ACK domain, crypto primitive, Carrier architecture, capacity number, or maintainer policy decision.
+This violates the existing written invariant that old/regressing duplicate context remains fail closed, and the M0 candidate context rule that regressions are `OldEpoch`. It also contradicts the implementation comment that rollback is validated against the ledger.
+
+Treat this as **HIGH / READY_LOCAL**. It is a local Session state-model defect; it does not require a wire/ACK/Carrier/crypto architecture change or maintainer policy decision.
 
 #### Required invariant
 
-- Same-context, fully contained byte-identical advanced duplicates remain supported and must be state/context/bytes/watermark idempotent.
-- An old/regressing context on a duplicate must remain fail closed; do not turn replay/rollback evidence into unconditional success merely to make duplicates idempotent.
-- A duplicate carrying a newer admissible context must **not** silently advance the context attached to `InFlight`, `Uncertain`, or `Confirmed` bytes.
-- In particular, `Confirmed` segment context may advance only through the existing explicit confirmation semantics; duplicate insertion alone cannot manufacture confirmation under a newer key/path/delivery context.
-- If the implementation chooses rejection for an advanced duplicate whose context differs, the rejection must leave global context, segment context/state, bytes, segment topology, and watermark unchanged.
-- `Unsent` overlap/extension behavior may continue to rebind/merge under the existing monotonic context rule because those bytes do not yet carry stronger delivery evidence.
-- No rejected duplicate may demote or split existing advanced evidence merely to simplify the fix.
+For a fully contained byte-identical advanced duplicate:
 
-#### Short proposal cycle before implementation
+- first validate the requested context against the ledger-wide current context **without mutating it**;
+- if the request regresses relative to ledger-global context, reject with `OldEpoch` atomically even if the overlapped segment itself still stores that old context;
+- if the request is globally admissible but differs from any overlapped advanced segment's stored evidence context, reject atomically with `InvalidMigration`; do not rebind advanced evidence through `insert`;
+- only if the request is globally admissible and exactly matches all overlapped advanced segment contexts may the duplicate succeed idempotently;
+- success must leave global context, segment context/state/topology, byte count and watermark unchanged;
+- `Unsent` overlap/extension keeps the existing mutating monotonic-context behavior;
+- `confirm_received` remains the explicit transition that may advance confirmation evidence context.
 
-Inspect exact-current callers/tests and compare 1–3 minimal shapes, then choose the smallest fail-closed one. Reasonable candidates are:
+#### Preferred minimum implementation shape
 
-1. for a fully covered advanced duplicate, run a **pure** context admissibility check and return the existing state without replacing segments or mutating ledger/segment context;
-2. require context equality for advanced duplicates and reject a differing context atomically, while retaining same-context idempotence and the existing old-context fail-closed rule;
-3. only if exact-current callers demonstrate a real need to rebind already-advanced bytes, propose a separate explicit typed transition API. That would be a larger semantic choice and should be DEFERRED unless repository truth proves it necessary.
+Avoid duplicating migration logic. Refactor the existing `context_ok` behavior into a pure validator plus the current mutating commit step, for example conceptually:
 
-Prefer 1 or 2. Do not build a generic interval framework or silently weaken the meaning of `Confirmed`.
+- `validate_context(&self, context) -> Result<(), LedgerError>` implements the existing component-wise rollback / delivery-epoch migration rules without changing `self.context`;
+- mutating insertion/confirmation paths call the pure validator and then assign the accepted ledger-global context where they already do today;
+- advanced duplicate idempotence calls only the pure validator before the same-segment-context equality check.
 
-#### Minimum focused evidence
+An equivalent smaller implementation is acceptable if it demonstrably cannot drift from `context_ok`. Do not invent a generic interval framework or a new migration policy.
 
-- same-context exact duplicate of `Confirmed` remains successful/idempotent with unchanged segment and ledger context;
-- exact duplicate of `Confirmed` carrying newer key/path context cannot mutate confirmation context through `insert` alone;
-- equivalent `InFlight` and `Uncertain` cases cannot silently rewrite their segment context;
-- a regressing/old context duplicate remains fail closed and atomic;
-- if a duplicate spans multiple same-state advanced segments, it must not collapse/relabel their contexts/evidence as an incidental side effect; rejecting that shape is acceptable for the current minimal representation;
-- prior left/right advanced-extension and bridge tests remain green;
-- `Unsent` overlap/extension, mixed-state rejection, conflict/bounds checks, global context monotonicity, byte count and watermark behavior remain intact;
-- `confirm_received` with a valid newer context still advances ledger + segment context atomically.
+#### Minimum executable evidence
 
-No fuzz is required unless the repair unexpectedly touches wire decode/parser/crypto framing.
+For each of `InFlight`, `Uncertain`, and `Confirmed`:
 
-### MEDIUM / DEFER TO FINAL GREEN SESSION SHA — candidate documentation overstates generic overlap idempotence
+- create segment A at `(1,0,1)`;
+- advance only ledger-global context to `(1,1,2)` through a disjoint valid segment/transition while A retains `(1,0,1)`;
+- duplicate A at `(1,0,1)` -> `OldEpoch`, exact atomic snapshot unchanged;
+- duplicate A at `(1,1,2)` -> `InvalidMigration`, because the request is globally current but A's advanced evidence remains owned by `(1,0,1)`;
+- ordinary same-context advanced duplicate when ledger-global context is not ahead -> success/idempotent;
+- preserve the `5270ea17` multi-segment duplicate, newer/different-context negatives and exact `1a562ef` novel-byte extension/bridge negatives;
+- preserve a valid `confirm_received` newer-context positive.
 
-`docs/spec/m0-session-state.md` still says, without qualification, that same-byte duplicate **and overlap** are idempotent. Exact `1a562ef` intentionally rejects advanced-state overlaps that introduce novel bytes, while provisional Session v0 now states the narrower truthful rule. Reconcile the M0 candidate text after the final green Session SHA so it distinguishes:
+Snapshot checks should cover global context, segment contexts/states/topology, bytes and confirmed watermark. No fuzz is required unless the repair unexpectedly changes wire decoder/parser/crypto framing.
 
-- fully contained exact duplicate idempotence;
+### MEDIUM / DEFER TO FINAL GREEN REPLACEMENT SHA — Session docs/release evidence still need one factual reconciliation
+
+`docs/spec/m0-session-state.md` still contains the stale blanket wording that same-byte duplicate **and overlap** are idempotent. Current implementation intentionally distinguishes:
+
+- fully contained exact duplicate idempotence, subject to context admissibility/evidence ownership;
 - `Unsent` same-byte overlap/extension merging;
-- fail-closed advanced-state extension with novel bytes.
+- fail-closed advanced-state overlap when novel bytes would be introduced.
 
-Do not make a standalone docs-churn commit for this while the context-idempotence HIGH is open.
+After the HIGH is repaired and the final replacement implementation/test SHA is green, reconcile this wording once. Update `docs/specs/nekomusume-session-v0.md` only if a short sentence is needed to make advanced duplicate context ownership explicit.
 
-The current release packet and item-4 factual review are correctly anchored to exact `1a562ef`; after the HIGH is fixed, re-anchor them once to the final tested implementation/test SHA and state only facts that the final tests prove. The pre-auth/resource review remains independently anchored to its own RSEC tested tree and should not be mechanically moved for unrelated Session changes.
+The release packet and `docs/reviews/release-item4-subgates-20260909.md` remain correctly anchored to exact `1a562ef` for now. Re-anchor them once, after the final replacement SHA has real exact-tree local provenance. Do not mechanically move unrelated RSEC/VPS evidence.
 
 ## Local-CI-first rule
 
-For implementation/test slices below, push the coherent developer SHA first, then validate that exact SHA in a clean temporary worktree/clone:
+Do **not** spend a provenance/docs commit on `5270ea17` first. Repair the HIGH in a replacement coherent developer SHA, push it, then validate that exact SHA from a clean temporary worktree/clone:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
@@ -97,63 +103,61 @@ git diff --check
 git status --porcelain   # empty
 ```
 
-Persist minimum provenance only after the final replacement SHA is green: exact SHA, commands, distinct UTC start/end timestamps, exits, host/OS/arch, stable Rust version, and initial/final clean-tree state. If red, preserve and repair the concrete failure; do not unchanged-rerun until lucky. Developer-local persisted CI, reviewer-executed CI and hosted CI remain separate evidence classes. Hosted CI is optional cross-evidence and must never become a wait condition.
+Persist minimum provenance only after that final replacement SHA is green: exact SHA, commands, distinct UTC start/end timestamps, exits, host/OS/arch, stable Rust version, and initial/final clean-tree state. If red, preserve and repair the concrete failure; do not unchanged-rerun until lucky.
 
-No fuzz is required for the current pure Session-state slice unless implementation unexpectedly changes wire decode/parser/crypto framing.
+Developer-local persisted CI, reviewer-executed checks and GitHub-hosted CI remain separate evidence classes. Hosted CI is optional cross-evidence and must never become a wait condition.
 
 ## Rolling queue — execute continuously in dependency order
 
-The coding agent must continue through every dependency-ready item below without waiting for the next reviewer hour. The context-idempotence HIGH is first and blocks unrelated expansion, but the current repository semantics are sufficient to resolve it without maintainer approval.
+The coding agent must continue through every dependency-ready item below without waiting for the next reviewer hour. The rollback HIGH is first and blocks unrelated expansion, but current repository semantics are sufficient to repair it locally.
 
-### A. HIGH / READY_LOCAL — choose and repair advanced-duplicate context ownership
+### A. HIGH / READY_LOCAL — validate ledger-global context before advanced duplicate success
 
-Run the short proposal cycle above against exact-current `DeliveryLedger` callers/tests. Implement the minimum shape that preserves old-context rejection while preventing `insert` from silently rebinding advanced delivery evidence to a newer context.
-
-Do not change the meaning of Session confirmation, ACK domains, Carrier semantics, crypto, wire format, or delivery evidence.
+Implement the minimum pure/non-mutating ledger-global context validation described above. Preserve the current equality-based evidence ownership rule and old error distinctions where possible: global rollback -> `OldEpoch`; globally admissible but advanced-segment context mismatch -> `InvalidMigration`; exact admissible equality -> idempotent success.
 
 Continue immediately to B.
 
-### B. HIGH-CLOSURE / READY_LOCAL — make context-idempotence executable
+### B. HIGH-CLOSURE / READY_LOCAL — make the disjoint-segment rollback escape executable
 
-Add the focused same-context/newer-context/older-context duplicate matrix for `InFlight`, `Uncertain`, and `Confirmed`, plus any compact multi-segment duplicate case required by the selected implementation. Preserve the exact-`1a562ef` novel-byte extension/bridge negatives and the confirmation-context positive.
+Add the A/B disjoint-context regression matrix for `InFlight`, `Uncertain`, and `Confirmed`, with exact atomic snapshots. Preserve existing duplicate/extension/bridge/confirmation positives and negatives.
 
 Continue immediately to C.
 
-### C. BOUNDED SESSION ADJACENT REVIEW / READY_LOCAL — inspect this evidence lane once, then stop
+### C. FINAL BOUNDED SESSION ADJACENT REVIEW / READY_LOCAL — inspect once, then stop this lane
 
-Perform one bounded source/test review of `insert -> mark_in_flight -> mark_uncertain -> confirm_received -> watermark`, limited to a **demonstrable contradiction with the written current evidence/context contract**. Fix only a concrete defect. Do not redefine watermark contiguity, interval semantics, or migration policy merely because an alternative model is imaginable.
+Perform **one final** bounded source/test review of `insert -> mark_in_flight -> mark_uncertain -> confirm_received -> watermark`, limited to a demonstrable contradiction with the current written evidence/context contract. Fix only a concrete BLOCKER/HIGH found in that pass.
 
-If no BLOCKER/HIGH remains after this pass, explicitly end the DeliveryLedger checker/hardening lane and continue to D.
+Do not redefine watermark contiguity, general interval semantics, migration policy, or build a generic checker. If no BLOCKER/HIGH remains, explicitly end the DeliveryLedger hardening lane and continue to D.
 
-### D. READY_LOCAL — final exact-tree gate and concise provenance
+### D. READY_LOCAL — final replacement exact-tree gate and concise provenance
 
-After A-C land in the final pushed implementation/test SHA, run the exact-tree local gate. Persist one concise provenance note with exact SHA, commands, UTC interval, host/OS/arch, stable Rust, clean-tree state, and the focused Session duplicate/overlap/context positives and negatives. If red, repair the concrete failure before closure. Do not wait for GitHub Actions.
+After A-C land in the final pushed implementation/test SHA, run the exact-tree local gate and persist one concise provenance note. If red, repair the concrete failure before any closure claim. Do not wait for GitHub Actions.
 
 Continue immediately to E.
 
 ### E. BOUNDED SPEC/RELEASE RECONCILIATION — update only changed facts
 
-After the final green Session SHA, reconcile together where applicable:
+After the final green replacement SHA, reconcile together where applicable:
 
-- `docs/specs/nekomusume-session-v0.md` only if the selected duplicate-context semantics need a precise candidate sentence;
-- `docs/spec/m0-session-state.md` to remove the stale blanket overlap-idempotence wording;
-- `docs/release-security-review-packet.md` tested-tree anchor and Session evidence row;
-- `docs/reviews/release-item4-subgates-20260909.md` header/scope/exact-tree gate facts;
-- `docs/status.md` only if a status/boundary fact actually changes.
+- `docs/spec/m0-session-state.md` — narrow the stale blanket overlap-idempotence statement;
+- `docs/specs/nekomusume-session-v0.md` — only if advanced duplicate context ownership needs an explicit candidate sentence;
+- `docs/release-security-review-packet.md` — tested-tree anchor and Session evidence row;
+- `docs/reviews/release-item4-subgates-20260909.md` — header/scope/exact-tree factual gate evidence;
+- `docs/status.md` — only if a status/boundary fact actually changed.
 
-Do not re-anchor unrelated RSEC/VPS evidence. Do not claim protocol freeze, interoperability, independent review, RC/release, public-service safety or production readiness.
+Do not claim protocol freeze, interoperability, independent review, RC/release, public-service safety or production readiness. Do not re-anchor unrelated RSEC/VPS evidence.
 
 Continue immediately to F.
 
-### F. REVIEW-CLOSURE / READY_LOCAL — close the bounded Session ledger lane if clean
+### F. REVIEW-CLOSURE / READY_LOCAL — close the DeliveryLedger lane if clean
 
-Check that advanced extension rejection, duplicate context handling, ledger-wide confirmation context, tests and candidate documentation agree. If no BLOCKER/HIGH remains, explicitly mark this bounded Session ledger correctness package complete and stop extending this checker/test lane unless a new demonstrated defect appears.
+Verify that advanced novel-byte rejection, duplicate context handling, ledger-global rollback, confirmation-owned context, tests and candidate docs agree. If no BLOCKER/HIGH remains, explicitly mark this bounded DeliveryLedger correctness package complete and **stop extending this checker/test lane unless a new demonstrated defect appears**.
 
 Continue immediately to G.
 
 ### G. LOCAL OUTPUT SELECTION — propose 1–3 real runtime/operator/release outputs
 
-Re-read exact-current `README.md`, `AGENTS.md`, `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `SECURITY.md`, `docs/status.md`, release packet and relevant implementation. Produce 1–3 dependency-ready proposals and autonomously choose the smallest safe one. Prefer, in order:
+Re-read exact-current `README.md`, `AGENTS.md`, `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `SECURITY.md`, `docs/status.md`, release packet and relevant implementation. Produce 1–3 dependency-ready proposals and autonomously choose the smallest safe one. Prefer:
 
 1. a demonstrated runtime/correctness/security defect with a concrete call site;
 2. an advertised operator/runtime behavior lacking direct executable evidence;
@@ -167,17 +171,19 @@ Continue immediately to H.
 
 ### H. READY_LOCAL / ROLLING VISIBLE OUTPUT — implement, exact-tree close, repeat
 
-Implement the chosen G output, run the exact-tree local gate, reconcile only changed facts, then repeat G -> H while concrete safe work remains. If high-quality coherent slices repeatedly finish in 10–30 minutes, enlarge the next coherent closure package rather than stopping after each small commit. Queue exhaustion must be real, not a stale-handoff/watcher artifact.
+Implement the chosen G output, run the exact-tree local gate, reconcile only changed facts, then repeat G -> H while concrete safe work remains. If coherent slices repeatedly finish in 10–30 minutes with good test/evidence quality, enlarge the next closure package instead of stopping after each small commit. Queue exhaustion must be real, not a stale-handoff/watcher artifact.
 
 ### I. CONDITIONAL VPS OUTPUT — only if exact-current truth creates a new live question
 
-Current repository truth still says `READY_LIVE: none`. Standing VPS authorization remains valid but is not a reason to duplicate old evidence. Only execute a VPS run if a new implementation/instrumentation change creates a named unresolved real-network question with satisfied dependencies. Otherwise do not unchanged-rerun HY2, repeated warm failover, periodic/soak, package lifecycle, distinct A -> B -> A, already-answered endpoint migration/key update, IPv6 without a real owned IPv6 path, or live PMTUD before its separate authenticated wire/security design gate.
+Current repository truth remains `READY_LIVE: none`. Standing VPS authorization is still valid but is not a reason to duplicate old evidence. Only execute a VPS run if a new implementation/instrumentation change creates a named unresolved real-network question with satisfied dependencies.
+
+Otherwise do not unchanged-rerun HY2, repeated warm failover, periodic/soak, package lifecycle, distinct A -> B -> A, already-answered endpoint migration/key update, IPv6 without a real owned IPv6 path, or live PMTUD before its separate authenticated wire/security design gate.
 
 ### J. POLICY-BLOCKED PARALLEL LANE — D019 source retention
 
 **Status:** `SOURCE_RETENTION_POLICY_BLOCKED`.
 
-The current source-accounting retention/no-reset conflict remains a maintainer/security-policy question. Do not invent TTL, LRU/history capacity, external authority or a weaker reset rule. This policy lane does not block dependency-independent local correctness/release work above.
+The source-accounting retention/no-reset conflict remains a maintainer/security-policy question. Do not invent TTL, LRU/history capacity, external authority or a weaker reset rule. This policy lane does not block dependency-independent local correctness/release work above.
 
 ## Stop conditions
 
