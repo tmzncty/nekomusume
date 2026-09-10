@@ -1,126 +1,166 @@
-# ChatGPT reviewer handoff — close matrix lane and reconcile Era-4 navigation
+# ChatGPT reviewer handoff — review wire closure and continue Session lane
 
 ## Reviewed state
 
-- Previous reviewer-owned handoff: exact `58b7161acd7eaaff2f8f99ebbb6bc4c164cd1d77` (`docs(handoff): unstick strict matrix argv implementation`).
-- Current default `main` before this reviewer update: exact `8749efa45bb16048352c2ce23993ffa12fb68506` (`docs: record strict matrix probe contract`).
+- Previous reviewer-owned handoff: exact `b429bd338a3a364afbc9027149722f03044a51d3` (`docs(handoff): close matrix lane and reconcile Era-4 navigation`).
+- Current default `main` before this reviewer update: exact `37b931935b5d3208ae76878304a4d92c5b92e748` (`docs: close bounded frozen wire corpus review`).
 - New developer sequence after the previous handoff:
-  1. exact `acb81bb7395d0683c669eac96aaa787dfc0abe66` — implementation/tests (`fix: parse matrix probe arguments strictly`);
-  2. exact `8749efa45bb16048352c2ce23993ffa12fb68506` — docs/provenance (`docs: record strict matrix probe contract`).
-- No new VPS/WAN experiment landed in this sequence.
-- Open PR #3 remains an old unrelated pre-auth branch; do not merge/cherry-pick it as a substitute for current-main work.
-- GitHub exposes zero hosted status records for exact `acb81bb`. Hosted CI remains optional cross-evidence and is not a wait condition.
+  1. exact `8fdd4bdba4b48a38d399d03d04a185184ff12319` — docs/navigation (`docs: reconcile Era-4 rolling navigation`);
+  2. exact `92de66e4283cb17346ef438075be8493be51c868` — docs/navigation/release/status alignment (`docs: align Era-4 rolling navigation`);
+  3. exact `525b61be78c628fd153164d514401305c960b460` — developer-local exact-tree provenance for exact `92de66e` (`docs: record Era-4 navigation provenance`);
+  4. exact `37b931935b5d3208ae76878304a4d92c5b92e748` — bounded frozen-wire-corpus review plus B-row navigation closure (`docs: close bounded frozen wire corpus review`).
+- No new runtime implementation, fixture reconstruction, package mutation, or VPS/WAN experiment landed in this sequence.
+- GitHub exposes zero hosted status records for exact `92de66e` and exact `37b9319`. Hosted CI remains optional cross-evidence and is not a wait condition.
 - This reviewer performed GitHub repository/source/evidence review only. No reviewer-executed local CI is claimed.
 
-## Review verdict — matrix operator-contract lane CLOSED
+## Review verdict — Era-4 navigation reconciliation ACCEPTED
 
-The previous matrix-argv MEDIUM and LOW fixture race are closed at exact implementation/test commit `acb81bb` with developer-local exact-tree evidence recorded by `8749efa`.
+The previous navigation MEDIUM is closed by `8fdd4bd` + `92de66e`, with developer-local exact-tree evidence recorded by `525b61b`.
 
-### What the implementation now proves
+The repository now truthfully distinguishes the immutable 2026-08-30 historical anchor from the rolling current-navigation overlay. K is no longer incorrectly `BLOCKED_IMPLEMENTATION`; exact `5d6582c` is limited to one bounded scripted migration-back implementation/process/VPS question. N is limited to the existing nine-scenario privileged ICMP/netem harness and is not Nekomusume throughput/performance evidence. O aggregates already-answered bounded self-owned VPS questions and creates no new live row. The obsolete K -> N -> O dependency-block explanation is removed without promoting unrelated downstream governance/orchestration/implementation gates.
 
-`crates/neko-cli/src/main.rs` now has a compact matrix-specific typed parser. It consumes `probe` matrix argv sequentially and rejects ambiguity before socket work:
-
-- `--matrix` is required exactly once;
-- `--target`, `--transport`, and `--ip-version` are required exactly once;
-- `--timeout-ms` and `--bytes` are optional at most once;
-- `--json` is optional at most once;
-- unknown tokens, stray positional tokens, duplicate options, and missing values fail through the existing exit-2 path;
-- malformed numeric values fail instead of falling back to defaults;
-- typed parsing is followed by existing `reachability::validate(...)`, then and only then by `reachability::run(...)`.
-
-The semantic boundary remains local-only: non-loopback targets, family mismatch, port zero, timeout outside `1..=5000`, and payload outside `1..=1200` reject before the normal matrix call reaches socket work. No public-WAN scope was added.
-
-`crates/neko-cli/tests/probe.rs` now exercises the requested grammar negatives, including the valid-first/invalid-second duplicate `--bytes 17 --bytes 1201`, and asserts exit `2` with empty stdout. The prior bind/drop TCP completed-failure fixture was replaced by a held-open silent loopback UDP endpoint, removing the identified port-reuse race. Reachable local TCP/UDP still produce exit `0`; a completed local failure produces exit `1`; the existing timestamp field is bracketed in the process test.
-
-### Developer-local exact-tree evidence
-
-For exact `acb81bb7395d0683c669eac96aaa787dfc0abe66`, the persisted developer-local provenance records:
+The persisted exact-tree developer-local gate for exact `92de66e` records:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh  -> exit 0
 git diff --check                                -> exit 0
-gate UTC: 2026-09-10T16:14:07Z -> 2026-09-10T16:16:03Z
+gate UTC: 2026-09-10T17:14:24Z -> 2026-09-10T17:16:20Z
 host: Linux 6.8.0-137-generic x86_64
 rustc: 1.98.0 (88d9e12ae 2026-08-18)
 initial/final source tree: clean
 ```
 
-This is developer-local local-loopback/operator evidence. It is not reviewer CI, hosted CI, WAN evidence, independent review, security approval, public-listener approval, RC, release, or production authorization.
+Focused `check-era4-closure.py`, plan-sync, status-evidence, release-boundary and markdown-link checks were also recorded green. This is developer-local navigation/evidence consistency, not runtime, WAN, security review, RC, release or production evidence.
 
-No fuzz was required: this slice changed CLI argv parsing, not network wire decode/parser/crypto framing.
+## Review verdict — B frozen-wire-corpus question ACCEPT_WITH_BOUNDS
 
-### Bounded adjacent review
+Exact `37b9319` closes only the **bounded B-row question** against the already-frozen canonical corpus. The developer-run review was executed on reachable exact source tree `525b61be78c628fd153164d514401305c960b460` and records:
 
-One bounded review of
+- frozen canonical corpus remains exactly 42 vectors across 10 required domains with `freeze=true`;
+- corpus schema/identity validators and generated review checks passed;
+- real `neko-wire` implementation adapters and candidate compatibility/property tests passed;
+- Session readiness fuzz seeds remained exact process messages;
+- isolated 30-second decode fuzz smoke completed without a crash;
+- the mutable legacy fuzz-seed corpus remains distinct from frozen canonical vectors;
+- no prior frozen release exists, so previous/current interoperability remains inapplicable rather than silently proven.
 
-```text
-dispatch -> strict matrix argv parse -> semantic validate -> local socket -> artifact/human output -> exit code
-```
+The classification update to `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` is therefore acceptable only for this corpus/candidate compatibility question. It does **not** freeze Noise transcripts, ciphertext, Carrier packetization, failover/resume, the global protocol, RC, release, security or production behavior.
 
-found no new BLOCKER/HIGH and no concrete contradiction requiring another matrix-parser slice. Do not continue this lane into generic CLI parser normalization, a repository-wide argument framework, schema-checker expansion, or the deferred cross-transport meaning of `payload_bytes` merely because more hardening is possible.
+Do not reopen B merely to run more vectors or fuzz time unless a concrete contradiction, wire change, corpus change, or compatibility question appears.
 
-## New finding — MEDIUM release/evidence navigation drift
+## New finding — MEDIUM final-tree provenance gap for `37b9319`
 
-The next concrete dependency-ready issue is not another matrix checker. It is a stale machine-readable Era-4 navigation contract.
+The wire review commands were run against exact `525b61b`, then exact `37b9319` changed the machine-readable Era-4 closure, Markdown map, release packet, status text, and added the wire review note itself. No persisted full `scripts/check.sh` gate exists for the **final classification-changing tree `37b9319`**.
 
-`docs/release-security-review-packet.md` currently calls `docs/era4-ledger-2026-08-30.json` the reviewed machine-readable navigation source. However the ledger still classifies track K (`migration-back gate`) as `BLOCKED_IMPLEMENTATION` and track N as `BLOCKED_DEPENDENCY` specifically because K is blocked. That no longer matches later repository truth: the current `IMPLEMENTATION_PLAN.md` records migration-back as `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` at exact `5d6582c`, while keeping the overall release-evidence item open and `READY_LIVE: none`.
+This does not invalidate the underlying wire/fuzz evidence and is not a security/correctness HIGH. It is a release-navigation/docs-evidence closure gap: the final tree that moves B from `OPEN_READY` to `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION` should itself pass the repository policy/status/link gates.
 
-This is a navigation/evidence correctness defect: an automated reader can derive an obsolete dependency explanation from a file that the release packet presents as current navigation. It is **not** permission to open a live row, and it does not mean every downstream N/O/P/Q dependency is now ready.
+### READY_LOCAL — close this first without waiting
 
-The ledger was originally anchored to an older Era-4 checkpoint and has historical value. Therefore do not blindly rewrite history. First decide, from repository intent and current checks, whether it is meant to be rolling current navigation or an anchor-time historical ledger whose use as the current navigation source has become stale.
-
-## Proposal adjudication — execute without waiting
-
-Run a short 1–3 shape proposal cycle and choose the smallest truthful shape in the same work session.
-
-### ACCEPT — rolling-ledger reconciliation, if the file is intentionally current
-
-If the ledger/checkers are intended to remain the current machine-readable opportunity map, reconcile demonstrably stale current classification/dependency facts against exact-current `IMPLEMENTATION_PLAN.md`, `ROADMAP.md`, `docs/status.md`, the release packet, and retained evidence.
-
-At minimum address K's obsolete migration-back `BLOCKED_IMPLEMENTATION` state and any closure arrays/derived dependency explanations that must change with it. Inspect the whole ledger for similarly stale post-anchor current-line classifications before committing, because a partial repair that leaves mutually contradictory current navigation is worse than a narrow truthful reconciliation.
-
-Do **not** infer that downstream rows become `OPEN_READY` merely because K changes. Every `OPEN_READY` row must still have a specific unresolved question, concrete evidence needed/next action, satisfied dependencies, and explicit scope. Preserve `READY_LIVE: none` unless repository evidence independently proves a genuinely new dependency-ready live question.
-
-### ACCEPT_WITH_BOUNDS — preserve ledger as historical and repair navigation wording
-
-If repository intent/checks show the ledger is an immutable or anchor-time historical artifact, preserve its historical classifications. Instead stop presenting it as the current machine-readable navigation source: update the release packet/current navigation wording so exact-current `IMPLEMENTATION_PLAN.md` / `docs/status.md` carries current readiness while the Era-4 file is clearly described as historical-at-anchor evidence.
-
-Do not create a second competing current-status system.
-
-### ACCEPT_WITH_BOUNDS — minimal current-overlay field
-
-A small explicit current-overlay/current-as-of section is acceptable only if the existing ledger schema/checks already support this cleanly and it avoids rewriting anchor-time facts. Do not invent a large versioned ledger framework.
-
-### REJECT
-
-- inventing a new migration-back architecture or rerunning migration-back merely to make the ledger look current;
-- declaring N/O/VPS work ready solely from a K status change;
-- changing old artifacts or negative-result truth;
-- weakening `READY_LIVE: none` without a new named real-network question;
-- generic evidence-schema/checker expansion unrelated to the demonstrated drift.
-
-## Required verification for the navigation repair
-
-Before the full gate, run the focused existing checks that own this contract:
+On an exact clean tree at `37b931935b5d3208ae76878304a4d92c5b92e748`, run at minimum:
 
 ```text
 python3 scripts/check-era4-closure.py
 bash scripts/check-plan-sync.sh
-```
-
-If other existing status/release checks fail because the correction exposes a real inconsistency, repair the inconsistency rather than relaxing the checker.
-
-Then commit/push the coherent repair and validate that **final exact developer SHA from a clean exact tree**:
-
-```text
+bash scripts/check-status-evidence.sh
+bash scripts/check-release-boundaries.sh
+bash scripts/check-markdown-links.sh
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
 git diff --check
 git status --porcelain   # empty
 ```
 
-Persist one concise provenance record after green with exact SHA, commands, UTC start/end, exit codes, host/OS/arch, stable Rust version, and initial/final clean-tree state. Do not wait for GitHub Actions and do not present developer-local CI as reviewer-run CI.
+If green, persist one concise developer-local provenance note anchored to exact `37b9319`. Do not rerun fuzz merely for the docs-only classification commit; the isolated decode fuzz evidence already belongs to the underlying bounded B review. If a policy/status/link check fails, repair the real inconsistency and gate the replacement final tree instead.
 
-No fuzz is required for docs/JSON navigation-only work.
+Do not wait for GitHub Actions.
+
+## Next concrete lane — C Session delivery ledger bounded review
+
+After the final B/docs provenance package is green, immediately enter C. Current machine-readable navigation has `C` as the earliest remaining `OPEN_READY` row; its dependency B is now bounded-question sufficient.
+
+Do **not** restart the already-closed overlap/global-context checker spiral. Exact-current Session evidence already covers:
+
+- fail-closed novel-byte overlap on `InFlight` / `Uncertain` / `Confirmed` ranges;
+- ledger-global context rollback rejection for advanced exact duplicates;
+- context-exact advanced duplicate idempotence;
+- confirmation context atomically advancing the ledger-wide context;
+- rejected insertion/confirmation preserving segment state, context, bytes and watermark.
+
+Instead perform one bounded review of the remaining candidate state-transition semantics and either close C or repair a concrete contradiction.
+
+### Specific question to inspect first — stale `Unsent -> InFlight` context
+
+Exact-current `DeliveryLedger::transition` changes `Unsent -> InFlight` and `InFlight -> Uncertain` without consulting ledger-global `SessionContext`. A concrete scenario exists to examine:
+
+1. insert segment A under context `(delivery_epoch=1, key_phase=0, path_generation=1)` and leave A `Unsent`;
+2. advance ledger-global context through a disjoint valid operation to `(1,1,2)`;
+3. call `mark_in_flight` on A, which currently carries the older segment context and takes no context argument.
+
+Do not assume this is automatically a bug. Determine from `docs/spec/m0-session-state.md`, `docs/specs/nekomusume-session-v0.md`, callers/tests and current recovery semantics whether an `Unsent` segment is intentionally allowed to retain assignment-time context across a later global key/path advance, or whether making it `InFlight` would manufacture stale advanced evidence that violates the component-wise monotonic context model.
+
+### Proposal adjudication for that question
+
+- **ACCEPT** a minimal guard or typed transition only if repository semantics require the segment to be current/admissible at the moment it becomes `InFlight`. Protect atomic failure and do not redesign Session/Carrier/ACK/wire semantics.
+- **ACCEPT_WITH_BOUNDS** an explicit tested/documented assignment-time-context rule if exact-current semantics genuinely allow queued `Unsent` bytes to become `InFlight` under their retained older context and later confirmation/migration rules already bound the evidence safely.
+- **DEFER** if the question cannot be resolved without changing core Session semantics; record the exact ambiguity rather than inventing a policy.
+- **REJECT** generic interval-framework work, a second ledger implementation, broad state-machine rewrites, or another checker-only expansion without a demonstrated contradiction.
+
+Minimal evidence should include a focused positive/negative test around the disjoint-context scenario plus the existing transition/confirmation regressions. If a real defect is found, fix it and re-run the focused Session tests before the full gate. If no contradiction remains, close only the bounded C-row question with an explicit candidate limitation; do not claim protocol freeze or complete Session validation.
+
+## Rolling queue — execute continuously
+
+The repository currently exposes seven genuine local `OPEN_READY` rows: C, D, E, F, L, M and T. They are real review/output questions, but several may already be materially answered by current evidence and therefore should be **reviewed and reclassified**, not mechanically reimplemented or rerun. Keep moving without watcher mode.
+
+### A. READY_LOCAL — exact `37b9319` final-tree gate/provenance
+
+Run the final docs/navigation gate described above. Persist concise developer-local provenance only after green. Immediately continue to B.
+
+### B. READY_LOCAL — C Session ledger bounded review
+
+Resolve the stale-`Unsent -> InFlight` context question first, then do one bounded pass over `insert -> mark_in_flight -> mark_uncertain -> confirm_received -> watermark/limits`. Repair only concrete contradictions. Otherwise classify C bounded-question sufficient with explicit candidate boundaries. Immediately continue to C.
+
+### C. READY_LOCAL — D authenticated-record/security matrix
+
+Once C is truthfully sufficient, run the existing crypto/authenticated-record negative/security matrix against exact current code and inspect for one concrete unresolved candidate gap: authentication failure, replay/nonce/key-phase/AAD/context binding, malformed/truncated record, or fail-closed boundary. Do not invent a new crypto construction or security capacity policy. If source changes touch external record parsing/framing, use the repository-pinned fuzz path; otherwise do not rerun fuzz merely to fill time.
+
+Close D only if the bounded question is actually answered. Immediately continue to D.
+
+### D. READY_LOCAL — E/F Carrier deterministic boundary package
+
+Review UDP lifecycle/encrypted loopback and TCP framing/failover deterministic gates as one coherent Carrier package where practical. Preserve Session-delivery vs packet/TCP feedback separation, bounded deadlines, cleanup and single-active failover invariants. Fix concrete reproducible contradictions; otherwise close only the bounded local E/F questions. Do not create WAN claims and do not reopen already-sufficient failover evidence solely for more sampling.
+
+Immediately continue to E.
+
+### E. READY_LOCAL — T unreliable-datagram boundary
+
+Run/review the existing authenticated unreliable-datagram boundary tests. Protect the current provisional contract: <=1200-byte payload cap, no retransmission or ACK, no ordering guarantee, no promotion to reliable Session delivery/effect evidence, bounded mixed-queue behavior. Repair a concrete local contradiction if present; otherwise close the bounded T question. No new user-level datagram CLI is required by this row.
+
+Immediately continue to F.
+
+### F. READY_LOCAL — L observability/timeline evidence reconciliation
+
+Inspect retained structured artifacts and current runtime events for one actually missing advertised metric. Prefer a direct runtime/operator evidence gap over new schema/checker machinery. If all bounded timeline questions already have sufficient retained evidence, reclassify L accordingly instead of manufacturing another WAN run. Current `READY_LIVE: none` remains authoritative absent a new named real-network question.
+
+Immediately continue to G.
+
+### G. READY_LOCAL — M deterministic-harness classification check
+
+Do not rerun `scripts/check.sh` or fuzz only because M says `OPEN_READY`; those gates are already exercised repeatedly. Decide whether current deterministic regression/fault evidence already answers M's declared bounded question. If yes, reconcile M to bounded-question sufficient. If not, require one specific missing failure mode tied to a current runtime invariant before adding new harness code.
+
+Immediately continue to H.
+
+### H. ROLLING OUTPUT REFILL — 1–3 exact-current proposals, choose autonomously
+
+After each closure package, re-read exact current repository truth and propose 1–3 concrete outputs naming owner file/API, demonstrated contradiction or missing advertised behavior, protected invariant/evidence boundary, focused positive/negative test and stop condition. Choose the smallest safe item in the same work session and implement/review it without reviewer acknowledgement.
+
+Prefer:
+
+1. correctness/security contradiction with a concrete call site;
+2. advertised operator/runtime behavior lacking executable evidence;
+3. a real release-evidence subgate answerable locally without claim inflation.
+
+Do not select D019 retention policy, signing/key-custody/SBOM policy, previous-release interoperability without a previous frozen release, service/production mutation, Experimental Track work without observed-problem evidence, or generic checker/parser normalization merely to manufacture backlog.
+
+For every coherent implementation/test/docs-evidence package: focused checks -> commit/push -> clean exact-tree `scripts/check.sh` + `git diff --check` -> concise provenance -> immediately continue if the next dependency-ready slice is pre-authorized and no real stop condition exists.
 
 ## Release and live boundaries
 
@@ -128,80 +168,13 @@ No fuzz is required for docs/JSON navigation-only work.
 - `PRODUCTION_READY=false`
 - `FREEZE=false`
 - `RELEASED=false`
+- `CANONICAL_CORPUS_V1_FROZEN=true` applies only to the 42-vector/10-domain corpus identity.
 - bounded release-evidence item 3 remains incomplete;
 - independent release/security item 4 remains incomplete;
 - D019 source retention remains `SOURCE_RETENTION_POLICY_BLOCKED`;
-- current live opportunity remains `READY_LIVE: none` unless exact-current facts materially change it.
+- current live opportunity remains `READY_LIVE: none`.
 
-Standing VPS authorization remains valid, but there is no reason to duplicate HY2, repeated warm failover, periodic/soak, package lifecycle, A -> B -> A, already-answered migration-back, endpoint migration, key update, IPv6 without an owned IPv6 path, or live PMTUD without its separate implementation/security dependency. A stale ledger is not a reason to manufacture a WAN run.
-
-## Rolling queue — execute continuously
-
-There are fewer than 6–10 fully preselected truthful slices in exact-current repository state; do not manufacture backlog. The following dependency-ordered work is real. Complete it continuously and refill through proposal -> implementation rather than watcher mode.
-
-### A. REVIEW-CLOSED — matrix operator contract
-
-Treat exact `acb81bb` + developer-local provenance in `8749efa` as the closed local matrix-argv package. Do not reopen absent a new concrete contradiction.
-
-Immediately continue to B.
-
-### B. READY_LOCAL — adjudicate Era-4 ledger intent and reconcile current navigation
-
-Perform the proposal adjudication above. Repair either the rolling ledger facts or the release packet's stale claim that the anchor-time ledger is current navigation. Preserve historical evidence and current `READY_LIVE: none` unless independently disproved.
-
-Immediately continue to C.
-
-### C. READY_LOCAL — dependency/classification consistency pass
-
-Within the same coherent package, inspect downstream rows whose explanation depends on any corrected track. Update only dependency explanations/classifications that are logically forced by current truth. Do not promote a row just because one blocker disappeared; retain another real blocker or reclassify only when its declared question is actually dependency-ready.
-
-Run `check-era4-closure.py`, `check-plan-sync.sh`, and any already-existing status/release focused checks. Immediately continue to D.
-
-### D. READY_LOCAL — final exact-tree gate and provenance
-
-Commit/push the coherent B/C repair, run the full clean exact-tree local gate on that final developer SHA, fix real failures, and persist one concise provenance note after green. GitHub-hosted CI is optional cross-evidence only.
-
-Immediately continue to E.
-
-### E. BOUNDED RELEASE RECONCILIATION — changed navigation facts only
-
-Update `docs/release-security-review-packet.md`, item-4 factual support, or `docs/status.md` only where B/C materially changed a current claim. Do not mechanically re-anchor unrelated Session, pre-auth, package, matrix, or VPS evidence.
-
-Then immediately continue to F.
-
-### F. LOCAL OUTPUT SELECTION — 1–3 exact-current proposals, choose autonomously
-
-Re-read current implementation plus `README.md`, `AGENTS.md`, `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `SECURITY.md`, `docs/status.md`, release packet, and the corrected navigation. Produce 1–3 **concrete** dependency-ready proposals, each naming owner file/API, observed contradiction or missing advertised behavior, protected invariant, minimal positive/negative evidence, and stop condition. Choose the smallest safe proposal in the same work session without reviewer acknowledgement.
-
-Prefer, in order:
-
-1. a demonstrated runtime/correctness/security contradiction with a concrete call site;
-2. an advertised operator/runtime behavior lacking direct executable evidence;
-3. a named release-evidence correctness question answerable locally without capacity/security claim inflation.
-
-Do not select D019 TTL/LRU/history policy, signing/key-custody/SBOM policy, previous-release interoperability without a frozen prior release, service/production mutation, Experimental Track carriers, the deferred matrix `payload_bytes` semantic question, or generic checker/parser work merely to create backlog.
-
-Immediately continue to G.
-
-### G. READY_LOCAL — implement and exact-tree-close the selected output
-
-Implement F's chosen real output, run focused tests followed by the full exact-tree local gate on its final pushed implementation/test SHA, persist minimal provenance, reconcile only changed facts, and continue if no real stop condition exists.
-
-If coherent work repeatedly finishes in 10–30 minutes with no test/evidence quality decline, enlarge the next coherent package. Commit timing is sizing input, not a productivity score.
-
-### H. ROLLING REFILL — repeat proposal -> implementation while genuine work exists
-
-Repeat F -> G from repository truth. Maintain several dependency-ordered slices only when real gaps exist; if fewer real slices exist, say so rather than manufacturing docs/checker work.
-
-### I. CONDITIONAL VPS — only for a newly created real-network question
-
-Current classification remains `READY_LIVE: none`. Standing authorization remains valid but is not a reason to rerun closed or blocked lines.
-
-Only execute a bounded self-owned VPS run when a new implementation/instrumentation/configuration/hypothesis creates a named unresolved real-network question with satisfied dependencies. Preserve old negatives; no unchanged retries.
-
-### J. POLICY-BLOCKED PARALLEL LANE — D019 source retention
-
-Status remains `SOURCE_RETENTION_POLICY_BLOCKED`. Do not invent TTL, LRU/history capacity, external authority, or a weaker no-reset rule. This does not block independent local correctness/operator work.
+Standing VPS authorization remains valid, but no newly dependency-ready real-network question exists. Do not repeat HY2, repeated warm failover, periodic/soak, package lifecycle, already-answered migration-back, endpoint migration, key update, IPv6 without an owned IPv6 path, or live PMTUD without its separate implementation/security dependency. Negative evidence remains retained.
 
 ## Stop conditions
 
