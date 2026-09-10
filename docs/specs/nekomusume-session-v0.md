@@ -44,8 +44,12 @@ ledger context and delivery state unchanged. `confirm_received` likewise
 validates the delivery transition and the ledger-wide component-wise monotonic
 context rule before atomically applying the same newer context to the ledger and
 segment; a rejected confirmation leaves both contexts, delivery state, and
-confirmed watermark unchanged. These remain bounded state-model invariants, not a claim of
-complete protocol validation.
+confirmed watermark unchanged. `Unsent -> InFlight` is only a local queue/send
+transition and preserves the segment's assignment-time context; it does not
+rebind bytes to a newer ledger-global key/path context or produce delivery
+evidence. Only an explicit validated evidence transition such as
+`confirm_received` may apply a newer context to that segment. These remain
+bounded state-model invariants, not a claim of complete protocol validation.
 
 ## Governance boundary (G0)
 

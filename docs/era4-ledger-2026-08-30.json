@@ -94,7 +94,7 @@
     {
       "id": "C",
       "name": "session delivery ledger",
-      "status": "candidate",
+      "status": "in-progress",
       "depends_on": [
         "B"
       ],
@@ -103,14 +103,13 @@
         "E1"
       ],
       "artifacts": [
-        "crates/neko-session/src/lib.rs"
+        "crates/neko-session/src/lib.rs",
+        "docs/local-session-queued-context-531e0bc-20260911.md",
+        "docs/spec/m0-session-state.md",
+        "docs/specs/nekomusume-session-v0.md"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
-      "evidence_needed": "Evidence for the unresolved session delivery ledger question, limited to the declared bounded scope.",
-      "next_action": "Add or review deterministic Session delivery edge-case coverage for the remaining candidate semantics.",
-      "execution_scope": "local",
-      "requires": "Dependencies B remain satisfied at the reviewed tree."
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "exact 531e0bc defines and tests assignment-time context ownership for queued Unsent -> InFlight bytes, explicit confirmation-owned context advancement, advanced duplicate/overlap rollback, watermark and limit atomicity; this is bounded candidate state-model evidence, not complete Session validation"
     },
     {
       "id": "D",
@@ -525,7 +524,7 @@
   ],
   "closure": {
     "schema": "nekomusume.era4-release-evidence-closure.v1",
-    "classified_at_commit": "wire-corpus-reconciliation-2026-09-11",
+    "classified_at_commit": "session-ledger-reconciliation-2026-09-11",
     "handoff_sha256": "6de20f52b7d7faa7c43961ba64b2e00ac8076385a83219cd5462966daff066a4",
     "allowed_classifications": [
       "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
@@ -537,7 +536,6 @@
       "OPEN_READY"
     ],
     "open_ready_rows": [
-      "C",
       "D",
       "E",
       "F",
@@ -561,6 +559,7 @@
     "already_sufficient_rows": [
       "A",
       "B",
+      "C",
       "G",
       "H",
       "I",

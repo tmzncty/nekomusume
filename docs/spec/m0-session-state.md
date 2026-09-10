@@ -33,7 +33,11 @@ not invent a second Session close protocol or claim application-level
 
 ## Context migration rule
 
-A ledger context is not exact global identity. `key_phase` and
+A ledger context is not exact global identity. `Unsent -> InFlight` records a
+local queue/send transition and preserves the segment's assignment-time context;
+it does not itself claim rebinding or delivery evidence under the current global
+key/path context. A newer context is applied to that segment only through an
+explicit validated evidence transition such as `confirm_received`. `key_phase` and
 `path_generation` may advance monotonically as independent migration evidence;
 `delivery_epoch` advances only at its explicit boundary. Regressions are
 `OldEpoch`, and a compound epoch change that also changes crypto/path context is
