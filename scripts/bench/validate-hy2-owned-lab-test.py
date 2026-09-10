@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import importlib.util,json,pathlib,tempfile
+import importlib.util,json,pathlib,tempfile,copy
+from jsonschema import Draft202012Validator
 p=pathlib.Path(__file__).with_name('validate-hy2-owned-lab.py'); spec=importlib.util.spec_from_file_location('validator',p); v=importlib.util.module_from_spec(spec); spec.loader.exec_module(v)
 tmp=pathlib.Path(tempfile.mkdtemp()); good=tmp/'time'
 good.write_text('Command exited with non-zero status 7\n{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":1.25,"cpu_user_seconds":0.1,"cpu_system_seconds":0.2,"rss_kib":12,"exit_code":7}\n')
@@ -56,8 +57,15 @@ for i in range(1,6): complete_rows += [row('nekomusume',i),row('hy2',i)]
 def client_resource(impl,run):
  return {'experiment_id':f'{impl}-owned-lab-{run}','implementation':impl,'identity':'sha256:'+('a'*64 if impl=='nekomusume' else 'b'*64),'role':'client','sampling':{'scope':'sampler-created process group'},'cpu':{'user_seconds':.2,'system_seconds':.3},'rss':{'max_kib':9},'fd':{'peak_count':4},'exit':{'code':0,'timed_out':False},'cleanup':{'process_reaped':True,'process_group_empty':True,'owned_sockets_after_exit':0,'complete':True}}
 complete_contract={'runs_per_implementation':5,'payload_bytes':1200,'payload_prepared':True,'payload_sha256':h,'client_lifecycle':'fresh transport per timed sample','client_resource_scope':'sampler-created process group','enforced_global_deadline_ms':540000,'work_deadline_ms':480000,'cleanup_reserve_ms':60000,'whole_lab_deadline_ms':540000,'nekomusume_binary_sha256':'a'*64,'hy2_binary_sha256':'b'*64}
-complete={'schema':'nekomusume.benchmark-result.v1','experiment_id':'hy2-owned-lab-paired','git_commit':'0'*40,'contract':complete_contract,'samples':complete_rows,'summary':v.expected_summary(complete_rows),'bounds':{'maximum_duration_ms':540000,'application_bytes_max':1200*5*2},'resources':[client_resource(impl,i) for impl in ('nekomusume','hy2') for i in range(1,6)],'cleanup_status':'verified','cleanup_evidence':doc['cleanup_evidence']}
+complete={'schema':'nekomusume.benchmark-result.v1','experiment_id':'hy2-owned-lab-paired','git_commit':'0'*40,'mode':'controlled-owned-lab','transport':'deterministic','scope':'self-owned-client-vps','contract':complete_contract,'samples':complete_rows,'summary':v.expected_summary(complete_rows),'bounds':{'maximum_duration_ms':540000,'application_bytes_max':1200*5*2},'resources':[client_resource(impl,i) for impl in ('nekomusume','hy2') for i in range(1,6)],'cleanup_status':'verified','cleanup_evidence':doc['cleanup_evidence']}
 result=tmp/'result.json'; v.atomic_write(result,complete); v.validate_result(result)
+common_schema=json.loads((pathlib.Path(__file__).parents[2]/'schema/benchmark-result.v1.json').read_text()); common=Draft202012Validator(common_schema)
+blocked_schema=json.loads((pathlib.Path(__file__).parents[2]/'schema/benchmark-blocked-harness.v1.json').read_text()); blocked_common=Draft202012Validator(blocked_schema)
+assert not list(common.iter_errors(complete))
+retained=pathlib.Path(__file__).parents[2]/'artifacts/hy2-owned-lab/13da094-hy2-diagnostic-attempt/result.json'
+assert not list(blocked_common.iter_errors(json.loads(retained.read_text())))
+for bad in (dict(complete,unexpected_comparison=True),dict(complete,summary={'hy2':'fast'}),dict(complete,bounds={'maximum_duration_ms':0,'application_bytes_max':12000}),dict(complete,cleanup_evidence={'remote_listeners_remaining':-1})):
+ assert list(common.iter_errors(bad)), bad
 # A complete artifact cannot relabel a failed required sample as an accepted
 # benchmark by recomputing its summary around the remaining successes.
 failed_complete_rows=[dict(x) for x in complete_rows]

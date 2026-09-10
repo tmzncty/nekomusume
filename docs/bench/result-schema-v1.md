@@ -2,9 +2,11 @@
 
 `schema/benchmark-result.v1.json` is the common result envelope for deterministic,
 netns, VPS, and later comparison experiments. It requires a unique experiment ID,
-source commit, explicit mode/transport/scope, duration and application-byte
-bounds, per-sample failure and latency fields, aggregate summary, and cleanup
-status.
+source commit, explicit mode/transport/scope, per-sample failure and latency fields,
+aggregate summary, and cleanup status. `bounds`, when present, records a producer-enforced
+whole-run duration and application-byte ceiling. The owned-lab runner has such a deadline;
+the sequential local comparator has per-command timeouts but no separate whole-run deadline,
+so it does not invent `maximum_duration_ms`.
 
 `wire_bytes` is nullable because it must not be fabricated when capture metadata
 cannot reliably measure it. Median/P95 fields are nullable for pre-session

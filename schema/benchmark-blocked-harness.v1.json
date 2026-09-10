@@ -186,6 +186,67 @@
             ],
             "minLength": 1,
             "maxLength": 96
+          },
+          "client_diagnostic": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "category",
+                  "last_success_stage",
+                  "last_success_source",
+                  "bundle_sha256",
+                  "bundle_bytes",
+                  "started_at",
+                  "ended_at"
+                ],
+                "properties": {
+                  "category": {
+                    "enum": [
+                      "tls",
+                      "auth",
+                      "config",
+                      "path",
+                      "readiness",
+                      "unknown"
+                    ]
+                  },
+                  "last_success_stage": {
+                    "enum": [
+                      "server_bound",
+                      "client_started",
+                      "quic_udp",
+                      "tls_authenticated"
+                    ]
+                  },
+                  "last_success_source": {
+                    "enum": [
+                      "harness",
+                      "capture"
+                    ]
+                  },
+                  "bundle_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "bundle_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2560
+                  },
+                  "started_at": {
+                    "type": "string"
+                  },
+                  "ended_at": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
           }
         }
       }

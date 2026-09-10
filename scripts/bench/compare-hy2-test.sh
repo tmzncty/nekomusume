@@ -21,6 +21,13 @@ assert_hy2_failures(){
 }
 run_compare good.json
 assert_hy2_failures good.json 0
+validate_common(){ python3 - "$ROOT/schema/benchmark-result.v1.json" "$tmp/$1" <<'PY'
+import json,sys
+from jsonschema import Draft202012Validator
+errors=list(Draft202012Validator(json.load(open(sys.argv[1]))).iter_errors(json.load(open(sys.argv[2])))); assert not errors, errors
+PY
+}
+validate_common good.json
 jq -e '[.samples[].wire_bytes] | all(. == null)' "$tmp/good.json" >/dev/null
 run_compare repeat.json
 jq -e '.schema == "nekomusume.benchmark-result.v1" and ([.samples[].failures] | add == 0)' "$tmp/repeat.json" >/dev/null
@@ -45,6 +52,7 @@ jq -e '[.samples[]|select(.implementation=="hy2")|.wire_bytes] | all(. == 1234)'
 run_bad_case wrong-hash 'printf '\''{"application_bytes":%s,"payload_sha256":"%064d","fd_count":4,"wire_bytes":null}\n'\'' "$BENCH_PAYLOAD_BYTES" 0'
 jq -e '[.samples[]|select(.implementation=="hy2")] | all(.payload_sha256 == ("0" * 64) and .application_bytes == 25 and .fd_count == 4 and .wire_bytes == null)' "$tmp/wrong-hash.json" >/dev/null
 run_bad_case empty ':'
+validate_common empty.json
 run_bad_case malformed 'printf '\''{"application_bytes":'\'''
 run_bad_case contaminated 'printf '\''{"application_bytes":%s,"payload_sha256":"%s","fd_count":4,"wire_bytes":null}\ngarbage\n'\'' "$BENCH_PAYLOAD_BYTES" "$BENCH_PAYLOAD_SHA256"'
 run_bad_case multiple 'printf '\''{"application_bytes":%s,"payload_sha256":"%s","fd_count":4,"wire_bytes":null}\n{}\n'\'' "$BENCH_PAYLOAD_BYTES" "$BENCH_PAYLOAD_SHA256"'
