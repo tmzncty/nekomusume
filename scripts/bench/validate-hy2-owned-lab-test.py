@@ -18,6 +18,12 @@ rows += [row('nekomusume',5,1)]
 records=tmp/'records.jsonl'; records.write_text(''.join(json.dumps(x)+'\n' for x in rows))
 blocked=tmp/'blocked.json'; doc={'schema':'nekomusume.benchmark-blocked-harness.v1','experiment_id':'hy2-owned-lab-paired','git_commit':'0'*40,'status':'BLOCKED_HARNESS','failure_stage':'hy2-5-client','contract':{'runs_per_implementation':5,'payload_bytes':1200,'payload_prepared':True,'payload_sha256':h},'samples':v.load_jsonl(records),'cleanup_status':'verified','cleanup_evidence':{'local_processes_reaped':True,'local_listeners_remaining':0,'remote_process_groups_reaped':True,'remote_listeners_remaining':0,'remote_temp_path_removed':True}}
 v.atomic_write(blocked,doc); v.validate_result(blocked); assert len(json.load(open(blocked))['samples'])==9 and 'summary' not in doc
+# BLOCKED artifacts are key-exclusive so hand-authored comparative claims cannot hide under non-canonical names.
+for key,value in (('median_exchange_latency_ms',0.29),('superiority','hy2 5x faster'),('comparative_summary',{'ratio':0.2}),('p95_latency_seconds',0.29)):
+ bad=dict(doc); bad[key]=value; v.atomic_write(blocked,bad)
+ try: v.validate_result(blocked)
+ except ValueError: pass
+ else: raise AssertionError(f'blocked comparative field accepted: {key}')
 for bad in (rows+[rows[0]], [rows[1],rows[0]], [dict(rows[0],application_bytes=1)]+rows[1:]):
  try: v.validate_samples(bad,doc['contract'],False)
  except ValueError: pass

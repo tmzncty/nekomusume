@@ -373,8 +373,8 @@ def validate_result(path):
     doc = load_json(path)
     schema = doc.get("schema")
     if schema == "nekomusume.benchmark-blocked-harness.v1":
-        required = {"schema", "experiment_id", "git_commit", "status", "failure_stage", "samples", "cleanup_status", "cleanup_evidence"}
-        if not required.issubset(doc) or doc["status"] != "BLOCKED_HARNESS" or not doc["failure_stage"]:
+        required = {"schema", "experiment_id", "git_commit", "status", "failure_stage", "contract", "samples", "cleanup_status", "cleanup_evidence"}
+        if set(doc) != required or doc["status"] != "BLOCKED_HARNESS" or not doc["failure_stage"]:
             raise ValueError("malformed BLOCKED_HARNESS artifact")
         contract = doc.get("contract")
         if not isinstance(contract, dict):
