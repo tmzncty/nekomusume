@@ -1,128 +1,205 @@
-# ChatGPT reviewer handoff — release facts accepted; run one final exact-current proposal sweep
+# ChatGPT reviewer handoff — bounded independent review accepted as partial item-4 evidence; no coding queue inflation
 
 ## Reviewed state
 
-- Previous reviewer-owned handoff: exact `9a42cc62ce64b44eb5d417d39621498249855ea6` (`docs(handoff): enter release review packet closure`).
-- Current default `main` before this reviewer update: exact `d77be326cd038707160383b89dbff1b5611139ed` (`docs: record release review facts gate`).
-- Two developer-owned commits landed after the previous handoff:
-  1. `bf7b1d3964c510d08d93bfb922d004a2539760e7` — docs-only release-facing factual reconciliation across `docs/release-security-review-packet.md`, `docs/reviews/release-item4-subgates-20260909.md`, and the Session row in `docs/status.md`;
-  2. `d77be326cd038707160383b89dbff1b5611139ed` — provenance-only note recording the clean exact-tree local gate for `bf7b1d3`.
-- No runtime implementation, tests, package mutation, fixture reconstruction, or real VPS/WAN experiment landed in this sequence.
-- GitHub exposes no hosted status records for exact `bf7b1d3`. Hosted CI remains optional cross-evidence and is not a wait condition.
-- This reviewer performed GitHub repository/source/evidence review only. No reviewer-executed local CI is claimed.
+- Previous reviewer-owned handoff: exact `3ed596ac62a3e3bda0fcea494432e0533285cb83` (`docs(handoff): accept release facts and force final proposal sweep`).
+- Developer/current sequence after that handoff:
+  1. `a24370bde84b86dced1e0af88283679afbd414c2` — docs-only bounded independent release/security evidence-index review of exact `3ed596a`;
+  2. `013f7526c2bff83a6b9c71489c664cf16a7cbcab` — docs-only Era-4 ledger provenance scoping, converting the stale generic `closure.handoff_sha256` into explicitly historical initial-classification provenance.
+- No runtime implementation, tests, package mutation, fixture reconstruction, or real VPS/WAN experiment landed in this developer sequence.
+- Reviewer follow-up commit `011eca9e49a3504c998c588ab03414b21f6fecad` sanitizes unnecessary local review-host/private-workdir details from the current-tree review note. This is reviewer-owned evidence hygiene only; it does not change the reviewed tree, release facts, classification, or any protocol/runtime behavior.
+- GitHub exposes no hosted status records for the current docs head. Hosted CI remains optional cross-evidence and is not a wait condition.
+- This ChatGPT reviewer performed GitHub repository/source/evidence review only. No reviewer-executed local CI is claimed in this turn.
 
-## Review verdict — release-facing factual reconciliation ACCEPT
+## Review verdict
 
-The prior MEDIUM release-navigation drift is closed.
+### `a24370b` — ACCEPT_WITH_BOUNDS as partial independent-review evidence
 
-The packet and item-4 factual support now distinguish:
+The bounded review is useful and reproducible within its stated scope. It independently reproduced or spot-checked:
 
-- developer-reviewed factual coverage through exact classification tree `78111e8ab55b37fefe2a6f3aa1e8c10bb84f2c09`;
-- provenance-only commit `3ee4fd0b93c97cf0fc7727783bf94cc656711ddc`, which records the clean gate for that classification tree;
-- the individual tested-tree anchors retained by the underlying local review notes.
+- release flags and cross-document boundary consistency;
+- zero Era-4 `OPEN_READY` rows on the reviewed exact `3ed596a` tree;
+- docs-only delta since the last fully gated classification tree `78111e8`;
+- canonical corpus validation (`42` vectors / `10` domains / `freeze=true`);
+- the `neko-crypto` 37-test matrix;
+- release boundary/link/status checks;
+- package smoke / clean-source regressions;
+- the retained five-record package anchor hash;
+- targeted Unix identity open/create behavior.
 
-The updated text does not pretend that one SHA ran every historical test and does not promote local engineering evidence into independent audit, RC, protocol freeze, release, public-listener approval, or production readiness.
+Its own scope explicitly excludes exhaustive source audit, cryptanalysis, adversarial-load assessment, WAN/VPS execution, penetration testing, and production approval. Therefore it is **not** sufficient to mark release item 4 complete and does not close RSEC-001 or D019. It found no BLOCKER/HIGH inside the surfaces it actually reviewed; that statement must not be promoted to “no security HIGH remains repository-wide.”
 
-The Session status row is also now appropriately bounded: the declared ledger question was reviewed, while complete Session/release validation remains unestablished.
+The review artifact is evidence support, not a release/security approval. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain unchanged.
 
-Exact `bf7b1d3` has a persisted developer-local gate in `docs/local-release-review-facts-bf7b1d3-20260911.md`:
+### `013f752` — ACCEPT
 
-- `python3 scripts/check-era4-closure.py`: passed (`0` open-ready, `16` already-sufficient, `0` dependency-blocked);
-- `bash scripts/check-plan-sync.sh`: passed;
-- `bash scripts/check-status-evidence.sh`: passed;
-- `bash scripts/check-release-boundaries.sh`: passed;
-- `bash scripts/check-markdown-links.sh`: passed;
-- `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`: exit `0`;
-- `git diff --check`: exit `0`;
-- UTC `2026-09-10T19:10:12Z -> 19:12:07Z`;
-- Linux `6.8.0-137-generic` x86_64;
-- Rust `1.98.0`;
-- initial/final source tree clean.
+The Era-4 ledger change correctly scopes the stale handoff digest as historical initial-classification provenance:
 
-This is developer-local validation of exact `bf7b1d3`; exact `d77be32` is only the later provenance-text commit and must not be described as the tested tree.
+- the rolling classifications continue to be cross-checked against `IMPLEMENTATION_PLAN.md` and `docs/status.md`;
+- `open_ready_rows`, `already_sufficient_rows`, and `blocked_dependency_rows` are unchanged;
+- no live row is promoted and no dependency is reclassified;
+- `scripts/check-era4-closure.py` does not depend on the removed generic `handoff_sha256` field.
 
-No new correctness/security BLOCKER or HIGH was found in the two-commit docs package.
+This is evidence-navigation repair only, not a new release fact.
 
-## Exact-current release boundary remains unchanged
+## Reviewer evidence-hygiene finding — current tree repaired, history intentionally not rewritten
 
-The repository is now genuinely at the end of the old local A-T closure queue:
+The new independent review note originally persisted a local RFC1918 host identifier and an absolute local checkout path. That is unnecessary provenance and conflicts with the repository rule against storing endpoint/private-topology detail when a sanitized host description is sufficient.
 
-- rolling Era-4 `OPEN_READY` rows: `0`;
+Severity: **MEDIUM evidence/security hygiene**, not a credential leak and not a release correctness blocker.
+
+Reviewer action already taken in exact `011eca9`:
+
+- current-tree note now says the review host and checkout path are intentionally sanitized;
+- `rustc 1.98.0` and all actual commands/results remain preserved;
+- no substantive review claim changed.
+
+The original values remain reachable in Git history at `a24370b`. Fully purging historical Git objects would require destructive history rewriting, which is outside normal reviewer authority and must not be performed automatically. No history rewrite is requested or implied by this handoff.
+
+## Exact-current release boundary
+
+Repository truth remains:
+
+- `IMPLEMENTATION_COMPLETE=true` only in the bounded research/governance sense;
 - release item 3 remains incomplete;
-- independent release/security item 4 remains incomplete;
+- release item 4 remains incomplete, although one bounded independent evidence-index review now exists;
 - `RELEASE_CANDIDATE=false`;
 - `PRODUCTION_READY=false`;
 - `FREEZE=false`;
 - `RELEASED=false`;
-- D019 source retention remains `SOURCE_RETENTION_POLICY_BLOCKED`;
+- D019 remains `SOURCE_RETENTION_POLICY_BLOCKED`;
+- RSEC-001 still requires representative adversarial-load/suitability evidence and an independent release/security decision before public-listener/release promotion;
 - current live opportunity remains `READY_LIVE: none`.
 
-Standing VPS authorization remains valid, but it does not manufacture a live question. Do not repeat HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint migration, key update, IPv6, or PMTUD without a materially new dependency-satisfied question.
+Standing VPS authorization remains valid. It is not a reason to repeat HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint migration, key update, IPv6, or PMTUD without a materially new dependency-satisfied question.
 
-Known remaining release boundaries are not automatically coding tickets:
+## Stage transition — coding expansion remains exhausted; independent review is now the real queue
 
-- D019 retention requires a policy decision: **DEFER / maintainer decision**;
-- signing/key-custody/SBOM workflow would require release-policy choices: **DEFER**, do not invent policy;
-- previous/current interoperability has no prior frozen release: **NOT APPLICABLE / DEFER**;
-- native aarch64 evidence is not a blocker for the currently declared x86_64-only first-RC scope unless N6 changes;
-- sustained/public/general reachability, natural-loss evidence and production/service-manager hardening are not presently `READY_LIVE` or a dependency-free local coding slice;
-- Experimental Track work remains non-TODO absent observed-problem evidence.
+The final proposal sweep did not produce a concrete new implementation defect. The next work is therefore **independent release/security review**, not filler coding and not watcher polling.
 
-## READY_LOCAL — one final exact-current proposal sweep, then either implement or stop coding expansion
+The external coding agent remains a support/repair agent during this stage. It may reproduce deterministic evidence, prepare narrowly scoped factual notes, or immediately repair a concrete finding that the reviewer identifies under existing semantics. It must not self-promote its own support work into “independent release approval,” and it must not manufacture new checker/parser/harness/framework work merely to stay busy.
 
-The release-facts package is green. The external coding agent must **not** wait for another reviewer turn. Immediately perform the pre-authorized exact-current proposal sweep that was queued by the prior handoff.
+### READY_LOCAL 1 — reconcile the first independent-review artifact into release-facing navigation
 
-Re-read current code/spec/status and propose at most 1–3 candidate local outputs. A candidate is admissible only if it has all of:
+Goal: make release-facing docs acknowledge that one bounded independent evidence-index review has occurred without claiming item-4 completion.
 
-- a named owner file/API/call path;
-- a demonstrated contradiction, correctness/security defect, or missing advertised behavior in the current tree;
-- an existing semantic/invariant basis for the fix, with no new core policy invention;
-- a bounded positive/negative regression or factual check;
-- a clear stop condition;
-- no core Session/Carrier/ACK/crypto/wire architecture choice;
-- no D019 retention choice, production mutation, new credentials/server/third-party permission, or maintainer benchmark-value judgment.
+Files/concepts:
 
-Pre-adjudication remains:
+- `docs/release-security-review-packet.md`;
+- `docs/reviews/release-item4-subgates-20260909.md` only if necessary for factual indexing;
+- `docs/status.md` only if an actual status statement needs precision;
+- `docs/reviews/independent-release-review-3ed596a-20260911.md` as the source artifact.
 
-- **ACCEPT** — concrete current correctness/security/operator defect with an unambiguous repair under existing semantics. Choose the smallest safe accepted item and immediately implement/test/commit/push it.
-- **ACCEPT_WITH_BOUNDS** — demonstrable factual/evidence contradiction. Repair only the contradiction, preserve evidence boundaries, then continue.
-- **DEFER** — requires a new core semantic, security-capacity, release-policy, D019, benchmark-value, production, or external-environment decision.
-- **REJECT** — generic checker/parser/harness normalization, another broad Session/ledger/pre-auth sweep without a demonstrated defect, documentation beautification, Experimental Track feature creation, or unchanged WAN reruns.
+Required boundary:
 
-Do not convert this proposal sweep into an open-ended static-analysis campaign. One bounded pass is enough. Existing closed lanes stay closed unless the current exact tree supplies a concrete reproducer or contradiction.
+- describe the review as bounded/partial;
+- preserve its exclusions (no exhaustive audit, cryptanalysis, adversarial load, WAN, penetration test, production approval);
+- do not mark item 4 complete;
+- do not flip any release flag;
+- do not convert “no HIGH found in reviewed surfaces” into a repository-wide security verdict;
+- keep the current-tree sanitized host/workdir wording; do not reintroduce private endpoint/topology detail.
 
-### If one proposal is ACCEPT / ACCEPT_WITH_BOUNDS
+Validation/closure:
 
-Continue in the same coding session:
+- `python3 scripts/check-era4-closure.py`;
+- `bash scripts/check-plan-sync.sh`;
+- `bash scripts/check-status-evidence.sh`;
+- `bash scripts/check-release-boundaries.sh`;
+- `bash scripts/check-markdown-links.sh`;
+- then one clean exact-tree `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, and clean-tree check on the final pushed docs SHA;
+- persist one concise local-CI provenance note for that final exact tree. Do not create separate provenance churn for `013f752` or reviewer-only `011eca9`; fold them into this final docs-tree gate.
 
-1. implement the smallest coherent slice;
-2. add focused positive/negative regression evidence;
-3. commit and push the implementation/test tree;
-4. run the required clean exact-tree local gate on the final developer SHA: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree;
-5. run the pinned decode fuzz smoke only if the change actually touches wire decoder/parser/crypto framing or the reviewer explicitly requires it;
-6. persist one concise provenance note with exact SHA, commands, UTC start/end, host/OS/arch, Rust stable version and clean-tree state;
-7. reconcile only facts genuinely changed by that slice;
-8. if the next proposal is independently ACCEPT and dependency-ready, continue immediately. Do not wait for reviewer acknowledgement.
+After green closure, continue directly. Do not wait for the next reviewer turn.
 
-### If no proposal is ACCEPT / ACCEPT_WITH_BOUNDS
+### REVIEW SUPPORT 2 — independent resource/abuse review, non-policy portion only
 
-This is **real coding-queue exhaustion**, not a watcher condition.
+This is a genuine release-item-4 review slice, not a new implementation project.
 
-Stop coding expansion and leave the repository at the next genuine stage: independent maintainer/security review of release item 4 using `docs/release-security-review-packet.md` and its linked evidence. Do not create filler work and do not poll every 5/30 minutes waiting for a reviewer handoff.
+Primary surfaces:
 
-Independent review is a true stage boundary but does **not** flip any release flag. New concrete findings from that review, if any, become the next dependency-ready local queue.
+- `SECURITY.md` resource/anti-amplification red lines;
+- `docs/reviews/resource-abuse-evidence-2026-09-04.md`;
+- `docs/adr/m1-g0-preauth-resource-budget.md`;
+- `crates/neko-crypto/src/lib.rs::{PreauthBudget, ProcessPreauthAdmission}`;
+- `crates/neko-cli/src/preauth.rs::{ListenerAdmission, AdmissionTicket, response/input permits}`;
+- the inventoried executable responder/admission call paths and their existing deterministic/process tests.
 
-## Rolling queue
+Reviewer question:
 
-The honest queue is intentionally short because the rolling local overlay already has zero `OPEN_READY` rows. Do not fabricate 6–12 hours of work.
+> Do the exact-current non-policy controls actually enforce charge-before-expensive-work, bounded response amplification, bounded source/global state/queue/memory/work accounting, permit settlement, expiry/release cleanup, and fail-closed terminalization on every currently advertised responder path?
 
-1. **READY_LOCAL:** execute the one exact-current 1–3 proposal sweep above now.
-2. **CONDITIONAL READY_LOCAL:** if a proposal is ACCEPT / ACCEPT_WITH_BOUNDS, implement -> focused tests -> commit/push -> exact-tree local gate -> concise provenance -> factual reconciliation, then continue to any other independently accepted proposal.
-3. **REAL QUEUE EXHAUSTION:** if no proposal qualifies, stop coding expansion and enter independent release/security review stage.
-4. **POST-REVIEW CONDITIONAL:** if independent review later produces a concrete local correctness/security/evidence finding, that finding becomes queue head; repair HIGH/BLOCKER before any broader work.
+External coding-agent behavior:
+
+- reproduce focused deterministic/process evidence and collect exact code pointers;
+- do not invent TTL/LRU/history capacity or weaken D019;
+- do not run a new WAN/adversarial load merely because the VPS exists;
+- if a concrete correctness/security defect is demonstrated, it becomes immediate queue head: implement the smallest repair under existing semantics, add bounded positive/negative regressions, run exact-tree local gates, commit/push, and stop broader review until the defect is closed;
+- if no defect is found, record a bounded support note only. RSEC-001 still remains open for adversarial-load/suitability and release decision unless an independently justified later stage closes it.
+
+### REVIEW SUPPORT 3 — comparison-methodology boundary review
+
+Primary surfaces:
+
+- current HY2 owned-lab runner/validator scripts;
+- retained exact `13da094` / prior negative artifacts and their immutable cleanup/status fields;
+- release packet comparison claims.
+
+Reviewer question:
+
+> Can any incomplete pair, failed HY2 sample, cleanup-negative artifact, or current-line frozen result accidentally produce or imply median/P95/superiority/comparative success that the retained evidence does not support?
+
+No live rerun is authorized by this queue entry. This is static/deterministic review support only because the current live ledger says `READY_LIVE: none` and same-class HY2 retry is frozen without a material new hypothesis.
+
+If a concrete claim-suppression/validator defect exists, repair/test/gate it immediately. Otherwise record the bounded review and continue.
+
+### REVIEW CHECKPOINT 4 — item-4 partial-closure assessment
+
+After the two bounded review-support slices above, reconcile what item 4 actually has versus what remains:
+
+- canonical vectors;
+- compatibility policy/current-current behavior;
+- package rollback and operator lifecycle;
+- comparison methodology;
+- resource/abuse controls;
+- independent review depth;
+- D019 policy boundary;
+- adversarial-load/suitability boundary.
+
+Do not mark item 4 complete merely because all deterministic checks pass. If the only remaining gates require D019 policy, adversarial-load condition/suitability value judgment, release signing/key-custody/SBOM policy, unavailable environment, or a genuinely independent human/maintainer security decision, classify them explicitly and stop coding expansion.
+
+## Honest rolling queue
+
+The local implementation overlay still has zero `OPEN_READY` rows, so the queue is intentionally short and review-oriented:
+
+1. **READY_LOCAL:** release-facing indexing of the first bounded independent review + one exact-tree docs gate/provenance closure.
+2. **REVIEW SUPPORT:** non-policy pre-auth/resource-abuse evidence reproduction and exact-current challenge.
+3. **REVIEW SUPPORT:** HY2/comparison methodology claim-boundary challenge without live retry.
+4. **CHECKPOINT:** item-4 partial-closure assessment and explicit remaining-gate classification.
+5. **CONDITIONAL READY_LOCAL:** any concrete correctness/security/evidence defect found by 2–4 becomes immediate repair head and blocks broader expansion until closed.
+6. **REAL STOP/ESCALATION:** D019 policy choice, destructive history rewrite/purge, production impact, new credentials/server/third-party permission, benchmark/adversarial-load conditions requiring maintainer value judgment, core Session/Carrier/ACK/crypto/wire architecture change, or a major security issue not safely adjudicable under existing semantics.
+
+Do not fabricate 6–12 hours of implementation work. Do not enter 5/30-minute watcher loops. During this independent-review stage, a quiet coding queue is legitimate; only concrete findings create new implementation slices.
+
+## Live/VPS boundary
+
+`READY_LIVE: none` remains authoritative for currently unresolved live capability rows. Standing authorization still permits bounded self-owned TCP/UDP experiments when a real dependency-ready question appears, but no such new question is created by this review.
+
+Do not repeat unchanged HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint/source migration, key update, IPv6, PLPMTUD, or Experimental Track runs merely to consume the rental window.
 
 ## Stop/escalation conditions
 
-Stop/escalate only for an unresolved BLOCKER/HIGH that cannot safely be repaired under existing semantics, a required core Session/Carrier/ACK/crypto/wire architecture change, destructive/canonical-meaning migration, action outside standing authorization, production impact, new credentials/server/third-party permission, benchmark conditions requiring maintainer value judgment, D019 policy decision, real repository breakage, runtime/tool-budget exhaustion, genuine queue exhaustion, or the independent-review stage boundary above.
+Stop/escalate only for:
 
-Otherwise: coherent slice -> focused checks -> commit/push -> clean exact-tree local gate -> concise provenance -> immediately continue to the next explicitly pre-authorized dependency-ready slice.
+- unresolved BLOCKER/HIGH that cannot safely be repaired under existing semantics;
+- required core Session/Carrier/ACK/crypto/wire architecture change;
+- destructive/canonical-meaning migration or Git-history rewrite;
+- action outside standing authorization;
+- production impact;
+- new credentials/server/third-party permission;
+- benchmark/adversarial-load conditions requiring maintainer value judgment;
+- D019 policy decision;
+- real repository breakage;
+- runtime/tool-budget exhaustion;
+- genuine review/coding queue exhaustion.
+
+Otherwise: bounded review/support slice -> concrete finding if any -> smallest repair -> focused tests -> commit/push -> clean exact-tree local gate -> concise provenance -> factual reconciliation -> continue to the next explicitly pre-authorized review slice.
