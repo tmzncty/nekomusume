@@ -6,7 +6,7 @@
 
 ## Method / reproduction
 
-Host `tmzn@192.168.122.1`, workdir `/media/tmzn/DATA5/nekomusume-work`, `rustc 1.98.0`.
+Review host and checkout path intentionally sanitized; `rustc 1.98.0`.
 
 - `git fetch --all --prune`; `git rev-parse HEAD origin/main` -> both `3ed596ac...`; `git status --porcelain` empty.
 - Local-link resolution over the packet and `docs/reviews/release-item4-subgates-20260909.md` -> **0 dangling links**.
