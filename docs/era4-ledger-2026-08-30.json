@@ -134,7 +134,7 @@
     {
       "id": "E",
       "name": "UDP carrier",
-      "status": "candidate",
+      "status": "in-progress",
       "depends_on": [
         "D"
       ],
@@ -145,19 +145,16 @@
       ],
       "artifacts": [
         "crates/neko-carrier/src/lib.rs",
-        "crates/neko-carrier/tests/encrypted_udp_echo.rs"
+        "crates/neko-carrier/tests/encrypted_udp_echo.rs",
+        "docs/local-carrier-ef-review-ccbc5ea-20260911.md"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
-      "evidence_needed": "Evidence for the unresolved UDP carrier question, limited to the declared bounded scope.",
-      "next_action": "Run the existing encrypted UDP loopback/lifecycle gate and record only reproducible failures or bounded evidence.",
-      "execution_scope": "local",
-      "requires": "Dependencies D remain satisfied at the reviewed tree."
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "exact ccbc5ea bounded local review passes UDP lifecycle/bounds/encrypted loopback/tamper-no-echo and evidence-separation tests; no WAN, natural-degradation, reliability, throughput, audit or production claim"
     },
     {
       "id": "F",
       "name": "TCP carrier and framing",
-      "status": "candidate",
+      "status": "in-progress",
       "depends_on": [
         "D"
       ],
@@ -168,14 +165,11 @@
       ],
       "artifacts": [
         "crates/neko-carrier/src/lib.rs",
-        "docs/spec/m3-tcp-failover.md"
+        "docs/spec/m3-tcp-failover.md",
+        "docs/local-carrier-ef-review-ccbc5ea-20260911.md"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
-      "evidence_needed": "Evidence for the unresolved TCP carrier and framing question, limited to the declared bounded scope.",
-      "next_action": "Run the existing TCP framing/failover deterministic gate and record unresolved cross-carrier boundaries.",
-      "execution_scope": "local",
-      "requires": "Dependencies D remain satisfied at the reviewed tree."
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "exact ccbc5ea bounded local review passes TCP framing/malformed/bounds, failover/resume/dedup/order/deadline/cleanup and single-active migration tests while preserving no packet-ACK duplication; no WAN, reliability, audit or production claim"
     },
     {
       "id": "G",
@@ -521,7 +515,7 @@
   ],
   "closure": {
     "schema": "nekomusume.era4-release-evidence-closure.v1",
-    "classified_at_commit": "crypto-record-reconciliation-2026-09-11",
+    "classified_at_commit": "carrier-ef-reconciliation-2026-09-11",
     "handoff_sha256": "6de20f52b7d7faa7c43961ba64b2e00ac8076385a83219cd5462966daff066a4",
     "allowed_classifications": [
       "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
@@ -533,8 +527,6 @@
       "OPEN_READY"
     ],
     "open_ready_rows": [
-      "E",
-      "F",
       "L",
       "M",
       "T"
@@ -557,6 +549,8 @@
       "B",
       "C",
       "D",
+      "E",
+      "F",
       "G",
       "H",
       "I",
