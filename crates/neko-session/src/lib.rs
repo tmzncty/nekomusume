@@ -246,8 +246,28 @@ impl DeliveryLedger {
         // Fully contained exact duplicates preserve advanced evidence. Any
         // novel bytes must begin Unsent; reject an advanced-state extension
         // rather than manufacturing InFlight/Uncertain/Confirmed evidence.
-        if state != Some(DeliveryState::Unsent) && existing_coverage < end {
-            return Err(LedgerError::InvalidMigration);
+        if state != Some(DeliveryState::Unsent) {
+            if existing_coverage < end {
+                return Err(LedgerError::InvalidMigration);
+            }
+            // An advanced duplicate is idempotent only in the context that
+            // produced its existing evidence. Validate rollback against the
+            // ledger, but never let insert rebind advanced bytes to a newer
+            // context; that requires the explicit evidence transition.
+            if overlaps
+                .iter()
+                .any(|key| self.segments[key].context != context)
+            {
+                if self.context.is_some_and(|old| {
+                    context.delivery_epoch.0 < old.delivery_epoch.0
+                        || context.key_phase.0 < old.key_phase.0
+                        || context.path_generation.0 < old.path_generation.0
+                }) {
+                    return Err(LedgerError::OldEpoch);
+                }
+                return Err(LedgerError::InvalidMigration);
+            }
+            return Ok(state.expect("overlaps is non-empty"));
         }
 
         // Never synthesize bytes across a hole. A new fragment may merge only
@@ -627,6 +647,67 @@ mod tests {
                 assert_eq!(x.watermark(1), expected_watermark);
             }
         }
+    }
+
+    #[test]
+    fn advanced_exact_duplicates_are_context_idempotent() {
+        for state in [
+            DeliveryState::InFlight,
+            DeliveryState::Uncertain,
+            DeliveryState::Confirmed,
+        ] {
+            let mut x = l();
+            x.insert(1, 0, b"abc", c(1, 0, 1)).unwrap();
+            x.mark_in_flight(1, 0).unwrap();
+            if matches!(state, DeliveryState::Uncertain | DeliveryState::Confirmed) {
+                x.mark_uncertain(1, 0).unwrap();
+            }
+            if state == DeliveryState::Confirmed {
+                x.confirm_received(1, 0, c(1, 0, 1)).unwrap();
+            }
+            let before_context = x.context;
+            let before_watermark = x.watermark(1);
+            assert_eq!(x.insert(1, 0, b"abc", c(1, 0, 1)), Ok(state));
+            assert_eq!(x.segments().count(), 1);
+            let segment = x.segments().next().unwrap();
+            assert_eq!(segment.state, state);
+            assert_eq!(segment.context, c(1, 0, 1));
+            assert_eq!(x.context, before_context);
+            assert_eq!(x.watermark(1), before_watermark);
+
+            assert_eq!(
+                x.insert(1, 0, b"abc", c(1, 1, 2)),
+                Err(LedgerError::InvalidMigration)
+            );
+            assert_eq!(
+                x.insert(1, 0, b"abc", c(0, 0, 1)),
+                Err(LedgerError::OldEpoch)
+            );
+            let segment = x.segments().next().unwrap();
+            assert_eq!(segment.state, state);
+            assert_eq!(segment.context, c(1, 0, 1));
+            assert_eq!(x.context, before_context);
+            assert_eq!(x.watermark(1), before_watermark);
+        }
+    }
+
+    #[test]
+    fn advanced_duplicate_spanning_segments_does_not_collapse_contexts() {
+        let mut x = l();
+        x.insert(1, 0, b"ab", c(1, 0, 1)).unwrap();
+        x.insert(1, 2, b"cd", c(1, 0, 1)).unwrap();
+        x.mark_in_flight(1, 0).unwrap();
+        x.mark_in_flight(1, 2).unwrap();
+        assert_eq!(
+            x.insert(1, 0, b"abcd", c(1, 0, 1)),
+            Ok(DeliveryState::InFlight)
+        );
+        assert_eq!(x.segments().count(), 2);
+        assert!(x.segments().all(
+            |segment| segment.state == DeliveryState::InFlight && segment.context == c(1, 0, 1)
+        ));
+        assert_eq!(x.bytes, 4);
+        assert_eq!(x.watermark(1), 0);
     }
 
     #[test]
