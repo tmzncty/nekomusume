@@ -1,190 +1,185 @@
-# ChatGPT reviewer handoff — bounded independent review accepted as partial item-4 evidence; no coding queue inflation
+# ChatGPT reviewer handoff — independent resource/HY2 reviews accepted; close repaired HY2 evidence boundary before item-4 checkpoint
 
 ## Reviewed state
 
-- Previous reviewer-owned handoff: exact `3ed596ac62a3e3bda0fcea494432e0533285cb83` (`docs(handoff): accept release facts and force final proposal sweep`).
-- Developer/current sequence after that handoff:
-  1. `a24370bde84b86dced1e0af88283679afbd414c2` — docs-only bounded independent release/security evidence-index review of exact `3ed596a`;
-  2. `013f7526c2bff83a6b9c71489c664cf16a7cbcab` — docs-only Era-4 ledger provenance scoping, converting the stale generic `closure.handoff_sha256` into explicitly historical initial-classification provenance.
-- No runtime implementation, tests, package mutation, fixture reconstruction, or real VPS/WAN experiment landed in this developer sequence.
-- Reviewer follow-up commit `011eca9e49a3504c998c588ab03414b21f6fecad` sanitizes unnecessary local review-host/private-workdir details from the current-tree review note. This is reviewer-owned evidence hygiene only; it does not change the reviewed tree, release facts, classification, or any protocol/runtime behavior.
-- GitHub exposes no hosted status records for the current docs head. Hosted CI remains optional cross-evidence and is not a wait condition.
+- Previous reviewer-owned handoff: exact `f184cf21cd7b51c02d2b6e0f7850600f1be28784` (`docs(handoff): enter bounded independent review queue`).
+- Developer sequence after that handoff, before reviewer-only evidence hygiene:
+  1. `2ffde7444f4705adb0b82b07a57fee75b261ba5f` — docs-only indexing of the first bounded independent release/evidence review;
+  2. `b28349d9de6b56939391c2c4991dd634b1740d4d` — docs-only independent bounded non-policy pre-auth resource/abuse review of exact `f184cf2`;
+  3. `e5fefc1c90b38a8c4a1d2ebb46c4f6262c27a3a9` — docs-only indexing/sanitization of that resource review;
+  4. `5dbade823da8ecdec78c0a8d7ad16c86a808a576` — docs-only independent bounded HY2 comparison-methodology review of exact `e5fefc1`;
+  5. `aca2842bed699448b19b0d1ef19b3acaf3bcecdf` — implementation/test repair: make `BLOCKED_HARNESS` result validation top-level-key-exclusive and add negative regressions for noncanonical comparative fields.
+- No new real VPS/WAN experiment, package mutation, protocol/wire/crypto change, Session/Carrier architecture change, or fixture reconstruction landed in this sequence.
+- Reviewer-only exact `4f9aa47a0471de4442fcaa62d5044926620b955f` sanitizes unnecessary local review-host/checkout-path detail from the current-tree HY2 methodology note. It changes no reviewed code, test, release classification, or methodology finding. The historical values remain in prior Git objects; destructive history rewrite is neither authorized nor requested.
+- GitHub exposes no hosted status records for exact developer implementation head `aca2842`. Hosted CI remains optional cross-evidence and is not a wait condition.
 - This ChatGPT reviewer performed GitHub repository/source/evidence review only. No reviewer-executed local CI is claimed in this turn.
 
 ## Review verdict
 
-### `a24370b` — ACCEPT_WITH_BOUNDS as partial independent-review evidence
+### `2ffde744` — ACCEPT
 
-The bounded review is useful and reproducible within its stated scope. It independently reproduced or spot-checked:
+The packet/item-4 navigation now truthfully indexes the earlier bounded independent evidence review without promoting it into item-4 completion, security approval, RC, release, or production authorization.
 
-- release flags and cross-document boundary consistency;
-- zero Era-4 `OPEN_READY` rows on the reviewed exact `3ed596a` tree;
-- docs-only delta since the last fully gated classification tree `78111e8`;
-- canonical corpus validation (`42` vectors / `10` domains / `freeze=true`);
-- the `neko-crypto` 37-test matrix;
-- release boundary/link/status checks;
-- package smoke / clean-source regressions;
-- the retained five-record package anchor hash;
-- targeted Unix identity open/create behavior.
+### `b28349d` / `e5fefc1` — ACCEPT_WITH_BOUNDS as partial item-4 resource/abuse evidence
 
-Its own scope explicitly excludes exhaustive source audit, cryptanalysis, adversarial-load assessment, WAN/VPS execution, penetration testing, and production approval. Therefore it is **not** sufficient to mark release item 4 complete and does not close RSEC-001 or D019. It found no BLOCKER/HIGH inside the surfaces it actually reviewed; that statement must not be promoted to “no security HIGH remains repository-wide.”
+The independent non-policy pre-auth review is useful within its declared scope. It independently reproduced:
 
-The review artifact is evidence support, not a release/security approval. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, and `RELEASED=false` remain unchanged.
+- the machine-checked inventory of `9` responder surfaces / `7` admission sites;
+- `cargo test -p neko-crypto preauth` (`24` passed on the reviewed tree);
+- `cargo test -p neko-cli` (`39` passed on the reviewed tree);
+- charge-before-protected-work ordering at the inventoried callsites;
+- per-state/source/global response, state, queue, memory and work accounting;
+- response/input permit settlement;
+- expiry/release/terminalization behavior;
+- the current non-policy `SECURITY.md` amplification/resource red lines.
 
-### `013f752` — ACCEPT
+No BLOCKER/HIGH was found **inside those audited non-policy surfaces**. That must not be widened into “no repository-wide security HIGH exists.” The review explicitly excludes adversarial-load capacity/suitability, D019 source-retention policy, cryptanalysis, penetration testing, WAN execution and production approval. Therefore:
 
-The Era-4 ledger change correctly scopes the stale handoff digest as historical initial-classification provenance:
+- RSEC-001 remains open;
+- D019 remains `SOURCE_RETENTION_POLICY_BLOCKED`;
+- release item 4 remains incomplete;
+- no public-listener or production claim follows.
 
-- the rolling classifications continue to be cross-checked against `IMPLEMENTATION_PLAN.md` and `docs/status.md`;
-- `open_ready_rows`, `already_sufficient_rows`, and `blocked_dependency_rows` are unchanged;
-- no live row is promoted and no dependency is reclassified;
-- `scripts/check-era4-closure.py` does not depend on the removed generic `handoff_sha256` field.
+The current-tree resource review provenance is sanitized. No history rewrite is requested.
 
-This is evidence-navigation repair only, not a new release fact.
+### `5dbade8` — ACCEPT_WITH_BOUNDS as partial comparison-methodology review
 
-## Reviewer evidence-hygiene finding — current tree repaired, history intentionally not rewritten
+The static/deterministic review correctly demonstrated that the owned-lab runner cannot turn an incomplete pair, failed HY2 sample, cleanup-negative artifact, or frozen current-line result into a valid comparative `summary`; retained `BLOCKED_HARNESS` artifacts contain no comparative summary and current exact `13da094` still has only a Nekomusume success followed by an HY2 failure before HY2 application bytes.
 
-The new independent review note originally persisted a local RFC1918 host identifier and an absolute local checkout path. That is unnecessary provenance and conflicts with the repository rule against storing endpoint/private-topology detail when a sanitized host description is sufficient.
+The review also found one concrete **MEDIUM evidence-integrity defect** under existing documented semantics: externally/hand-authored `nekomusume.benchmark-blocked-harness.v1` documents could carry arbitrary extra top-level comparative-looking fields because the blocked validator used `required.issubset(doc)` and rejected only the literal `summary` key. The runner itself could not generate the malformed shape and no retained artifact used it, so this was not a current performance-claim compromise or HIGH.
 
-Severity: **MEDIUM evidence/security hygiene**, not a credential leak and not a release correctness blocker.
+### `aca2842` — SOURCE REVIEW ACCEPT; exact-tree closure still required
 
-Reviewer action already taken in exact `011eca9`:
+The developer repair is the right minimum shape:
 
-- current-tree note now says the review host and checkout path are intentionally sanitized;
-- `rustc 1.98.0` and all actual commands/results remain preserved;
-- no substantive review claim changed.
+- the blocked-artifact required top-level set now explicitly includes `contract`;
+- `set(doc) == required` is required before accepting a `BLOCKED_HARNESS` artifact;
+- four mutation regressions cover `median_exchange_latency_ms`, `superiority`, `comparative_summary`, and `p95_latency_seconds` as forbidden noncanonical extras;
+- the retained exact `13da094` blocked result already has exactly the canonical nine-key shape, so no historical artifact rewrite is required.
 
-The original values remain reachable in Git history at `a24370b`. Fully purging historical Git objects would require destructive history rewriting, which is outside normal reviewer authority and must not be performed automatically. No history rewrite is requested or implied by this handoff.
+This repairs the demonstrated MEDIUM at source/test level. **Do not yet write “closed by a green exact-tree gate”**: no persistent developer-local `scripts/check.sh` provenance for exact `aca2842` is present at this review point, and GitHub has no hosted status for it. Focused review/test existence is not a substitute for the requested exact-tree gate.
 
-## Exact-current release boundary
+No fuzz is required for this repair: it changes the Python benchmark evidence validator/test, not wire decode/parser/crypto framing.
 
-Repository truth remains:
+## Exact-current release/live boundary
 
-- `IMPLEMENTATION_COMPLETE=true` only in the bounded research/governance sense;
+Repository truth remains unchanged:
+
+- `IMPLEMENTATION_COMPLETE=true` only in the repository's bounded research/governance sense;
 - release item 3 remains incomplete;
-- release item 4 remains incomplete, although one bounded independent evidence-index review now exists;
+- release item 4 remains incomplete, now with bounded independent evidence-index, non-policy resource/abuse, and comparison-methodology review material;
 - `RELEASE_CANDIDATE=false`;
 - `PRODUCTION_READY=false`;
 - `FREEZE=false`;
 - `RELEASED=false`;
 - D019 remains `SOURCE_RETENTION_POLICY_BLOCKED`;
-- RSEC-001 still requires representative adversarial-load/suitability evidence and an independent release/security decision before public-listener/release promotion;
+- RSEC-001 still lacks representative adversarial-load/capacity-suitability evidence and the independent release/security decision required for promotion;
 - current live opportunity remains `READY_LIVE: none`.
 
-Standing VPS authorization remains valid. It is not a reason to repeat HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint migration, key update, IPv6, or PMTUD without a materially new dependency-satisfied question.
+The HY2 current line remains frozen at exact `13da094`: no complete pair, no median/P95 comparison, no superiority result, and no same-class live retry without a materially new hypothesis. Standing VPS authorization remains valid but creates no new live question by itself.
 
-## Stage transition — coding expansion remains exhausted; independent review is now the real queue
+## READY_LOCAL 1 — close the repaired HY2 methodology/evidence package
 
-The final proposal sweep did not produce a concrete new implementation defect. The next work is therefore **independent release/security review**, not filler coding and not watcher polling.
+This is the immediate queue head. It is a closure package for a demonstrated defect, not another broad benchmark project.
 
-The external coding agent remains a support/repair agent during this stage. It may reproduce deterministic evidence, prepare narrowly scoped factual notes, or immediately repair a concrete finding that the reviewer identifies under existing semantics. It must not self-promote its own support work into “independent release approval,” and it must not manufacture new checker/parser/harness/framework work merely to stay busy.
+### 1A. Exact implementation-tree verification
 
-### READY_LOCAL 1 — reconcile the first independent-review artifact into release-facing navigation
+Use a safe temporary worktree/clean checkout of exact developer implementation commit `aca2842bed699448b19b0d1ef19b3acaf3bcecdf`; do not disturb the active shared workspace.
 
-Goal: make release-facing docs acknowledge that one bounded independent evidence-index review has occurred without claiming item-4 completion.
+Run at minimum:
 
-Files/concepts:
+- `python3 scripts/bench/validate-hy2-owned-lab-test.py`;
+- `bash scripts/bench/compare-hy2-owned-lab-test.sh`;
+- `bash scripts/bench/compare-hy2-test.sh`;
+- `python3 scripts/bench/validate-hy2-owned-lab.py validate-result` on each retained `artifacts/hy2-owned-lab/*/result.json`;
+- `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`;
+- `git diff --check`;
+- confirm the exact checkout is clean before and after.
 
-- `docs/release-security-review-packet.md`;
-- `docs/reviews/release-item4-subgates-20260909.md` only if necessary for factual indexing;
-- `docs/status.md` only if an actual status statement needs precision;
-- `docs/reviews/independent-release-review-3ed596a-20260911.md` as the source artifact.
+Persist minimum provenance for exact `aca2842`: exact SHA, commands, UTC start/end, exit codes, sanitized host OS/arch, Rust stable version, clean-tree state. Do not store local addresses, private topology, credentials, or absolute private checkout paths.
 
-Required boundary:
+If any gate is red, repair the real failure first and rerun. Do not substitute absent GitHub Actions for local closure.
 
-- describe the review as bounded/partial;
-- preserve its exclusions (no exhaustive audit, cryptanalysis, adversarial load, WAN, penetration test, production approval);
-- do not mark item 4 complete;
-- do not flip any release flag;
-- do not convert “no HIGH found in reviewed surfaces” into a repository-wide security verdict;
-- keep the current-tree sanitized host/workdir wording; do not reintroduce private endpoint/topology detail.
+### 1B. Release-facing factual reconciliation
 
-Validation/closure:
+After exact `aca2842` is green, update only the release-facing facts that actually changed:
 
-- `python3 scripts/check-era4-closure.py`;
-- `bash scripts/check-plan-sync.sh`;
-- `bash scripts/check-status-evidence.sh`;
-- `bash scripts/check-release-boundaries.sh`;
-- `bash scripts/check-markdown-links.sh`;
-- then one clean exact-tree `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, and clean-tree check on the final pushed docs SHA;
-- persist one concise local-CI provenance note for that final exact tree. Do not create separate provenance churn for `013f752` or reviewer-only `011eca9`; fold them into this final docs-tree gate.
+- `docs/release-security-review-packet.md` — index the independent HY2 methodology review and the subsequent bounded validator repair;
+- `docs/reviews/release-item4-subgates-20260909.md` — record that the review found a MEDIUM in blocked-artifact key exclusivity and that exact `aca2842` repairs it after the exact-tree gate is green;
+- `docs/status.md` only if a current status sentence is actually stale;
+- retain the historical reviewed-tree anchor of `docs/reviews/independent-hy2-methodology-review-e5fefc1-20260911.md`; do not rewrite it to pretend the review originally observed the later repair.
 
-After green closure, continue directly. Do not wait for the next reviewer turn.
+Required claims:
 
-### REVIEW SUPPORT 2 — independent resource/abuse review, non-policy portion only
+- incomplete/failed/cleanup-negative BLOCKED artifacts cannot carry noncanonical top-level comparative fields after the repair;
+- no retained artifact needed rewriting;
+- no live HY2 run occurred;
+- no complete pair or performance conclusion exists;
+- item 4 remains incomplete;
+- all release flags remain false.
 
-This is a genuine release-item-4 review slice, not a new implementation project.
+For the final coherent docs reconciliation SHA, run the focused repository policy checks (`check-era4-closure`, `check-plan-sync`, `check-status-evidence`, `check-release-boundaries`, `check-markdown-links`) and then one clean exact-tree `scripts/check.sh + git diff --check` closure. A later provenance-only commit may record that final docs-tree result; do not recurse into testing the provenance-only commit itself.
 
-Primary surfaces:
+After green closure, continue immediately to the next review slice. Do not enter watcher mode.
 
-- `SECURITY.md` resource/anti-amplification red lines;
-- `docs/reviews/resource-abuse-evidence-2026-09-04.md`;
-- `docs/adr/m1-g0-preauth-resource-budget.md`;
-- `crates/neko-crypto/src/lib.rs::{PreauthBudget, ProcessPreauthAdmission}`;
-- `crates/neko-cli/src/preauth.rs::{ListenerAdmission, AdmissionTicket, response/input permits}`;
-- the inventoried executable responder/admission call paths and their existing deterministic/process tests.
+## REVIEW SUPPORT 2 — bounded complete-result schema/validator applicability check
 
-Reviewer question:
+This is a focused release-evidence contract question discovered while reviewing the HY2 validator; it is **not yet declared a defect**.
 
-> Do the exact-current non-policy controls actually enforce charge-before-expensive-work, bounded response amplification, bounded source/global state/queue/memory/work accounting, permit settlement, expiry/release cleanup, and fail-closed terminalization on every currently advertised responder path?
+Observed exact-current facts that require reconciliation:
 
-External coding-agent behavior:
+- the HY2 complete-result branch of `validate-hy2-owned-lab.py` intentionally accepts a required subset plus runner metadata;
+- `schema/benchmark-result.v1.json` declares `additionalProperties: false` for `nekomusume.benchmark-result.v1` and lists a different common envelope;
+- the owned-lab runner emits fields such as `cleanup_evidence` in its complete result.
 
-- reproduce focused deterministic/process evidence and collect exact code pointers;
-- do not invent TTL/LRU/history capacity or weaken D019;
-- do not run a new WAN/adversarial load merely because the VPS exists;
-- if a concrete correctness/security defect is demonstrated, it becomes immediate queue head: implement the smallest repair under existing semantics, add bounded positive/negative regressions, run exact-tree local gates, commit/push, and stop broader review until the defect is closed;
-- if no defect is found, record a bounded support note only. RSEC-001 still remains open for adversarial-load/suitability and release decision unless an independently justified later stage closes it.
+Question:
 
-### REVIEW SUPPORT 3 — comparison-methodology boundary review
+> Is `schema/benchmark-result.v1.json` actually an authoritative validator contract for HY2 owned-lab complete results, or is the Python owned-lab validator the intentionally specialized authority and the common schema only documents another result surface?
 
-Primary surfaces:
+Agent behavior:
 
-- current HY2 owned-lab runner/validator scripts;
-- retained exact `13da094` / prior negative artifacts and their immutable cleanup/status fields;
-- release packet comparison claims.
+1. Trace exact consumers/checkers and docs; do not assume the JSON schema applies merely because the schema string is similar.
+2. If the two contracts are intentionally distinct and no current claim says otherwise, record the boundary and stop; do not invent a schema framework.
+3. If repository docs/checkers claim that the common JSON schema governs owned-lab complete results, propose 1–3 minimal reconciliation shapes, select the smallest fail-closed option under existing semantics, add bounded positive/negative tests, implement, exact-tree gate, commit/push, and then continue.
+4. Do not broaden this into benchmark redesign or a live HY2 retry.
 
-Reviewer question:
+Any demonstrated evidence-integrity defect becomes queue head until closed. Otherwise this slice ends with a bounded factual note or no commit if no navigation change is needed.
 
-> Can any incomplete pair, failed HY2 sample, cleanup-negative artifact, or current-line frozen result accidentally produce or imply median/P95/superiority/comparative success that the retained evidence does not support?
+## REVIEW CHECKPOINT 3 — item-4 partial-closure assessment
 
-No live rerun is authorized by this queue entry. This is static/deterministic review support only because the current live ledger says `READY_LIVE: none` and same-class HY2 retry is frozen without a material new hypothesis.
+After READY_LOCAL 1 and REVIEW SUPPORT 2, assess item 4 against exact-current evidence. Reconcile at least:
 
-If a concrete claim-suppression/validator defect exists, repair/test/gate it immediately. Otherwise record the bounded review and continue.
-
-### REVIEW CHECKPOINT 4 — item-4 partial-closure assessment
-
-After the two bounded review-support slices above, reconcile what item 4 actually has versus what remains:
-
-- canonical vectors;
-- compatibility policy/current-current behavior;
-- package rollback and operator lifecycle;
-- comparison methodology;
-- resource/abuse controls;
-- independent review depth;
+- canonical corpus/vector review;
+- compatibility/current-current behavior and the absence of a prior frozen release;
+- package build/install/upgrade/rollback/archive validation;
+- operator READY/DRAINING/STOPPED and cleanup behavior;
+- Session/Carrier bounded local evidence;
+- non-policy resource/abuse controls;
+- comparison methodology and the repaired blocked-artifact validator;
+- independent review depth actually performed;
 - D019 policy boundary;
-- adversarial-load/suitability boundary.
+- RSEC-001 adversarial-load/capacity-suitability boundary;
+- relationship to still-incomplete release item 3.
 
-Do not mark item 4 complete merely because all deterministic checks pass. If the only remaining gates require D019 policy, adversarial-load condition/suitability value judgment, release signing/key-custody/SBOM policy, unavailable environment, or a genuinely independent human/maintainer security decision, classify them explicitly and stop coding expansion.
+Do **not** mark item 4 complete merely because deterministic/local checks are green. Developer/agent-prepared review support cannot self-promote into a genuinely independent release/security approval. If the remaining gates are policy/value/environment/independent-human decisions rather than code defects, classify them explicitly and stop coding expansion.
 
 ## Honest rolling queue
 
-The local implementation overlay still has zero `OPEN_READY` rows, so the queue is intentionally short and review-oriented:
+The local Era-4 implementation overlay had zero `OPEN_READY` rows before these independent reviews, so the queue remains intentionally short and evidence-driven:
 
-1. **READY_LOCAL:** release-facing indexing of the first bounded independent review + one exact-tree docs gate/provenance closure.
-2. **REVIEW SUPPORT:** non-policy pre-auth/resource-abuse evidence reproduction and exact-current challenge.
-3. **REVIEW SUPPORT:** HY2/comparison methodology claim-boundary challenge without live retry.
-4. **CHECKPOINT:** item-4 partial-closure assessment and explicit remaining-gate classification.
-5. **CONDITIONAL READY_LOCAL:** any concrete correctness/security/evidence defect found by 2–4 becomes immediate repair head and blocks broader expansion until closed.
-6. **REAL STOP/ESCALATION:** D019 policy choice, destructive history rewrite/purge, production impact, new credentials/server/third-party permission, benchmark/adversarial-load conditions requiring maintainer value judgment, core Session/Carrier/ACK/crypto/wire architecture change, or a major security issue not safely adjudicable under existing semantics.
+1. **READY_LOCAL:** exact-tree gate + provenance for `aca2842`, then factual release/index reconciliation and one final docs-tree gate.
+2. **REVIEW SUPPORT:** determine whether the complete-result JSON-schema/Python-validator relationship is a real current contract mismatch; repair only if demonstrated.
+3. **CHECKPOINT:** item-4 partial-closure assessment with explicit remaining-gate classification.
+4. **CONDITIONAL READY_LOCAL:** any concrete correctness/security/evidence defect found by 2–3 becomes immediate repair head: smallest fix -> bounded tests -> commit/push -> exact-tree local gate -> provenance -> factual reconciliation.
+5. **REAL STOP/ESCALATION:** D019 policy choice; adversarial-load/benchmark conditions requiring maintainer value judgment or exceeding standing authorization; destructive Git-history rewrite; production impact; new credentials/server/third-party permission; core Session/Carrier/ACK/crypto/wire architecture change; or a major security issue not safely adjudicable under existing semantics.
 
-Do not fabricate 6–12 hours of implementation work. Do not enter 5/30-minute watcher loops. During this independent-review stage, a quiet coding queue is legitimate; only concrete findings create new implementation slices.
+Do not fabricate 6–12 hours of implementation work after genuine queue exhaustion. Do not create checker/parser/harness churn merely to keep the agent busy. Conversely, while an explicit READY_LOCAL or demonstrated conditional repair remains, do not wait for the next hourly reviewer update.
 
 ## Live/VPS boundary
 
-`READY_LIVE: none` remains authoritative for currently unresolved live capability rows. Standing authorization still permits bounded self-owned TCP/UDP experiments when a real dependency-ready question appears, but no such new question is created by this review.
+`READY_LIVE: none` remains authoritative for unresolved live capability rows. No new live question was produced by these reviews.
 
-Do not repeat unchanged HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint/source migration, key update, IPv6, PLPMTUD, or Experimental Track runs merely to consume the rental window.
+Do not repeat unchanged HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint/source migration, key update, IPv6, PLPMTUD, or Experimental Track runs merely because the VPS rental window remains open. A future materially changed, dependency-ready self-owned TCP/UDP question may use standing authorization directly, but this handoff creates none.
 
 ## Stop/escalation conditions
 
@@ -200,6 +195,6 @@ Stop/escalate only for:
 - D019 policy decision;
 - real repository breakage;
 - runtime/tool-budget exhaustion;
-- genuine review/coding queue exhaustion.
+- genuine review/coding queue exhaustion after the explicit slices above are resolved.
 
-Otherwise: bounded review/support slice -> concrete finding if any -> smallest repair -> focused tests -> commit/push -> clean exact-tree local gate -> concise provenance -> factual reconciliation -> continue to the next explicitly pre-authorized review slice.
+Otherwise: bounded review/support -> concrete finding if any -> smallest repair -> focused tests -> commit/push -> clean exact-tree local gate -> concise provenance -> factual reconciliation -> continue to the next pre-authorized slice.
