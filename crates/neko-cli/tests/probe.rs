@@ -303,6 +303,203 @@ fn matrix_probe_distinguishes_invalid_failed_and_reachable_outcomes() {
             "1201",
             "--json",
         ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--timeout-ms",
+            "not-a-number",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--bytes",
+            "not-a-number",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--bogus",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "stray",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--json",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--target",
+            "127.0.0.1:10",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--transport",
+            "udp",
+            "--ip-version",
+            "ipv4",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--ip-version",
+            "ipv6",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--timeout-ms",
+            "100",
+            "--timeout-ms",
+            "200",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--bytes",
+            "17",
+            "--bytes",
+            "1201",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "--ip-version",
+            "ipv4",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--timeout-ms",
+            "--json",
+        ],
+        vec![
+            "probe",
+            "--matrix",
+            "--target",
+            "127.0.0.1:9",
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+            "--bytes",
+            "--json",
+        ],
     ] {
         let out = run(&args);
         assert_eq!(
@@ -318,28 +515,33 @@ fn matrix_probe_distinguishes_invalid_failed_and_reachable_outcomes() {
         );
     }
 
-    let refused = TcpListener::bind("127.0.0.1:0").unwrap();
-    let refused_addr = refused.local_addr().unwrap();
-    drop(refused);
-    let refused_out = run(&[
+    // Keep the UDP port owned but intentionally never answer. This produces a
+    // deterministic completed failure without a bind-release race.
+    let silent_udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let silent_addr = silent_udp.local_addr().unwrap();
+    let failed_out = run(&[
         "probe",
         "--matrix",
         "--target",
-        &refused_addr.to_string(),
+        &silent_addr.to_string(),
         "--transport",
-        "tcp",
+        "udp",
         "--ip-version",
         "ipv4",
         "--timeout-ms",
         "100",
         "--json",
     ]);
-    assert_eq!(refused_out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&refused_out.stdout).contains("\"reachable\":false"));
+    assert_eq!(failed_out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&failed_out.stdout).contains("\"reachable\":false"));
 
     let tcp = TcpListener::bind("127.0.0.1:0").unwrap();
     let tcp_addr = tcp.local_addr().unwrap();
     let tcp_peer = thread::spawn(move || tcp.accept().unwrap());
+    let before_tcp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     let tcp_out = run(&[
         "probe",
         "--matrix",
@@ -352,8 +554,23 @@ fn matrix_probe_distinguishes_invalid_failed_and_reachable_outcomes() {
         "--json",
     ]);
     let _ = tcp_peer.join().unwrap();
+    let after_tcp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     assert_eq!(tcp_out.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&tcp_out.stdout).contains("\"reachable\":true"));
+    let tcp_json = String::from_utf8_lossy(&tcp_out.stdout);
+    assert!(tcp_json.contains("\"reachable\":true"));
+    let observed = tcp_json
+        .split("\"observed_at_unix_ms\":")
+        .nth(1)
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    assert!((before_tcp..=after_tcp).contains(&observed));
 
     let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
     let udp_addr = udp.local_addr().unwrap();
@@ -383,9 +600,9 @@ fn matrix_probe_distinguishes_invalid_failed_and_reachable_outcomes() {
         "probe",
         "--matrix",
         "--target",
-        &refused_addr.to_string(),
+        &silent_addr.to_string(),
         "--transport",
-        "tcp",
+        "udp",
         "--ip-version",
         "ipv4",
         "--timeout-ms",

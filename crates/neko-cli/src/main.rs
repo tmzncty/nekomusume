@@ -3658,38 +3658,115 @@ fn workload(args: &[String]) {
     }
 }
 
-fn matrix_probe(args: &[String]) -> ! {
-    let get = |key: &str| args.windows(2).find(|w| w[0] == key).map(|w| w[1].as_str());
-    let target: SocketAddr = get("--target")
-        .and_then(|v| v.parse().ok())
+#[derive(Debug)]
+struct MatrixProbeArgs {
+    target: SocketAddr,
+    transport: reachability::Transport,
+    version: reachability::IpVersion,
+    timeout_ms: u64,
+    bytes: usize,
+    json: bool,
+}
+
+fn parse_matrix_probe_args(args: &[String]) -> MatrixProbeArgs {
+    let mut matrix = false;
+    let mut target = None;
+    let mut transport = None;
+    let mut version = None;
+    let mut timeout_ms = None;
+    let mut bytes = None;
+    let mut json = false;
+    let mut index = 1;
+    while index < args.len() {
+        let option = args[index].as_str();
+        match option {
+            "--matrix" => {
+                if matrix {
+                    fail("duplicate --matrix");
+                }
+                matrix = true;
+                index += 1;
+            }
+            "--json" => {
+                if json {
+                    fail("duplicate --json");
+                }
+                json = true;
+                index += 1;
+            }
+            "--target" | "--transport" | "--ip-version" | "--timeout-ms" | "--bytes" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.starts_with("--"))
+                    .unwrap_or_else(|| fail(&format!("missing value for {option}")))
+                    .clone();
+                let slot = match option {
+                    "--target" => &mut target,
+                    "--transport" => &mut transport,
+                    "--ip-version" => &mut version,
+                    "--timeout-ms" => &mut timeout_ms,
+                    "--bytes" => &mut bytes,
+                    _ => unreachable!(),
+                };
+                if slot.replace(value).is_some() {
+                    fail(&format!("duplicate {option}"));
+                }
+                index += 2;
+            }
+            _ => fail(&format!("unknown matrix argument: {option}")),
+        }
+    }
+    if !matrix {
+        fail("missing --matrix");
+    }
+    let target = target
+        .and_then(|value| value.parse::<SocketAddr>().ok())
         .unwrap_or_else(|| fail("missing or invalid --target"));
-    let transport = match get("--transport") {
+    let transport = match transport.as_deref() {
         Some("tcp") => reachability::Transport::Tcp,
         Some("udp") => reachability::Transport::Udp,
         _ => fail("--transport must be tcp or udp"),
     };
-    let version = match get("--ip-version") {
+    let version = match version.as_deref() {
         Some("ipv4") => reachability::IpVersion::V4,
         Some("ipv6") => reachability::IpVersion::V6,
         _ => fail("--ip-version must be ipv4 or ipv6"),
     };
-    let timeout = get("--timeout-ms")
+    let timeout_ms = timeout_ms
         .map(|value| {
             value
                 .parse::<u64>()
                 .unwrap_or_else(|_| fail("invalid --timeout-ms"))
         })
         .unwrap_or(500);
-    let bytes = get("--bytes")
+    let bytes = bytes
         .map(|value| {
             value
                 .parse::<usize>()
                 .unwrap_or_else(|_| fail("invalid --bytes"))
         })
         .unwrap_or(32);
-    reachability::validate(target, version, timeout, bytes).unwrap_or_else(|error| fail(error));
-    let artifact = reachability::run(transport, version, target, timeout, bytes);
-    if json_mode(args) {
+    reachability::validate(target, version, timeout_ms, bytes).unwrap_or_else(|error| fail(error));
+    MatrixProbeArgs {
+        target,
+        transport,
+        version,
+        timeout_ms,
+        bytes,
+        json,
+    }
+}
+
+fn matrix_probe(args: &[String]) -> ! {
+    let parsed = parse_matrix_probe_args(args);
+    let artifact = reachability::run(
+        parsed.transport,
+        parsed.version,
+        parsed.target,
+        parsed.timeout_ms,
+        parsed.bytes,
+    );
+    if parsed.json {
         println!("{artifact}");
     } else if artifact.contains("\"reachable\":true") {
         println!("pass: 喵~！");
