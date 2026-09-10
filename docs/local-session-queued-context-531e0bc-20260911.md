@@ -35,4 +35,6 @@ Exact-tree gate:
 - Rust: `rustc 1.98.0 (88d9e12ae 2026-08-18)`
 - initial/final source tree: clean
 
+The final classification/documentation tree `ae0f41d941f4bf1a4180c349623796fc4d1b9007` was also validated from a clean exact worktree with `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` and `git diff --check`, both exit `0`, at `2026-09-10T18:18:21Z` -> `2026-09-10T18:20:17Z` on the same host/Rust toolchain; initial/final source tree was clean.
+
 This is developer-local bounded candidate Session evidence, not protocol freeze, complete Session validation, interoperability, independent review, RC, release, public-listener, or production authorization.
