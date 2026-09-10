@@ -433,7 +433,7 @@
     {
       "id": "T",
       "name": "unreliable datagram boundary",
-      "status": "candidate",
+      "status": "in-progress",
       "depends_on": [
         "B",
         "D"
@@ -442,14 +442,11 @@
         "E1"
       ],
       "artifacts": [
-        "docs/spec/m2-unreliable-datagram.md"
+        "docs/spec/m2-unreliable-datagram.md",
+        "docs/local-unreliable-datagram-review-e19ddcc-20260911.md"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
-      "evidence_needed": "Evidence for the unresolved unreliable datagram boundary question, limited to the declared bounded scope.",
-      "next_action": "Run the existing authenticated unreliable-datagram boundary tests and record the remaining candidate limitation.",
-      "execution_scope": "local",
-      "requires": "Dependencies B, D remain satisfied at the reviewed tree."
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "exact e19ddcc bounded local review passes authenticated <=1200-byte roundtrip/replay, oversize-before-replay atomicity, bounded queue/drop/close and reliable process-evidence separation tests; no ACK/retransmission/ordering/fairness/PMTU/WAN/release claim"
     },
     {
       "id": "U",
@@ -515,7 +512,7 @@
   ],
   "closure": {
     "schema": "nekomusume.era4-release-evidence-closure.v1",
-    "classified_at_commit": "carrier-ef-reconciliation-2026-09-11",
+    "classified_at_commit": "unreliable-datagram-reconciliation-2026-09-11",
     "handoff_sha256": "6de20f52b7d7faa7c43961ba64b2e00ac8076385a83219cd5462966daff066a4",
     "allowed_classifications": [
       "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
@@ -528,8 +525,7 @@
     ],
     "open_ready_rows": [
       "L",
-      "M",
-      "T"
+      "M"
     ],
     "notes": {
       "item_3": "unchecked; no release/performance/superiority claim",
@@ -557,7 +553,8 @@
       "J",
       "K",
       "N",
-      "O"
+      "O",
+      "T"
     ],
     "blocked_dependency_rows": []
   }
