@@ -114,7 +114,7 @@
     {
       "id": "D",
       "name": "crypto and authenticated record",
-      "status": "candidate",
+      "status": "in-progress",
       "depends_on": [
         "B",
         "C"
@@ -125,14 +125,11 @@
       ],
       "artifacts": [
         "crates/neko-crypto/src/lib.rs",
-        "docs/research/crypto-dependency-review-2026-08-29.md"
+        "docs/research/crypto-dependency-review-2026-08-29.md",
+        "docs/local-crypto-record-review-4981b93-20260911.md"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
-      "evidence_needed": "Evidence for the unresolved crypto and authenticated record question, limited to the declared bounded scope.",
-      "next_action": "Run the existing authenticated-record negative/security test matrix and record unresolved candidate gaps.",
-      "execution_scope": "local",
-      "requires": "Dependencies B, C remain satisfied at the reviewed tree."
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "exact 4981b93 bounded source/test review passes the 37-test authenticated-record matrix for Noise IK authentication/authorization, transcript and RecordContext binding, directional nonce exhaustion, replay atomicity, synchronized key phase, malformed/size and resume/preauth boundaries; independent audit and persistent restart/rollback replay safety remain absent"
     },
     {
       "id": "E",
@@ -524,7 +521,7 @@
   ],
   "closure": {
     "schema": "nekomusume.era4-release-evidence-closure.v1",
-    "classified_at_commit": "session-ledger-reconciliation-2026-09-11",
+    "classified_at_commit": "crypto-record-reconciliation-2026-09-11",
     "handoff_sha256": "6de20f52b7d7faa7c43961ba64b2e00ac8076385a83219cd5462966daff066a4",
     "allowed_classifications": [
       "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
@@ -536,7 +533,6 @@
       "OPEN_READY"
     ],
     "open_ready_rows": [
-      "D",
       "E",
       "F",
       "L",
@@ -560,6 +556,7 @@
       "A",
       "B",
       "C",
+      "D",
       "G",
       "H",
       "I",
