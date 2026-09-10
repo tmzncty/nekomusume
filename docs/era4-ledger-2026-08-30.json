@@ -281,14 +281,11 @@
         "artifacts/repeated-warm-failover/4a2129e-final-typed-negative/result.json",
         "artifacts/periodic-session/60cd40d-start-timeout/result.json",
         "artifacts/periodic-session/00ac2c1-final-transport-exit/result.json",
-        "artifacts/periodic-session/00ac2c1-final-transport-exit/ERRATUM-R009.md"
+        "artifacts/periodic-session/00ac2c1-final-transport-exit/ERRATUM-R009.md",
+        "docs/local-observability-review-7378581-20260911.md"
       ],
-      "classification": "OPEN_READY",
-      "classification_basis": "a specific unresolved bounded question has a concrete next action and no current blocker",
-      "evidence_needed": "Evidence for the unresolved observability and bounded timelines question, limited to the declared bounded scope.",
-      "next_action": "Reconcile observability claims against retained artifacts and identify one bounded missing metric, if any.",
-      "execution_scope": "local",
-      "requires": "Dependencies G, J remain satisfied at the reviewed tree."
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "exact 7378581 bounded review passes stable observability schemas/mutations, monotonic Session events, deterministic health and bounded recovery timeline evidence, and repairs stale soak-authorization wording; stable vocabulary does not claim every producer is wired and READY_LIVE remains none"
     },
     {
       "id": "M",
@@ -512,7 +509,7 @@
   ],
   "closure": {
     "schema": "nekomusume.era4-release-evidence-closure.v1",
-    "classified_at_commit": "unreliable-datagram-reconciliation-2026-09-11",
+    "classified_at_commit": "observability-reconciliation-2026-09-11",
     "handoff_sha256": "6de20f52b7d7faa7c43961ba64b2e00ac8076385a83219cd5462966daff066a4",
     "allowed_classifications": [
       "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
@@ -524,7 +521,6 @@
       "OPEN_READY"
     ],
     "open_ready_rows": [
-      "L",
       "M"
     ],
     "notes": {
@@ -552,6 +548,7 @@
       "I",
       "J",
       "K",
+      "L",
       "N",
       "O",
       "T"
