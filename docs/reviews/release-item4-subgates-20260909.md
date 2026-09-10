@@ -1,8 +1,8 @@
-# Release item-4 subgate factual review — exact `0f8f192`
+# Release item-4 subgate factual review — developer coverage through `78111e8`
 
 ## Scope
 
-Developer-prepared factual review support for reachable exact commit `0f8f19251bdb08c9179265ff26ed432fd07b894d`. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
+Developer-prepared factual review support through reachable exact classification tree `78111e8ab55b37fefe2a6f3aa1e8c10bb84f2c09`. Its clean exact-tree gate is recorded by later provenance-only commit `3ee4fd0b93c97cf0fc7727783bf94cc656711ddc`. Each underlying review note retains its own exact tested-tree anchor; this document does not pretend that one SHA executed every historical test. This is not an independent review, security approval, release decision, protocol freeze, RC, public-listener approval, or production authorization. Release flags remain false.
 
 ## Verified subgate facts
 
@@ -29,6 +29,16 @@ Developer-prepared factual review support for reachable exact commit `0f8f19251b
 
 - Current deterministic gates cover current/current candidate negotiation and data admission, fail-closed unsupported/future-only offers and future selected responses, canonical negotiation before data admission, exact negotiation/transcript binding into Noise, allowlist/trust rejection, tamper/replay rejection, bounded framing, malformed/truncated/oversize rejection, and fuzz-smoke. Previous/current interoperability is not claimed because the repository has no prior frozen release; the distinct-package A/B/A operator rehearsal is not protocol-version interoperability evidence.
 - These are implementation/test facts, not an independent cryptographic/security approval or frozen public protocol claim.
+
+### Post-`0f8f192` bounded local review facts
+
+- Session C: exact `531e0bc` defines assignment-time context ownership for queued `Unsent -> InFlight` bytes; explicit validated confirmation remains the only transition that applies a newer context and advances the watermark. Final classification-tree evidence is retained in [`../local-session-queued-context-531e0bc-20260911.md`](../local-session-queued-context-531e0bc-20260911.md). This is not complete Session validation.
+- Authenticated-record D: the 37-test Noise/authz/context/nonce/replay/key-phase/malformed matrix and clippy passed on the note's exact tree; independent audit and persistent restart/rollback replay safety remain absent. See [`../local-crypto-record-review-4981b93-20260911.md`](../local-crypto-record-review-4981b93-20260911.md).
+- Carrier E/F: bounded encrypted UDP lifecycle/tamper and TCP framing/failover/resume/dedup/deadline/cleanup tests passed; no WAN, reliability-rate, interoperability, or performance claim follows. See [`../local-carrier-ef-review-ccbc5ea-20260911.md`](../local-carrier-ef-review-ccbc5ea-20260911.md).
+- Unreliable datagram T: authenticated cap/replay, oversize atomicity and bounded queue/drop/close semantics passed; no ACK, retransmission, ordering, fairness, PMTU or WAN behavior is established. See [`../local-unreliable-datagram-review-e19ddcc-20260911.md`](../local-unreliable-datagram-review-e19ddcc-20260911.md).
+- Observability L: stable schemas, monotonic Session event projection, deterministic health and bounded recovery-timeline tests passed. Standing VPS authorization was reconciled without creating a `READY_LIVE` row. See [`../local-observability-review-7378581-20260911.md`](../local-observability-review-7378581-20260911.md).
+- Deterministic harness M: current workspace/property/process/harness evidence answers the named bounded local question; no specific missing runtime failure mode was found. The final classification tree exact `78111e8` received a clean full local gate recorded by provenance-only `3ee4fd0`. See [`../local-deterministic-harness-review-f5814ca-20260911.md`](../local-deterministic-harness-review-f5814ca-20260911.md).
+- The rolling Era-4 overlay consequently has zero `OPEN_READY` rows. That is local queue exhaustion, not independent review completion or release promotion.
 
 ### Pre-auth resource controls and D019
 

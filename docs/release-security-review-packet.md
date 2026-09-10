@@ -2,9 +2,9 @@
 
 **Scope:** evidence index only. This is not an audit, security approval, production authorization, protocol freeze, or release decision.
 
-**Evidence indexed and developer local gates rerun through reachable exact commit:** `0f8f19251bdb08c9179265ff26ed432fd07b894d`
+**Developer-reviewed factual coverage:** through exact classification tree `78111e8ab55b37fefe2a6f3aa1e8c10bb84f2c09`; its clean exact-tree gate is recorded by the later provenance-only commit `3ee4fd0b93c97cf0fc7727783bf94cc656711ddc`.
 
-The packet text is updated after that tested tree; it is not a self-referential commit attestation. Developer local-CI provenance for the package source-state guard and reproducibility workflow is retained in [`docs/local-ci-0a81d99-20260909.md`](local-ci-0a81d99-20260909.md). Complete exact-current CLI/package validation, including distinct UTC timestamps, clean-tree checks, reproducibility, and native execution of the produced package, is retained in [`docs/local-package-smoke-b1b2552-20260909.md`](local-package-smoke-b1b2552-20260909.md); exact `5e68ad6` remains a coarser historical local smoke, and hosted runs remain separate evidence.
+No single SHA is claimed to have executed every historical test. Each linked local review note retains its own tested-tree anchor and commands. The packet text is an evolving evidence index, not a self-referential commit attestation. Developer local-CI provenance for the package source-state guard and reproducibility workflow is retained in [`docs/local-ci-0a81d99-20260909.md`](local-ci-0a81d99-20260909.md). Complete CLI/package validation for its own exact tree, including distinct UTC timestamps, clean-tree checks, reproducibility, and native execution of the produced package, is retained in [`docs/local-package-smoke-b1b2552-20260909.md`](local-package-smoke-b1b2552-20260909.md); exact `5e68ad6` remains a coarser historical local smoke, and hosted runs remain separate evidence.
 
 This packet is an evidence index, not a self-referential commit attestation; later packet-text commits may update the index without changing the tested tree.
 
