@@ -683,6 +683,31 @@ mod tests {
     }
 
     #[test]
+    fn queued_unsent_bytes_retain_assignment_context_until_confirmation() {
+        let mut x = l();
+        x.insert(1, 0, b"a", c(1, 0, 1)).unwrap();
+        x.insert(2, 0, b"b", c(1, 1, 2)).unwrap();
+        assert_eq!(x.context, Some(c(1, 1, 2)));
+
+        // mark_in_flight records a local queue/send-state transition. It does
+        // not claim that the old segment was rebound to the current ledger
+        // key/path context; that requires explicit confirmation evidence.
+        x.mark_in_flight(1, 0).unwrap();
+        let queued = x.segments().find(|segment| segment.stream_id == 1).unwrap();
+        assert_eq!(queued.state, DeliveryState::InFlight);
+        assert_eq!(queued.context, c(1, 0, 1));
+        assert_eq!(x.context, Some(c(1, 1, 2)));
+        assert_eq!(x.watermark(1), 0);
+
+        x.confirm_received(1, 0, c(1, 1, 2)).unwrap();
+        let confirmed = x.segments().find(|segment| segment.stream_id == 1).unwrap();
+        assert_eq!(confirmed.state, DeliveryState::Confirmed);
+        assert_eq!(confirmed.context, c(1, 1, 2));
+        assert_eq!(x.context, Some(c(1, 1, 2)));
+        assert_eq!(x.watermark(1), 1);
+    }
+
+    #[test]
     fn ledger_global_context_blocks_stale_advanced_duplicates() {
         for state in [
             DeliveryState::InFlight,
