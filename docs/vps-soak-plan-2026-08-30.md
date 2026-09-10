@@ -1,9 +1,13 @@
-# VPS soak plan (not authorized for execution)
+# VPS soak plan (bounded execution only under standing authorization)
 
 ## Status
 
-`execution_not_authorized`: this document is a plan only. Real public WAN/VPS
-experiments remain frozen. Historical authorization cannot be reused.
+This document is a plan, not a queued live experiment. The later repository-level
+[`standing-vps-lab-authorization.md`](standing-vps-lab-authorization.md) supersedes
+the anchor-time `execution_not_authorized` statement only for bounded work on
+self-owned endpoints within its explicit limits; it does not make any soak
+`READY_LIVE`. Exact-current navigation remains `READY_LIVE: none`, so this plan
+must not be executed merely because standing authorization exists.
 
 ## Previous/current interoperability
 
@@ -59,5 +63,7 @@ verify only pre-existing files remain. Record cleanup verification and any
 pre-existing dirty state separately. A run is invalid if attribution cannot be
 made.
 
-The plan remains `execution_not_authorized`; no listener, probe, soak, route,
-firewall, proxy, netns or production-network change is implied by this file.
+The plan remains inactive: no listener, probe, soak, route, firewall, proxy,
+netns or production-network change is implied by this file. A future selected
+run must satisfy both exact-current dependency/readiness classification and the
+standing authorization; authorization alone is not task selection.
