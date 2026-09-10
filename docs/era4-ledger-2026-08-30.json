@@ -507,7 +507,6 @@
   "closure": {
     "schema": "nekomusume.era4-release-evidence-closure.v1",
     "classified_at_commit": "deterministic-harness-reconciliation-2026-09-11",
-    "handoff_sha256": "6de20f52b7d7faa7c43961ba64b2e00ac8076385a83219cd5462966daff066a4",
     "allowed_classifications": [
       "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
       "BLOCKED_DEPENDENCY",
@@ -549,6 +548,9 @@
       "O",
       "T"
     ],
-    "blocked_dependency_rows": []
+    "blocked_dependency_rows": [],
+    "initial_classification_handoff_sha256": "6de20f52b7d7faa7c43961ba64b2e00ac8076385a83219cd5462966daff066a4",
+    "initial_classification_handoff_commit": "3649492",
+    "initial_classification_handoff_scope": "historical classification-source provenance only; current rolling classifications are cross-checked against IMPLEMENTATION_PLAN.md and docs/status.md"
   }
 }
