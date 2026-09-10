@@ -27,8 +27,11 @@ may be claimed.
 An inserted fragment may merge overlapping or contiguous existing segments only
 when their union covers every byte in the resulting range. If a proposed merge
 would bridge an uncovered gap, the insertion is rejected with `Conflict`; the
-ledger never zero-fills or otherwise synthesizes missing bytes. Fully contained exact duplicates are idempotent. Byte-identical overlap or
-contiguous extension may merge while all participating bytes are `Unsent`.
+ledger never zero-fills or otherwise synthesizes missing bytes. Fully contained
+exact duplicates are idempotent only when their context is ledger-globally
+admissible and exactly matches every covered advanced segment's evidence
+context. Byte-identical overlap or contiguous extension may merge while all
+participating bytes are `Unsent`.
 Once an existing range is `InFlight`, `Uncertain`, or `Confirmed`, an overlap
 that introduces any novel byte is rejected rather than assigning that byte
 evidence it never acquired; the advanced existing range remains unchanged.

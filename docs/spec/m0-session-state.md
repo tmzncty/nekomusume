@@ -12,7 +12,7 @@ This phase models the weakest candidate proof, `received`/transport delivery: th
 
 ## Candidate invariants
 
-- Same-byte duplicate and overlap are idempotent; conflicting bytes at one offset are rejected.
+- A fully contained same-byte duplicate is idempotent only when its context is ledger-globally admissible and exactly matches the evidence context of every covered advanced-state segment. `Unsent` same-byte overlap/extension may merge; an advanced-state overlap that introduces novel bytes rejects rather than promoting them. Conflicting bytes at one offset are rejected.
 - ACKs from an old `DeliveryEpoch` are rejected without changing the watermark.
 - Per-stream watermarks never decrease.
 - `max_reorder`, `max_streams`, `max_connection_bytes`, and `max_offset_jump` produce deterministic errors.
