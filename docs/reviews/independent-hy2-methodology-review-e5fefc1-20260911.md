@@ -1,7 +1,7 @@
 # Independent bounded comparison-methodology review (HY2 owned-lab) — exact `e5fefc1`
 
 **Reviewed revision:** `e5fefc1c90b38a8c4a1d2ebb46c4f6262c27a3a9` (`origin/main`).
-**Review type:** independent static/deterministic review of the HY2 owned-lab runner/validator and its claim-suppression boundary. **Date:** 2026-09-11 (UTC `2026-09-10T21:18:52Z`). Host `tmzn@192.168.122.1`, workdir `/media/tmzn/DATA5/nekomusume-work`.
+**Review type:** independent static/deterministic review of the HY2 owned-lab runner/validator and its claim-suppression boundary. **Date:** 2026-09-11 (UTC `2026-09-10T21:18:52Z`). Review host and checkout path intentionally sanitized.
 **Artifacts reviewed:** `scripts/bench/compare-hy2-owned-lab.sh` (sha256 `5569f57d…`), `scripts/bench/validate-hy2-owned-lab.py` (sha256 `f93bfb1a…`), `scripts/bench/validate-hy2-owned-lab-test.py` (sha256 `ca334636…`), `scripts/bench/compare-hy2.sh`, `docs/bench/result-schema-v1.md`, `docs/bench/hy2-comparison-workload.md`, the three retained `artifacts/hy2-owned-lab/*/result.json`, and the packet/item-4/status HY2 claims.
 **Not** a security audit, cryptanalysis, adversarial-load assessment, live/WAN run, penetration test, or production approval. No VPS/WAN execution, no secrets touched.
 
