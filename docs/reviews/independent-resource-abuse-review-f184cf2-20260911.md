@@ -3,7 +3,7 @@
 **Reviewed revision:** `f184cf21cd7b51c02d2b6e0f7850600f1be28784` (`origin/main` at review time).
 **Later docs-only descendant:** `2ffde7444f4705adb0b82b07a57fee75b261ba5f` adds only packet/item-4 index rows; `git diff --stat f184cf2..2ffde74 -- ':(exclude)docs' ':(exclude)*.md'` is empty, so all code citations below hold at both revisions.
 **Review type:** independent bounded audit of **non-policy** pre-auth resource/abuse controls. **Date:** 2026-09-11 (UTC `2026-09-10T21:14:22Z`).
-**Scope:** `SECURITY.md`, `docs/reviews/resource-abuse-evidence-2026-09-04.md`, `docs/adr/m1-g0-preauth-resource-budget.md`, `PreauthBudget`, `ProcessPreauthAdmission`, `ListenerAdmission`/permits, the responder inventory, and focused tests. **Not** a security audit, cryptanalysis, adversarial-load assessment, penetration test, D019 policy decision, or production approval. Host `tmzn@192.168.122.1`, workdir `/media/tmzn/DATA5/nekomusume-work`, `rustc 1.98.0`.
+**Scope:** `SECURITY.md`, `docs/reviews/resource-abuse-evidence-2026-09-04.md`, `docs/adr/m1-g0-preauth-resource-budget.md`, `PreauthBudget`, `ProcessPreauthAdmission`, `ListenerAdmission`/permits, the responder inventory, and focused tests. **Not** a security audit, cryptanalysis, adversarial-load assessment, penetration test, D019 policy decision, or production approval. Review host and checkout path intentionally sanitized; `rustc 1.98.0`.
 
 ## Verdict
 
