@@ -9,7 +9,7 @@ neko probe --matrix --target '[::1]:40080' --transport udp --ip-version ipv6 --j
 
 The artifact is defined in `schema/reachability-matrix.v1.json`. Every artifact explicitly records `scope`, `privileged`, `raw_protocol`, and `third_party_scan`. Targets must be loopback, timeout is bounded to 1–5000 ms, and payload is bounded to 1–1200 bytes. TCP and ordinary UDP only are supported; raw sockets, ICMP, and privileged protocols are intentionally excluded. The command never performs public-WAN probing or third-party scanning.
 
-Exit status remains 0 for a reachable case, 1 for a completed failed case, and 2 for invalid arguments. Existing authenticated `probe` behavior is unchanged unless `--matrix` is supplied.
+Exit status remains 0 for a reachable case, 1 for a completed failed case, and 2 for invalid arguments. Matrix arguments use a strict single-pass grammar: required/value/flag options cannot be duplicated, and unknown flags, stray positionals, missing values, malformed numerics, or semantic scope/bound failures produce no reachability artifact. Completed artifacts populate the existing `observed_at_unix_ms` field when the system clock can provide a Unix-millisecond value. Exact local operator-contract validation is retained in [`local-matrix-probe-contract-acb81bb-20260911.md`](local-matrix-probe-contract-acb81bb-20260911.md). Existing authenticated `probe` behavior is unchanged unless `--matrix` is supplied.
 
 
 ## Cross-host failover evidence boundary
