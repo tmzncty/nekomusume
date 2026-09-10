@@ -258,7 +258,7 @@
     {
       "id": "K",
       "name": "migration-back gate",
-      "status": "era3-boundary",
+      "status": "in-progress",
       "depends_on": [
         "J"
       ],
@@ -267,10 +267,11 @@
         "E1"
       ],
       "artifacts": [
-        "docs/adr/m4-migration-back-state-machine.md"
+        "docs/adr/m4-migration-back-state-machine.md",
+        "docs/notes/migration-back-vps-5d6582c-20260908.md"
       ],
-      "classification": "BLOCKED_IMPLEMENTATION",
-      "classification_basis": "new implementation/architecture and corresponding deterministic/live evidence"
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "exact 5d6582c supplies the declared bounded scripted migration-back implementation, positive/tamper process evidence, and one self-owned VPS observation; do not rerun merely because broader natural recovery remains unproved"
     },
     {
       "id": "L",
@@ -326,7 +327,7 @@
     {
       "id": "N",
       "name": "controlled netns benchmark matrix",
-      "status": "candidate",
+      "status": "in-progress",
       "depends_on": [
         "M",
         "K"
@@ -339,15 +340,13 @@
         "scripts/bench/run-netns.sh",
         "docs/bench/latest-netns.json"
       ],
-      "classification": "BLOCKED_DEPENDENCY",
-      "classification_basis": "dependency K remains BLOCKED_IMPLEMENTATION; privileged netns availability cannot make the declared chain dependency-ready",
-      "evidence_needed": "Resolve or explicitly decouple the declared K dependency through reviewed scope semantics; do not implement migration-back merely to unlock a benchmark checkbox.",
-      "requires": "K must cease to be BLOCKED_IMPLEMENTATION or the ledger dependency must be explicitly reviewed and corrected."
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "the existing privileged isolated netns/veth/netem matrix supplies the declared bounded nine-scenario ICMP harness question with zero harness failures; it is not Nekomusume throughput, migration-back, HY2, WAN, capacity, or superiority evidence"
     },
     {
       "id": "O",
       "name": "VPS bounded observation",
-      "status": "candidate",
+      "status": "in-progress",
       "depends_on": [
         "L",
         "N"
@@ -357,12 +356,13 @@
       ],
       "artifacts": [
         "docs/vps-experiment-2026-08-29.md",
-        "docs/vps-failover-success-2026-08-30.md"
+        "docs/vps-failover-success-2026-08-30.md",
+        "docs/notes/endpoint-rebind-vps-a8f49fc-20260908.md",
+        "docs/notes/migration-back-vps-5d6582c-20260908.md",
+        "docs/notes/periodic-key-update-vps-2f4f59a-20260908.md"
       ],
-      "classification": "BLOCKED_DEPENDENCY",
-      "classification_basis": "dependency N is not dependency-ready, so no VPS observation may be selected from this row",
-      "evidence_needed": "A dependency-ready N row and an exact declared VPS question distinct from already-sufficient observations.",
-      "requires": "N must be dependency-ready and exact-head CI must be green."
+      "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
+      "classification_basis": "bounded self-owned VPS observations already answer the declared limited endpoint-change, scripted migration-back, synchronized key-update, package-smoke, controlled-fallback, and single periodic-sample questions; no remaining unimplemented READY_LIVE question exists and broader release evidence remains open"
     },
     {
       "id": "P",
@@ -526,7 +526,7 @@
   ],
   "closure": {
     "schema": "nekomusume.era4-release-evidence-closure.v1",
-    "classified_at_commit": "closure-taxonomy-repair-2026-09-04",
+    "classified_at_commit": "rolling-navigation-reconciliation-2026-09-11",
     "handoff_sha256": "6de20f52b7d7faa7c43961ba64b2e00ac8076385a83219cd5462966daff066a4",
     "allowed_classifications": [
       "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
@@ -553,21 +553,23 @@
       "periodic": "BLOCKED_ORCHESTRATION_CURRENT_LINE",
       "repeated_warm_failover": "BLOCKED_ORCHESTRATION_CURRENT_LINE",
       "hy2": "BLOCKED_ORCHESTRATION_CURRENT_LINE",
-      "nat_migration_key_update_pmtud": "BLOCKED_IMPLEMENTATION",
+      "nat_migration_key_update_pmtud": "NAT/source change, migration-back, and live key update are ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION at their exact bounded evidence; live PMTUD remains BLOCKED_IMPLEMENTATION",
       "ipv6": "BLOCKED_ENVIRONMENT",
       "governance": "GOVERNANCE_GATE; release_candidate=false; production_ready=false; freeze=false; released=false",
-      "open_ready_definition": "Only rows with a specific unresolved question, evidence_needed, next_action, satisfied dependencies and no current blocker; no direct dependency may be blocked or governance-gated."
+      "open_ready_definition": "Only rows with a specific unresolved question, evidence_needed, next_action, satisfied dependencies and no current blocker; no direct dependency may be blocked or governance-gated.",
+      "ready_live": "none; O is bounded-question sufficient, Q/repeated/periodic current lines are frozen or blocked, IPv6 is environment-blocked, and PMTUD is implementation-blocked",
+      "anchor_and_overlay": "anchor records creation-time Era-3 boundary; track classifications and closure arrays are the rolling current navigation overlay"
     },
     "already_sufficient_rows": [
       "A",
       "G",
       "H",
       "I",
-      "J"
-    ],
-    "blocked_dependency_rows": [
+      "J",
+      "K",
       "N",
       "O"
-    ]
+    ],
+    "blocked_dependency_rows": []
   }
 }
