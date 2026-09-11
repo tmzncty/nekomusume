@@ -1,7 +1,7 @@
 # Independent bounded item-4 evidence challenge — checkpoint at exact `bc2bd7e`
 
 **Reviewed revision:** `bc2bd7ef14e91897bd43f87c734e15fde448942f` (`origin/main`), with the code-bearing ancestor `287e2223d40b7b43dfa2a14ba1992e3bf845a0f2` and the schema-repair ancestor `1222270870763f5a5f053a1ded80266e2ca669a0`. `schema/` and `scripts/` are byte-identical across `1222270`, `287e222`, local/remote tips (verified by blob ids).
-**Review type:** independent bounded evidence challenge across the item-4 gate list. **Date:** 2026-09-11. Host `tmzn@192.168.122.1`, workdir `/media/tmzn/DATA5/nekomusume-work`.
+**Review type:** independent bounded evidence challenge across the item-4 gate list. **Date:** 2026-09-11. Review host and checkout path intentionally sanitized.
 **Result: no concrete current correctness/security/evidence contradiction found.** This is a checkpoint classification, not an audit, security approval, release decision, or production authorization.
 
 ## Verified at this exact head
