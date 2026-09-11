@@ -1,129 +1,118 @@
-# ChatGPT reviewer handoff — HY2 blocked-artifact repair closed; reconcile common benchmark-result v1 contract
+# ChatGPT reviewer handoff — comparison schema repair accepted; narrow common-envelope scope before final gate
 
 ## Reviewed state
 
-- Previous reviewer-owned handoff: exact `580da6a6ce3736983aac60e111302bc39f8ec205` (`docs(handoff): close HY2 validator repair before item-4 checkpoint`).
-- Current developer-owned head reviewed this turn: exact `6def1c6182c86e415dcbb974a959fd8ed3b00aac` (`docs: close HY2 blocked schema review`), parented directly on that handoff.
-- `6def1c` is docs/evidence only. It adds developer-local exact-tree provenance for implementation/test commit `aca2842bed699448b19b0d1ef19b3acaf3bcecdf`, indexes the bounded independent HY2 methodology review + repair into release/item-4 navigation, and changes no runtime implementation, Session/Carrier/wire/crypto architecture, package behavior, fixture reconstruction, or VPS/WAN evidence.
-- GitHub exposes no hosted status records for exact `aca2842`; hosted CI remains optional cross-evidence and is not a wait condition.
-- This ChatGPT reviewer performed GitHub repository/source/evidence review only. No reviewer-executed local CI is claimed in this turn.
+- Previous reviewer-owned handoff: exact `a97f9e052cc180407b215f53e4f22a194c22af63` (`docs(handoff): reconcile benchmark-result v1 contract`).
+- Current developer-owned head reviewed this turn: exact `1222270870763f5a5f053a1ded80266e2ca669a0` (`fix: align benchmark result schemas`), parented directly on that handoff.
+- This is one coherent implementation/test/docs commit. It changes the two comparison-result contracts/tests and generic comparison producer metadata; it does **not** change Session/Carrier/ACK/wire/crypto framing, package/install behavior, canonical fixtures, or perform any VPS/WAN experiment.
+- GitHub exposes no hosted status records for exact `1222270`. Hosted CI is optional cross-evidence and is not a wait condition.
+- No persistent clean exact-tree `scripts/check.sh` provenance for exact `1222270` is present yet. Focused tests reported by the developer are useful but do not substitute for the required final local gate.
+- This ChatGPT reviewer performed GitHub source/spec/evidence review only. No reviewer-executed local CI is claimed in this turn.
 
 ## Review verdict
 
-### `6def1c` — ACCEPT_WITH_BOUNDS
+### `1222270` — ACCEPT_WITH_BOUNDS, not yet final closure
 
-The previously demonstrated blocked-artifact MEDIUM is now closed at implementation/test + developer-local exact-tree gate level:
+The original comparison-path `nekomusume.benchmark-result.v1` mismatch is substantially repaired:
 
-- exact `aca2842` requires the canonical nine top-level keys for `nekomusume.benchmark-blocked-harness.v1` and rejects noncanonical comparative-looking extras;
-- retained blocked artifacts validate without rewrite;
-- focused HY2 validator/comparison tests pass;
-- every retained `artifacts/hy2-owned-lab/*/result.json` validates;
-- `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` and `git diff --check` both exit `0` on a clean detached checkout of exact `aca2842`;
-- recorded full-gate UTC interval is `2026-09-10T22:13:24Z -> 22:15:20Z`, Linux x86_64, Rust `1.98.0`, clean before/after.
+- the common JSON schema now accepts the established **array** summary shape used by the comparison producers;
+- failed-sample evidence such as unavailable application-byte values may remain `null` rather than being fabricated;
+- owned-lab complete results can carry bounded `cleanup_evidence` while top-level unknown fields remain fail-closed;
+- `bounds` is no longer universally required, and the documentation now states that it is present only when a producer has a truthful producer-enforced whole-run bound;
+- the generic sequential comparator derives `git_commit` from the repository root rather than ambient caller cwd;
+- generic success/failure outputs are checked against `schema/benchmark-result.v1.json` in the comparison test;
+- owned-lab validator tests exercise common-schema conformance plus malformed summary/bounds/cleanup and unknown top-level negatives;
+- the separately versioned `nekomusume.benchmark-blocked-harness.v1` contract remains fail-closed and is not merged into the complete-result schema.
 
-This is **developer-local CI provenance**, not reviewer-executed CI, GitHub-hosted CI, a security audit, release approval, or production evidence. No live HY2 run occurred and no complete pair/performance/superiority result exists.
+This closes the **comparison-producer structural mismatch** at source/test level. It does not yet close the package at exact-tree local-CI level because final `scripts/check.sh` provenance has not been persisted.
 
-`6def1c` itself is the subsequent docs/evidence commit and is not the tested implementation tree. The previous handoff asked for one final exact-tree docs closure after factual reconciliation; no persistent `scripts/check.sh` provenance for exact `6def1c` is present. Treat that as a low-priority closure hygiene gap, not a reason to stall. Fold the next coherent docs/code package into one final exact-tree gate rather than creating a standalone watcher/provenance cycle for `6def1c`.
+Do not wait for GitHub Actions. Do not create a standalone provenance commit for exact `1222270` before fixing the new documentation-scope drift below; produce one replacement developer tree and gate that exact tree once.
 
-## New finding — MEDIUM evidence-contract drift in `nekomusume.benchmark-result.v1`
+## New finding — MEDIUM documentation/evidence-contract scope drift
 
-The previous handoff asked whether `schema/benchmark-result.v1.json` and the HY2 owned-lab Python validator are intentionally distinct contracts. Exact-current repository truth answers that question: **the common JSON schema is claimed as the common result envelope, while current comparison producers emit the same exact schema identifier but do not conform to it.** This is a real current contract mismatch, not merely similar naming.
+The edited `docs/bench/result-schema-v1.md` currently states that `schema/benchmark-result.v1.json` is the common result envelope for **deterministic, netns, VPS, and later comparison experiments**. Exact-current repository truth does not support that broad claim.
 
-Evidence:
+Concrete evidence:
 
-- `docs/bench/result-schema-v1.md` explicitly says `schema/benchmark-result.v1.json` is the **common result envelope** for deterministic, netns, VPS, and later comparison experiments and says it requires source commit, mode/transport/scope, bounds, samples, summary, and cleanup status.
-- `scripts/bench/compare-hy2.sh` emits `schema: "nekomusume.benchmark-result.v1"`.
-- `scripts/bench/compare-hy2-owned-lab.sh` also emits `schema: "nekomusume.benchmark-result.v1"` and validates that complete result through the specialized Python validator.
-- `schema/benchmark-result.v1.json` currently requires `bounds`, declares `summary` to be an object, and has top-level `additionalProperties: false` without a `cleanup_evidence` property.
-- both current comparison producers emit `summary` as an **array** produced by `group_by(... ) | map(...)`;
-- the generic `compare-hy2.sh` complete result does **not** emit the required top-level `bounds` object;
-- the owned-lab complete result emits top-level `cleanup_evidence`, which the common JSON schema rejects because it is not a declared property;
-- generic failed samples can retain `application_bytes: null`, while the common schema currently types present `application_bytes` only as an integer.
+- `scripts/bench/run-isolated.py` still emits `schema: "nekomusume.bench.v0"`, with its own deterministic-recovery fixture shape and object summary;
+- committed `docs/bench/latest-deterministic.json` is the corresponding `nekomusume.bench.v0` artifact;
+- `scripts/bench/run-netns.sh` still emits `schema: "nekomusume.netns-bench.v0"`, with its own isolated-netns shape and object summary;
+- committed `docs/bench/latest-netns.json` is the corresponding `nekomusume.netns-bench.v0` artifact;
+- neither producer was changed by `1222270`.
 
-This is **MEDIUM evidence/schema correctness**, not a security HIGH: the owned-lab specialized Python validator still fail-closes its actual evidence semantics, the current retained HY2 line is `BLOCKED_HARNESS`, and there is no current complete HY2 pair/performance claim whose numerical conclusion is invalidated by this mismatch. But an artifact that labels itself `nekomusume.benchmark-result.v1` must not be structurally incompatible with the repository's documented schema of that same identifier.
+Therefore `benchmark-result.v1` is demonstrably the aligned common envelope for the **current complete comparison paths**, but it is not currently the envelope emitted by the deterministic or netns harnesses. Calling it common to those producer families creates release/evidence navigation drift even though their existing artifacts remain truthful under their own schema identifiers.
 
-The separate `nekomusume.benchmark-blocked-harness.v1` JSON schema and the newly repaired blocked validator are not reopened by this finding.
+Severity is **MEDIUM evidence/documentation correctness**, not security HIGH: no existing deterministic/netns measurement is invalidated and no live or performance conclusion changes. The problem is the newly strengthened contract claim, not the historical artifacts.
 
-## READY_LOCAL 1 — reconcile the common `benchmark-result.v1` contract
+### Minimal accepted repair
 
-This demonstrated MEDIUM is the immediate queue head. Do not wait for the next reviewer cycle.
+Prefer the smallest truthful correction:
 
-### Goal
+- narrow `docs/bench/result-schema-v1.md` to say that `benchmark-result.v1` is the common complete-result envelope for the **controlled comparison paths that actually emit that identifier**;
+- explicitly state that the deterministic recovery fixture remains `nekomusume.bench.v0` and the privileged netns fixture remains `nekomusume.netns-bench.v0`, with their committed artifacts/producers separate;
+- do **not** migrate or rewrite deterministic/netns producers/artifacts merely to make the prose true;
+- do not invent a migration/versioning framework or reinterpret historical measurements.
 
-Make current complete comparison producers and the documented/schema contract mutually consistent without weakening evidence semantics, inventing a schema framework, or performing a live benchmark.
+A broader producer migration is **DEFER** unless an existing release/spec requirement independently demands it. This review finds no such requirement that justifies changing canonical meanings now.
 
-### Bounded proposal/implementation authority
+## READY_LOCAL 1 — correct scope, then exact-tree close `1222270` package
 
-Before editing, inspect exact consumers/tests of:
+This is the immediate queue head and is fully pre-authorized.
 
-- `schema/benchmark-result.v1.json`;
+### Files/concepts
+
 - `docs/bench/result-schema-v1.md`;
-- `scripts/bench/compare-hy2.sh` + test;
-- `scripts/bench/compare-hy2-owned-lab.sh` + validator/tests;
-- any committed complete-result artifacts using `nekomusume.benchmark-result.v1`.
+- comparison schema/tests already changed by `1222270`;
+- deterministic/netns producer identifiers only as regression/navigation anchors, not migration targets.
 
-Then compare at most 1–3 **minimal** reconciliation shapes. The following is pre-authorized as `ACCEPT_WITH_BOUNDS` if consumer truth supports it:
+### Protected boundaries
 
-1. keep the existing `nekomusume.benchmark-result.v1` identifier;
-2. make the JSON schema faithfully accept the intended current complete-result envelope(s), including the established array summary shape and owned-lab cleanup evidence, with bounded types/keys rather than a broad `additionalProperties: true` escape hatch;
-3. make the generic comparison producer emit any truly required common-envelope field that can be derived truthfully under existing semantics (notably `bounds`) rather than silently weakening a documented requirement;
-4. preserve failure truthfulness: nullable/absent evidence on failed samples must not be rewritten into invented success evidence merely to satisfy schema;
-5. preserve the stronger specialized owned-lab Python semantic validator; JSON-schema conformity is an additional structural contract, not a replacement for lifecycle/resource/cleanup checks.
+- keep `nekomusume.benchmark-result.v1` structural conformance for generic and owned-lab complete comparison results;
+- keep blocked-harness results on their separate exact-key schema;
+- preserve failed-sample truthfulness and specialized owned-lab semantic validation;
+- preserve deterministic/netns v0 producer/artifact meanings;
+- no WAN run, no benchmark rerun, no performance/superiority claim.
 
-If a field such as generic `maximum_duration_ms` cannot be assigned a truthful meaning from the existing harness without redefining benchmark semantics, do **not** guess. Prefer a smaller documented/common-contract reconciliation or present the specific versioned alternative in the 1–3 option comparison. A schema identifier split, reinterpretation of committed complete artifacts, or destructive canonical migration is **not** pre-authorized merely to make tests green.
+### Verification and closure
 
-### Required regressions
+After the small documentation correction, create a coherent replacement developer SHA and run on that **clean exact tree**:
 
-At minimum prove the repaired contract against representative outputs from both current complete comparison producers:
+1. `bash scripts/bench/compare-hy2-test.sh`;
+2. `bash scripts/bench/compare-hy2-owned-lab-test.sh`;
+3. `python3 scripts/bench/validate-hy2-owned-lab-test.py`;
+4. any direct JSON-schema checks already used by the focused tests;
+5. `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`;
+6. `git diff --check` and explicit clean-tree verification.
 
-- generic local `compare-hy2.sh` success output conforms structurally;
-- generic failed-sample output remains truthful and conforms if failed results are intended to remain in v1;
-- owned-lab complete-result assembly shape conforms structurally, including cleanup evidence;
-- malformed/unknown top-level evidence fields remain fail-closed where the contract claims key exclusivity;
-- malformed summary/bounds/cleanup evidence does not become accepted merely because of the reconciliation;
-- existing specialized owned-lab semantic-validator tests remain green;
-- `BLOCKED_HARNESS` exact-key regressions remain green and use their separate schema.
+Record minimum sanitized provenance: exact SHA, commands, UTC start/end, exit codes, host OS/arch, Rust stable version, clean before/after. If local `scripts/check.sh` fails for any reason—including a newly introduced test dependency that is not available in the actual gate environment—that is a real failure: repair it and rerun rather than citing absent hosted CI.
 
-Reuse existing repository tooling if present. Do not add a heavyweight schema-validation framework solely for this slice. A small targeted contract test is acceptable if needed to keep the schema and producer shapes from drifting again.
+After green closure, persist one concise provenance/factual package and update only genuinely stale release/item-4 navigation. A later provenance-only docs commit may record the tested tree without recursively claiming that the provenance commit itself was tested.
 
-### Closure
-
-After the coherent repair commit:
-
-- run focused benchmark/schema tests;
-- run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`;
-- run `git diff --check`;
-- verify the exact developer SHA is clean before/after;
-- persist minimum sanitized developer-local provenance for the **final implementation/test tree**;
-- then update only genuinely stale benchmark/release/item-4 navigation and run one final docs-tree closure; a later provenance-only commit may record that result without recursively testing itself.
-
-No fuzz is required unless the repair unexpectedly touches wire decoder/parser/crypto framing, which is outside this slice and should normally not happen.
-
-After green closure, continue immediately to REVIEW SUPPORT 2. Do not enter watcher mode.
+Then continue immediately to REVIEW SUPPORT 2. Do not enter watcher mode.
 
 ## REVIEW SUPPORT 2 — bounded item-4 evidence challenge
 
-After READY_LOCAL 1, continue the independent-review support queue rather than inventing implementation backlog. Challenge current release item-4 evidence in one bounded pass, prioritizing places where a machine-readable or release-facing claim can disagree with code/artifacts.
+After READY_LOCAL 1, perform one bounded independent-review support pass against exact-current repository truth. This is review/support work, not permission to manufacture generic checker/harness cleanup.
 
-Cover at least:
+Challenge at least:
 
-- common benchmark-result schema/producer conformity after the repair;
-- canonical corpus/vector review and what has actually been independently reproduced;
-- package build/install/upgrade/rollback/archive validation boundaries;
-- operator `READY -> DRAINING -> STOPPED` and cleanup evidence boundaries;
-- Session/Carrier bounded local evidence versus unverified WAN/long-run claims;
+- comparison `benchmark-result.v1` producer/schema conformance after the repair and the now-explicit separation from deterministic/netns v0 artifacts;
+- canonical corpus/vector review: what is frozen, mechanically validated, and independently reproduced versus merely developer-authored evidence;
+- package build/install/upgrade/rollback/archive claims and their tested-tree anchors;
+- operator `READY -> DRAINING -> STOPPED`, process/listener cleanup and evidence boundaries;
+- Session/Carrier bounded local evidence versus WAN/long-run/performance claims;
 - non-policy pre-auth resource/abuse controls versus still-open adversarial-load capacity/suitability;
-- HY2 methodology and the distinction between blocked evidence, a complete pair, and a performance conclusion;
-- D019 policy boundary;
+- HY2 blocked evidence versus a complete paired result versus an actual performance conclusion;
+- D019 source-retention policy boundary;
 - relationship to still-incomplete release item 3.
 
-If this pass finds a concrete correctness/security/evidence defect with an existing semantic answer, it becomes immediate READY_LOCAL head: smallest repair -> bounded positive/negative tests -> commit/push -> exact-tree local gate -> provenance -> factual reconciliation -> continue. Do not turn the review into generic checker/harness normalization.
+If this pass finds a concrete correctness/security/evidence defect with an existing semantic answer, it becomes the immediate READY_LOCAL head: smallest repair -> bounded positive/negative tests -> commit/push -> exact-tree local gate -> provenance -> factual reconciliation -> continue. Do not wait for the next hourly reviewer refresh.
 
-If no concrete repairable defect remains, write only the bounded factual checkpoint needed for navigation and classify remaining gates honestly. Developer/agent-prepared support cannot self-promote into an independent final security/release approval.
+If no concrete repairable defect remains, write only the bounded factual checkpoint needed for navigation and proceed to CHECKPOINT 3. Developer/agent-prepared support cannot self-promote into final independent security/release approval.
 
 ## REVIEW CHECKPOINT 3 — classify remaining release gates
 
-After READY_LOCAL 1 and REVIEW SUPPORT 2, explicitly classify what remains as one of:
+After READY_LOCAL 1 and REVIEW SUPPORT 2, classify every remaining release obstacle as exactly one of:
 
 - code/evidence defect still repairable under existing semantics;
 - independent review depth still missing;
@@ -140,7 +129,7 @@ Repository truth remains:
 
 - `IMPLEMENTATION_COMPLETE=true` only in the repository's bounded research/governance sense;
 - release item 3 remains incomplete;
-- release item 4 remains incomplete, with bounded independent evidence-index, non-policy resource/abuse, and HY2 methodology review support only;
+- release item 4 remains incomplete and has only bounded independent review support so far;
 - `RELEASE_CANDIDATE=false`;
 - `PRODUCTION_READY=false`;
 - `FREEZE=false`;
@@ -155,13 +144,13 @@ The HY2 current line remains frozen at exact `13da094`: no complete pair, no med
 
 The queue is intentionally evidence-driven rather than padded to a nominal duration:
 
-1. **READY_LOCAL:** repair the demonstrated common `benchmark-result.v1` schema/producer mismatch, add bounded regressions, exact-tree gate, provenance, factual reconciliation.
-2. **REVIEW SUPPORT:** one bounded item-4 evidence challenge after the schema repair; concrete defects immediately become repair heads.
+1. **READY_LOCAL:** narrow the over-broad benchmark-result-v1 documentation scope while retaining the `1222270` comparison-contract repair; run focused + full clean exact-tree local gate on the replacement developer SHA; persist provenance/factual reconciliation.
+2. **REVIEW SUPPORT:** one bounded item-4 evidence challenge against exact-current source/spec/artifacts after that closure.
 3. **CHECKPOINT:** classify remaining item-3/item-4/D019/RSEC-001/independent-review/release-decision gates.
-4. **CONDITIONAL READY_LOCAL:** any concrete defect found in 2–3 with an existing semantic answer is pre-authorized for the smallest fix + tests + exact-tree local closure.
-5. **REAL STOP/ESCALATION:** D019 policy choice; schema/canonical-result migration that requires redefining committed meaning; adversarial-load/benchmark conditions requiring maintainer value judgment or exceeding standing authorization; destructive history rewrite; production impact; new credentials/server/third-party permission; core Session/Carrier/ACK/crypto/wire architecture change; or a major security issue not safely adjudicable under existing semantics.
+4. **CONDITIONAL READY_LOCAL:** any concrete defect found in 2–3 with an existing semantic answer is pre-authorized for smallest fix + tests + exact-tree local closure.
+5. **REAL STOP/ESCALATION:** D019 policy choice; destructive/canonical-meaning migration; adversarial-load/benchmark conditions requiring maintainer value judgment or exceeding standing authorization; production impact; new credentials/server/third-party permission; core Session/Carrier/ACK/crypto/wire architecture change; or a major security issue not safely adjudicable under existing semantics.
 
-Do not fabricate 6–12 hours of work if repository truth does not supply it. Conversely, while the benchmark-result contract MEDIUM or a later concrete repair remains, keep implementing/testing/committing/pushing continuously without waiting for hourly reviewer refresh.
+Do not fabricate 6–12 hours of work if repository truth does not supply it. Conversely, while READY_LOCAL or a later concrete repair remains, implement/test/commit/push continuously without waiting for reviewer cadence.
 
 ## Live/VPS boundary
 
@@ -175,7 +164,7 @@ Stop/escalate only for:
 
 - unresolved BLOCKER/HIGH that cannot safely be repaired under existing semantics;
 - required core Session/Carrier/ACK/crypto/wire architecture change;
-- destructive/canonical-meaning migration, including a benchmark schema version split that would reinterpret committed complete-result artifacts without an already documented migration rule;
+- destructive/canonical-meaning migration;
 - action outside standing authorization;
 - production impact;
 - new credentials/server/third-party permission;
