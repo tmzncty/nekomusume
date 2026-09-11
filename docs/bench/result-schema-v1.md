@@ -1,12 +1,18 @@
 # Bounded benchmark result schema v1
 
-`schema/benchmark-result.v1.json` is the common result envelope for deterministic,
-netns, VPS, and later comparison experiments. It requires a unique experiment ID,
-source commit, explicit mode/transport/scope, per-sample failure and latency fields,
-aggregate summary, and cleanup status. `bounds`, when present, records a producer-enforced
-whole-run duration and application-byte ceiling. The owned-lab runner has such a deadline;
-the sequential local comparator has per-command timeouts but no separate whole-run deadline,
-so it does not invent `maximum_duration_ms`.
+`schema/benchmark-result.v1.json` is the common complete-result envelope for the
+controlled comparison paths that emit `nekomusume.benchmark-result.v1`. It requires a
+unique experiment ID, source commit, explicit mode/transport/scope, per-sample failure
+and latency fields, aggregate summary, and cleanup status. `bounds`, when present,
+records a producer-enforced whole-run duration and application-byte ceiling. The
+owned-lab runner has such a deadline; the sequential local comparator has per-command
+timeouts but no separate whole-run deadline, so it does not invent
+`maximum_duration_ms`.
+
+The deterministic recovery fixture remains `nekomusume.bench.v0`, and the privileged
+network-namespace fixture remains `nekomusume.netns-bench.v0`; their producers and
+committed artifacts are separate contracts. This document does not migrate or reinterpret
+those historical result surfaces.
 
 `wire_bytes` is nullable because it must not be fabricated when capture metadata
 cannot reliably measure it. Median/P95 fields are nullable for pre-session
