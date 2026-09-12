@@ -2349,7 +2349,11 @@ const HEALTHY_MAX_PTO: u16 = 3;
 
 impl CarrierManager {
     pub fn new(limits: ManagerLimits) -> Result<Self, FlowError> {
-        if limits.min_hold_events == 0 || limits.max_paths == 0 {
+        // switch_margin is a positive-improvement gate: a negative value would
+        // invert the M4 margin and admit a strictly worse healthy candidate.
+        // It has no committed meaning, so reject it like the other invalid
+        // limits rather than comparing it inverted at decision time.
+        if limits.min_hold_events == 0 || limits.max_paths == 0 || limits.switch_margin < 0 {
             return Err(FlowError::InvalidLimit);
         }
         Ok(Self {
@@ -2816,6 +2820,31 @@ mod manager_tests {
         m.observe(PathId(10), sample).unwrap();
         assert_eq!(m.choose(), Some(PathId(10)));
         assert_eq!(m.choose(), Some(PathId(10)));
+    }
+
+    #[test]
+    fn negative_switch_margin_is_rejected_at_construction() {
+        // M4 ADR: the candidate score must exceed the active path's by a
+        // positive `switch_margin` improvement. A negative margin inverts the
+        // gate and would admit a strictly worse healthy candidate; it has no
+        // committed meaning and must be rejected via the existing
+        // invalid-limit path, not silently inverted at comparison time.
+        assert!(matches!(
+            CarrierManager::new(ManagerLimits {
+                min_hold_events: 1,
+                switch_margin: -1,
+                max_paths: 2,
+            }),
+            Err(FlowError::InvalidLimit)
+        ));
+        assert!(matches!(
+            CarrierManager::new(ManagerLimits {
+                min_hold_events: 1,
+                switch_margin: i64::MIN,
+                max_paths: 2,
+            }),
+            Err(FlowError::InvalidLimit)
+        ));
     }
 
     #[test]
