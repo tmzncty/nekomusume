@@ -141,21 +141,16 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
     let _ = fs::remove_file(client_identity);
 }
 
-#[test]
-fn rejected_negotiation_close_is_either_eof_or_platform_reset(stream: &mut TcpStream) {
+fn assert_rejected_negotiation_closed(stream: &mut TcpStream) {
     stream
         .set_read_timeout(Some(Duration::from_secs(1)))
         .unwrap();
     let mut byte = [0; 1];
     match stream.read(&mut byte) {
         Ok(0) => {}
-        Ok(n) => panic!("peer emitted {n} bytes after negotiation rejection"),
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe
-            ) => {}
-        Err(error) => panic!("negotiation rejection close failed unexpectedly: {error}"),
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        Ok(n) => panic!("peer emitted {n} byte(s) after negotiation rejection"),
+        Err(error) => panic!("unexpected terminal-close error: {error}"),
     }
 }
 
@@ -500,15 +495,7 @@ fn executable_rejects_unsupported_only_negotiation_before_noise_or_data() {
         connect_with_startup_deadline(&format!("127.0.0.1:{port}"), Duration::from_secs(2));
     // A syntactically valid N1 hello whose only offer is unsupported by this executable.
     frame_write(&mut socket, &[b'N', b'V', 1, 1, 0, 2]);
-    socket
-        .set_read_timeout(Some(Duration::from_secs(1)))
-        .unwrap();
-    let mut byte = [0_u8; 1];
-    assert_eq!(
-        socket.read(&mut byte).unwrap(),
-        0,
-        "server entered Noise/data admission"
-    );
+    assert_rejected_negotiation_closed(&mut socket);
     let output = server.wait_with_output().unwrap();
     assert_uniform_handshake_rejection(&output);
     let _ = fs::remove_file(server_identity_path);
