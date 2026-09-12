@@ -2,6 +2,8 @@
 
 Developer-run exact-tree validation of reachable documentation commit `6f50d700b673b18679ee1ca3e2f6423a5ded3d3`.
 
+> **Superseded provenance:** the pre-rebase SHAs named below are not repository-reachable and this report is not accepted as exact-tree evidence. Reachable commits `1cf6c79`, `68e96e7`, `0774ab6`, `407bfea`, `96af2be`, `d0d2f42`, and `89f26b5` only identify where the historical notes/reconciliation entered the repository; they do not retroactively validate the unpublished trees. Current evidence uses pushed anchors such as exact `4034f86`.
+
 ## Reconciled facts
 
 The release packet and item-4 factual support now index the completed local repair/review queue:
