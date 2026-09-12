@@ -44,7 +44,7 @@ Developer-prepared factual review support through reachable exact classification
 
 The local reports introduced by reachable commits `1cf6c79`, `68e96e7`, `0774ab6`, `407bfea`, `96af2be`, and `d0d2f42` cited pre-rebase tested-tree SHAs that are not repository-reachable. They are retained only as historical developer reports and are **quarantined / not accepted as exact-tree evidence**. Repeated local rebases invalidated those pre-rebase SHA anchors; current provenance is recorded only from pushed commits.
 
-Reachable exact `4034f86` contains the corrected unsupported-negotiation close assertion, passes its clean exact-tree gate, and is the source anchor for the independent bounded wire/parser review at `5d85e09`; see [`independent-wire-review-4034f86-20260912.md`](independent-wire-review-4034f86-20260912.md). That review finds no wire/parser code defect and does not make the superseded reports independent or release-authorizing evidence.
+Reachable exact `4034f86` contains the corrected unsupported-negotiation close assertion and passes its clean exact-tree gate. Current developer review support is rebuilt on that single reachable anchor in [`reachable-item4-review-4034f86-20260912.md`](reachable-item4-review-4034f86-20260912.md); independent wire/parser review at exact `5d85e09` is retained in [`independent-wire-review-4034f86-20260912.md`](independent-wire-review-4034f86-20260912.md). These bounded reviews find no concrete defect and do not make the superseded reports independent or release-authorizing evidence.
 
 ## Bounded independent evidence-index review
 
