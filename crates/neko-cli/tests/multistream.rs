@@ -142,6 +142,24 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
 }
 
 #[test]
+fn rejected_negotiation_close_is_either_eof_or_platform_reset(stream: &mut TcpStream) {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    let mut byte = [0; 1];
+    match stream.read(&mut byte) {
+        Ok(0) => {}
+        Ok(n) => panic!("peer emitted {n} bytes after negotiation rejection"),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe
+            ) => {}
+        Err(error) => panic!("negotiation rejection close failed unexpectedly: {error}"),
+    }
+}
+
+#[test]
 fn unauthorized_client_is_rejected_by_allowlist() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let (server_identity, server_key) = identity(bin, "negative-server");
