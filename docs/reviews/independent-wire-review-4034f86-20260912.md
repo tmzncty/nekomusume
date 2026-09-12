@@ -1,7 +1,7 @@
 # Independent bounded wire/parser review and dc52a5e closure decision — exact `4034f86`
 
 **Reviewed revision:** `4034f86ceb356a3e04b8ff713b97338af3e71265` (`origin/main`, worktree clean).
-**Review type:** independent bounded fail-closed/allocation-bound challenge of `neko-wire` decoding plus a closure decision on `dc52a5e`. **Date:** 2026-09-12 (UTC `2026-09-12T11:08:40Z`). Host `tmzn@192.168.122.1`, workdir `/media/tmzn/DATA5/nekomusume-work`, rustc 1.98.0, cargo-fuzz 0.13.2.
+**Review type:** independent bounded fail-closed/allocation-bound challenge of `neko-wire` decoding plus a closure decision on `dc52a5e`. **Date:** 2026-09-12 (UTC `2026-09-12T11:08:40Z`). Host/workdir intentionally sanitized; Linux x86_64, rustc 1.98.0, cargo-fuzz 0.13.2.
 **Anchoring note:** this review is anchored to reachable `4034f86` only. An earlier request cited `03a9396`; that object does not exist in this repository, so it was not treated as evidence.
 
 ## Verdict
@@ -14,7 +14,7 @@
 
 The parent of `dc52a5e` declared a `#[test] fn rejected_negotiation_close_is_either_eof_or_platform_reset(stream: &mut TcpStream)` — a test with a parameter. Reproduced on a worktree of `dc52a5e^`:
 
-```
+```text
 $ CARGO_TARGET_DIR=… cargo check --test multistream -p neko-cli
 error: functions used as tests can not have any arguments
    --> crates/neko-cli/tests/multistream.rs:145:1
@@ -52,7 +52,7 @@ This is bounded fuzz-saturation evidence for the current tree, not a proof of pa
 **Where:** `docs/release-security-review-packet.md:34`, `docs/reviews/release-item4-subgates-20260909.md:50`, `docs/local-item4-review-reconciliation-6f50d70-20260911.md:12`.
 **Reproducer:**
 
-```
+```text
 $ git cat-file -t 58b5d13   # fatal: could not get object info
 $ git cat-file -t c5d0b15   # fatal: Not a valid object name
 $ git cat-file -t 77d3b4a   # fatal: Not a valid object name
