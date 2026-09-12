@@ -50,6 +50,10 @@ pub struct Producer {
     capacity: usize,
     next_sequence: u64,
     dropped_total: u64,
+    /// Whether the single sequence-exhaustion `resource.limit_hit` was emitted.
+    limit_hit_emitted: bool,
+    /// Evictions since the last emitted `diagnostic.events_dropped` report.
+    drops_since_report: u64,
     events: VecDeque<Event>,
     last_datagram: DatagramCounters,
     retransmit_frames_total: u64,
@@ -71,6 +75,8 @@ impl Producer {
             capacity,
             next_sequence: 0,
             dropped_total: 0,
+            limit_hit_emitted: false,
+            drops_since_report: 0,
             events: VecDeque::with_capacity(capacity),
             last_datagram: DatagramCounters::default(),
             retransmit_frames_total: 0,
@@ -273,9 +279,9 @@ impl Producer {
         // large `u64` counter delta cannot drive unbounded CPU work or
         // underflow a `usize` conversion.
         let emit_admitted = admitted.min(self.capacity as u64);
-        self.dropped_total = self
-            .dropped_total
-            .saturating_add(admitted.saturating_sub(emit_admitted));
+        let truncated = admitted.saturating_sub(emit_admitted);
+        self.dropped_total = self.dropped_total.saturating_add(truncated);
+        self.drops_since_report = self.drops_since_report.saturating_add(truncated);
         for _ in 0..emit_admitted {
             self.push(
                 at_ms,
@@ -295,11 +301,11 @@ impl Producer {
         // accounted as dropped rather than looping over an unbounded delta.
         let emit_queue_full = queue_full.min(self.capacity as u64);
         let emit_terminal = terminal.min(self.capacity as u64);
-        self.dropped_total = self.dropped_total.saturating_add(
-            queue_full
-                .saturating_sub(emit_queue_full)
-                .saturating_add(terminal.saturating_sub(emit_terminal)),
-        );
+        let truncated_dropped = queue_full
+            .saturating_sub(emit_queue_full)
+            .saturating_add(terminal.saturating_sub(emit_terminal));
+        self.dropped_total = self.dropped_total.saturating_add(truncated_dropped);
+        self.drops_since_report = self.drops_since_report.saturating_add(truncated_dropped);
         for code in std::iter::repeat_n("queue_full", emit_queue_full as usize)
             .chain(std::iter::repeat_n("terminal", emit_terminal as usize))
         {
@@ -312,9 +318,9 @@ impl Producer {
             );
         }
         let emit_oversize = oversize.min(self.capacity as u64);
-        self.dropped_total = self
-            .dropped_total
-            .saturating_add(oversize.saturating_sub(emit_oversize));
+        let truncated_oversize = oversize.saturating_sub(emit_oversize);
+        self.dropped_total = self.dropped_total.saturating_add(truncated_oversize);
+        self.drops_since_report = self.drops_since_report.saturating_add(truncated_oversize);
         for _ in 0..emit_oversize {
             self.push(
                 at_ms,
@@ -325,6 +331,9 @@ impl Producer {
             );
         }
         self.last_datagram = counters;
+        // Report drops accumulated from clamped (un-emitted) deltas and any
+        // real eviction during this batch, as one coalesced diagnostic.
+        self.flush_drop_report(at_ms);
     }
 
     pub fn record_scheduler(
@@ -377,6 +386,32 @@ impl Producer {
         }
     }
 
+    /// Oldest retained sequence, or the next sequence that will be assigned
+    /// when the buffer is empty.
+    fn oldest_sequence(&self) -> u64 {
+        self.events
+            .front()
+            .map(|e| e.sequence)
+            .unwrap_or(self.next_sequence)
+    }
+
+    /// Appends one event, evicting oldest-first on overflow. When
+    /// `count_eviction` is true the eviction is real dropped evidence and
+    /// increments `dropped_total`; a `diagnostic.events_dropped` report passes
+    /// false so that reporting a drop does not itself inflate the count or
+    /// recursively re-report. Returns true when this append evicted an event.
+    fn push_inner(&mut self, item: Event, count_eviction: bool) -> bool {
+        let evicted = self.events.len() == self.capacity;
+        if evicted {
+            self.events.pop_front();
+            if count_eviction {
+                self.dropped_total = self.dropped_total.saturating_add(1);
+            }
+        }
+        self.events.push_back(item);
+        evicted
+    }
+
     fn push(
         &mut self,
         at_ms: u64,
@@ -385,6 +420,30 @@ impl Producer {
         correlation: Correlation,
         data: String,
     ) {
+        // Sequence must be strictly increasing. Once `next_sequence` reaches
+        // u64::MAX the final usable value is consumed by a single
+        // `resource.limit_hit` saturation marker; subsequent ordinary events
+        // are dropped rather than reusing u64::MAX and producing duplicates.
+        if self.next_sequence == u64::MAX {
+            if !self.limit_hit_emitted {
+                self.limit_hit_emitted = true;
+                let limit_item = Event {
+                    sequence: u64::MAX,
+                    observed_at_ms: at_ms,
+                    event: "resource.limit_hit",
+                    severity: "error",
+                    correlation: self.session_correlation(),
+                    data: format!(
+                        "{{\"resource\":\"event_sequence\",\"limit\":\"u64_max\",\"observed\":{}}}",
+                        self.next_sequence
+                    ),
+                };
+                self.push_inner(limit_item, true);
+            }
+            // The ordinary event could not be assigned a fresh sequence.
+            self.dropped_total = self.dropped_total.saturating_add(1);
+            return;
+        }
         let item = Event {
             sequence: self.next_sequence,
             observed_at_ms: at_ms,
@@ -394,11 +453,40 @@ impl Producer {
             data,
         };
         self.next_sequence = self.next_sequence.saturating_add(1);
-        if self.events.len() == self.capacity {
-            self.events.pop_front();
-            self.dropped_total = self.dropped_total.saturating_add(1);
+        if self.push_inner(item, true) {
+            // A real (non-diagnostic) event was just evicted; count it toward
+            // the next coalesced drop report.
+            self.drops_since_report = self.drops_since_report.saturating_add(1);
         }
-        self.events.push_back(item);
+        self.flush_drop_report(at_ms);
+    }
+
+    /// Emits one coalesced `diagnostic.events_dropped` for the evictions
+    /// accumulated since the last report, if any. The diagnostic occupies the
+    /// ring but does not itself count as a drop or re-report.
+    fn flush_drop_report(&mut self, at_ms: u64) {
+        if self.drops_since_report == 0 || self.next_sequence == u64::MAX {
+            return;
+        }
+        let reported = self.drops_since_report;
+        self.drops_since_report = 0;
+        self.push_inner(
+            Event {
+                sequence: self.next_sequence,
+                observed_at_ms: at_ms,
+                event: "diagnostic.events_dropped",
+                severity: "warn",
+                correlation: self.session_correlation(),
+                data: format!(
+                    "{{\"dropped_total\":{},\"dropped_since_last\":{},\"oldest_sequence\":{}}}",
+                    self.dropped_total,
+                    reported,
+                    self.oldest_sequence()
+                ),
+            },
+            false,
+        );
+        self.next_sequence = self.next_sequence.saturating_add(1);
     }
     fn session_correlation(&self) -> Correlation {
         Correlation {
@@ -519,7 +607,10 @@ mod tests {
 
     #[test]
     fn switch_datagram_scheduler_and_eviction_are_observed() {
-        let mut p = Producer::new(SessionId(9), 4).unwrap();
+        // Capacity sized so the burst overflows once, emitting one coalesced
+        // `diagnostic.events_dropped`, while the asserted datagram/scheduler
+        // evidence is still retained.
+        let mut p = Producer::new(SessionId(9), 5).unwrap();
         let mut m = ConcurrentCarrierManager::new(ConcurrentLimits {
             k_ready: 1,
             ..Default::default()
@@ -553,8 +644,10 @@ mod tests {
             Some((neko_carrier::StreamId(4), StreamPriority::Bulk)),
             true,
         );
-        assert_eq!(p.retained(), 4);
-        assert_eq!(p.dropped_total(), 2);
+        // `dropped_total` counts only real (non-diagnostic) evictions; the
+        // emitted drop diagnostic occupies the ring but does not inflate it.
+        assert_eq!(p.retained(), 5);
+        assert_eq!(p.dropped_total(), 1);
         assert_eq!(p.dequeue_totals(), (0, 1, 1));
         assert_eq!(p.resource_high_water(), (1, 3));
         let lines: Vec<_> = p.events().map(Event::to_json_line).collect();
@@ -595,6 +688,55 @@ mod tests {
         // remaining generic dropped delta is terminal, not mislabelled.
         assert_eq!(queue_full, 1, "lines={lines:?}");
         assert_eq!(terminal, 1, "lines={lines:?}");
+    }
+
+    #[test]
+    fn sequence_exhaustion_emits_limit_hit_and_never_duplicates() {
+        // Drive next_sequence to the u64::MAX boundary, then overflow with
+        // further pushes. The final usable sequence must be a single
+        // `resource.limit_hit`; later ordinary events must not reuse u64::MAX.
+        let mut p = Producer::new(SessionId(9), 4).unwrap();
+        p.next_sequence = u64::MAX;
+        // Three pushes past the boundary.
+        for _ in 0..3 {
+            let c = p.session_correlation();
+            p.push(1, "session.started", "info", c, "{}".into());
+        }
+        let seqs: Vec<u64> = p.events().map(|e| e.sequence).collect();
+        // No duplicate sequence values; strictly increasing.
+        let mut sorted = seqs.clone();
+        sorted.dedup();
+        assert_eq!(seqs.len(), sorted.len(), "seqs={seqs:?}");
+        assert!(seqs.windows(2).all(|w| w[0] < w[1]), "seqs={seqs:?}");
+        assert!(
+            p.events()
+                .any(|e| e.event == "resource.limit_hit" && e.sequence == u64::MAX)
+        );
+    }
+
+    #[test]
+    fn ring_overflow_emits_events_dropped_with_floor() {
+        // Small ring; force overflow so a coalesced diagnostic.events_dropped
+        // is emitted carrying dropped_total and the retained sequence floor.
+        let mut p = Producer::new(SessionId(9), 3).unwrap();
+        // 6 admitted events -> more than capacity 3 -> overflow + report.
+        p.record_datagrams(
+            1,
+            DatagramCounters {
+                admitted: 6,
+                ..Default::default()
+            },
+        );
+        let lines: Vec<_> = p.events().map(Event::to_json_line).collect();
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("diagnostic.events_dropped")),
+            "lines={lines:?}"
+        );
+        // sequences still strictly increasing
+        let seqs: Vec<u64> = p.events().map(|e| e.sequence).collect();
+        assert!(seqs.windows(2).all(|w| w[0] < w[1]), "seqs={seqs:?}");
     }
 
     #[test]
