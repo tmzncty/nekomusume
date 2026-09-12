@@ -1,0 +1,17 @@
+# Independent bounded FairScheduler / flow-control review — exact `91f8cd8`
+
+Bounded independent review of `FairScheduler`, `FlowLimits`, `FlowStream`, stream/session byte accounting in `crates/neko-carrier/src/lib.rs` (`:1642-1795`) plus the `manager_tests` scheduler cases and the `scheduler-fairness` CLI fixture (`crates/neko-cli/src/main.rs:3480+`), at reachable exact `91f8cd8be1dd40c0f58a4857e47bbec2fe78ccde`. This is a deterministic scheduling/accounting model review — not a WAN/performance claim, not Session delivery evidence, not an independent security/release approval.
+
+## Challenged invariants and result
+
+- **Interactive/bulk fairness and starvation guard — holds.** `next_frame` prefers `Interactive` while `consecutive_interactive < INTERACTIVE_BURST (3)`, then prefers `Bulk`; a `Bulk` dequeue resets the interactive counter (`:1780-1784`), so interactive traffic can burst at most 3 frames before bulk is preferred. `find(None)` fallback prevents starvation when the preferred class is empty. `interactive_burst_is_bounded_and_order_is_repeatable` pins the deterministic `I,I,I,B,I,B,B,B` interleave.
+- **Per-stream and session-wide byte caps checked before mutation — holds.** `enqueue` computes `sn`/`cn` with `checked_add` and returns `StreamLimit`/`SessionLimit` **before** the `get_mut`/`push_back`/counter update (`:1734-1752`); `flow_limits_are_atomic` confirms a rejected enqueue leaves `queued_bytes == 0`.
+- **Enqueue/dequeue accounting on rejection/partial progress — holds.** Rejection is mutation-free; `next_frame` decrements `queued_bytes`/`session_bytes` by exactly the popped `data.len()` (`:1778-1779`). The plain `-=` is safe because the counters track the queue contents exactly (only `enqueue` adds, only `next_frame` removes), so `data.len() <= queued_bytes` always holds and cannot underflow.
+- **One bulk stream cannot bypass limits or starve interactive work — holds.** Bulk frames obey the same `max_stream_bytes`/`max_session_bytes` caps, and the interactive-burst preference means bulk can never starve interactive streams; conversely the burst cap prevents interactive from starving bulk.
+- **Stream removal/close cannot leak accounting — boundary noted, not a defect.** `FairScheduler` has no `close`/`remove` API: an opened stream occupies its `streams`/`order` slot for the scheduler's lifetime, and once `streams.len() == max_streams` no further `open` succeeds. This is a hard, monotonic resource bound — not an accounting leak — and is consistent with the bounded `scheduler-fairness` fixture scope (process exit reclaims). There is no queue/counter state that can be orphaned, since the only byte accounting lives in `queued_bytes`/`session_bytes` which drain to zero on `next_frame`. If a future caller needs stream teardown, an explicit close/removal API is a feature addition, not a repair here.
+- **Integer overflow cannot promote capacity — holds.** All growth is `checked_add`; `next_frame` subtraction is safe by the queue/counter invariant above. `FlowLimits` rejects any zero cap at construction (`:1698-1700`).
+
+## Evidence
+
+- `cargo test -p neko-carrier` on exact `91f8cd8`: 50 lib tests + integration, all passed (includes `interactive_burst_is_bounded_and_order_is_repeatable`, `flow_limits_are_atomic`, `manager_tests` fairness cases).
+- No code change; no defect found in this scope. No new `READY_LIVE` question; release/governance state unchanged.
