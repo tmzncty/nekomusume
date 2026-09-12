@@ -1,97 +1,93 @@
-# ChatGPT reviewer handoff — repair observability stable-v1 HIGH, then continue deep item-4 review
+# ChatGPT reviewer handoff — observability stable-v1 HIGH remains first; preserve deep core-review queue
 
 ## Reviewed repository truth
 
-- Latest developer source/test head reviewed: exact `91f8cd8be1dd40c0f58a4857e47bbec2fe78ccde` (`fix(carrier): reject negative switch_margin at construction`).
-- This reviewer pass adds reviewer-only exact `af0e08a354ccc9dfa3b2127c357bf64079020fd3` (`docs(review): identify observability stable-v1 closure defects`). It does not change runtime behavior and is not a tested-tree anchor.
-- Current `main` is reviewer-only `af0e08a` over source head `91f8cd8`.
-- Since the high-throughput queue reopened at `e6a0377`, 18 commits landed before this reviewer note. Substantive source work includes:
-  - `531c82d`: reject peer ACK `largest > largest_sent` atomically;
-  - `8f93b93`: correct mixed datagram-drop attribution;
-  - `02b6eaa`: reject any nonempty ACK when no packet has ever been sent;
-  - `8a4e465`: bound datagram event emission work by event capacity;
-  - `ece67b8`: attempt O2 sequence-exhaustion + O3 in-band drop-gap evidence repair;
-  - `a14cf47`: saturate CarrierManager score+margin addition;
-  - `91f8cd8`: reject negative `switch_margin` at construction.
-- Dedicated bounded review support now exists for UDP recovery (`e3054c9`, `7a0c400`), `CarrierState` (`0831443`), observability challenge (`9ad927c` plus this follow-up), and CarrierManager/health/migration-back (`5f1cb8d`).
-- Hosted `stable checks` and `nightly decode fuzz smoke` for exact `91f8cd8` are green. Hosted CI is cross-evidence only and does not replace developer-local exact-tree provenance.
-- No VPS/WAN experiment occurred in this sequence. No release flag changed.
+- Current default branch before this refresh: exact `496258d80819a3e3fc3b9f36426cb55bd8ef9f11` (`docs(review): independent bounded FairScheduler/flow-control review at 91f8cd8`).
+- Latest developer source/test head remains exact `91f8cd8be1dd40c0f58a4857e47bbec2fe78ccde` (`fix(carrier): reject negative switch_margin at construction`). Commits after it are reviewer/review-support docs only; they do not repair runtime source.
+- Current source still contains exact `ece67b85a23b62dfba6fe00f817c9badd975fad0` observability O2/O3 implementation underneath the later carrier fixes.
+- Hosted GitHub `stable checks` and `nightly decode fuzz smoke` for exact `91f8cd8` are green. This is cross-evidence only; developer-local exact-tree provenance is still required on the next coherent corrected source tree.
+- No VPS/WAN experiment, release flag, production state, or live classification changed.
 - Governance remains: item 3 incomplete, item 4 incomplete, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, D019 policy-blocked, `READY_LIVE: none`.
 
-## Reviewer verdict on recent carrier work
+This reviewer refresh re-read the current execution/governance surfaces and the exact owners involved in the active HIGH: `README.md`, `AGENTS.md`, `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `SECURITY.md`, `docs/status.md`, `docs/standing-vps-lab-authorization.md`, `docs/vps-rental-window-priority.md`, `docs/decisions.md`, `docs/carrier-architecture.md`, `docs/specs/nekomusume-session-v0.md`, `docs/release-security-review-packet.md`, `docs/era4-observability-contract.md`, `schema/observability-event.v1.json`, current `crates/neko-observe/src/lib.rs`, and the new FairScheduler review.
 
-### `a14cf47` positive/extreme margin overflow — ACCEPT
+## Verdict on new `496258d` FairScheduler / flow-control review
 
-Both selection comparisons now use `saturating_add`, preventing debug panic/release wrap from an extreme positive caller-supplied `switch_margin`. The dedicated CarrierManager review at `5f1cb8d` challenged single-active ownership, warm readiness, generation/validation, health separation, migration-back hold/margin and bounded evidence, and found no additional defect in that scope.
+### `496258d` — ACCEPT_AS_BOUNDED_SUPPORT, but it does not advance the queue front
 
-### `91f8cd8` negative margin domain — ACCEPT_WITH_BOUNDS
+The note is technically useful and bounded: it challenges scheduler fairness, byte accounting, arithmetic atomicity and monotonic stream-slot retention at exact source tree `91f8cd8`, runs `cargo test -p neko-carrier`, and makes no WAN/performance/release claim. No concrete scheduler defect is established.
 
-The accepted M4 semantics define `switch_margin` as a required improvement margin. A negative value has no committed meaning and would invert that gate, so rejecting `< 0` through existing `FlowError::InvalidLimit` is the smallest correct repair. The new regression covers `-1` and `i64::MIN`; no new upper bound or policy value is invented.
+However, it was produced after the current handoff had already declared observability O4/O5/O6 an evidence HIGH and explicitly required source closure before expanding farther. Therefore:
 
-Do not reopen the manager margin family absent a new concrete failure. Final developer-local exact-tree provenance may be recorded on the next coherent corrected source tree after the mandatory observability repair below instead of creating provenance-only churn for `91f8cd8`.
+- retain `docs/reviews/independent-fair-scheduler-91f8cd8-20260913.md` as useful module-specific support;
+- do **not** treat it as closing or bypassing the active observability HIGH;
+- do **not** redo the scheduler review after O4/O5/O6 unless the observability repair unexpectedly touches scheduler/carrier code;
+- return immediately to the mandatory observability repair below.
 
-## Evidence HIGH — observability O2/O3 implementation is not closed
+This avoids both review-order drift and duplicate work.
 
-Authority: `docs/era4-observability-contract.md` stable v1 + `schema/observability-event.v1.json`.
+## Evidence HIGH remains OPEN — observability stable-v1 O4/O5/O6
 
-Reviewer report: `docs/reviews/independent-observability-followup-91f8cd8-20260913.md`.
+Authority: `docs/era4-observability-contract.md` stable v1 plus `schema/observability-event.v1.json`.
 
-Exact `ece67b8` fixes important parts of O2/O3, but the resulting emitted evidence still contradicts the stable machine contract. Stop expanding other item-4 surfaces until the three findings below are coherently closed.
+Existing reviewer finding: `docs/reviews/independent-observability-followup-91f8cd8-20260913.md`.
 
-### HIGH O4 — emitted event shapes violate the closed stable-v1 schema
+Current source still demonstrates all three contradictions:
 
-Current sequence-exhaustion `resource.limit_hit` emits:
+1. sequence-exhaustion `resource.limit_hit` emits `resource="event_sequence"` while the stable-v1 `resource` enum does not contain `event_sequence`;
+2. that event emits `limit="u64_max"` as a string while schema `limit` is a nonnegative integer counter;
+3. `diagnostic.events_dropped` emits undeclared `dropped_since_last` even though v1 `data.additionalProperties=false`;
+4. `flush_drop_report` inserts the diagnostic with `push_inner(..., false)` while the ring can still be full, so a second retained event can be evicted without incrementing `dropped_total`;
+5. `oldest_sequence` is formatted before that diagnostic insertion/eviction, so the emitted retained floor can be stale.
 
-- `resource="event_sequence"`, but `event_sequence` is not currently in the stable-v1 `resource` enum;
-- `limit="u64_max"`, but `limit` is an integer counter in the schema.
+Do not expand into additional core-surface reviews until this HIGH is coherently repaired and re-closed. Existing already-written bounded notes remain retained; the restriction is against further expansion, not against preserving evidence.
 
-Current `diagnostic.events_dropped` emits `dropped_since_last`, but stable-v1 `data` has `additionalProperties=false` and does not define that field.
+## MUST_EXECUTE_LOCAL 1 — repair O4/O5/O6 as one coherent source slice
 
-Required closure:
-
-1. Every runtime-emitted event must be representable by `schema/observability-event.v1.json`.
-2. Do not loosen `additionalProperties=false` merely to hide producer drift.
-3. Stable v1 explicitly permits append-only enum/value additions. If sequence exhaustion remains a `resource.limit_hit`, adding truthful `event_sequence` to the existing resource enum is allowed; emit integer `u64::MAX` as `limit`, not a string.
-4. Prefer removing `dropped_since_last` from emitted v1 JSON because the committed contract only requires `dropped_total` and retained `oldest_sequence`; only add a new optional field if an existing committed requirement actually needs it.
-5. Add focused exact-shape regressions. Do not build a generalized runtime-schema framework.
-
-### HIGH O5 — diagnostic insertion silently undercounts a second real eviction
-
-Stable v1 §6 requires **every overflow** to evict oldest-first and increment `dropped_total`.
-
-Current full-ring path can evict twice:
-
-1. normal event append evicts one retained ordinary event and counts it;
-2. `flush_drop_report` then appends `diagnostic.events_dropped` to the still-full ring via `push_inner(..., false)`, evicting another retained ordinary event without incrementing `dropped_total`.
-
-The diagnostic itself must not recursively count as dropped, but the ordinary evidence displaced to make room for it is genuinely lost and must be reflected in the coalesced count. Repair without recursion. Cover capacity `1` and a small capacity `>1`, and prove `dropped_total` equals actual ordinary retained evidence evicted/truncated.
-
-### HIGH O6 — `oldest_sequence` reports the pre-diagnostic floor
-
-`flush_drop_report` formats `oldest_sequence()` before inserting the diagnostic. If the ring is full, that insertion evicts the current front, so the emitted floor is stale.
-
-Stable v1 requires the retained sequence floor. Regression must compare the diagnostic field to the actual oldest retained sequence after the coalesced diagnostic is present.
-
-## Continuous execution order
-
-### MUST_EXECUTE_LOCAL 1 — repair O4/O5/O6 coherently
-
-Owners:
+Primary owners:
 
 - `crates/neko-observe/src/lib.rs`;
-- `schema/observability-event.v1.json` only for the minimal truthful append-only `resource` enum adjustment if the sequence marker keeps `resource.limit_hit`;
-- focused observability contract tests as needed.
+- `schema/observability-event.v1.json` only for the minimal truthful append-only enum adjustment required by the stable-v1 contract;
+- focused `neko-observe` tests / existing observability contract tests.
 
-Keep already-correct behavior green:
+### Required O4 shape
 
-- O1 mixed queue-full/terminal attribution;
-- bounded huge counter deltas;
-- strict sequence ordering at exhaustion;
-- one bounded/coalesced drop diagnostic rather than recursive emission;
-- health/switch/recovery/PTO/scheduler/resource projections;
-- secret-free correlation and fixed event vocabulary.
+Use the existing stable-v1 semantics; do not weaken the schema.
 
-Minimum focused validation:
+- If sequence exhaustion stays represented by `resource.limit_hit`, append truthful `event_sequence` to the existing `resource` enum. Stable v1 explicitly permits append-only enum/value additions.
+- Keep `limit` numeric. For this bound, emit integer `u64::MAX` / `18446744073709551615`, not string `"u64_max"`.
+- `observed` remains numeric.
+- Remove `dropped_since_last` from emitted stable-v1 `diagnostic.events_dropped` unless a current committed requirement proves a stable meaning is required. The current contract requires `dropped_total` and retained `oldest_sequence`; adding a new field is unnecessary to close the bug.
+- Add focused exact-shape regressions. A generalized runtime-schema framework is not required.
+
+### Required O5/O6 accounting shape
+
+The simplest bounded implementation shape is to make room for the coalesced diagnostic **before** constructing its final data when the ring is full:
+
+1. if `drops_since_report == 0` or no fresh sequence is available, follow the existing bounded no-report path;
+2. when a diagnostic must be emitted and the ring is full, reserve one slot by evicting exactly the current oldest retained event;
+3. that reservation eviction is a real loss of retained evidence, so increment `dropped_total` for it; do not recurse through normal `push`/`flush`;
+4. after any reservation eviction, compute the actual retained `oldest_sequence` that will remain once the diagnostic is inserted;
+5. construct one `diagnostic.events_dropped` using the updated `dropped_total` and post-reservation retained floor;
+6. insert it into the already-reserved slot without a second eviction and without recursively reporting the diagnostic itself;
+7. reset/coalesce pending drop-report state exactly once.
+
+Equivalent implementations are acceptable if regressions prove the same contract. Do not create a second diagnostic queue or a generalized logging subsystem.
+
+### Mandatory focused regressions
+
+At minimum prove:
+
+- sequence-exhaustion `resource.limit_hit` is representable by stable-v1 schema vocabulary and uses integer `limit`;
+- `diagnostic.events_dropped` emits only declared stable-v1 fields;
+- capacity `1`: ordinary overflow plus diagnostic reservation accounts every ordinary retained event actually lost, terminates without recursion, and final diagnostic `oldest_sequence` equals the actual retained floor;
+- small capacity `>1`: exact same accounting/floor property;
+- existing mixed queue-full/terminal datagram attribution stays correct;
+- huge counter deltas remain bounded by event capacity and terminate;
+- emitted event sequences remain strictly increasing until the explicit exhaustion boundary;
+- O1 health/switch/recovery/PTO/scheduler/resource projection tests remain green.
+
+Minimum focused commands:
 
 ```bash
 cargo test -p neko-observe
@@ -99,13 +95,13 @@ bash scripts/check-observability-contract.sh
 bash scripts/check-observability-contract-test.sh
 ```
 
-No wire/crypto decoder change is required, so no new decode-fuzz requirement for this repair.
+No wire/crypto decoder change is expected, so no new decode-fuzz requirement for this slice.
 
-Commit/push one coherent repair and continue immediately to LOCAL 2.
+Commit and push the coherent source/schema repair, then continue immediately to LOCAL 2.
 
-### MUST_EXECUTE_LOCAL 2 — coherent exact-tree local gate/provenance
+## MUST_EXECUTE_LOCAL 2 — exact-tree local closure/provenance
 
-On the final pushed source tree containing O4/O5/O6 plus the already-landed carrier repairs:
+On the final pushed developer source SHA containing O4/O5/O6 plus the already-landed carrier fixes:
 
 ```bash
 cargo test -p neko-observe
@@ -115,122 +111,73 @@ git diff --check
 git status --short
 ```
 
-Persist concise sanitized provenance with reachable exact SHA, commands, UTC start/end, exit codes, OS/arch, stable Rust version, clean initial/final tree. GitHub-hosted CI is optional cross-evidence and not a wait condition.
+Persist one concise sanitized provenance record with exact reachable SHA, commands, UTC start/end, exit codes, OS/arch, stable Rust version and clean initial/final tree. Do not wait for hosted CI.
 
-### REVIEW_LOCAL 3 — independently re-close corrected observability producer
+## REVIEW_LOCAL 3 — independent observability re-close
 
-Challenge the corrected reachable tree against stable v1:
+After the source repair, independently challenge the corrected exact tree. This re-close must cover:
 
-- every emitted event shape is schema-valid;
-- strict sequence ordering/exhaustion;
-- exact overflow/drop accounting including diagnostic-induced eviction;
-- retained floor correctness;
-- bounded huge counter deltas;
-- mixed datagram attribution;
-- health/switch/recovery/PTO projections;
-- scheduler/resource high-water projection;
+- every runtime-emitted event shape against stable-v1 vocabulary/types;
+- strict sequence ordering and explicit exhaustion behavior;
+- exact overflow/drop accounting including diagnostic-reservation eviction;
+- retained-floor correctness;
+- bounded huge counter deltas and mixed datagram attribution;
+- health/switch/recovery/PTO/scheduler/resource projections;
 - secret-safe correlation/fixed vocabulary;
-- no recursive/unbounded diagnostic work.
+- no recursive or externally-magnitude-driven diagnostic work.
 
-Concrete defect -> smallest repair/regression -> push -> exact-tree gate. No finding -> bounded independent note.
+Also inspect the stable-v1 rule that monotonic metric saturation must emit `resource.limit_hit`: current producer uses several `saturating_add` counters (`dropped_total`, PTO/retransmit/dequeue counters). Do not pre-judge these as defects; determine whether any saturation is reachable through current public producer inputs and can silently contradict the contract. Concrete reachable contradiction -> smallest repair/regression. No finding -> state why.
 
-After this re-close, the observability HIGH is closed and the deep queue resumes without reviewer wait.
+Once this re-close has no unresolved BLOCKER/HIGH, observability HIGH is closed and the deep queue resumes immediately without reviewer wait.
 
-### REVIEW_LOCAL 4 — FairScheduler + multistream + flow-control accounting
+## Deep pre-authorized queue after observability closure
 
-Primary owner: `crates/neko-carrier/src/lib.rs` `FairScheduler`, `FlowLimits`, stream queues and directly related tests/specs.
+The queue remains intentionally deep; preserve completed no-finding reviews and skip duplicates.
 
-Challenge:
+### REVIEW_LOCAL 4 — Carrier adapters close/error/resource semantics
 
-- checked stream/session byte accounting before allocation/enqueue;
-- exact stream/session caps and arithmetic overflow atomicity;
-- round-robin cursor behavior across empty/nonempty streams;
-- interactive burst preference without permanent bulk starvation;
-- fallback selection when preferred class is empty;
-- duplicate stream open semantics against current spec/callers;
-- lifecycle/resource retention: determine whether stream closure/removal is intentionally owned elsewhere or whether scheduler state can consume `max_streams` permanently contrary to a current claim;
-- dequeue releases exact bytes and cannot underflow internal counters under public API sequences.
+Review Memory/UDP/TCP adapters plus fault wrapper for local vs peer close, queued-data drain, EOF/reset/would-block/truncation distinctions, message/frame boundaries, empty messages, oversize/truncation atomicity, resource release, close idempotence, poison/OS-error mapping, and evidence-domain separation. No transport redesign or portability framework.
 
-Do not invent new scheduling weights, burst size or flow-control policy. Existing-semantics defect -> smallest repair/regression. No finding -> dedicated bounded note.
+### REVIEW_LOCAL 5 — `SessionRuntime` lifecycle/resource/DeliveryAck accounting
 
-### REVIEW_LOCAL 5 — Carrier adapters close/error/resource semantics
+Challenge stream/session windows, queue/total bytes, send/receive offsets, DeliveryAck release, duplicate/dedup/conflict handling, idle/close/deadline/cancel cleanup, terminal transitions, process-message decode bounds, and reset/close resource cleanup. Packet ACK must remain separate from Session delivery evidence. No process-codec redesign.
 
-Review Memory/UDP/TCP adapters plus fault wrapper for:
+### REVIEW_LOCAL 6 — package / reproducibility / operator implementation
 
-- local vs peer close and queued-data drain;
-- would-block/EOF/reset/truncated distinctions where contract requires them;
-- message/frame boundaries and empty messages;
-- oversize/truncation atomicity before allocation/state promotion;
-- buffer/resource release and close idempotence;
-- mutex poison/OS error mapping;
-- adapter observations never becoming Session delivery/path-validation evidence.
+Review current `scripts/release/` source behavior: clean-source refusal before mutation, archive shape/type/root/mode/checksum ordering, reproducibility identity, installed-package lifecycle/A-B-A boundary, cleanup/listener/process residue, secret-safe retained evidence, and negative/partial result truth. Do not invent signing/key-custody/SBOM/publication policy.
 
-No transport redesign or platform-normalization framework.
-
-### REVIEW_LOCAL 6 — `SessionRuntime` lifecycle/resource/DeliveryAck accounting
-
-Challenge:
-
-- stream/session windows;
-- queue/total byte accounting and exact release;
-- send/receive offset progression and arithmetic boundaries;
-- DeliveryAck bounds/release and no packet-ACK conflation;
-- duplicate receive/dedup/conflict behavior;
-- close/idle/deadline/cancel cleanup;
-- atomic invalid transitions;
-- process-message bounded decode/admission;
-- reset/close state and resource cleanup.
-
-Do not redesign the process codec or Session semantics.
-
-### REVIEW_LOCAL 7 — package / reproducibility / operator implementation
-
-Review current `scripts/release/` behavior rather than old evidence prose:
-
-- clean-source refusal before mutation;
-- archive path/type/root/layout/mode/checksum rejection ordering;
-- reproducibility identity;
-- installed-package lifecycle and A/B/A state boundary;
-- failure cleanup/listener/process residue handling;
-- secret-safe retained evidence;
-- partial/negative result truthfulness.
-
-Do not invent signing/key-custody/SBOM/publication policy.
-
-### REVIEW_LOCAL 8 — dependency/build independent pass
+### REVIEW_LOCAL 7 — dependency/build independent pass
 
 Inspect Cargo manifests/lock/features/build scripts/native hooks and workspace unsafe inheritance. Challenge executable dependency graph consistency, unexpected native/build behavior, feature drift, and crates that fail to inherit workspace safety policy. No scanner framework, dependency upgrade or SBOM policy.
 
-### REVIEW_LOCAL 9 — cross-platform CLI/process semantics
+### REVIEW_LOCAL 8 — cross-platform CLI/process semantics
 
-Challenge remaining OS-artifact assumptions: socket terminal outcomes, filesystem permission/rename/unlink behavior, signals/shutdown, process exit/status, listener release/rebind, platform API/error mapping. Preserve security invariants; do not broaden errors merely to make tests portable.
+Challenge remaining OS-artifact assumptions: socket terminal outcomes, filesystem permission/rename/unlink behavior, signals/shutdown, process exit/status, listener release/rebind and platform error mapping. Preserve fail-closed semantics; do not broaden accepted errors merely for portability.
 
-### REVIEW_LOCAL 10 — CLI machine/human/exit-code contract
+### REVIEW_LOCAL 9 — CLI machine/human/exit-code contract
 
-Challenge success JSON timing, nonzero rejection exits, exact human probe output versus JSON authority, secret-safe stderr, benchmark partial/blocked semantics, and READY/DRAINING/STOPPED stage truth.
+Challenge success JSON timing, nonzero rejection exits, human probe strings versus JSON authority, secret-safe stderr, benchmark partial/blocked semantics and READY/DRAINING/STOPPED stage truth.
 
-### REVIEW_LOCAL 11 — algorithmic resource boundedness, static/deterministic only
+### REVIEW_LOCAL 10 — algorithmic resource boundedness, static/deterministic only
 
-Search implemented core owners for:
+Search implemented core owners for external-magnitude loops, allocation/clone before validated bounds, retry loops without bounded progress, collection growth beyond declared retained state, arithmetic saturation/overflow that can invert gates or fabricate evidence/state, and diagnostic work growing faster than retained state. This is not adversarial capacity testing and sets no new policy values.
 
-- loops driven by external numeric magnitude instead of retained capacity;
-- clone/allocation before validated bound;
-- retry loops without bounded progress;
-- collection growth beyond declared retained state;
-- arithmetic overflow/saturation that can invert a gate or fabricate evidence/state;
-- diagnostic/evidence work that grows faster than retained state.
+### REVIEW_SUPPORT 11 — release/item-4 factual reconciliation
 
-This is not adversarial capacity testing and sets no new policy values.
+After roughly 3–4 further coherent source/review slices, reconcile `docs/release-security-review-packet.md`, `docs/reviews/release-item4-subgates-20260909.md`, review indexes and `docs/status.md` only where facts require it. Index reachable review/repair evidence, including the already-retained FairScheduler note when appropriate. Do not self-declare independent security approval or item-4 completion.
 
-### REVIEW_SUPPORT 12 — release/item-4 factual reconciliation
+### REVIEW_LOCAL 12 — broad core-surface inventory before any future `queue exhausted`
 
-After roughly 3–4 further coherent source/review slices, reconcile `docs/release-security-review-packet.md`, `docs/reviews/release-item4-subgates-20260909.md`, review indexes, and `docs/status.md` only where current facts require it. Index reachable evidence; do not self-declare independent security approval or item-4 completion.
+Only after the above, inventory all implemented core crates and release tooling for remaining surfaces without dedicated bounded independent challenge. `queue exhausted` is permitted only if this repository-wide inventory finds no unreviewed implemented core surface, no concrete defect, no READY review-support and no READY live question, with all remaining work genuinely external/policy/environment/release-authority gated.
 
 ## Queue discipline
 
-This is still a deep queue. Do not collapse it after each small commit. A bounded no-finding independent review of a previously unreviewed implemented core surface is useful item-4 work.
-
-Unresolved O4/O5/O6 is an evidence HIGH, so fix it before expanding into REVIEW_LOCAL 4+. After closure, continue through the pre-authorized queue without waiting for reviewer cadence.
+- O4/O5/O6 is the active evidence HIGH. Source repair comes first.
+- `496258d` FairScheduler review is retained; do not redo it unless touched.
+- After HIGH closure, continue the deep queue without waiting for another reviewer pass.
+- A bounded no-finding independent review of a previously unreviewed implemented core surface is valid item-4 support and is not filler.
+- Do not collapse this queue to one ticket after a small commit.
+- Every concrete defect whose answer is already determined by committed semantics becomes smallest repair -> regression -> push -> exact-tree local gate -> provenance -> continue.
 
 Stop only for unresolved BLOCKER/HIGH, core architecture/policy decision, destructive/canonical migration, action outside standing authorization, production/third-party action, new credential/server permission, maintainer-valued capacity/pressure conditions, repository breakage, or actual runtime/tool-budget exhaustion.
 
@@ -247,4 +194,4 @@ Stop only for unresolved BLOCKER/HIGH, core architecture/policy decision, destru
 - signing/key custody/SBOM/publication trust and previous-frozen-release interoperability remain separate gates/dependencies;
 - `READY_LIVE: none` remains authoritative.
 
-Standing VPS authorization remains valid, but no new dependency-ready live question is created here. Do not mechanically rerun HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint migration, key update, IPv6, PLPMTUD, or Experimental Track work.
+Standing VPS authorization remains valid, but current repository truth creates no dependency-ready live question. Do not mechanically rerun HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint migration, key update, IPv6, PLPMTUD, or Experimental Track work.
