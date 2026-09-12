@@ -1,69 +1,79 @@
-# ChatGPT reviewer handoff — resume local repair and item-4 review queue
+# ChatGPT reviewer handoff — BLOCKER: repair broken main and retract unverifiable local-CI claims
 
 ## Reviewed repository truth
 
-- Default branch: `main`.
-- Exact reviewer HEAD before this refresh: `f6c79b6deeed57782febb8208b0bf67a050b4d4c` (`docs(handoff): escalate persistent multistream execution stall`).
-- Previous reviewed developer-owned head remains exact `e96b9c1be84dbafb78010dca30cb7e3d5f5ada1a` (`docs: index independent item-4 checkpoint`).
-- No developer-owned commit has landed after that checkpoint; the current source still contains the queued test-only defect in `crates/neko-cli/tests/multistream.rs`.
-- The maintainer has explicitly resumed execution after a real model/tool-budget interruption. Do **not** treat that historical runtime-budget stop as an ongoing blocker. This is an execution-availability fact only; it does not change release/security/network authorization.
-- Repository release truth remains unchanged: item 3 incomplete, item 4 incomplete, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, D019 policy-blocked, and `READY_LIVE: none`.
-- `README.md`, `AGENTS.md`, `ROADMAP.md`, `IMPLEMENTATION_PLAN.md`, `SECURITY.md`, `docs/status.md`, `docs/standing-vps-lab-authorization.md`, `docs/vps-rental-window-priority.md`, `docs/decisions.md`, `docs/carrier-architecture.md`, `docs/specs/nekomusume-session-v0.md`, and `docs/release-security-review-packet.md` were re-read for this refresh. No architecture or authorization expansion is introduced here.
+- Default branch `main` before this reviewer refresh: exact `89f26b567512fe531b42c9a3f97c262fa5cbc0fc` (`docs: record item-4 reconciliation gate`).
+- Previous reviewer handoff: exact `7d3ce5aa87f4c657c3495c4fb43803f54c0946fb` (`docs(handoff): resume local repair and item-4 review queue`).
+- Developer sequence after that handoff is nine commits, beginning with `6be43f6b7f3e07de474631feec24a84a505e4842` and ending at `89f26b5`.
+- No VPS/WAN experiment occurred in this sequence. The only source/test change is `crates/neko-cli/tests/multistream.rs`; the rest is documentation/review/provenance indexing.
+- Release flags remain unchanged: item 3 incomplete, item 4 incomplete, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, D019 policy-blocked, `READY_LIVE: none`.
 
-## Reviewer verdict
+## Reviewer verdict — repository breakage BLOCKER + evidence-integrity HIGH
 
-The prior claim that all local work was exhausted is stale for the current branch. There is an exact-current `READY_LOCAL` test defect, and after that repair the still-open independent release/security gate supports additional **bounded local review/repair work** that does not invent policy or require WAN execution.
+The sequence is **not accepted**. Stop all further item-4 expansion until both findings below are closed.
 
-This queue is deliberately not a new feature backlog. It is a release/security review-support queue. A slice may produce either:
+### BLOCKER 1 — exact-current `main` does not compile
 
-1. a concrete defect with existing semantics -> smallest repair + regression + exact-tree closure; or
-2. a bounded no-finding review note with precise scope/boundaries.
+Exact `89f26b5` GitHub-hosted `stable checks` failed in the authoritative `bash scripts/check.sh` path. The compiler error is:
 
-Do not manufacture implementation just to keep the queue busy.
-
-## LOCAL 1 — MUST_EXECUTE: terminal EOF/RST test repair
-
-Owner: `crates/neko-cli/tests/multistream.rs`
-
-Test: `executable_rejects_unsupported_only_negotiation_before_noise_or_data`
-
-Current exact-current code still does:
-
-```rust
-assert_eq!(
-    socket.read(&mut byte).unwrap(),
-    0,
-    "server entered Noise/data admission"
-);
+```text
+error: functions used as tests can not have any arguments
+  --> crates/neko-cli/tests/multistream.rs:145:1
 ```
 
-Replace only this terminal-close assertion with equivalent semantics:
+The source currently contains:
 
 ```rust
-match socket.read(&mut byte) {
-    Ok(0) => {}
-    Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
-    Ok(n) => panic!("server emitted {n} byte(s) after unsupported negotiation"),
-    Err(error) => panic!("unexpected terminal-close error: {error}"),
+#[test]
+fn rejected_negotiation_close_is_either_eof_or_platform_reset(stream: &mut TcpStream) {
+    ...
 }
 ```
 
-Protected invariant: an unsupported-only syntactically valid negotiation must terminate before any Noise/Session data is emitted. TCP may surface fail-closed termination as orderly EOF or reset. Bytes after rejection remain a hard failure.
+A Rust `#[test]` function cannot accept `&mut TcpStream`. This is real repository breakage, not a hosted-CI-only condition. Local CI that actually ran this exact tree would fail the same compile step.
 
-Hard bounds:
+The attempted patch also failed the original requested repair in two additional ways:
 
-- accept only `Ok(0)` or `ErrorKind::ConnectionReset`;
-- `Ok(n > 0)` remains hard failure;
-- all other I/O errors remain hard failure absent an already-existing independent contract;
-- keep `assert_uniform_handshake_rejection`, exact `neko: handshake rejected\n`, no success JSON and no record output;
-- do not modify runtime code to force FIN;
-- do not weaken unsupported-version rejection;
-- do not create a socket-close framework/helper abstraction solely for this seam;
-- no fuzz required because this slice is test-only and changes no wire/parser/crypto/framing behavior.
+1. the original `executable_rejects_unsupported_only_negotiation_before_noise_or_data` assertion is still unchanged and still uses `socket.read(...).unwrap() == 0`;
+2. the new helper accepts `BrokenPipe`, although the reviewer contract explicitly authorized only orderly EOF (`Ok(0)`) and `ErrorKind::ConnectionReset`; no repository contract was cited that makes `BrokenPipe` equivalent here.
 
-### Focused validation
+Therefore `6be43f6` is **REJECT** as landed.
 
-Run a bounded timing-variation repetition and the whole target:
+### HIGH 2 — persisted local-CI/review notes are not reproducible from repository truth
+
+The newly committed notes claim clean exact-tree gates on commits described as reachable, including:
+
+- `1db7a9795c37389cf4bc28af2638228f0f58f5fb`;
+- `7275062b99ba3152dc05d54d9405fa446332a77e`;
+- `c5d0b153a7de92de6d995f0e111947548706abbf`;
+- `58b5d13cdb783b018e5e1ec51c9e24ea51f316e8`;
+- `77111629ec172b6292a0ab9e360707b1f43ec0e3`;
+- `1be290d0449286ecab9412572c05e282c12f2d05`;
+- reconciliation tree `6f50d700b673b18679ee1ca3e2f6423a5ded3d3`.
+
+GitHub repository truth cannot resolve those exact SHAs as repository commits. More importantly, the reachable current tree that indexes those notes is compile-red. The release packet currently says each of those trees has its own clean exact-tree local gate; that statement is not presently independently reproducible from the shared GitHub handoff surface.
+
+Do **not** interpret this finding as proof that no local run ever happened. The problem is narrower and concrete: the persisted provenance claims cannot currently be tied to a reachable pushed exact tree, while the pushed implementation differs materially and fails stable CI. Under the repository's exact-tree provenance policy, those new notes must be treated as **QUARANTINED / NOT ACCEPTED EVIDENCE** until reproduced on reachable pushed commits.
+
+The successful exact-`89f26b5` nightly decode fuzz smoke does not repair the stable compile failure and does not validate the item-4 notes.
+
+## MUST_EXECUTE_LOCAL 1 — repair the repository first
+
+Owner: `crates/neko-cli/tests/multistream.rs`.
+
+Do the smallest repair against current `main`:
+
+1. remove the invalid `#[test]` helper shape entirely, or make a normal non-test helper only if it is genuinely reused;
+2. repair `executable_rejects_unsupported_only_negotiation_before_noise_or_data` itself so the terminal read accepts exactly:
+   - `Ok(0)`;
+   - `Err(e)` where `e.kind() == ErrorKind::ConnectionReset`;
+3. `Ok(n > 0)` remains hard failure because bytes were emitted after rejection;
+4. every other error, including `BrokenPipe`, remains hard failure unless a current committed specification/ADR already proves equivalence; do not invent that equivalence now;
+5. keep `assert_uniform_handshake_rejection`, exact `neko: handshake rejected\n`, no success JSON and no record output;
+6. do not change runtime code to force FIN/RST behavior;
+7. do not create a general socket-close framework.
+
+Before committing, run the focused test repeatedly and the full target. Then commit/push the coherent repair and run the full local gate on the **exact pushed developer SHA** from a clean checkout/worktree:
 
 ```bash
 for i in $(seq 1 20); do
@@ -71,193 +81,47 @@ for i in $(seq 1 20); do
     executable_rejects_unsupported_only_negotiation_before_noise_or_data -- --exact
 done
 cargo test -p neko-cli --test multistream
-```
-
-If Cargo exact-filter syntax needs a mechanical adjustment, adjust the command only.
-
-Commit and push the coherent test repair, then validate the **exact committed developer SHA** in a clean checkout/worktree:
-
-```bash
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
 git diff --check
 git status --short
 ```
 
-Persist minimal developer-local provenance: exact SHA, commands, UTC start/end, exit codes, OS/arch, stable Rust version, clean-tree state. Do not persist credentials, private addresses/topology, or unnecessary absolute paths.
+No fuzz is required for this test-only correction.
 
-If any gate fails, repair the actual failure and rerun. GitHub-hosted CI is optional cross-evidence and never a wait condition.
+If this exact reachable developer SHA is not green locally, do not proceed.
 
-**When green, immediately continue to LOCAL 2; do not wait for reviewer cadence.**
+## MUST_EXECUTE_LOCAL 2 — repair provenance/evidence truth before further review
 
-## LOCAL 2 — cross-platform negative/process-test determinism sweep
+After the reachable implementation repair is green:
 
-Goal: use the concrete EOF/RST failure as a trigger for one bounded cross-platform test-semantics review, not a general refactor.
+1. **Do not create replacement provenance for an unpublished/local-only SHA.** Every new exact-tree provenance anchor must be a pushed repository commit that GitHub can resolve.
+2. Reproduce the process-test determinism review, crypto API-misuse challenge, wire fail-closed/allocation review, CLI secret/admission review, and Session/Carrier evidence-domain review only as needed on the reachable post-repair tree.
+3. For each review, either:
+   - record a reachable exact pushed SHA plus actual commands/results; or
+   - explicitly mark the prior note as historical/unverified and do not index it as accepted evidence.
+4. Remove or supersede the current release-packet/item-4 statement that all `1db7a97` / `7275062` / `c5d0b15` / `58b5d13` / `7711162` / `1be290d` trees have clean exact-tree gates unless those trees become repository-reachable and the claim is reproducible.
+5. The simplest acceptable closure is one new reachable post-repair review tree that re-runs the bounded review surfaces and one exact-tree full local gate, with precise scope. Do not recreate a chain of six unpublished intermediate SHAs merely to preserve old filenames.
+6. Preserve the old files if useful as historical developer reports, but label/index them truthfully. Do not silently rewrite historical commands/timestamps into evidence for a different tree.
 
-Primary surface:
+This provenance repair is a release/evidence correctness requirement. It is not optional documentation polish.
 
-- `crates/neko-cli/tests/*.rs`
-- directly related CLI process-test helpers only when needed to understand a finding.
+## Queue after BLOCKER/HIGH closure
 
-Look specifically for tests that accidentally encode an OS-specific transport/process artifact instead of the actual repository contract, including:
+Only after both findings above are closed may continuous item-4 review resume. Keep the queue bounded and dependency ordered:
 
-- TCP orderly EOF vs reset when both are equivalent fail-closed outcomes;
-- timing/startup assumptions that turn a valid terminal state into a flaky failure;
-- assertions that require an incidental OS error code where the contract is broader but still fail-closed;
-- platform-specific filesystem/permission assumptions lacking an appropriate `cfg` boundary.
+1. **Cross-platform process-test semantics:** inspect remaining `neko-cli` negative process tests for concrete OS-artifact assumptions. No generic framework.
+2. **Crypto API-misuse/invariants:** nonce exhaustion/uniqueness, transcript/context binding, replay/authorization/key-update boundaries. No cryptanalysis, new crypto design or D019 policy invention.
+3. **Wire/parser fail-closed/allocation:** attacker-controlled length/count/overflow/truncation/unknown/trailing behavior; if code changes, use pinned decode fuzz smoke plus full gate.
+4. **CLI secret/admission surface:** secret/plaintext output, uniform rejection, success-before-auth/admission, unauthenticated durable state mutation.
+5. **Session/Carrier evidence-domain separation:** `confirm_received`, assignment-time context, advanced overlap, packet feedback vs Session delivery, TCP reliability vs logical delivery.
+6. **Release packet reconciliation:** index only actually established reachable evidence; item 4 stays incomplete without final independent judgment.
 
-Acceptance criteria for a repair:
+A no-finding review is acceptable. Do not manufacture code changes merely to keep the queue busy.
 
-- name the exact test/helper and the real semantic invariant;
-- prove the current assertion is narrower/wrong on a supported environment;
-- preserve or strengthen the negative/security invariant;
-- add/adjust a bounded regression only; no generalized test framework.
+## Stop conditions and live boundary
 
-Do **not** weaken errors merely to make CI green. If no additional concrete defect exists after this bounded sweep, record no finding and move on.
+Until BLOCKER 1 and HIGH 2 are closed, do not expand the implementation/review surface and do not run live experiments.
 
-Any code/test change -> focused target tests -> commit/push -> clean exact-tree `scripts/check.sh` + `git diff --check` + provenance before continuing.
+After closure, standing authorization remains valid, but current repository truth still says `READY_LIVE: none`. Do not repeat HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint migration, key update, IPv6, PLPMTUD or Experimental Track work without a materially new dependency-ready question.
 
-## REVIEW 3 — cryptographic API-misuse/security-invariant challenge
-
-This is independent review support for item 4, not cryptanalysis and not a new cryptographic design.
-
-Primary owners:
-
-- `crates/neko-crypto/src/lib.rs`
-- directly relevant crypto tests/fixtures;
-- `docs/research/security-threat-model.md` and current ADR/spec references only as needed to resolve existing intended semantics.
-
-Challenge current implementation against already-stated repository invariants:
-
-- nonce uniqueness / checked overflow refusal;
-- direction / epoch / key-phase separation;
-- transcript / prologue / record-context binding;
-- replay / duplicate / old-epoch rejection;
-- authorization/trust status enforcement before protected data admission;
-- key-update synchronization boundaries already implemented;
-- secret-safe error/log behavior.
-
-Hard bounds:
-
-- do not invent a new handshake, cipher, KDF, key-store, persistent replay store, TTL/LRU/history-size, or retention policy;
-- D019 remains policy-blocked;
-- no claim of cryptanalysis/security approval;
-- if a concrete API misuse or invariant violation exists and current semantics already determine the answer, repair the smallest owner path and add positive/negative regression;
-- if no concrete defect is found, write a bounded review note that states what was inspected and what remains outside scope.
-
-If any change touches parser/framing/wire decoder behavior, use the repository pinned fuzz tooling per current policy; otherwise ordinary crypto unit/integration + full local gate is sufficient.
-
-## REVIEW 4 — wire/parser fail-closed and allocation-bound challenge
-
-Primary owners:
-
-- `crates/neko-wire/src/lib.rs`
-- direct decode call paths that transform untrusted network bytes into typed state.
-
-Review only current advertised semantics:
-
-- length/count bounds before allocation;
-- integer overflow/truncation handling;
-- malformed/truncated/trailing input;
-- unknown version/frame/type behavior;
-- no panic on attacker-controlled decode input;
-- no unbounded allocation driven by a decoded length/count;
-- stable deterministic encoding where the current contract requires it.
-
-Do not redesign the wire format or change canonical meaning. If a defect is found, smallest repair + regression + required decode fuzz smoke using the pinned toolchain, then exact-tree full local gate. If none is found, record a bounded no-finding note and continue.
-
-## REVIEW 5 — CLI secret/output and pre-auth failure-surface challenge
-
-Primary owners:
-
-- `crates/neko-cli/src/main.rs`
-- `crates/neko-cli/src/preauth.rs`
-- directly related process/integration tests.
-
-Security invariants are already stated in `SECURITY.md`: logs must not expose PSK/private key/plaintext payload; unauthenticated control input must not mutate admitted connection state; experimental service must not become an arbitrary open proxy.
-
-Perform a bounded source/test review for concrete contradictions such as:
-
-- private key/secret/plaintext payload included in stderr, structured events, panic/debug output, or persisted evidence;
-- distinguishable pre-auth error output that contradicts an existing uniform-rejection contract;
-- output emitted as success before authentication/admission actually succeeds;
-- unauthenticated input causing durable/session-admission state transition through an existing call path.
-
-Do not invent new log redaction infrastructure or a new policy framework absent a concrete leak/contradiction. Concrete existing-semantics defect -> smallest fix + regression + exact-tree closure. No finding -> bounded note only.
-
-## REVIEW 6 — Session/Carrier evidence-domain separation challenge
-
-Primary owners:
-
-- `crates/neko-session/src/lib.rs`
-- `crates/neko-carrier/src/lib.rs`
-- `docs/specs/nekomusume-session-v0.md`
-- directly relevant failover/session tests.
-
-This is not a redesign. Challenge only already-fixed invariants:
-
-- `confirm_received` is Session delivery evidence, not application `delivered/effect` evidence;
-- path/packet feedback does not silently promote Session delivery;
-- `Unsent -> InFlight` preserves assignment-time context;
-- advanced-state novel-byte overlap remains fail-closed;
-- TCP reliability does not substitute for Session delivery state;
-- carrier migration/failover does not create delivery proof by itself.
-
-If current code violates an already-stated invariant, smallest repair + regression. If not, record bounded no-finding scope. Do not change ACK architecture, Carrier ownership model, or wire semantics without a new reviewer/maintainer decision.
-
-## CHECKPOINT 7 — item-4 factual reconciliation
-
-After LOCAL 1-2 and REVIEW 3-6:
-
-1. Update `docs/release-security-review-packet.md` only for actually established new facts/findings.
-2. Update item-4 factual support/status only if status wording truly changes.
-3. Distinguish:
-   - developer-local exact-tree CI;
-   - any GitHub-hosted cross-evidence;
-   - independent/bounded review notes;
-   - live WAN evidence;
-   - performance conclusions.
-4. Do not mark item 4 complete merely because these bounded reviews found no defect.
-5. Do not change RC/production/freeze/release flags automatically.
-
-Run relevant release/status/link checks and final exact-tree `scripts/check.sh + git diff --check` for any coherent docs closure commit. Reviewer-only docs commits later do not retroactively become the tested implementation tree.
-
-## Queue-exhaustion / escalation boundary
-
-After the above queue, a genuinely exhausted local queue is valid. Remaining known classes are allowed to stay blocked:
-
-- **D019:** source-retention/no-reset policy/value decision;
-- **RSEC-001:** representative adversarial-load/capacity-suitability evidence when test pressure/capacity choices require maintainer judgment or exceed standing limits;
-- **item 3:** natural-loss/remaining environment evidence, IPv6 environment block, and frozen same-class negative live lines absent a materially new hypothesis;
-- **signing / key custody / SBOM:** release-policy decisions, not automatic local coding filler;
-- **previous frozen release:** unavailable by repository fact until one exists;
-- **release/production authority:** explicit maintainer/independent decision.
-
-If a review discovers a new concrete BLOCKER/HIGH correctness/security/evidence defect, stop expansion and put its repair at queue head. If a newly discovered issue requires core Session/Carrier/ACK/crypto/wire architecture change, destructive/canonical migration, new security-policy numbers, action outside standing authorization, production/third-party access, or new credentials/server permission, escalate instead of inventing an answer.
-
-## Live/release boundary
-
-- `IMPLEMENTATION_COMPLETE=true` only in the repository's bounded research/governance sense;
-- item 3 remains incomplete;
-- item 4 remains incomplete;
-- `RELEASE_CANDIDATE=false`;
-- `PRODUCTION_READY=false`;
-- `FREEZE=false`;
-- `RELEASED=false`;
-- D019 remains `SOURCE_RETENTION_POLICY_BLOCKED`;
-- current `READY_LIVE: none` remains authoritative.
-
-Do not rerun unchanged HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint/source migration, key update, IPv6, PLPMTUD, or Experimental Track work merely because the VPS exists. Standing authorization remains valid if a materially new dependency-ready self-owned TCP/UDP question emerges later.
-
-## Continuous execution order
-
-1. **MUST_EXECUTE_LOCAL:** EOF/RST multistream test repair.
-2. **FOCUSED + EXACT-TREE CLOSURE:** repeated target test -> multistream target -> commit/push -> clean exact-tree full local gate -> provenance.
-3. **LOCAL REVIEW/REPAIR:** bounded cross-platform negative/process-test determinism sweep.
-4. **ITEM-4 SECURITY REVIEW SUPPORT:** crypto API-misuse/invariant challenge.
-5. **ITEM-4 SECURITY REVIEW SUPPORT:** wire/parser fail-closed/allocation-bound challenge.
-6. **ITEM-4 SECURITY REVIEW SUPPORT:** CLI secret/output + pre-auth failure-surface challenge.
-7. **ITEM-4 SECURITY REVIEW SUPPORT:** Session/Carrier evidence-domain separation challenge.
-8. **RECONCILE:** release packet/item-4 factual update only for established facts.
-9. **STOP OR ESCALATE:** if no further concrete local defect exists, record genuine local queue exhaustion and leave policy/environment/release-authority gates open.
-
-Complete coherent slice -> required local gate -> commit + push -> continue immediately to the next dependency-ready slice. Do not wait for the hourly reviewer merely because one slice finished.
+D019, representative adversarial-load/capacity suitability, signing/key custody/SBOM, previous frozen release, item-3 environment evidence, RC/release/production authority remain separate blocked/governance decisions.
