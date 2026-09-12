@@ -1,6 +1,6 @@
 # Local item-4 factual reconciliation gate — `6f50d70`
 
-Developer-run exact-tree validation of reachable documentation commit `6f50d700b673b18679ee1ca3e2f6423a5ded3d3`.
+Historical developer report for pre-rebase label `6f50d70`; that object is not repository-reachable, so its exact-tree gate claim is quarantined / not accepted. Reachable commit `89f26b5` introduced this report; current accepted navigation uses reachable `4034f86` and later evidence.
 
 > **Superseded provenance:** the pre-rebase SHAs named below are not repository-reachable and this report is not accepted as exact-tree evidence. Reachable commits `1cf6c79`, `68e96e7`, `0774ab6`, `407bfea`, `96af2be`, `d0d2f42`, and `89f26b5` only identify where the historical notes/reconciliation entered the repository; they do not retroactively validate the unpublished trees. Current evidence uses pushed anchors such as exact `4034f86`.
 
