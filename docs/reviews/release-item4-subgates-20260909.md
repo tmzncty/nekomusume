@@ -40,6 +40,19 @@ Developer-prepared factual review support through reachable exact classification
 - Deterministic harness M: current workspace/property/process/harness evidence answers the named bounded local question; no specific missing runtime failure mode was found. The final classification tree exact `78111e8` received a clean full local gate recorded by provenance-only `3ee4fd0`. See [`../local-deterministic-harness-review-f5814ca-20260911.md`](../local-deterministic-harness-review-f5814ca-20260911.md).
 - The rolling Era-4 overlay consequently has zero `OPEN_READY` rows. That is local queue exhaustion, not independent review completion or release promotion.
 
+### Additional bounded local challenge layer — exact `1be290d`
+
+A later bounded item-4 support pass reviewed and retained the following additional facts; they do not mark release item 4 complete:
+
+- `1db7a97` repaired a rejected-negotiation process test to accept clean EOF or platform `ConnectionReset`/`BrokenPipe` after rejection while still hard-failing any received byte; see [`../local-tcp-reset-close-regression-1db7a97-20260911.md`](../local-tcp-reset-close-regression-1db7a97-20260911.md).
+- `7275062` applies the same cross-platform close contract to all three rejected multistream negotiation paths without a framework; see [`../local-process-test-determinism-7275062-20260911.md`](../local-process-test-determinism-7275062-20260911.md).
+- `c5d0b15` records a bounded crypto API-misuse challenge covering nonce exhaustion/overflow, direction/context binding, replay, authorization and synchronized/unsynchronized key update; no cryptanalysis or independent audit exists. See [`../local-crypto-api-misuse-c5d0b15-20260911.md`](../local-crypto-api-misuse-c5d0b15-20260911.md).
+- `58b5d13` records a bounded wire fail-closed/allocation review finding no current panic/unbounded-allocation contradiction; pinned decode fuzz was not rerun because no decoder changed. See [`../local-wire-failclosed-review-58b5d13-20260911.md`](../local-wire-failclosed-review-58b5d13-20260911.md).
+- `7711162` records the nine pre-auth responder surfaces/seven admission sites, secret/output boundary, exact deterministic config ordering and admission-before-success contract; no private/plaintext leakage or premature READY mutation was found. See [`../local-cli-secret-admission-7711162-20260911.md`](../local-cli-secret-admission-7711162-20260911.md).
+- `1be290d` records a final bounded Session/Carrier evidence-domain check for queued assignment context, global-context duplicates, novel-byte state, packet feedback versus logical delivery, and TCP reliability versus `DeliveryAck`; no contradiction was found. See [`../local-evidence-domain-review-1be290d-20260911.md`](../local-evidence-domain-review-1be290d-20260911.md).
+
+Each of those trees has its own clean exact-tree local gate and remains developer-local evidence only. They do not establish adversarial-load capacity, cryptanalysis, persistent replay safety, D019 retention, public-listener readiness, independent review, RC, release or production approval.
+
 ### Pre-auth resource controls and D019
 
 - Bounded non-policy engineering controls remain reviewed: carrier/source projection, admission before expensive work, input/response accounting, source/global state/queue/memory bounds, terminalization/rollback, expiry/release cleanup, aggregate redacted observability, and listener inventory.
