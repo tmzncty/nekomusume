@@ -5,8 +5,8 @@ Historical developer report for pre-rebase local label `f4f7f93`. That object is
 ## Reconciled provenance
 
 - `dc52a5e` is the GitHub-reachable consolidated source/test anchor for the five-domain item-4 challenge review.
-- `eb5f0e5` is the reachable consolidated evidence-note commit and separately passed a clean exact-tree local gate.
-- `f4f7f93` updates release packet and item-4 factual support to that anchor while quarantining the prior unpublished chain as historical/unverified superseded evidence.
+- Historical label `eb5f0e5` was claimed as the consolidated evidence-note commit but is not repository-reachable; that exact-tree gate claim is quarantined / not accepted. Reachable `c0b2ee0` introduced the consolidated report.
+- Historical label `f4f7f93` described the index repair but is not repository-reachable. Reachable `563532f` introduced this quarantined report; current authoritative navigation is the later reachable repair chain.
 - Stale `ConnectionReset/BrokenPipe` wording is removed from current support; the accepted contract accepts clean EOF or platform reset and still rejects any received bytes.
 - The rolling navigation remains `0 open-ready`, but item 4 is not marked complete or independently reviewed.
 

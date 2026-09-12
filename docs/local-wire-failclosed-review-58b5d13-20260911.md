@@ -1,6 +1,6 @@
 # Local wire fail-closed/allocation-bound review — `58b5d13`
 
-Developer-run bounded source/test review of exact tree `58b5d13cdb783b018e5e1ec51c9e24ea51f316e8`, completed on reachable parent `77d3b4a` without changing code.
+Historical developer review using pre-rebase labels `58b5d13` / `77d3b4a`; those objects are not repository-reachable, so this file is quarantined / not accepted as exact-tree evidence. Reachable `407bfea` introduced the report; current accepted wire navigation uses independent review anchored at reachable `4034f86`.
 
 ## Result
 

@@ -1,6 +1,6 @@
 # Local TCP reset/close regression closure — `1db7a97`
 
-Developer-run exact-tree validation of reachable test-only commit `1db7a9795c37389cf4bc28af2638228f0f58f5fb`.
+Historical developer report for pre-rebase label `1db7a97`; that object is not repository-reachable, so this file is quarantined / not accepted as exact-tree evidence. Reachable `1cf6c79` introduced the report; current accepted navigation uses reachable `4034f86`.
 
 ## Repair
 

@@ -1,6 +1,6 @@
 # Local CLI secret/admission surface review — `7711162`
 
-Developer-run bounded source/process review of exact tree `77111629ec172b6292a0ab9e360707b1f43ec0e3`, completed on reachable parent `48bca29` without changing code.
+Historical developer review using pre-rebase labels `7711162` / `48bca29`; those objects are not repository-reachable, so this file is quarantined / not accepted as exact-tree evidence. Reachable `96af2be` introduced the report; current accepted navigation uses reachable `4034f86`.
 
 ## Review result
 

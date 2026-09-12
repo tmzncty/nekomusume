@@ -1,6 +1,6 @@
 # Local process-test determinism closure — `7275062`
 
-Developer-run review and exact-tree validation of reachable test-only commit `7275062b99ba3152dc05d54d9405fa446332a77e`.
+Historical developer report for pre-rebase label `7275062`; that object is not repository-reachable, so this file is quarantined / not accepted as exact-tree evidence. Reachable `68e96e7` introduced the report; current accepted navigation uses reachable `4034f86`.
 
 ## Review result
 

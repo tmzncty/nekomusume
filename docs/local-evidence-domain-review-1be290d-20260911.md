@@ -1,6 +1,6 @@
 # Local Session/Carrier evidence-domain review — `1be290d`
 
-Developer-run bounded source/test review of exact tree `1be290d0449286ecab9412572c05e282c12f2d05`, completed on reachable parent `0b87f23` without changing code.
+Historical developer review using pre-rebase labels `1be290d` / `0b87f23`; those objects are not repository-reachable, so this file is quarantined / not accepted as exact-tree evidence. Reachable `d0d2f42` introduced the report; current accepted navigation uses reachable `4034f86`.
 
 ## Result
 

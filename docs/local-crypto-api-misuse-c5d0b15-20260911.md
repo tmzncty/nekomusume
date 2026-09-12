@@ -1,6 +1,6 @@
 # Local crypto API-misuse/security-invariant challenge — `c5d0b15`
 
-Developer-run bounded challenge of exact source tree `c5d0b153a7de92de6d995f0e111947548706abbf`, completed on reachable parent `d2bc0ef` without changing code.
+Historical developer review using pre-rebase labels `c5d0b15` / `d2bc0ef`; those objects are not repository-reachable, so this file is quarantined / not accepted as exact-tree evidence. Reachable `0774ab6` introduced the report; current accepted navigation uses reachable `4034f86`.
 
 ## Challenge result
 
