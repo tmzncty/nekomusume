@@ -12,7 +12,7 @@ On a clean detached checkout of exact `289fbad`:
 
 - `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`: exit `0`;
 - `git diff --check`: exit `0`;
-- UTC `2026-09-12T11:17:42Z -> 11:19:38Z`;
+- UTC `2026-09-12T11:17:00Z -> 11:18:58Z`;
 - Linux x86_64; Rust `1.98.0`;
 - initial/final source tree clean.
 
