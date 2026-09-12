@@ -266,7 +266,17 @@ impl Producer {
         let queue = counters
             .queue_dropped
             .saturating_sub(self.last_datagram.queue_dropped);
-        for _ in 0..admitted {
+        // Bounded per-event emission: the retained ring holds at most
+        // `capacity` events, so emitting more than `capacity` events of one
+        // kind can never keep them all. Cap the emitted count at `capacity`
+        // and account the un-emitted remainder as dropped, so an arbitrarily
+        // large `u64` counter delta cannot drive unbounded CPU work or
+        // underflow a `usize` conversion.
+        let emit_admitted = admitted.min(self.capacity as u64);
+        self.dropped_total = self
+            .dropped_total
+            .saturating_add(admitted.saturating_sub(emit_admitted));
+        for _ in 0..emit_admitted {
             self.push(
                 at_ms,
                 "datagram.admitted",
@@ -280,9 +290,19 @@ impl Producer {
         // `terminal`. Clamp the subset to the generic delta so an inconsistent
         // external counter can never emit more queue_full events than drops.
         let queue_full = queue.min(dropped);
-        for code in std::iter::repeat_n("queue_full", queue_full as usize).chain(
-            std::iter::repeat_n("terminal", dropped.saturating_sub(queue_full) as usize),
-        ) {
+        let terminal = dropped.saturating_sub(queue_full);
+        // Bound emission at `capacity`; excess events of each kind are
+        // accounted as dropped rather than looping over an unbounded delta.
+        let emit_queue_full = queue_full.min(self.capacity as u64);
+        let emit_terminal = terminal.min(self.capacity as u64);
+        self.dropped_total = self.dropped_total.saturating_add(
+            queue_full
+                .saturating_sub(emit_queue_full)
+                .saturating_add(terminal.saturating_sub(emit_terminal)),
+        );
+        for code in std::iter::repeat_n("queue_full", emit_queue_full as usize)
+            .chain(std::iter::repeat_n("terminal", emit_terminal as usize))
+        {
             self.push(
                 at_ms,
                 "datagram.dropped",
@@ -291,7 +311,11 @@ impl Producer {
                 format!("{{\"error_code\":\"{code}\"}}"),
             );
         }
-        for _ in 0..oversize {
+        let emit_oversize = oversize.min(self.capacity as u64);
+        self.dropped_total = self
+            .dropped_total
+            .saturating_add(oversize.saturating_sub(emit_oversize));
+        for _ in 0..emit_oversize {
             self.push(
                 at_ms,
                 "datagram.dropped",
@@ -598,5 +622,25 @@ mod tests {
             .count();
         assert_eq!(queue_full, 1, "lines={lines:?}");
         assert_eq!(terminal, 0, "lines={lines:?}");
+    }
+
+    #[test]
+    fn datagram_huge_delta_emits_bounded_events() {
+        use neko_session::DatagramCounters;
+        // A counter delta far beyond ring capacity must not drive unbounded
+        // per-event work: emission is capped at capacity and the un-emitted
+        // remainder is accounted as dropped. This must terminate quickly.
+        let mut p = Producer::new(neko_session::SessionId(9), 16).unwrap();
+        let counters = DatagramCounters {
+            admitted: u64::MAX / 2,
+            dropped: u64::MAX / 2,
+            rejected_oversize: u64::MAX / 2,
+            queue_dropped: u64::MAX / 4,
+            ..Default::default()
+        };
+        p.record_datagrams(1, counters);
+        // Ring retains at most `capacity` events; the rest are dropped_total.
+        assert!(p.events().count() <= 16);
+        assert!(p.dropped_total() > 0);
     }
 }
