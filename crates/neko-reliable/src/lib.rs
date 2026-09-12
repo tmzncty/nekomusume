@@ -290,9 +290,12 @@ impl Recovery {
         // A peer cannot acknowledge a packet number greater than the largest
         // the sender has ever sent: such an ACK references a never-sent packet
         // and would fabricate loss/retransmit evidence for real in-flight
-        // packets. Reject atomically before any RTT/loss/PTO mutation.
-        if self.largest_sent.is_some_and(|sent| largest > sent) {
-            return Err(Error::InvalidRange);
+        // packets. A Recovery that has never accepted on_sent has no sent
+        // state at all, so any nonempty ACK is likewise invalid. Both reject
+        // atomically before any RTT/loss/PTO mutation.
+        match self.largest_sent {
+            Some(sent) if largest <= sent => {}
+            _ => return Err(Error::InvalidRange),
         }
         let mut out = RecoveryResult::default();
         if let Some(p) = self.sent.get(&largest) {
@@ -712,6 +715,22 @@ mod tests {
         let x = r.on_ack(&valid, 10_000, 0).unwrap();
         assert_eq!(x.acked_packets, vec![3]);
         assert_eq!(x.lost_packets, vec![0]);
+    }
+    #[test]
+    fn ack_with_no_sent_state_is_rejected() {
+        // A Recovery that has never accepted on_sent has no sent state, so any
+        // nonempty ACK references a never-sent packet number and must be
+        // rejected atomically (no RTT mutation, no output).
+        let mut r = Recovery::default();
+        let rtt_before = (r.rtt.smoothed_us, r.rtt.variance_us, r.rtt.initialized);
+        let mut a = AckRanges::new(2).unwrap();
+        a.insert(0).unwrap();
+        assert_eq!(r.on_ack(&a, 10_000, 0), Err(Error::InvalidRange));
+        assert_eq!(r.in_flight(), 0);
+        assert_eq!(
+            (r.rtt.smoothed_us, r.rtt.variance_us, r.rtt.initialized),
+            rtt_before
+        );
     }
     #[test]
     fn ack_largest_equal_to_largest_sent_is_accepted() {
