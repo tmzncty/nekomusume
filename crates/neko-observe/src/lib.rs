@@ -275,8 +275,14 @@ impl Producer {
                 "{\"error_code\":\"admitted\"}".into(),
             );
         }
-        for _ in 0..dropped {
-            let code = if queue > 0 { "queue_full" } else { "terminal" };
+        // `queue_dropped` is a subset of the generic `dropped` counter. Emit
+        // `queue_full` only for that subset and classify the remainder as
+        // `terminal`. Clamp the subset to the generic delta so an inconsistent
+        // external counter can never emit more queue_full events than drops.
+        let queue_full = queue.min(dropped);
+        for code in std::iter::repeat_n("queue_full", queue_full as usize).chain(
+            std::iter::repeat_n("terminal", dropped.saturating_sub(queue_full) as usize),
+        ) {
             self.push(
                 at_ms,
                 "datagram.dropped",
@@ -534,5 +540,63 @@ mod tests {
                 .iter()
                 .any(|line| line.contains("scheduler.starvation_guard"))
         );
+    }
+
+    #[test]
+    fn datagram_mixed_drop_window_classifies_queue_and_terminal_separately() {
+        use neko_session::DatagramRuntime;
+        let mut p = Producer::new(neko_session::SessionId(9), 16).unwrap();
+        let mut d = DatagramRuntime::new(1, 64).unwrap();
+        // One queue-full drop.
+        d.send(b"a").unwrap();
+        assert_eq!(d.send(b"b"), Err(neko_session::DatagramError::QueueFull));
+        // One terminal drop (send after close): counted in `dropped` but not
+        // in `queue_dropped`.
+        d.close();
+        assert_eq!(d.send(b"c"), Err(neko_session::DatagramError::Terminal));
+        let counters = d.counters();
+        assert_eq!(counters.dropped, 2);
+        assert_eq!(counters.queue_dropped, 1);
+        p.record_datagrams(1, counters);
+        let lines: Vec<_> = p.events().map(Event::to_json_line).collect();
+        let queue_full = lines
+            .iter()
+            .filter(|l| l.contains("\"error_code\":\"queue_full\""))
+            .count();
+        let terminal = lines
+            .iter()
+            .filter(|l| l.contains("\"error_code\":\"terminal\""))
+            .count();
+        // queue_dropped is a subset of dropped: exactly one queue_full, and the
+        // remaining generic dropped delta is terminal, not mislabelled.
+        assert_eq!(queue_full, 1, "lines={lines:?}");
+        assert_eq!(terminal, 1, "lines={lines:?}");
+    }
+
+    #[test]
+    fn datagram_inconsistent_queue_delta_is_bounded_conservatively() {
+        use neko_session::DatagramCounters;
+        let mut p = Producer::new(neko_session::SessionId(9), 16).unwrap();
+        // Externally supplied counters that are internally inconsistent
+        // (queue_dropped delta exceeds the generic dropped delta) must be
+        // projected conservatively: never emit more queue_full events than the
+        // generic dropped delta, and never underflow.
+        let counters = DatagramCounters {
+            dropped: 1,
+            queue_dropped: 3,
+            ..Default::default()
+        };
+        p.record_datagrams(1, counters);
+        let lines: Vec<_> = p.events().map(Event::to_json_line).collect();
+        let queue_full = lines
+            .iter()
+            .filter(|l| l.contains("\"error_code\":\"queue_full\""))
+            .count();
+        let terminal = lines
+            .iter()
+            .filter(|l| l.contains("\"error_code\":\"terminal\""))
+            .count();
+        assert_eq!(queue_full, 1, "lines={lines:?}");
+        assert_eq!(terminal, 0, "lines={lines:?}");
     }
 }
