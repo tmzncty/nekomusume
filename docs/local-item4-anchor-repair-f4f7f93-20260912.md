@@ -1,6 +1,6 @@
 # Local item-4 anchor-repair gate — `f4f7f93`
 
-Developer-run exact-tree validation of reachable documentation/provenance commit `f4f7f93`, which repairs the item-4 evidence index.
+Historical developer report for pre-rebase local label `f4f7f93`. That object is not repository-reachable, so this file is **quarantined / not accepted as exact-tree evidence**. Reachable commit `563532f` introduced this report; current accepted navigation is rebuilt from reachable `4034f86` and later commits.
 
 ## Reconciled provenance
 

@@ -1,6 +1,6 @@
 # Local dependency/safety factual review — `8d7c147`
 
-Developer-run bounded factual review of reachable evidence/index commit `8d7c147`, checked on the pushed source anchor and committed lockfile.
+Historical developer factual review for pre-rebase local label `8d7c147`. That object is not repository-reachable, so its exact-tree gate claim is **quarantined / not accepted as exact-tree evidence**. Reachable commit `2e92b0c` introduced this report. The dependency inventory remains a bounded observation, not accepted CI provenance.
 
 ## Findings
 

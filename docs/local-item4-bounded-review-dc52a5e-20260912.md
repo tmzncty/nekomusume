@@ -1,6 +1,6 @@
 # Consolidated bounded item-4 local review — `dc52a5e`
 
-Developer-run consolidated review of GitHub-reachable implementation/test tree `dc52a5e`, executed on exact reachable parent `89f26b5` without manufacturing intermediate evidence SHAs. The consolidated evidence-note commit `eb5f0e5` also received its own clean exact-tree local gate.
+Historical developer consolidated review of reachable source tree `dc52a5e`. Its claimed evidence-note tree `eb5f0e5` is a pre-rebase label that is not repository-reachable, so that exact-tree gate claim is **quarantined / not accepted**. Reachable commit `c0b2ee0` introduced this report; current accepted review navigation uses reachable `4034f86` and later evidence.
 
 ## Bounded no-finding review
 
