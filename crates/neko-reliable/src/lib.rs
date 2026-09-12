@@ -287,6 +287,13 @@ impl Recovery {
         ack_delay_us: u64,
     ) -> Result<RecoveryResult, Error> {
         let largest = ack.largest().ok_or(Error::InvalidRange)?;
+        // A peer cannot acknowledge a packet number greater than the largest
+        // the sender has ever sent: such an ACK references a never-sent packet
+        // and would fabricate loss/retransmit evidence for real in-flight
+        // packets. Reject atomically before any RTT/loss/PTO mutation.
+        if self.largest_sent.is_some_and(|sent| largest > sent) {
+            return Err(Error::InvalidRange);
+        }
         let mut out = RecoveryResult::default();
         if let Some(p) = self.sent.get(&largest) {
             self.rtt.update(
@@ -659,10 +666,16 @@ mod tests {
     fn time_threshold_and_reno_pacing() {
         let mut r = Recovery::default();
         r.rtt.update(8_000, 0);
+        // Two packets. The old packet 1 (sent at t=0) is left outstanding and
+        // is lost via the time threshold; the fresh packet 2 (sent at t=19000)
+        // is ACKed, so largest=2 <= largest_sent stays valid. Because the ACK
+        // samples a small recent RTT, loss_delay stays well below now - 0.
         r.on_sent(packet(1, 0, 7)).unwrap();
+        r.on_sent(packet(2, 19_000, 8)).unwrap();
         let mut a = AckRanges::new(1).unwrap();
-        a.insert(9).unwrap();
-        let x = r.on_ack(&a, 9_000, 0).unwrap();
+        a.insert(2).unwrap();
+        let x = r.on_ack(&a, 20_000, 0).unwrap();
+        assert_eq!(x.acked_packets, vec![2]);
         assert_eq!(x.lost_packets, vec![1]);
         let mut c = Reno::new(1200).unwrap();
         c.sent(1200);
@@ -672,6 +685,47 @@ mod tests {
         c.sent(2400);
         c.lost(2400);
         assert_eq!(c.cwnd, c.ssthresh);
+    }
+    #[test]
+    fn ack_largest_beyond_largest_sent_is_rejected_atomically() {
+        // A peer-supplied ACK whose largest references a packet number the
+        // sender never sent must be rejected atomically: it must not mutate
+        // RTT, remove packets, or fabricate loss/retransmit evidence.
+        let mut r = Recovery::default();
+        for n in 0..=3 {
+            r.on_sent(packet(n, 0, n)).unwrap()
+        }
+        let rtt_before = (r.rtt.smoothed_us, r.rtt.variance_us, r.rtt.initialized);
+        let in_flight_before = r.in_flight();
+        let mut a = AckRanges::new(2).unwrap();
+        a.insert(3).unwrap();
+        a.insert(100).unwrap(); // largest=100 > largest_sent=3
+        assert_eq!(r.on_ack(&a, 10_000, 0), Err(Error::InvalidRange));
+        assert_eq!(r.in_flight(), in_flight_before);
+        assert_eq!(
+            (r.rtt.smoothed_us, r.rtt.variance_us, r.rtt.initialized),
+            rtt_before
+        );
+        // A subsequent valid ACK still works on the untouched state.
+        let mut valid = AckRanges::new(2).unwrap();
+        valid.insert(3).unwrap();
+        let x = r.on_ack(&valid, 10_000, 0).unwrap();
+        assert_eq!(x.acked_packets, vec![3]);
+        assert_eq!(x.lost_packets, vec![0]);
+    }
+    #[test]
+    fn ack_largest_equal_to_largest_sent_is_accepted() {
+        // Boundary: largest == largest_sent is legitimate (ACKs the newest
+        // packet). Only strictly-future packet numbers are rejected.
+        let mut r = Recovery::default();
+        for n in 0..=3 {
+            r.on_sent(packet(n, 0, n)).unwrap()
+        }
+        let mut a = AckRanges::new(2).unwrap();
+        a.insert(3).unwrap();
+        let x = r.on_ack(&a, 10_000, 0).unwrap();
+        assert_eq!(x.acked_packets, vec![3]);
+        assert_eq!(x.lost_packets, vec![0]);
     }
     #[test]
     fn huge_ack_range_is_constant_work_and_canonical() {
