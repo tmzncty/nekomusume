@@ -2689,7 +2689,10 @@ impl CarrierManager {
             .ok_or(MigrationError::NotTcp)?;
         let current_score = Self::score(current);
         if !current_score.healthy
-            || candidate_score.score < current_score.score + self.limits.switch_margin
+            || candidate_score.score
+                < current_score
+                    .score
+                    .saturating_add(self.limits.switch_margin)
         {
             return Err(MigrationError::ScoreMargin);
         }
@@ -2736,7 +2739,7 @@ impl CarrierManager {
                     && Some(candidate) != self.active
                     && current_score.is_none_or(|x| {
                         Self::score(*self.samples.get(&candidate).unwrap()).score
-                            >= x + self.limits.switch_margin
+                            >= x.saturating_add(self.limits.switch_margin)
                     })
             {
                 self.active = Some(candidate);
@@ -2813,6 +2816,60 @@ mod manager_tests {
         m.observe(PathId(10), sample).unwrap();
         assert_eq!(m.choose(), Some(PathId(10)));
         assert_eq!(m.choose(), Some(PathId(10)));
+    }
+
+    #[test]
+    fn migrate_back_switch_margin_addition_does_not_overflow() {
+        // switch_margin is a caller-supplied i64 with no range bound. A huge
+        // margin must saturate the score comparison instead of overflowing
+        // i64 addition (which would panic in debug or wrap in release and let
+        // an unjustified migration through).
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 1,
+            switch_margin: i64::MAX,
+            max_paths: 2,
+        })
+        .unwrap();
+        // Active TCP path (id 1) with a perfect sample; candidate UDP path 2
+        // same generation, validated and healthy.
+        m.observe(PathId(1), GOOD).unwrap();
+        m.observe(PathId(2), GOOD).unwrap();
+        m.set_active_tcp(PathId(1), PathGeneration(1)).unwrap();
+        let candidate = MigrationCandidate {
+            path: PathId(2),
+            generation: PathGeneration(1),
+            validated: true,
+            health: GOOD,
+        };
+        // The score comparison runs before the hold gate, so the very first
+        // call reaches `current_score + switch_margin`; with margin ==
+        // i64::MAX the addition must saturate, not overflow.
+        let result = m.migrate_back_to_udp(candidate);
+        // With margin == i64::MAX the candidate can never beat current+margin,
+        // so the deterministic outcome is ScoreMargin — not a panic and not a
+        // spurious success.
+        assert_eq!(result, Err(MigrationError::ScoreMargin));
+        assert_eq!(m.active(), Some(PathId(1)));
+    }
+
+    #[test]
+    fn choose_switch_margin_addition_does_not_overflow() {
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 1,
+            switch_margin: i64::MAX,
+            max_paths: 2,
+        })
+        .unwrap();
+        m.observe(PathId(1), GOOD).unwrap();
+        m.observe(PathId(2), GOOD).unwrap();
+        m.set_active_tcp(PathId(1), PathGeneration(1)).unwrap();
+        // choose() compares the best candidate score against current + margin,
+        // but only once hold >= min_hold_events. First call accumulates hold;
+        // second call reaches the `x + margin` comparison which must saturate
+        // rather than overflow — keeping the current path, never switching on a
+        // wrapped negative threshold.
+        assert_eq!(m.choose(), Some(PathId(1)));
+        assert_eq!(m.choose(), Some(PathId(1)));
     }
 
     #[test]
