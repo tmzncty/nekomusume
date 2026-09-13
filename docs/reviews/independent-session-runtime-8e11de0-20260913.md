@@ -1,5 +1,7 @@
 # Independent bounded SessionRuntime lifecycle/resource review — exact `8e11de0`
 
+> **SUPERSEDED (one sentence):** the terminal-cleanup claim under "Reset/close/failure release state consistently" is incorrect for exact `8e11de0` — the `tick()` idle-timeout and close-deadline paths did **not** release `received`/`confirmed`/inflight/window state there. See [`independent-session-runtime-8e11de0-20260913-SUPERSEDED.md`](independent-session-runtime-8e11de0-20260913-SUPERSEDED.md); the defect was repaired at exact `9697ee7`. All other invariants in this note remain accurate for `8e11de0`. The `SessionRuntime.events` retained-state gap remains `POLICY_BLOCKED_RESOURCE_BOUND`.
+
 Bounded independent review of `SessionRuntime`, `RuntimeLimits`, stream/window/inflight/queue accounting, and `delivery_ack` in `crates/neko-session/src/lib.rs` (`:828-1621`), against `docs/spec/m0-session-state.md` and `docs/specs/nekomusume-session-v0.md`, at reachable exact `8e11de0e5915efa43591069172b97f311aae2c6e`. Not a WAN/live claim, not an independent security/release approval.
 
 ## Challenged invariants and result
