@@ -7,13 +7,15 @@
 //! the ACK payload lives inside the ciphertext, neither can be tampered with
 //! or forged without failing `open` — and a failed `open` never advances
 //! recovery state.
-use neko_carrier::{PathRecovery, UdpCarrier, UdpLimits, UdpLoopbackPair, PathId};
+use neko_carrier::{PathId, PathRecovery, UdpCarrier, UdpLimits, UdpLoopbackPair};
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, PreauthBudget, PreauthLimits, RecordContext,
     ResponderHandshake, TrustPolicy, TrustRecord, TrustStatus,
 };
-use neko_reliable::{AckRanges, SentPacket, FrameId};
-use neko_wire::{decode, decode_ack, encode, encode_ack, AckPayload, AckRangeWire, Record, RecordType};
+use neko_reliable::{AckRanges, FrameId, SentPacket};
+use neko_wire::{
+    AckPayload, AckRangeWire, Record, RecordType, decode, decode_ack, encode, encode_ack,
+};
 use std::{
     thread,
     time::{Duration, Instant},
@@ -122,7 +124,9 @@ fn authenticated_packet_ack_advances_recovery_but_tamper_cannot() {
         payload: ack_payload,
     })
     .unwrap();
-    server.send_datagram(&ss.seal(&ack_record).unwrap()).unwrap();
+    server
+        .send_datagram(&ss.seal(&ack_record).unwrap())
+        .unwrap();
 
     // Sender opens the ACK record and applies it to recovery.
     let plain = cs.open(&recv(&client)).unwrap();
@@ -135,7 +139,9 @@ fn authenticated_packet_ack_advances_recovery_but_tamper_cannot() {
             ranges.insert(n).unwrap();
         }
     }
-    let out = recovery.on_ack(1, &ranges, 20_000, ack.ack_delay_us).unwrap();
+    let out = recovery
+        .on_ack(1, &ranges, 20_000, ack.ack_delay_us)
+        .unwrap();
     assert_eq!(out.acked_packets, vec![0]);
 
     // Tampered ACK ciphertext cannot reach recovery at all.

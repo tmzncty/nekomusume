@@ -5,14 +5,14 @@
 //! no spurious retransmit on the happy path, and fail-closed negatives —
 //! duplicate/old/future/malformed ACK, wrong generation, socket close. This is
 //! loopback evidence only; no WAN/release claim.
-use neko_carrier::{PathRecovery, UdpCarrier, UdpLimits, UdpLoopbackPair, PathId};
+use neko_carrier::{PathId, PathRecovery, UdpCarrier, UdpLimits, UdpLoopbackPair};
 use neko_crypto::{
-    InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, TrustPolicy,
-    TrustRecord, TrustStatus,
+    InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, TrustPolicy, TrustRecord,
+    TrustStatus,
 };
 use neko_reliable::{AckRanges, FrameId, SentPacket};
 use neko_wire::{
-    decode, decode_ack, encode, encode_ack, AckPayload, AckRangeWire, Record, RecordType,
+    AckPayload, AckRangeWire, Record, RecordType, decode, decode_ack, encode, encode_ack,
 };
 use std::{
     thread,
@@ -121,7 +121,12 @@ fn multi_record_exchange_acks_retire_and_produce_rtt_without_spurious_retransmit
 
     // Server opens all four (authenticity verified by open).
     for _ in 0..4 {
-        assert_eq!(decode(&ss.open(&recv(&server)).unwrap()).unwrap().record_type, RecordType::Data);
+        assert_eq!(
+            decode(&ss.open(&recv(&server)).unwrap())
+                .unwrap()
+                .record_type,
+            RecordType::Data
+        );
     }
 
     // Server ACKs all four in one record; sender applies it.
@@ -136,7 +141,9 @@ fn multi_record_exchange_acks_retire_and_produce_rtt_without_spurious_retransmit
             ranges.insert(n).unwrap();
         }
     }
-    let out = recovery.on_ack(1, &ranges, 40_000, ack.ack_delay_us).unwrap();
+    let out = recovery
+        .on_ack(1, &ranges, 40_000, ack.ack_delay_us)
+        .unwrap();
     assert_eq!(out.acked_packets.len(), 4);
     assert_eq!(recovery.in_flight(), 0);
     assert_eq!(recovery.bytes_in_flight(), 0);
@@ -188,18 +195,21 @@ fn malformed_ack_record_never_reaches_recovery() {
     assert_eq!(rec.record_type, RecordType::Ack);
     assert!(decode_ack(&rec.payload).is_err());
     // Overlapping/adjacent noncanonical ranges also reject.
-    assert!(decode_ack(
-        &encode_ack(&AckPayload {
-            largest_observed: 9,
-            ack_delay_us: 0,
-            ranges: vec![
-                AckRangeWire { start: 0, end: 5 },
-                AckRangeWire { start: 6, end: 9 }, // adjacent -> must merge
-            ],
-        })
-        .unwrap_or_default()
-    )
-    .is_err() || true);
+    assert!(
+        decode_ack(
+            &encode_ack(&AckPayload {
+                largest_observed: 9,
+                ack_delay_us: 0,
+                ranges: vec![
+                    AckRangeWire { start: 0, end: 5 },
+                    AckRangeWire { start: 6, end: 9 }, // adjacent -> must merge
+                ],
+            })
+            .unwrap_or_default()
+        )
+        .is_err()
+            || true
+    );
 }
 
 #[test]
@@ -249,7 +259,9 @@ fn lost_packet_retransmits_frame_level_and_delivers_exactly_once() {
             ranges.insert(n).unwrap();
         }
     }
-    let out = recovery.on_ack(1, &ranges, 40_000, ack.ack_delay_us).unwrap();
+    let out = recovery
+        .on_ack(1, &ranges, 40_000, ack.ack_delay_us)
+        .unwrap();
     assert_eq!(out.acked_packets, vec![1, 2, 3]);
     // Packet 0 is declared lost -> its frame is scheduled for retransmit.
     assert_eq!(out.lost_packets, vec![0]);
