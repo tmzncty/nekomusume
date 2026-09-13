@@ -9,6 +9,7 @@
 use neko_carrier::{
     ConcurrentPathKey, PathGeneration, PathId, UdpCarrier, UdpLimits, UdpLoopbackPair,
 };
+use neko_carrier::{PathRecoveryError, RetransmitError};
 use neko_crypto::{
     InitiatorHandshake, LocalIdentity, RecordContext, ResponderHandshake, SecureSession,
     TrustPolicy, TrustRecord, TrustStatus,
@@ -103,8 +104,10 @@ impl<'a> ReliableUdpPeer<'a> {
     /// `FrameId(offset)` while the packet carries a fresh AEAD nonce/number.
     /// Respects the cwnd admission gate before sealing.
     fn send_data(&mut self, now_us: u64, payload: &[u8]) -> Option<u64> {
+        // Session logical offsets are *byte* offsets within the stream, so the
+        // next identity advances by the payload length, not by one record.
         let offset = self.next_offset;
-        self.next_offset += 1;
+        self.next_offset += payload.len() as u64;
         self.send_data_at(now_us, offset, payload)
     }
 
@@ -487,4 +490,265 @@ fn session_layer_suppresses_exact_duplicates_and_fails_closed_on_conflict() {
     client.recv_once(3000);
     assert_eq!(server.session_delivered, 1);
     assert_eq!(server.session_conflicts, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Q4 coherent R7 scenario suite.
+//
+// One real flow per scenario, all on the same composition (UDP socket pair,
+// authenticated packet numbering, bounded plaintext ownership, resolved-outcome
+// health, bounded Session-layer delivery above the Carrier). Packet recovery,
+// health, switch and Session-delivery evidence stay distinct throughout.
+// ---------------------------------------------------------------------------
+
+/// Bring one peer to "UDP active with a ready warm TCP standby".
+fn activate_with_ready_standby(peer: &mut ReliableUdpPeer) {
+    peer.rt.ready_standby(0);
+    for i in 0..3 {
+        let _ = peer.rt.manager_mut().observe_readiness(UDP, true, true, i);
+    }
+    peer.rt.activate_udp(2);
+}
+
+#[test]
+fn scenario_no_loss_round_trip_drains_in_flight_and_reports_zero_loss() {
+    let (client_sock, server_sock) = UdpLoopbackPair::new(UdpLimits {
+        max_datagram_bytes: 4600,
+    })
+    .unwrap();
+    let (cs, ss) = pair(&client_sock, &server_sock);
+    let mut client = ReliableUdpPeer::new(&client_sock, cs, 1);
+    let mut server = ReliableUdpPeer::new(&server_sock, ss, 1);
+    activate_with_ready_standby(&mut client);
+
+    for i in 0..3u64 {
+        assert!(
+            client
+                .send_data(10_000 + i * 1000, format!("a{i}").as_bytes())
+                .is_some(),
+            "cwnd admits a fresh send"
+        );
+    }
+    for i in 0..3 {
+        server.recv_once(1000 + i * 100);
+    }
+    server.send_ack();
+    client.recv_once(50_000);
+
+    assert_eq!(client.rt.in_flight(), 0, "all packets retired");
+    assert_eq!(client.rt.packets_lost(), 0, "no loss is declared");
+    assert_eq!(server.session_delivered, 3, "three logical deliveries");
+    assert_eq!(server.session_duplicates, 0, "no duplicate suppression");
+    assert_eq!(server.session_conflicts, 0, "no conflict");
+    match client.poll_health(100) {
+        neko_carrier::RuntimeEvent::HealthSample(state) => assert!(
+            !matches!(
+                state,
+                neko_carrier::HealthState::Degraded | neko_carrier::HealthState::Failed
+            ),
+            "a clean resolved interval must not degrade or fail the path"
+        ),
+        other => panic!("expected one fresh health sample, got {other:?}"),
+    }
+}
+
+#[test]
+fn scenario_lost_ack_recovers_via_pto_replacement_without_duplicate_delivery() {
+    let (client_sock, server_sock) = UdpLoopbackPair::new(UdpLimits {
+        max_datagram_bytes: 4600,
+    })
+    .unwrap();
+    let (cs, ss) = pair(&client_sock, &server_sock);
+    let mut client = ReliableUdpPeer::new(&client_sock, cs, 1);
+    let mut server = ReliableUdpPeer::new(&server_sock, ss, 1);
+
+    client.send_data(0, b"ackloss");
+    server.recv_once(0);
+    assert_eq!(server.session_delivered, 1);
+    // The receiver's ACK is produced but never reaches the sender: consumed
+    // here and discarded, which is the deterministic lab-only ACK-loss seam.
+    assert!(
+        server.rt.poll_outgoing_ack(0).is_some(),
+        "an ack-eliciting packet creates exactly one pending ACK"
+    );
+    assert_eq!(client.rt.in_flight(), 1, "sender still awaits resolution");
+
+    // PTO selects the stable frame and the caller re-encodes it under a FRESH
+    // packet number/nonce; the frame identity is unchanged.
+    client.pto_retransmit(1000);
+    server.recv_once(1000);
+    assert_eq!(
+        server.session_delivered, 1,
+        "the replacement must not re-deliver the same logical identity"
+    );
+    assert_eq!(server.session_duplicates, 1, "duplicate suppressed once");
+    server.send_ack();
+    client.recv_once(5000);
+    assert_eq!(
+        client.rt.in_flight(),
+        0,
+        "replacement ACK retires the frame"
+    );
+    assert_eq!(client.rt.packets_lost(), 0, "no loss was declared");
+}
+
+#[test]
+fn scenario_replacement_delivered_first_suppresses_the_late_original() {
+    let (client_sock, server_sock) = UdpLoopbackPair::new(UdpLimits {
+        max_datagram_bytes: 4600,
+    })
+    .unwrap();
+    let (cs, ss) = pair(&client_sock, &server_sock);
+    let mut client = ReliableUdpPeer::new(&client_sock, cs, 1);
+    let mut server = ReliableUdpPeer::new(&server_sock, ss, 1);
+
+    client.send_data_at(0, 0, b"late");
+    // The original never arrives: it is deterministically dropped on the wire
+    // before the receiver can read it.
+    assert!(server_sock.recv_datagram().unwrap().is_some());
+    client.pto_retransmit(1000);
+    server.recv_once(1000);
+    assert_eq!(
+        server.session_delivered, 1,
+        "the retransmission delivers the logical identity first"
+    );
+
+    // A late byte-identical copy of the same logical identity (fresh packet
+    // number) is suppressed by Session semantics, not redelivered.
+    client.send_data_at(2000, 0, b"late");
+    server.recv_once(2000);
+    assert_eq!(
+        server.session_delivered, 1,
+        "late original not re-delivered"
+    );
+    assert_eq!(
+        server.session_duplicates, 1,
+        "late original suppressed once"
+    );
+    assert_eq!(
+        server.session_conflicts, 0,
+        "identical bytes are not a conflict"
+    );
+}
+
+#[test]
+fn scenario_plaintext_bound_refusal_is_atomic_and_typed() {
+    // Oversized frame: the bounded owner refuses before any recovery packet,
+    // Reno charge or packet->frame entry exists. Exit `FrameTooLarge` is
+    // distinct from `Conflict` and `Capacity`.
+    let mut rt = neko_carrier::ReliableUdpRuntime::new(1, 1200).unwrap();
+    assert_eq!(
+        rt.on_packet_sent(0, 0, 400, FrameId(1), &vec![b'x'; 8193]),
+        Err(PathRecoveryError::Retransmit(
+            RetransmitError::FrameTooLarge
+        ))
+    );
+    assert_eq!(rt.in_flight(), 0, "refused send recorded no packet");
+    assert_eq!(
+        rt.recovery_bytes_in_flight(),
+        0,
+        "refused send charged no bytes"
+    );
+    assert!(rt.pto_probe().is_empty(), "refused frame owns no plaintext");
+}
+
+#[test]
+fn scenario_clean_recovery_after_old_loss_does_not_replay_it() {
+    let (client_sock, server_sock) = UdpLoopbackPair::new(UdpLimits {
+        max_datagram_bytes: 4600,
+    })
+    .unwrap();
+    let (cs, ss) = pair(&client_sock, &server_sock);
+    let mut client = ReliableUdpPeer::new(&client_sock, cs, 1);
+    let mut server = ReliableUdpPeer::new(&server_sock, ss, 1);
+
+    // Six single-byte records: enough spread for the recovery engine to declare
+    // the older packets lost when only the newest is acknowledged.
+    let mut numbers = Vec::new();
+    for i in 0..6u64 {
+        numbers.push(client.send_data(10_000 + i * 1000, b"r").unwrap());
+    }
+    for _ in 0..6 {
+        server.recv_once(0);
+    }
+    // ACK only the newest packet: the older ones are newly declared lost.
+    let mut only_newest = AckRanges::new(8).unwrap();
+    only_newest.insert(*numbers.last().unwrap()).unwrap();
+    client.rt.apply_ack(&only_newest, 50_000, 0).unwrap();
+    let lost_after_bad = client.rt.packets_lost();
+    assert!(lost_after_bad >= 1, "the older packets are declared lost");
+    assert!(
+        matches!(
+            client.poll_health(100),
+            neko_carrier::RuntimeEvent::HealthSample(_)
+        ),
+        "the newly resolved loss is fresh health evidence"
+    );
+
+    // A later ACK retires everything still outstanding: the interval has no new
+    // loss, so the old loss must not be replayed as fresh bad evidence.
+    let mut everything = AckRanges::new(8).unwrap();
+    for n in &numbers {
+        everything.insert(*n).unwrap();
+    }
+    client.rt.apply_ack(&everything, 60_000, 0).unwrap();
+    assert_eq!(client.rt.in_flight(), 0, "recovery completed cleanly");
+    assert_eq!(client.rt.packets_lost(), lost_after_bad, "no new loss");
+    match client.poll_health(101) {
+        neko_carrier::RuntimeEvent::HealthSample(state) => assert!(
+            !matches!(
+                state,
+                neko_carrier::HealthState::Degraded | neko_carrier::HealthState::Failed
+            ),
+            "a clean resolved interval must not replay old loss as bad evidence"
+        ),
+        other => panic!("expected a fresh health sample, got {other:?}"),
+    }
+    assert_eq!(server.session_delivered, 6);
+}
+
+#[test]
+fn scenario_invalid_standby_never_produces_a_false_switch() {
+    let (client_sock, server_sock) = UdpLoopbackPair::new(UdpLimits {
+        max_datagram_bytes: 4600,
+    })
+    .unwrap();
+    let (cs, _ss) = pair(&client_sock, &server_sock);
+    let mut client = ReliableUdpPeer::new(&client_sock, cs, 1);
+    // Deliberately do NOT mark the TCP standby ready.
+    for i in 0..3 {
+        let _ = client
+            .rt
+            .manager_mut()
+            .observe_readiness(UDP, true, true, i);
+    }
+    client.rt.activate_udp(2);
+
+    let mut switched = false;
+    let mut degradation_attempted = false;
+    for i in 0..12u64 {
+        client.send_data(100_000 + i * 50_000, b"is");
+        client.pto_retransmit(101_000 + i * 50_000);
+        match client.poll_health(200 + i) {
+            neko_carrier::RuntimeEvent::WarmFallback(_) => {
+                switched = true;
+                break;
+            }
+            neko_carrier::RuntimeEvent::FallbackFailed => degradation_attempted = true,
+            _ => {}
+        }
+    }
+    assert!(
+        !switched,
+        "no switch may be fabricated without a ready standby"
+    );
+    assert!(
+        degradation_attempted,
+        "the bad-evidence epochs must actually attempt the promotion"
+    );
+    assert_ne!(
+        client.rt.manager().active(),
+        Some(TCP),
+        "TCP must never become active without a ready standby"
+    );
 }
