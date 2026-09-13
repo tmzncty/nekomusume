@@ -4450,8 +4450,12 @@ pub enum RuntimeEvent {
     /// A fresh health observation was produced for the path.
     HealthSample(HealthState),
     /// Degradation crossed the hysteresis and the warm TCP standby was
-    /// automatically promoted (UDP failed -> TCP active).
-    WarmFallback,
+    /// automatically promoted — carries the real switch event for the caller
+    /// to record as switch evidence (separate from health evidence).
+    WarmFallback(ConcurrentSwitchEvent),
+    /// Degradation was detected but the UDP fail or TCP promote transition
+    /// failed — explicitly reported, never silently treated as a fallback.
+    FallbackFailed,
     /// Nothing actionable this poll.
     Idle,
 }
@@ -4601,6 +4605,11 @@ impl ReliableUdpRuntime {
 
     /// Poll fresh health evidence and, on Degraded, automatically fail UDP and
     /// promote the warm TCP standby. Returns the emitted event (or Idle).
+    /// Poll fresh health evidence and, on Degraded, automatically fail UDP and
+    /// promote the warm TCP standby. `WarmFallback` is reported ONLY after the
+    /// promotion actually succeeded — a failed `fail`/`activate` is propagated
+    /// as `FallbackFailed`, never silently treated as a handled fallback. The
+    /// real switch event is returned for the caller's observability sink.
     pub fn poll_health(&mut self, now_ms: u64) -> RuntimeEvent {
         match self.recovery.fresh_health_sample() {
             None => RuntimeEvent::Idle,
@@ -4613,16 +4622,24 @@ impl ReliableUdpRuntime {
                     && self.manager.state(self.path).is_ok()
                     && self.manager.state(self.tcp).is_ok()
                 {
-                    let _ = self
+                    // Fail UDP first; a failed transition must not fabricate a
+                    // successful fallback.
+                    if self
                         .manager
-                        .fail(self.path, SwitchReason::UdpPathDegraded, now_ms);
-                    let _ = self.manager.activate(
+                        .fail(self.path, SwitchReason::UdpPathDegraded, now_ms)
+                        .is_err()
+                    {
+                        return RuntimeEvent::FallbackFailed;
+                    }
+                    return match self.manager.activate(
                         self.tcp,
                         SwitchReason::UdpPathDegraded,
                         now_ms,
                         true,
-                    );
-                    return RuntimeEvent::WarmFallback;
+                    ) {
+                        Ok(event) => RuntimeEvent::WarmFallback(event),
+                        Err(_) => RuntimeEvent::FallbackFailed,
+                    };
                 }
                 RuntimeEvent::HealthSample(state)
             }
@@ -5068,7 +5085,7 @@ mod path_recovery_tests {
                     .unwrap();
                 pn += 1;
             }
-            if rt.poll_health(200 + i) == RuntimeEvent::WarmFallback {
+            if matches!(rt.poll_health(200 + i), RuntimeEvent::WarmFallback(_)) {
                 fell = true;
                 break;
             }
@@ -5084,6 +5101,21 @@ mod path_recovery_tests {
                 generation: PathGeneration(1)
             })
         );
+    }
+
+    #[test]
+    fn fallback_is_not_fabricated_when_tcp_not_ready() {
+        // Do NOT mark the TCP standby ready — a Degraded UDP must not produce a
+        // fabricated WarmFallback when promotion cannot actually succeed.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.activate_udp(0);
+        // Drive a resolved PTO outcome to force fresh health evidence.
+        rt.on_packet_sent(0, 0, 400, FrameId(1), b"x").unwrap();
+        rt.pto_probe();
+        let ev = rt.poll_health(10);
+        // Not WarmFallback (no ready standby); it is either a health sample or
+        // an explicit FallbackFailed — never a fabricated successful switch.
+        assert!(!matches!(ev, RuntimeEvent::WarmFallback(_)));
     }
 
     #[test]
