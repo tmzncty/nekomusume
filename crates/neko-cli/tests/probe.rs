@@ -1831,6 +1831,106 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
     );
 }
 #[test]
+fn reliable_udp_failover_settles_packet_acks_to_zero_in_flight() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-failover-server");
+    let cp = tmp("r9-failover-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "8",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-server-test-01",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "6",
+            "--reliable-udp",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-client-test-01",
+        ])
+        .output()
+        .unwrap();
+    let (server_status, server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "stdout={client_log} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(server_status.success(), "stdout={server_log}");
+    // R9-2: reliable-UDP packet ACKs retire all in-flight to zero; Session
+    // DeliveryAck stays a separate logical confirmation; packet ACK is emitted
+    // as authenticated Carrier feedback on the server side.
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_in_flight_settled\""),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains("\"remaining_in_flight\":0"),
+        "{client_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"udp_packet_ack_sent\""),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"udp_delivery_ack_sent\""),
+        "{server_log}"
+    );
+}
+#[test]
 fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");

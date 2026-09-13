@@ -917,6 +917,9 @@ fn recv_udp_delivery_ack(
     noise_response: &[u8],
     deadline: Instant,
     diagnostic: &mut dyn FnMut(&'static str),
+    // R9: optional reliable-UDP runtime — authenticated packet ACK datagrams
+    // are fed to `apply_ack` while waiting for the Session DeliveryAck.
+    mut rt: Option<&mut neko_carrier::ReliableUdpRuntime>,
 ) -> Result<usize, &'static str> {
     let mut buf = [0u8; 65536];
     let mut malformed = 0usize;
@@ -936,7 +939,34 @@ fn recv_udp_delivery_ack(
             Ok((n, _)) if buf[..n] == *noise_response => diagnostic("duplicate_noise_response"),
             Ok((n, _)) => match secure.open_unreliable(&buf[..n]) {
                 Ok(plain) if delivery_ack_matches(&plain, expected) => return Ok(n),
-                _ => {
+                Ok(plain) => {
+                    // An authenticated Carrier packet ACK — apply to recovery.
+                    if let Some(rt) = rt.as_deref_mut() {
+                        if let Ok(rec) = neko_wire::decode(&plain)
+                            && rec.record_type == neko_wire::RecordType::Ack
+                            && let Ok(ack) = neko_wire::decode_ack(&rec.payload)
+                            && let Ok(ranges) = neko_reliable::AckRanges::from_ranges(
+                                32,
+                                &ack.ranges
+                                    .iter()
+                                    .map(|w| neko_reliable::AckRange {
+                                        start: w.start,
+                                        end: w.end,
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )
+                        {
+                            let _ = rt.apply_ack(&ranges, 0, ack.ack_delay_us);
+                        }
+                        continue;
+                    }
+                    malformed += 1;
+                    diagnostic("malformed_or_unadmitted");
+                    if malformed >= MAX_POST_HANDSHAKE_MALFORMED {
+                        return Err("UDP delivery acknowledgement malformed bound exceeded");
+                    }
+                }
+                Err(_) => {
                     malformed += 1;
                     diagnostic("malformed_or_unadmitted");
                     if malformed >= MAX_POST_HANDSHAKE_MALFORMED {
@@ -1072,6 +1102,10 @@ fn failover_server(args: &[String]) {
     let tcp_local_port = tcp.local_addr().map(|a| a.port()).unwrap_or(tp);
     let mut runtime =
         SessionRuntime::new(SessionId(7001), runtime_limits(bytes, count), 0).unwrap();
+    // R9: bounded receiver-side reliable-UDP runtime for packet ACK tracking.
+    // Session delivery/dedup stays in `runtime` (SessionRuntime) above Carrier.
+    let mut server_rt = neko_carrier::ReliableUdpRuntime::new(1, 1200)
+        .unwrap_or_else(|_| fail("server reliable udp runtime"));
     runtime.open_stream(StreamId(1), 0).unwrap();
     emit_diagnostic(
         args,
@@ -1287,7 +1321,17 @@ fn failover_server(args: &[String]) {
                     1,
                     &format!(",\"ciphertext_bytes\":{}", n),
                 );
+                let reliable_udp = args.iter().any(|a| a == "--reliable-udp");
                 if let Ok(plain) = ss.open_unreliable(&buf[..n]) {
+                    // R9: the authenticated outer AEAD sequence is the Carrier
+                    // recovery packet number — record receipt and emit a packet
+                    // ACK as Carrier feedback alongside the Session DeliveryAck.
+                    let pn = u64::from_be_bytes(buf[..8].try_into().unwrap_or([0; 8]));
+                    if reliable_udp {
+                        server_rt
+                            .on_packet_received(pn, true)
+                            .unwrap_or_else(|_| fail("r9 server on_packet_received"));
+                    }
                     if let Ok(ProcessMessage::Data { session, record }) =
                         ProcessMessage::decode(&plain)
                     {
@@ -1333,6 +1377,29 @@ fn failover_server(args: &[String]) {
                                 preauth.release(admission);
                             }
                             handshake_cache = None;
+                            // R9 packet ACK: authenticated Carrier feedback for
+                            // the received packet number, before/separate from
+                            // the Session DeliveryAck logical confirmation.
+                            if reliable_udp {
+                                if let Some(ranges) = server_rt.poll_outgoing_ack(0) {
+                                    let pack = neko_wire::encode(&neko_wire::Record {
+                                        record_type: neko_wire::RecordType::Ack,
+                                        flags: 0,
+                                        payload: neko_wire::encode_ack(&ranges).unwrap(),
+                                    })
+                                    .unwrap();
+                                    if let Ok(sealed_ack) = ss.seal_unreliable(&pack) {
+                                        let _ = udp.send_to(&sealed_ack, peer);
+                                        emit_diagnostic(
+                                            args,
+                                            "server",
+                                            "udp_packet_ack_sent",
+                                            0,
+                                            "",
+                                        );
+                                    }
+                                }
+                            }
                             if cease_udp_replies_after.is_none_or(|point| udp_replies < point) {
                                 udp.send_to(&ack, peer).unwrap();
                                 udp_replies += 1;
@@ -1912,6 +1979,34 @@ fn failover_client(args: &[String]) {
     if first_data_delay_ms > 0 {
         std::thread::sleep(Duration::from_millis(first_data_delay_ms));
     }
+    // R9 reliable-UDP mode: the post-auth application transport runs the
+    // committed ReliableUdpRuntime — cwnd admission, packet->stable-FrameId
+    // recording, socket send, authenticated packet ACKs, in-flight settlement.
+    // Session DeliveryAck remains a separate logical confirmation path.
+    let reliable_udp = args.iter().any(|a| a == "--reliable-udp");
+    let mut rt = if reliable_udp {
+        let mut r = neko_carrier::ReliableUdpRuntime::new(1, 1200)
+            .unwrap_or_else(|_| fail("r9 reliable udp runtime"));
+        r.ready_standby(0);
+        Some(r)
+    } else {
+        None
+    };
+    if let Some(rt) = rt.as_mut() {
+        // cwnd admission before committing Session byte offset/recovery owner.
+        if !rt.can_send(encrypted.len() as u64) {
+            fail("r9 cwnd refused initial send");
+        }
+        let pn = u64::from_be_bytes(encrypted[..8].try_into().unwrap());
+        rt.on_packet_sent(
+            pn,
+            0,
+            encrypted.len() as u64,
+            neko_reliable::FrameId(udp_record.offset),
+            &udp_record.data,
+        )
+        .unwrap_or_else(|_| fail("r9 record send"));
+    }
     u.send_to(&encrypted, target).unwrap();
     emit_diagnostic(
         args,
@@ -1943,6 +2038,7 @@ fn failover_client(args: &[String]) {
         &noise_response,
         application_deadline,
         &mut admission_diagnostic,
+        rt.as_mut(),
     )
     .unwrap_or_else(|e| fail(&format!("UDP health observation failed: {e:?}")));
     delivery
@@ -1960,6 +2056,49 @@ fn failover_client(args: &[String]) {
         1,
         &format!(",\"ciphertext_bytes\":{}", n),
     );
+    // R9 settlement: drain authenticated Carrier packet ACKs until the runtime
+    // reports zero in-flight, or the bounded application deadline passes.
+    if let Some(rt) = rt.as_mut() {
+        let settle_deadline = Instant::now() + Duration::from_secs(secs.min(10));
+        while rt.in_flight() > 0 && Instant::now() < settle_deadline {
+            match recv_udp_until(&u, &mut buf, settle_deadline, &AtomicBool::new(false))
+                .unwrap_or(UdpWait::Deadline)
+            {
+                UdpWait::Datagram(n2, peer2) if peer2 == target => {
+                    if let Ok(plain2) = us.open_unreliable(&buf[..n2]) {
+                        if let Ok(ProcessMessage::Data { .. }) = ProcessMessage::decode(&plain2) {
+                            // Session Data is not Carrier ACK — ignore here.
+                        }
+                        // Try to decode as a Carrier ACK record over the wire.
+                        if let Ok(rec) = neko_wire::decode(&plain2)
+                            && rec.record_type == neko_wire::RecordType::Ack
+                            && let Ok(ack) = neko_wire::decode_ack(&rec.payload)
+                            && let Ok(ranges) = neko_reliable::AckRanges::from_ranges(
+                                32,
+                                &ack.ranges
+                                    .iter()
+                                    .map(|w| neko_reliable::AckRange {
+                                        start: w.start,
+                                        end: w.end,
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )
+                        {
+                            let _ = rt.apply_ack(&ranges, 0, ack.ack_delay_us);
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        emit_diagnostic(
+            args,
+            "client",
+            "r9_udp_in_flight_settled",
+            0,
+            &format!(",\"remaining_in_flight\":{}", rt.in_flight()),
+        );
+    }
     let health_limits = HealthLimits {
         degrade_after: 2,
         fail_after: 3,
@@ -2705,6 +2844,7 @@ fn failover_client(args: &[String]) {
             &noise_response,
             deadline,
             &mut |_| {},
+            None,
         )
         .unwrap_or_else(|_| fail("post-return UDP DeliveryAck timeout"));
         delivery
@@ -4652,6 +4792,7 @@ mod cli_regression_tests {
             b"noise",
             Instant::now() + Duration::from_secs(1),
             &mut |d| diagnostics.push(d),
+            None,
         )
         .unwrap();
         assert_eq!(n, sealed.len());
@@ -4690,6 +4831,7 @@ mod cli_regression_tests {
             b"noise",
             Instant::now() + Duration::from_secs(1),
             &mut |_| {},
+            None,
         )
         .unwrap_err();
         assert_eq!(err, "UDP delivery acknowledgement malformed bound exceeded");
