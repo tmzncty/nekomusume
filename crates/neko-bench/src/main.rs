@@ -22,10 +22,19 @@ struct Stat {
 fn stat(mut xs: Vec<u128>, failures: usize) -> Stat {
     xs.sort_unstable();
     let n = xs.len();
+    // Align with the repository's existing netns P95 convention: the order
+    // statistic index is `round((n - 1) * 0.95)` on sorted successful samples
+    // (index 94 for n=100, 949 for n=1000), not `n * 95 / 100` (index 95).
+    // Median stays the lower-middle `n / 2`, matching the same convention.
+    let p95_index = if n == 0 {
+        0
+    } else {
+        ((n - 1) as f64 * 0.95).round() as usize
+    };
     Stat {
         n,
         median: xs.get(n / 2).copied().unwrap_or(0),
-        p95: xs.get(n.saturating_mul(95) / 100).copied().unwrap_or(0),
+        p95: xs.get(p95_index).copied().unwrap_or(0),
         failures,
     }
 }
@@ -202,5 +211,22 @@ mod tests {
         assert_eq!(s.median, 0);
         assert_eq!(s.p95, 0);
         assert_eq!(s.failures, 3);
+    }
+
+    #[test]
+    fn p95_order_statistic_matches_repository_convention() {
+        // P95 index is round((n-1) * 0.95) on sorted samples — the same order
+        // statistic used by run-netns.sh — so the convention is reproducible.
+        for (n, expected_index) in [(1usize, 0usize), (2, 1), (20, 18), (100, 94), (1000, 949)] {
+            // Distinct ascending values let the chosen index be read back.
+            let xs: Vec<u128> = (0..n as u128).map(|v| v + 1).collect();
+            let s = stat(xs, 0);
+            assert_eq!(
+                s.p95,
+                (expected_index + 1) as u128,
+                "n={n} expected index {expected_index}"
+            );
+            assert_eq!(s.median, (n / 2 + 1) as u128, "n={n} median index n/2");
+        }
     }
 }

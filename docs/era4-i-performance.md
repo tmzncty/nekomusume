@@ -18,7 +18,10 @@ median, P95, and failures in nanoseconds. Median and P95 are computed from the
 excluded from the latency distribution, so a failure cannot depress the median
 or fabricate a faster result. The per-operation `iterations` field reports the
 number of successful samples actually timed (equal to the requested iteration
-count when `failures == 0`). The workload is local and synchronous:
+count when `failures == 0`). On `n` sorted successful samples the order
+statistics are `median = xs[n / 2]` and `p95 = xs[round((n - 1) * 0.95)]`,
+matching the repository's netns benchmark convention (e.g. index 94 for
+n = 100, 949 for n = 1000); an empty successful distribution reports 0. The workload is local and synchronous:
 wire frame encode/decode, outer record encode/decode, Noise transport seal/open,
 `FairScheduler::next_frame`, and deterministic recovery ACK/loss processing.
 `instrumentation_counter` is only a proxy for the cost of one explicit counter
