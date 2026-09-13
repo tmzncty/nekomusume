@@ -8,7 +8,7 @@
 //! delivery — they only feed packet-level health evidence.
 use neko_carrier::{
     CarrierHealth, CarrierKind, ConcurrentCarrierManager, ConcurrentLimits, ConcurrentPathKey,
-    HealthLimits, HealthSample, LogicalRangeId, PathGeneration, PathId, PathRecovery, SwitchReason,
+    HealthLimits, LogicalRangeId, PathGeneration, PathId, PathRecovery, SwitchReason,
 };
 use neko_reliable::{AckRanges, FrameId, SentPacket};
 
@@ -65,26 +65,51 @@ fn packet_loss_drives_udp_degrade_then_warm_tcp_fallback_replays_uncertain_once(
     warm(&mut m, TCP, 3);
     m.assign(RANGE, b"payload").unwrap();
 
-    // Real packet loss: send 8, only the largest is ACKed -> 5/8 declared lost
-    // (625/mille), a measured packet-recovery bad sample.
-    for n in 0..8u64 {
-        recovery.on_sent(sent(n)).unwrap();
-    }
-    let mut ack = AckRanges::new(8).unwrap();
-    ack.insert(7).unwrap();
-    recovery.on_ack(1, &ack, 40_000, 0).unwrap();
-    let sample: HealthSample = recovery.health_sample();
-    assert_eq!(sample.loss_per_mille, 625);
-
-    // Feed the packet-recovery evidence into Carrier health until degraded.
-    let mut degraded = false;
-    for _ in 0..4 {
-        if health.observe(PathId(1), sample).unwrap() == neko_carrier::HealthState::Degraded {
-            degraded = true;
+    // Real packet loss across THREE distinct recovery-evidence windows: each
+    // round sends packets and ACKs only the largest so the rest are lost. The
+    // fresh-evidence bridge yields one bad health observation per new evidence
+    // epoch — polling the same cumulative snapshot returns None and cannot be
+    // replayed into several bad observations.
+    let mut packet_no = 0u64;
+    let mut rounds = 0u32;
+    let mut bad_obs = 0u32;
+    let mut poll_only_none = 0u32;
+    loop {
+        for _ in 0..8 {
+            recovery.on_sent(sent(packet_no)).unwrap();
+            packet_no += 1;
+        }
+        let mut ack = AckRanges::new(8).unwrap();
+        ack.insert(packet_no - 1).unwrap();
+        recovery.on_ack(1, &ack, packet_no * 40_000, 0).unwrap();
+        if let Some(s) = recovery.fresh_health_sample() {
+            health.observe(PathId(1), s).unwrap();
+            bad_obs += 1;
+        }
+        // A second poll with no new evidence yields nothing (fresh-evidence).
+        if recovery.fresh_health_sample().is_none() {
+            poll_only_none += 1;
+        }
+        rounds += 1;
+        if health.path(PathId(1)).unwrap().state == neko_carrier::HealthState::Degraded {
             break;
         }
+        if rounds > 12 {
+            panic!("did not degrade under distinct bad evidence");
+        }
     }
-    assert!(degraded, "sustained packet loss degrades UDP path health");
+    assert!(
+        bad_obs >= 2,
+        "degrade needs >= degrade_after bad observations"
+    );
+    // Every evidence epoch produced exactly one observation; the redundant
+    // no-evidence polls produced none — no snapshot is replayed.
+    assert_eq!(poll_only_none, bad_obs, "no epoch replays as extra bad obs");
+    assert_eq!(
+        health.path(PathId(1)).unwrap().state,
+        neko_carrier::HealthState::Degraded,
+        "distinct new bad evidence crosses hysteresis -> Degraded"
+    );
 
     // Degradation fails the active UDP path; the already-ready warm TCP
     // standby is promoted and the uncertain application bytes replay once.

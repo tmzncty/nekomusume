@@ -4048,6 +4048,12 @@ pub struct PathRecovery {
     reno: neko_reliable::Reno,
     packets_sent: u64,
     packets_lost: u64,
+    /// Bumped each time packet-recovery evidence changes (sent/ACK/PTO/loss).
+    /// A health observation may be consumed at most once per evidence epoch so
+    /// that repeated polling of one cumulative snapshot cannot be replayed as
+    /// several distinct bad observations.
+    evidence_epoch: u64,
+    health_epoch: Option<u64>,
 }
 
 /// Outcome of applying an authenticated packet ACK to a path.
@@ -4090,6 +4096,8 @@ impl PathRecovery {
             reno: neko_reliable::Reno::new(mss)?,
             packets_sent: 0,
             packets_lost: 0,
+            evidence_epoch: 0,
+            health_epoch: None,
         })
     }
 
@@ -4113,6 +4121,7 @@ impl PathRecovery {
             self.reno.sent(packet.bytes);
         }
         self.packets_sent = self.packets_sent.saturating_add(1);
+        self.evidence_epoch = self.evidence_epoch.saturating_add(1);
         Ok(())
     }
 
@@ -4136,6 +4145,7 @@ impl PathRecovery {
         self.packets_lost = self
             .packets_lost
             .saturating_add(r.lost_packets.len() as u64);
+        self.evidence_epoch = self.evidence_epoch.saturating_add(1);
         Ok(RecoveryAckOutcome {
             acked_packets: r.acked_packets.clone(),
             lost_packets: r.lost_packets.clone(),
@@ -4154,6 +4164,7 @@ impl PathRecovery {
         max_probe_frames: usize,
     ) -> Result<Vec<neko_reliable::FrameId>, PathRecoveryError> {
         let frames = self.recovery.on_pto(max_probe_frames)?;
+        self.evidence_epoch = self.evidence_epoch.saturating_add(1);
         Ok(frames)
     }
 
@@ -4198,6 +4209,21 @@ impl PathRecovery {
     pub fn rtt_us(&self) -> u64 {
         self.recovery.rtt.smoothed_us
     }
+    /// Fresh-evidence health bridge: returns the current `HealthSample` only
+    /// when packet-recovery evidence changed since the last consumption. The
+    /// same cumulative snapshot cannot be replayed into multiple distinct bad
+    /// observations — a runtime loop that polls with no new sent/ACK/PTO/loss
+    /// evidence gets `None` and cannot advance the bad-observation streak.
+    /// Packet feedback still cannot validate a Path or confirm Session
+    /// delivery; it only produces a packet-level health observation.
+    pub fn fresh_health_sample(&mut self) -> Option<HealthSample> {
+        if self.health_epoch == Some(self.evidence_epoch) {
+            return None;
+        }
+        self.health_epoch = Some(self.evidence_epoch);
+        Some(self.health_sample())
+    }
+
     /// Map authenticated packet-level recovery evidence into a `HealthSample`
     /// for the existing Carrier health domain. This carries only packet
     /// recovery observations (RTT/loss/PTO); it cannot validate a Path or
