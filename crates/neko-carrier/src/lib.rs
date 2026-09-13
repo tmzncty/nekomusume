@@ -4046,6 +4046,8 @@ pub struct PathRecovery {
     next_packet_number: u64,
     recovery: neko_reliable::Recovery,
     reno: neko_reliable::Reno,
+    packets_sent: u64,
+    packets_lost: u64,
 }
 
 /// Outcome of applying an authenticated packet ACK to a path.
@@ -4084,6 +4086,8 @@ impl PathRecovery {
             next_packet_number: 0,
             recovery: neko_reliable::Recovery::default(),
             reno: neko_reliable::Reno::new(mss)?,
+            packets_sent: 0,
+            packets_lost: 0,
         })
     }
 
@@ -4106,6 +4110,7 @@ impl PathRecovery {
         if packet.ack_eliciting {
             self.reno.sent(packet.bytes);
         }
+        self.packets_sent = self.packets_sent.saturating_add(1);
         Ok(())
     }
 
@@ -4126,6 +4131,9 @@ impl PathRecovery {
         let r = self.recovery.on_ack(ack, now_us, ack_delay_us)?;
         self.reno.acked(r.acked_bytes);
         self.reno.lost(r.lost_bytes);
+        self.packets_lost = self
+            .packets_lost
+            .saturating_add(r.lost_packets.len() as u64);
         Ok(RecoveryAckOutcome {
             acked_packets: r.acked_packets,
             lost_packets: r.lost_packets,
@@ -4169,6 +4177,36 @@ impl PathRecovery {
     pub fn bytes_in_flight(&self) -> u64 {
         self.reno.bytes_in_flight
     }
+    /// Packet-recovery counters for health/observability — sent and declared
+    /// lost packet totals. Loss-per-mille is `packets_lost*1000/packets_sent`.
+    pub fn packets_sent(&self) -> u64 {
+        self.packets_sent
+    }
+    pub fn packets_lost(&self) -> u64 {
+        self.packets_lost
+    }
+    /// The current measured RTT in microseconds (0 until a sample exists).
+    pub fn rtt_us(&self) -> u64 {
+        self.recovery.rtt.smoothed_us
+    }
+    /// Map authenticated packet-level recovery evidence into a `HealthSample`
+    /// for the existing Carrier health domain. This carries only packet
+    /// recovery observations (RTT/loss/PTO); it cannot validate a Path or
+    /// confirm Session delivery.
+    pub fn health_sample(&self) -> HealthSample {
+        let loss_per_mille = if self.packets_sent == 0 {
+            0
+        } else {
+            ((self.packets_lost.saturating_mul(1000)) / self.packets_sent).min(u16::MAX as u64)
+                as u16
+        };
+        HealthSample {
+            rtt_us: self.recovery.rtt.smoothed_us,
+            loss_per_mille,
+            pto: self.recovery.pto_count.min(u16::MAX as u32) as u16,
+        }
+    }
+
     /// Mark persistent congestion after repeated PTOs and collapse the window.
     pub fn persistent_congestion(&mut self) -> bool {
         if self.reno.persistent_congestion(self.recovery.pto_count) {
@@ -4275,6 +4313,37 @@ mod path_recovery_tests {
         r.on_ack(7, &ack_of(0), 10_000, 0).unwrap();
         assert_eq!(r.bytes_in_flight(), 0);
         assert!(r.can_send(1200));
+    }
+
+    #[test]
+    fn recovery_evidence_maps_to_health_sample_without_session_delivery() {
+        let mut r = recovery();
+        let mut health = CarrierHealth::new(HealthLimits::default()).unwrap();
+        // Baseline: no traffic -> clean sample, path goes Healthy on Progress.
+        let clean = r.health_sample();
+        assert_eq!(clean.loss_per_mille, 0);
+        assert_eq!(health.observe(PathId(1), clean), Ok(HealthState::Healthy));
+        // Send 8; ACK only the largest so packets 0..4 fall out of the reorder
+        // window (largest - n >= PACKET_THRESHOLD=3) -> 5/8 lost = 625/mille.
+        for n in 0..8u64 {
+            r.on_sent(sent(n, 400, &[n])).unwrap();
+        }
+        let mut ack = AckRanges::new(8).unwrap();
+        ack.insert(7).unwrap();
+        r.on_ack(7, &ack, 40_000, 0).unwrap();
+        let bad = r.health_sample();
+        assert_eq!(bad.loss_per_mille, 625);
+        // Feed it as packet-recovery evidence: this is a MeasuredSample health
+        // observation on the Carrier path, not Path validation or Session
+        // delivery — observe() degrades on enough bad samples.
+        let mut degraded_seen = false;
+        for _ in 0..4 {
+            if health.observe(PathId(1), bad).unwrap() == HealthState::Degraded {
+                degraded_seen = true;
+                break;
+            }
+        }
+        assert!(degraded_seen, "sustained 250/mille loss degrades the path");
     }
 
     #[test]
