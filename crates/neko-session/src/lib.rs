@@ -1257,15 +1257,7 @@ impl SessionRuntime {
         }
         self.check(now_ms)?;
         self.state = RuntimeState::Closed;
-        self.send.clear();
-        self.recv.clear();
-        self.received.clear();
-        self.confirmed.clear();
-        self.send_inflight.clear();
-        self.recv_window_used.clear();
-        self.session_send_inflight = 0;
-        self.session_recv_window_used = 0;
-        self.queued_bytes = 0;
+        self.clear_runtime_state();
         self.event(now_ms, RuntimeEventKind::SessionClosed);
         Ok(())
     }
@@ -1560,15 +1552,7 @@ impl SessionRuntime {
         }
         self.cancelled = true;
         self.state = RuntimeState::Error;
-        self.send.clear();
-        self.recv.clear();
-        self.received.clear();
-        self.confirmed.clear();
-        self.send_inflight.clear();
-        self.recv_window_used.clear();
-        self.session_send_inflight = 0;
-        self.session_recv_window_used = 0;
-        self.queued_bytes = 0;
+        self.clear_runtime_state();
         self.event(now_ms, RuntimeEventKind::Error);
         Ok(())
     }
@@ -1578,9 +1562,7 @@ impl SessionRuntime {
         }
         if now_ms.saturating_sub(self.last_activity_ms) >= self.limits.idle_timeout_ms {
             self.state = RuntimeState::Closed;
-            self.send.clear();
-            self.recv.clear();
-            self.queued_bytes = 0;
+            self.clear_runtime_state();
             self.event(now_ms, RuntimeEventKind::SessionClosed);
             return Err(RuntimeError::IdleTimeout);
         }
@@ -1588,12 +1570,27 @@ impl SessionRuntime {
             && now_ms >= d
         {
             self.state = RuntimeState::Closed;
-            self.send.clear();
-            self.recv.clear();
-            self.queued_bytes = 0;
+            self.clear_runtime_state();
             self.event(now_ms, RuntimeEventKind::SessionClosed);
         }
         Ok(())
+    }
+    /// Releases every runtime-owned in-progress state on terminalization
+    /// (remote close, cancel, idle timeout, close deadline): send/recv queues,
+    /// dedup history, confirmation watermarks, per-stream and session window
+    /// accounting, and queued bytes. Lifetime/cumulative facts that
+    /// intentionally survive (`total_bytes`, `last_activity_ms`, the event
+    /// log, `next_event`, `cancelled`) are preserved.
+    fn clear_runtime_state(&mut self) {
+        self.send.clear();
+        self.recv.clear();
+        self.received.clear();
+        self.confirmed.clear();
+        self.send_inflight.clear();
+        self.recv_window_used.clear();
+        self.session_send_inflight = 0;
+        self.session_recv_window_used = 0;
+        self.queued_bytes = 0;
     }
     fn check(&mut self, now_ms: u64) -> Result<(), RuntimeError> {
         if self.cancelled || self.state == RuntimeState::Error {
@@ -1929,6 +1926,72 @@ mod runtime_tests {
             Err(RuntimeError::Terminal)
         );
     }
+
+    #[test]
+    fn idle_timeout_releases_all_runtime_owned_state() {
+        // Terminal cleanup must be symmetric: an idle-timeout close releases the
+        // same bounded runtime-owned state as close_remote/cancel — send/recv
+        // queues, dedup history, confirmation watermarks, per-stream and
+        // session window/inflight counters — not just send/recv/queued_bytes.
+        let mut r = SessionRuntime::new(SessionId(1), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        r.queue_send(StreamId(1), b"ab", 1).unwrap();
+        r.receive(
+            InboundRecord {
+                stream: StreamId(1),
+                offset: 0,
+                data: b"xy".to_vec(),
+            },
+            2,
+        )
+        .unwrap();
+        r.delivery_ack(StreamId(1), 0, 2, 3).unwrap();
+        // Sanity: runtime-owned state is populated before timeout.
+        assert!(
+            r.send_inflight.contains_key(&StreamId(1))
+                || r.queued_bytes > 0
+                || !r.received.is_empty()
+                || !r.confirmed.is_empty()
+        );
+        // Last activity was receive() at t=2; idle_timeout=10 -> timeout at t>=12.
+        assert_eq!(r.tick(12), Err(RuntimeError::IdleTimeout));
+        assert_eq!(r.state(), RuntimeState::Closed);
+        // All bounded runtime-owned state released, not only send/recv.
+        assert!(r.send.is_empty() && r.recv.is_empty());
+        assert!(r.received.is_empty());
+        assert!(r.confirmed.is_empty());
+        assert!(r.send_inflight.is_empty() && r.recv_window_used.is_empty());
+        assert_eq!(r.session_send_inflight, 0);
+        assert_eq!(r.session_recv_window_used, 0);
+        assert_eq!(r.queued_bytes(), 0);
+        // Cumulative lifetime facts survive terminalization.
+        assert!(r.total_bytes() > 0);
+    }
+
+    #[test]
+    fn close_deadline_releases_all_runtime_owned_state() {
+        let mut r = SessionRuntime::new(SessionId(1), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        r.receive(
+            InboundRecord {
+                stream: StreamId(1),
+                offset: 0,
+                data: b"xy".to_vec(),
+            },
+            1,
+        )
+        .unwrap();
+        r.close_graceful(2).unwrap();
+        assert_eq!(r.state(), RuntimeState::Closing);
+        // Deadline expiry closes and releases runtime-owned state.
+        assert_eq!(r.tick(2 + 5 + 1), Ok(()));
+        assert_eq!(r.state(), RuntimeState::Closed);
+        assert!(r.received.is_empty() && r.confirmed.is_empty());
+        assert!(r.send_inflight.is_empty() && r.recv_window_used.is_empty());
+        assert_eq!(r.session_send_inflight, 0);
+        assert_eq!(r.session_recv_window_used, 0);
+    }
+
     #[test]
     fn observable_event_json_is_stable_and_monotonic() {
         let mut r = SessionRuntime::new(SessionId(9), limits(), 0).unwrap();
