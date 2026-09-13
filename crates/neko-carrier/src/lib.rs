@@ -4934,6 +4934,60 @@ mod path_recovery_tests {
     }
 
     #[test]
+    fn pto_only_health_sample_cannot_erase_a_later_resolved_loss() {
+        // H-RUDP-001D regression (reviewer mandatory cases 1 and 4): a PTO
+        // health sample must not consume the send-time denominator, otherwise a
+        // later ACK that newly declares old packets lost yields delta_sent == 0
+        // and a falsely clean zero-loss sample.
+        let mut r = recovery();
+        for n in 0..4u64 {
+            r.on_sent(sent(n, 400, &[n])).unwrap();
+        }
+        // A PTO that schedules probe frames IS a resolved outcome and emits one
+        // sample — but it resolved no packets, so there is no loss to report.
+        assert_eq!(
+            r.on_pto(4).unwrap(),
+            vec![FrameId(0), FrameId(1), FrameId(2), FrameId(3)]
+        );
+        let pto = r
+            .fresh_health_sample()
+            .expect("a PTO that schedules probes is a resolved outcome");
+        assert_eq!(
+            pto.loss_per_mille, 0,
+            "a PTO that resolved no packets cannot report loss"
+        );
+        // No send intervenes. The later ACK retires packet 3 and declares the
+        // three older packets lost, so the resolved interval is 1 acked + 3 lost
+        // -> 750/mille. Under the old send-time denominator this interval had
+        // delta_sent == 0 and was reported as a clean zero-loss sample.
+        let lost_before = r.packets_lost();
+        let mut a = AckRanges::new(8).unwrap();
+        a.insert(3).unwrap();
+        r.on_ack(7, &a, 50_000, 0).unwrap();
+        let newly_lost = r.packets_lost() - lost_before;
+        let after = r
+            .fresh_health_sample()
+            .expect("the newly resolved loss is fresh evidence");
+        // Exactly one packet was acked by this ACK; the resolved denominator is
+        // therefore 1 acked + N newly lost, and the ratio is N/(1+N). The key
+        // assertion is that this is non-zero: under the old send-time
+        // denominator the interval had delta_sent == 0 and reported 0/mille.
+        assert!(
+            newly_lost >= 1,
+            "the later ACK must resolve at least one loss"
+        );
+        assert_eq!(
+            u64::from(after.loss_per_mille),
+            newly_lost * 1000 / (1 + newly_lost),
+            "resolved denominator must be 1 acked + {newly_lost} lost"
+        );
+        assert!(
+            after.loss_per_mille > 0,
+            "a resolved loss after a PTO-only sample must not be erased to 0"
+        );
+    }
+
+    #[test]
     fn fresh_health_bridge_emits_one_observation_per_resolved_outcome() {
         let mut r = recovery();
         let mut health = CarrierHealth::new(HealthLimits::default()).unwrap();
