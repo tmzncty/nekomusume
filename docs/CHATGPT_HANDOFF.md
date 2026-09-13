@@ -1,220 +1,209 @@
-# ChatGPT reviewer handoff — R1–R6 accepted; R7 integration has blocking correctness findings
+# ChatGPT reviewer handoff — reliable-UDP R7 advancing; two HIGH integration findings remain
 
 ## Reviewed repository truth
 
-- Current default-branch developer HEAD reviewed: exact `a20eb72ab14b2127a9056445bb2a79fec785844a` (`test(carrier): automatic health-driven fallback in runtime fixture (Q5/R7)`).
-- This is a substantial implementation sequence, not documentation churn: `main` advanced 30 commits from reviewer phase-opening `b505a60`; `neko-carrier` gained the path-local reliable-UDP owner plus ACK tracking/retransmit/runtime/failover/observability tests, and `neko-wire` gained bounded ACK/packet grammar + decode fuzz coverage.
-- No open PRs.
-- Developer-local clean exact-tree provenance exists for exact `92557ea` after the Q1–Q3 R1–R6 repairs (`docs/local-gate-92557ea-20260913.md`): `scripts/check.sh`, `git diff --check`, clean tree, timestamps/host/Rust all recorded green.
-- Current exact `a20eb72` does **not** have equivalent persisted developer-local exact-tree provenance.
-- GitHub-hosted current-head evidence is split: `nightly decode fuzz smoke` is green; `stable checks` is **red**, with failure in `bash scripts/check.sh`. Hosted CI is cross-evidence only, but a current-head red stable gate is still a real repository blocker and must be reproduced locally rather than ignored.
-- No new VPS/WAN experiment occurred. `READY_LIVE: none` remains authoritative until the repaired executable surface passes bounded independent review.
+- Current default-branch developer HEAD reviewed: exact `50c4a9e69d479c34085217be2360fb3981084398` (`refactor(carrier): drop dead raw_health_sample after interval-delta bridge`).
+- Since the previous reviewer handoff at `f7fdd1f`, the developer landed substantive source/test work, not docs churn:
+  - `e19cd6d` promotes the coherent socket-agnostic `ReliableUdpRuntime` orchestrator into `neko-carrier`;
+  - `a19d1a4` closes the prior rustfmt stable-gate failure and `cec861f` persists developer-local exact-tree provenance for that repaired R7 tree;
+  - `0bd4270` separates stable `FrameId` from fresh packet number and changes manager-facing health from lifetime-cumulative loss to an interval delta;
+  - `50c4a9e` removes the now-dead raw health helper.
+- Current GitHub-hosted `stable checks` and `nightly decode fuzz smoke` are both green on exact `50c4a9e`. These are cross-evidence only.
+- There is **no persisted developer-local clean exact-tree provenance for exact `50c4a9e` yet**. The newest persisted developer-local source-tree gate remains earlier (`a19d1a4` / `cec861f`). Final repaired R7 acceptance still requires a new pushed exact-tree local gate/provenance.
+- No open PRs and no new VPS/WAN experiment in this sequence.
 - Governance remains unchanged: item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`; D019, `SessionRuntime.events`, RSEC-001, signing/SBOM and release authority remain separate policy/security gates.
+- `READY_LIVE` remains none until the coherent local runtime is corrected, independently challenged, and promoted into the executable CLI/lab path.
 
-## Acceptance of Q1–Q4 / repaired R1–R6 primitives
+## Reviewer verdict on new developer work
 
-### H-RUDP-001A/B public freshness bypass / bare-send replay — ACCEPT NARROWLY at `c8193b7`
+### BLOCKER-GATE-001 — CLOSED
 
-The prior raw public `health_sample()` bypass is gone: manager-facing code can only consume `fresh_health_sample()`, while raw cumulative counters are private/diagnostic. `on_sent` no longer advances the health outcome epoch, so bare sends and repeated same-epoch polling cannot replay one historical bad snapshot.
+The prior current-head red `scripts/check.sh` was reproduced as a rustfmt formatting failure in the R7 runtime test. `a19d1a4` makes the smallest formatting repair; `cec861f` records the clean exact-tree developer-local gate. Current hosted stable/fuzz checks are also green at `50c4a9e`.
 
-This closes the exact A/B findings, but does **not** close health semantics overall; new H-RUDP-001C below is an integration-level consequence of continuing to classify each fresh outcome using cumulative lifetime loss.
+Do not reopen this unless a new gate fails.
 
-### H-RUDP-005 pending ACK / ACK-of-ACK — ACCEPT at `4270f82`
+### H-RUDP-007 stable FrameId / replacement ownership — DIRECTION ACCEPTED, closure incomplete because of H-RUDP-011
 
-`PacketAckTracker::observe_packet(..., ack_eliciting)` separates range observation from response obligation, and `take_ack()` consumes at most one pending emission until new eligible evidence arrives. ACK-only packets do not schedule ACK-of-ACK. The coherent runtime uses `take_ack`, not repeated `build_ack`, for emission.
+`0bd4270` fixes the central identity error from the previous handoff:
 
-Keep `build_ack()` as a diagnostic/render helper only; do not introduce another runtime emission path that bypasses `take_ack()`.
+- packet number / AEAD nonce is fresh per transmission;
+- `FrameId` is supplied independently and remains stable across replacement packets;
+- `packet_frames` records real packet -> frame ownership instead of reconstructing `FrameId(packet_number)`;
+- `retransmit_frames` no longer causes immediate plaintext release;
+- `pto_probe()` returns `(FrameId, plaintext)` and `on_retransmit_sent()` records the same stable frame under a new packet number;
+- a frame is released after packet retirement only when recovery reports no outstanding copy and it is not currently scheduled for retransmission.
 
-### M-RUDP-006 final-copy query — ACCEPT AS PRIMITIVE at `92557ea`
+The existing regressions deliberately use FrameIds different from packet numbers and retain overlapping copies until final retirement. This closes the **identity/copy-count logic** of H-RUDP-007.
 
-`Recovery::frame_outstanding` / `PathRecovery::frame_outstanding` correctly expose whether at least one packet copy still carries a `FrameId`; focused overlap tests prove one copy retiring does not imply final retirement.
+However, the integrated retained-plaintext owner is still not fail-closed or truly bounded; H-RUDP-011 below therefore blocks full ownership acceptance and R8.
 
-The primitive itself is valid. R7 currently uses it incorrectly/incompletely; that is H-RUDP-007 below, not a rejection of M-RUDP-006.
+### H-RUDP-001C lifetime-loss replay — PARTIALLY CLOSED; new H-RUDP-001D found
 
-### R2/R3/R4 prior repairs — ACCEPT
+`0bd4270` correctly stops the previously identified pattern where an old cumulative lifetime loss ratio is reclassified as bad on every later clean resolved outcome. A clean outcome after old loss can now produce zero new-loss evidence and reset the bad streak.
 
-- authenticated `SecureSession` sequence is the one packet-number source (`badaafd`);
-- vacuous ACK negative assertion is replaced by real canonical/overlap rejection (`9890bc0`);
-- Reno releases only per-packet actually charged bytes (`3739138`).
+But the new delta uses `packets_sent since last health consumption` as the denominator. That denominator is not aligned with when old packets are later **resolved** lost. A PTO sample can consume the send denominator before those packets are declared lost; a later ACK/loss outcome can then have `delta_sent = 0` and `delta_lost > 0`, causing `checked_div(0).unwrap_or(0)` to report **zero loss for a real newly resolved loss event**. H-RUDP-001D below must close this before automatic fallback is accepted.
 
-The exact `92557ea` developer-local clean gate closes the repaired R1–R6 primitive layer. Do not rerun/rewrite those reviews unless current code changes their owners.
+## New / still-open findings
 
-## R7 / Q5 verdict — NOT ACCEPTED
+### H-RUDP-011 — retained plaintext capacity is bypassable and send ownership is non-transactional
 
-The new coherent `ReliableUdpPeer` fixture is useful because it finally composes real UDP sockets, authenticated records, ACK state, recovery, health and manager fallback in one flow. That composition exposed several real integration bugs/gaps that the isolated S4–S9 primitive tests could not catch.
+**Severity: HIGH for resource/retransmission correctness; blocks R7 acceptance and R8.**
 
-### BLOCKER-GATE-001 — current `a20eb72` stable gate is red
+Current `ReliableUdpRuntime::on_packet_sent` does:
 
-**Severity: BLOCKER for R7 expansion, not a release-policy question.**
+1. `recovery.on_sent(...)` — mutates sent/recovery/Reno state;
+2. `let _ = self.retransmit.track(frame, frame_plaintext)` — **discards Capacity / FrameTooLarge / Conflict**;
+3. unconditionally clones the plaintext into a separate `frame_plaintext: BTreeMap<FrameId, Vec<u8>>`.
 
-Current hosted `stable checks` fails inside `bash scripts/check.sh`, while current fuzz smoke passes. The exact failing subcommand is not established by the available hosted metadata and must not be guessed.
+This creates two independent plaintext owners. `RetransmitBuffer` is explicitly bounded to 64 frames / 8192 bytes, but the second `frame_plaintext` map has no corresponding byte/frame cap. A too-large frame or full retransmit buffer can therefore fail `track()` while the runtime still records the packet as sent and still stores an unrestricted plaintext copy. That is both a resource-bound bypass and an inconsistent recovery state: a packet can exist in recovery even though the authoritative bounded retransmit owner rejected it.
 
-Required action:
-
-1. reproduce `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` on a clean exact `a20eb72` checkout/worktree;
-2. identify the first actual failing command/output;
-3. make the smallest repair; no unrelated cleanup;
-4. run focused tests plus full `scripts/check.sh`, `git diff --check`, clean initial/final tree;
-5. commit/push and persist exact-tree provenance.
-
-Do not treat a green fuzz job as a substitute for the red stable gate.
-
-### H-RUDP-007 — integrated retransmit plaintext ownership is wrong
-
-**Severity: HIGH for reliable-UDP correctness; blocks R8/executable expansion.**
-
-Current `ReliableUdpPeer::recv_once()` mishandles recovery output in two ways:
-
-1. after `Recovery::on_ack` schedules `out.retransmit_frames`, the fixture immediately calls `self.retransmit.release(*f)` on those frames; but a `retransmit_frames` entry means the last outstanding packet copy was lost and the retained plaintext is exactly what is needed to create the replacement packet. Releasing it there destroys the retransmission source before it can be resealed;
-2. `pto_retransmit()` retrieves old frame `F`, then calls `send_data()`, which assigns the new packet's number as a **new `FrameId`**. A retransmission copy must carry the same stable `FrameId F`; packet number/AEAD nonce changes, frame identity does not. Otherwise recovery's outstanding-copy accounting and `frame_outstanding(F)` no longer describe the actual copies.
-
-There is a related invalid shortcut: ACK handling currently releases `RetransmitBuffer` by iterating `out.acked_packets` and converting each packet number to `FrameId(packet_number)`. Packet identity and frame identity are not generally equivalent; a packet may carry a stable frame whose ID differs from the packet number and may carry multiple frames.
-
-Why S5 did not catch this: the standalone `lost_packet_retransmits_frame_level_and_delivers_exactly_once` manually constructs the retransmission with `frames: vec![FrameId(0)]`, correctly preserving the old FrameId. The coherent R7 helper instead routes through `send_data()`, which loses that identity and also pre-releases ACK-driven retransmit plaintext.
+`on_retransmit_sent` similarly records a replacement packet without proving at the API boundary that the stable frame is still retained.
 
 Required repair contract:
 
-- separate stable `FrameId` ownership from fresh packet-number allocation;
-- a replacement packet for frame F must record `frames: [F]` (or the same set of original stable frame IDs), while sealing under a fresh SecureSession sequence/nonce;
-- `out.retransmit_frames` means retain/fetch/reseal, **not release**;
-- retained plaintext may release only when recovery authoritatively says no outstanding copy remains **and** the frame is not currently scheduled for retransmission;
-- do not infer releasable frame IDs from packet numbers;
-- if the cleanest solution is an additional recovery result such as final-ACKed frame IDs, derive it from the existing authoritative copy map rather than introducing a second divergent ownership counter.
+- use **one authoritative bounded plaintext owner**; prefer removing the duplicate `frame_plaintext` map and fetching probe bytes from `RetransmitBuffer`, unless a second map has a demonstrated non-duplicative purpose;
+- never ignore `RetransmitBuffer::track` errors;
+- initial-send ownership must be transactional/fail-closed: capacity/conflict/oversize rejection leaves no sent recovery packet, no Reno charge, no packet->frame map entry, and no leaked plaintext;
+- if plaintext reservation happens before `recovery.on_sent`, roll it back exactly when the send-record step rejects; do not release an already-existing identical frame accidentally;
+- a replacement send must require an existing retained stable frame (or equivalent explicit ownership proof) before recovery records a new copy;
+- no public API path may create an outstanding recovery copy whose plaintext cannot be resealed if later scheduled;
+- teardown must clear the single bounded owner and packet->frame map deterministically.
 
 Mandatory regressions:
 
-1. ACK-driven loss schedules F; plaintext remains present until a fresh replacement packet carrying **F** is recorded/sent;
-2. PTO original+replacement overlap: ACKing one copy does not release F; final successful retirement releases exactly once;
-3. loss of one copy while another remains neither releases F nor schedules an unnecessary second replacement;
-4. late ACK of old copy after replacement cannot double-release/resurrect;
-5. teardown clears retained plaintext deterministically;
-6. packet number and FrameId intentionally differ in at least one regression so accidental `FrameId(packet_number)` coupling cannot pass.
+1. frame larger than plaintext bound -> rejection is atomic; recovery in-flight/bytes-in-flight/packet map/retained bytes all unchanged;
+2. max-frame/max-byte capacity first excess -> same atomic rejection;
+3. same FrameId + conflicting bytes -> same atomic rejection;
+4. recovery-side rejection after a successful plaintext reservation rolls back only the newly reserved ownership;
+5. replacement for an unretained/retired FrameId fails before recording a packet;
+6. successful original + overlapping retransmit still retains exactly one plaintext copy and releases it only after authoritative final retirement;
+7. repeated failure cannot make retained plaintext exceed configured bounds.
 
-### H-RUDP-001C — fresh outcome still replays historical cumulative loss into new bad streaks
+Do **not** fix this by inventing larger limits; preserve the existing bounds.
 
-**Severity: HIGH for automatic fallback correctness.**
+### H-RUDP-001D — health loss delta is keyed to sends, not resolved outcomes
 
-Q1 fixed *event freshness*, but current `fresh_health_sample()` still returns `raw_health_sample()` based on lifetime cumulative `packets_lost / packets_sent`.
+**Severity: HIGH for automatic degradation/fallback correctness.**
 
-That means one historical loss burst can still be counted repeatedly as new bad manager observations whenever unrelated future **clean ACK outcomes** advance `outcome_epoch`. Example: an initial resolved outcome leaves cumulative loss 5/8 (=625 per mille) and counts one bad observation; a later clean ACK after one new send yields a fresh outcome but the cumulative ratio is still 5/9 (=555), so the same old losses count as a second bad observation and can cross `degrade_after=2` even though the new interval itself had zero loss. This is a different replay trigger from the already-fixed bare-send/same-epoch case.
+`fresh_health_sample()` currently computes:
+
+`delta_sent = packets_sent - last_health_sent`
+
+`delta_lost = packets_lost - last_health_lost`
+
+and reports `delta_lost / delta_sent`.
+
+That only works when send and loss-resolution intervals coincide. They need not.
+
+Counterexample that must become a regression:
+
+1. send several packets;
+2. fire PTO and consume the fresh health sample — this advances `last_health_sent` to include those still-unresolved packets;
+3. later receive an ACK that newly declares some of those old packets lost, with no intervening send;
+4. now `delta_lost > 0` but `delta_sent == 0`; current code reports `loss_per_mille = 0` even though the newly resolved outcome contains real loss. If the ACK also resets `pto_count`, the manager-facing sample can look entirely clean.
 
 Required repair:
 
-- manager-facing loss evidence must represent the newly resolved observation interval/delta (or another mechanically equivalent non-replaying window), not reclassify the full lifetime loss numerator on every fresh outcome;
-- keep cumulative totals available for diagnostics/observability if useful;
-- do not invent new health thresholds;
-- PTO semantics may continue to use the existing consecutive PTO state, but a clean ACK must be able to produce clean/progress evidence instead of inheriting historical lifetime loss forever.
+- manager-facing loss must be based on **newly resolved packet outcomes**, not send-time deltas;
+- mechanically acceptable shape: accumulate `resolved_packets` and `resolved_lost` from `RecoveryResult.acked_packets + lost_packets` and consume deltas from those counters; or aggregate equivalent per-outcome numerators/denominators until the next health sample;
+- a PTO-only outcome may produce PTO health evidence with zero resolved packet-loss denominator; it must not consume future loss denominator for still-unresolved packets;
+- keep lifetime sent/lost counters separately for observability/diagnostics;
+- preserve existing thresholds/hysteresis and same-epoch/bare-send freshness rules.
 
 Mandatory regressions:
 
-1. one historical bad loss outcome -> exactly one bad manager observation;
-2. multiple subsequent clean send+ACK outcomes with zero new loss do **not** advance the bad streak/degrade from that old loss;
-3. a clean outcome resets/advances existing `CarrierHealth` progress semantics as currently defined;
-4. distinct new loss/PTO outcomes still cross unchanged hysteresis when they truly occur;
-5. same-epoch polling and bare sends still produce no observation;
+1. send -> PTO health sample -> later ACK declares old packets lost with no new send: fresh sample reports non-zero newly resolved loss;
+2. one old bad resolved outcome followed by genuinely clean resolved ACK outcomes does not replay old loss;
+3. ACK with 1 acked + N newly lost packets uses exactly that newly resolved set as the interval denominator;
+4. PTO-only samples remain distinct and cannot erase a later loss outcome;
+5. same-epoch polling and bare sends still emit none;
 6. packet feedback still cannot validate a path or confirm Session delivery.
 
-### H-RUDP-008 — R7 has no stable Session logical identity/dedup path
+### H-RUDP-008 — stable Session logical identity / receiver dedup remains open
 
 **Severity: HIGH before executable failover/live claims.**
 
-The coherent runtime currently encodes raw application bytes directly as `RecordType::Data`, opens them, and returns only the packet number. It does not carry a stable Session stream/offset/message identity through retransmission and does not invoke existing Session/manager delivery/dedup ownership.
+The coherent reliable-UDP runtime still needs a stable logical Session data identity independent of fresh packet numbers. Reuse existing committed Session / `ProcessMessage::Data` / stream+offset / manager logical-range semantics rather than inventing packet-number delivery identity.
 
-A fresh retransmission necessarily has a new AEAD nonce/packet number. Therefore packet replay protection alone cannot deduplicate a late original packet versus its fresh replacement: both are distinct authenticated packets containing the same application bytes. S5's "exactly once" test avoids this by permanently discarding the original ciphertext; it does not prove late-original/retransmit dedup.
+Required behavior remains:
 
-The repository already has stable Session identities (`ProcessMessage::Data { stream, offset, ... }`, `DeliveryLedger`, `LogicalRangeId`/ConcurrentCarrierManager uncertain ranges). Reuse an existing committed identity/evidence model rather than inventing a packet-number-as-delivery-ID shortcut.
+- retransmission preserves logical identity while packet number/nonce changes;
+- replacement-first then late-original produces one application-visible logical delivery, explicit duplicate accounting, no conflict;
+- conflicting bytes for the same logical identity fail closed;
+- packet ACK is never Session delivery confirmation.
 
-Required R7 behavior:
+### M-RUDP-009 — actual cwnd/pacing send admission remains open
 
-- application data has a stable logical identity independent of packet number;
-- retransmission preserves that logical identity while using a fresh packet number/nonce;
-- receiver accepts first logical delivery and suppresses exact duplicate late original/replacement; conflicting bytes for the same identity fail closed;
-- Session delivery confirmation remains separate from packet ACK;
-- packet ACK must never call or imply Session `confirm_received` by itself.
+**Severity: MEDIUM now; blocks executable R8/WAN evidence.**
 
-Mandatory test: deliver the replacement first, then deliver the previously delayed original; application-visible delivery count remains one, duplicate accounting is explicit, and packet recovery/ACK evidence remains separate.
+Current `ReliableUdpRuntime::on_packet_sent` records/charges a send directly and does not itself enforce `can_send()` or a deterministic pacing deadline. The isolated Reno test is not enough.
 
-### M-RUDP-009 — congestion/pacing is not yet an actual runtime send gate
+Close after H-RUDP-011 so ownership ordering and congestion admission are solved together:
 
-**Severity: MEDIUM now; correctness-critical before R8/WAN execution.**
+- actual runtime send admission checks cwnd before any socket/recovery send record;
+- pacing is represented as a deterministic next-send/deadline decision, not hidden sleep;
+- cwnd refusal is atomic: no packet/recovery charge/plaintext ownership/socket effect;
+- after ACK opens capacity, the same logical frame can proceed safely;
+- do not change Reno policy values.
 
-S6 proves `PathRecovery::can_send()` and `pacing_interval_us()` in isolation, but current `ReliableUdpPeer::send_data()` does not call either before sealing/recording/sending. It unconditionally `seal -> recovery.on_sent -> retransmit.track -> send_datagram`.
+### M-RUDP-010 — automatic fallback transition errors/evidence remain open
 
-Therefore Q5's coherent runtime does not yet compose the advertised congestion/pacing decision path.
+**Severity: MEDIUM; blocks R8 evidence.**
 
-Required repair:
+Current `poll_health()` still discards `manager.fail(...)` and `manager.activate(...)` errors with `let _ = ...` and returns `WarmFallback` whenever health reaches Degraded and both path records merely exist. This can fabricate fallback success when TCP is not actually warm/activatable.
 
-- actual runtime send attempts must consult congestion admission before recording/sending an ack-eliciting packet;
-- pacing must be represented as a deterministic deadline/next-send decision, not a hidden busy sleep;
-- define fail-closed ownership ordering so buffer/recovery/socket failures cannot leave a sent-but-untracked packet or tracked-but-never-owned plaintext. Consuming an unused crypto nonce is acceptable if necessary for fail-closed ordering; nonce reuse is not;
-- focused tests must hit cwnd refusal and prove no socket send/recovery charge occurs, then ACK opens capacity and the same logical frame can be sent safely.
+Required repair remains:
 
-Do not change Reno thresholds/values.
+- return/propagate transition failure explicitly;
+- report `WarmFallback` only after real fail + promotion success;
+- expose/record the actual switch event separately from health evidence;
+- deterministic invalid standby state must produce no successful switch event.
 
-### M-RUDP-010 — automatic fallback errors are swallowed and switch evidence is incomplete
+## Continuous READY_LOCAL queue — keep feeding the agent
 
-**Severity: MEDIUM; must close before R8 evidence.**
+Do not wait for the next reviewer between dependency-safe slices. The queue is intentionally deep; preserve still-valid later work rather than collapsing it after each repair.
 
-`poll_health()` currently checks only that UDP/TCP keys exist, then executes `manager.fail(...)` and `manager.activate(...)` with `let _ = ...`. A failed state transition is silently discarded even though the method still returns `Some(Degraded)`; this can make the caller believe automatic fallback was handled when it was not. The coherent fixture also records the health sample but does not persist the actual switch event through `Producer::record_switch` in that path.
+### Q1 — close H-RUDP-011 single bounded transactional plaintext owner
 
-Required repair:
+Implement the exact contract/regressions above. This is first because H-RUDP-008/Q4 both depend on correct frame/plaintext ownership.
 
-- propagate/return transition failure explicitly; do not swallow `fail`/`activate` errors;
-- only report/record automatic fallback success after promotion actually succeeds;
-- record the real switch event separately from health evidence;
-- negative test with TCP not warm/ready (or other deterministic invalid transition) must not fabricate successful fallback/switch evidence.
+### Q2 — close H-RUDP-001D resolution-aligned interval health
 
-No new recovery policy values are needed.
+Replace send-delta denominator with resolution-aligned accounting and add all six regressions. Preserve cumulative diagnostics separately.
 
-## Continuous READY_LOCAL queue — high throughput
+### Q3 — close H-RUDP-008 stable Session logical identity + late-original dedup
 
-Do not wait for another reviewer between dependency-safe items. BLOCKER/HIGH repairs are front-loaded; after they are green continue directly into executable/runtime work.
+Reuse existing logical Session identity; replacement-first + delayed original must deliver once, conflict fail closed, packet ACK remain separate.
 
-### Q0 — reproduce and close current stable-check red
+### Q4 — close M-RUDP-009 actual congestion/pacing admission
 
-Clean exact `a20eb72`, identify the actual failing `scripts/check.sh` subcommand, smallest repair, focused/full gate, commit/push. If any Q1–Q4 repair naturally subsumes the failure, still record the original failure cause and final exact-tree green provenance.
+Integrate cwnd + deterministic pacing decision into the coherent runtime with atomic ownership ordering.
 
-### Q1 — close H-RUDP-007 retransmit ownership
+### Q5 — close M-RUDP-010 explicit automatic switch result/evidence
 
-Repair stable FrameId/plaintext lifetime across ACK-loss and PTO replacement paths. Add the six regressions above. Do not proceed to R8 while plaintext can disappear early or frame IDs change across copies.
-
-### Q2 — close H-RUDP-001C interval health evidence
-
-Separate cumulative diagnostics from manager-facing non-replaying interval outcome. Add the six regressions above. Preserve existing health thresholds/hysteresis.
-
-### Q3 — close H-RUDP-008 stable Session identity/dedup integration
-
-Reuse existing committed Session/logical-range identity. Prove replacement-first + late-original duplicate suppression and conflict fail-closed, with packet ACK separate from Session delivery evidence.
-
-### Q4 — close M-RUDP-009 actual cwnd/pacing send admission
-
-Make the coherent runtime exercise the real send gate and safe ownership ordering. No new congestion policy.
-
-### Q5 — close M-RUDP-010 explicit automatic-switch result/evidence
-
-No swallowed manager errors; switch event recorded only on successful promotion; deterministic negative path stays non-promoted.
+No swallowed manager errors. Real switch result/event only after actual successful promotion.
 
 ### Q6 — R7 coherent local runtime re-acceptance
 
-After Q0–Q5, one integrated flow must prove all of the following together, not by manual choreography:
+One integrated flow, not manual choreography, must prove together:
 
-- real UDP socket send/receive;
+- real UDP socket send/receive in the coherent local fixture/path;
 - authenticated fresh packet number / nonce;
-- bounded ACK state with no ACK storm/ACK-of-ACK;
-- ACK/loss/PTO/retransmit with stable FrameId + retained plaintext lifetime;
-- fresh replacement packet images;
-- actual cwnd/pacing send admission;
-- interval/fresh health evidence;
+- bounded canonical ACK state; no ACK storm / ACK-of-ACK;
+- ACK/loss/PTO/retransmit with stable FrameId and one bounded transactional plaintext owner;
+- replacement packets use fresh nonce but stable logical Session identity;
+- actual cwnd/pacing admission;
+- resolution-aligned fresh health evidence;
 - warm TCP readiness;
-- automatic manager fail/promote with explicit result;
-- stable Session logical identity, uncertain replay and receiver dedup;
-- layered observability, with packet recovery / health / switch / Session delivery domains distinct.
+- automatic manager fail/promote with explicit success/failure result;
+- uncertain replay + receiver logical dedup/conflict handling;
+- recovery / health / switch / Session delivery observability remain distinct.
 
-Add at least: clean no-loss, isolated recoverable loss (no fallback), replacement-first + late-original dedup, ACK loss/PTO, sustained distinct bad outcomes -> automatic warm fallback, and invalid warm target -> no fabricated switch.
+Minimum scenarios: no-loss; isolated recoverable loss without fallback; ACK loss/PTO replacement; replacement-first + late-original dedup; one historical loss then clean recovery; PTO-sample-before-later-loss; sustained distinct bad resolved outcomes -> successful warm fallback; invalid warm target -> no fabricated switch; plaintext capacity refusal -> zero partial state.
 
-### Q7 — current repaired exact-tree developer-local gate/provenance
+### Q7 — final pushed exact-tree developer-local provenance
 
-On final pushed source SHA after Q0–Q6:
+After Q1–Q6 reach one coherent source SHA:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
@@ -222,39 +211,69 @@ git diff --check
 git status --short
 ```
 
-Record exact SHA, UTC start/end, exits, OS/arch, stable Rust and clean initial/final tree. Wire/parser changes require pinned decode fuzz; pure carrier/runtime-only repairs do not require mechanical fuzz reruns (hosted extra evidence remains separate).
+Record exact pushed SHA, UTC start/end, exits, OS/arch, stable Rust and clean initial/final tree. If wire/parser/framing changes again, also run the repository-pinned decode fuzz build/run; pure carrier/session/runtime-only work does not require a mechanical fuzz rerun. Hosted CI remains extra cross-evidence.
 
-### Q8 — R8 executable bounded lab path
+### Q8 — independent bounded R7 review
 
-Only after R7 re-acceptance. Reuse the repaired coherent components in existing CLI/failover/owned-lab machinery; do not fork a second implementation in test-only code. Add deterministic local sender-side packet suppression and structured recovery/health/switch/Session-delivery counters. Bound duration/count/bytes and cleanup.
+Challenge the final exact source tree specifically for:
 
-### Q9 — R9 process/socket acceptance
+- plaintext/resource transactional ownership;
+- resolved-outcome health math;
+- stable logical identity/dedup;
+- ACK/Session evidence separation;
+- cwnd/pacing admission;
+- automatic-switch truthful result/evidence;
+- nonce freshness/retransmit semantics;
+- bounded retained state.
 
-At minimum: no-loss; one recoverable loss; ACK loss; PTO replacement; late original; no duplicate app delivery; cwnd block/release; no ACK storm; no cumulative-loss health replay; automatic fallback only after distinct bad outcomes; invalid/not-warm TCP does not promote; cleanup/no listener residue.
+Concrete defect -> smallest repair + regressions + new exact-tree provenance, then continue. No defect -> precise no-finding note.
 
-### Q10 — independent bounded R10 re-review
+### Q9 — R8 executable CLI / bounded lab path
 
-Challenge exact executable pushed tree, not only primitive unit tests. BLOCKER/HIGH -> repair immediately and rerun gate. No finding -> precise review note with exclusions and exact tested anchor.
+Only after R7 re-acceptance. Reuse the same repaired `ReliableUdpRuntime` / Session components in existing CLI/failover/lab machinery; no second test-only implementation. Add bounded deterministic sender-side packet suppression/loss injection and structured recovery/health/switch/Session-delivery counters.
 
-### Q11 — create exactly one new READY_LIVE question
+### Q10 — R9 process/socket acceptance
 
-Only after Q10. A valid next live question is now scientifically new because implementation/instrumentation changed: self-owned client/VPS, authenticated reliable UDP, controlled sender-side packet suppression (not production qdisc/route/firewall), real recovery observations, automatic health-driven warm TCP fallback, stable Session delivery/dedup accounting, bounded resource observations and cleanup. Controlled suppression is **not** natural Internet loss.
+At minimum cover: no-loss; one recoverable packet loss; ACK loss; PTO replacement; replacement-first + late original; no duplicate logical delivery; conflicting logical duplicate fail-closed; sustained packet-recovery degradation -> automatic warm TCP fallback; invalid standby -> no false switch; cleanup/listener/process residue zero.
 
-Stay inside standing authorization. Do not mix HY2, IPv6, unrelated package lifecycle or experimental-track reruns into this first live run.
+### Q11 — release/status reconciliation and READY_LIVE decision
 
-### Q12 — one bounded self-owned VPS execution if Q11 is READY
+Only after Q9/Q10. Update `docs/status.md`, `IMPLEMENTATION_PLAN.md`, release packet and handoff truthfully. If the executable path now creates a materially new real-network question, classify an exact READY_LIVE row. Do not inherit old application-reply-cessation evidence as proof of packet-recovery fallback.
 
-Use the smallest profile that answers the question. Record binary SHA, actual parameters, start/end, packet/recovery health events, switch event, Session delivered/duplicate/lost/uncertain accounting, and cleanup. Preserve negative result exactly; no same-class retry without a materially changed hypothesis.
+### Q12 — changed-hypothesis self-owned VPS evidence
 
-### Q13 — item-3/item-4 reconciliation and queue refill
+Only if Q11 creates READY_LIVE and standing authorization covers the exact run. Use the minimum bounded profile that distinguishes:
 
-Reclassify controlled packet-suppression evidence separately from natural WAN loss/PTO blackhole. Update status/evidence only to the exact supported claim. Keep D019, `SessionRuntime.events`, RSEC-001, signing/SBOM/frozen-release interoperability and final release authority separate. Then inventory the newly integrated runtime surface for the next dependency-safe engineering/review chain; do not revert to `queue exhausted` merely because this one experiment completes.
+- real packet recovery without fallback;
+- real packet loss/PTO causing truthful UDP degradation;
+- same logical Session warm TCP promotion;
+- uncertain replay/dedup;
+- duplicate/lost application bytes;
+- failure-decision-to-first-resumed-data timing;
+- CPU/RSS/FD/socket observations when available;
+- cleanup.
 
-## Stop / governance boundary
+This is a genuinely new hypothesis/instrumentation path, not a same-class rerun of historical reply-cessation/warm-failover negatives.
 
-- Current stable-check red and H-RUDP-007/H-RUDP-001C/H-RUDP-008 are local mechanically actionable correctness/evidence blockers. They do not require maintainer policy.
-- M-RUDP-009/M-RUDP-010 are local runtime integration corrections under already committed semantics.
-- Do not choose or modify D019, event-retention, capacity/security numeric policy, signing/SBOM, previous-release, RC/freeze/release/production authority here.
-- No production network mutation, third-party target, or high-load capacity test is authorized by this queue.
-- `READY_LIVE: none` until Q10 independent review creates a real changed-hypothesis live row.
-- item 3 incomplete; item 4 incomplete; all release/production/freeze flags remain false.
+### Q13 — item-3/item-4 evidence reconciliation after new live result
+
+Preserve negative evidence and exact boundaries. Do not change RC/freeze/release/production flags automatically. Refill the next engineering queue from what the new evidence actually exposes.
+
+## Separate policy/security gates — do not let them stall Q1–Q13
+
+Still unresolved and unchanged:
+
+- `SessionRuntime.events` retained-state policy;
+- D019 source-retention/no-reset policy;
+- RSEC-001 representative adversarial-load/capacity suitability;
+- signing/key custody/SBOM/publication trust;
+- previous frozen release / final independent security-release judgment;
+- RC/freeze/release/production authority.
+
+Do not invent these decisions while implementing reliable-UDP runtime integration, but do not use them as a reason to idle on the dependency-safe queue above.
+
+## Stop conditions
+
+Stop only for a newly discovered unresolved BLOCKER/HIGH that prevents safe continuation, a required core Session/Carrier/ACK/crypto/wire architecture decision not already determined by committed semantics, destructive migration, action beyond standing authorization, production/third-party/new credentials, or actual repository/tool breakage.
+
+Otherwise: implement -> focused tests -> full required local gate -> commit/push -> immediately continue to the next dependency-ready slice.
