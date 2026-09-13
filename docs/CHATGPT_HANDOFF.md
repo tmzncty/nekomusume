@@ -2,12 +2,23 @@
 
 ## Reviewed repository truth
 
-- Current default branch before this reviewer refresh: exact `335246340bb764e458ca89c75ec92a35ed38fc6e` (`docs(release): index second-half 2026-09-13 deep item-4 sweep`).
+- Developer/review-support head immediately before this reviewer handoff: exact `e10b6f520c68f0679b0903951370f092663c7017` (`docs(review): item-4 core-surface inventory after 2026-09-13 deep sweep`), descendant of exact `335246340bb764e458ca89c75ec92a35ed38fc6e` release-packet reconciliation.
 - Previous handoff `ef1338b9965ce9f640531a10d02604c98b88f017` is stale and is superseded by this queue.
 - The sequence after `ef1338b` closed the prior SessionRuntime evidence-integrity HIGH, then completed dedicated independent bounded reviews for DeliveryLedger, ProcessMessage/Resume/readiness codec, DatagramRuntime, crypto integration/API, CLI command truth boundaries, and static resource/result-validator surfaces.
 - The only source/test change in that sequence is reachable exact `01b24a07ef81e9427d14f953fbf04b239b4015ce` (`fix(bench): exclude failed ops from median/P95 latency distribution`). It correctly stops failed operations from depressing successful-sample latency statistics. GitHub-hosted `stable checks` and `nightly decode fuzz smoke` are green for exact `01b24a0`; hosted CI is extra cross-evidence only.
-- Exact `3352463` now indexes the second-half deep sweep in `docs/release-security-review-packet.md`.
+- Exact `3352463` indexes the second-half deep sweep in `docs/release-security-review-packet.md`.
 - No VPS/WAN experiment occurred. Governance remains unchanged: item 3 incomplete, item 4 incomplete, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, D019 policy-blocked, `SessionRuntime.events` remains `POLICY_BLOCKED_RESOURCE_BOUND`, and `READY_LIVE: none`.
+
+## Reviewer correction — exact `e10b6f` core inventory is NOT an accepted exhaustion decision
+
+`docs/reviews/item4-core-inventory-20260913.md` at exact `e10b6f` is useful as a partial coverage table, but its concluding claim that every substantial implemented core surface is covered and only policy/environment/authority gates remain is **premature and superseded by this handoff**.
+
+Two concrete reasons are repository facts that already existed at its anchor:
+
+1. `neko-reliable` contains executable `Plpmtud` and bounded XOR `FecBlock` candidates, with committed specs/tests, but the inventory collapses all of `neko-reliable` into the dedicated reliable-UDP ACK/recovery review. Those candidates have distinct state/evidence semantics and no dedicated independent bounded challenge in the accepted review index.
+2. The bench row treats exact `01b24a0` as sufficiently closed, but current `neko-bench::stat()` still uses a P95 order-statistic convention inconsistent with the repository's existing `run-netns.sh` P95 convention; this is a concrete repairable measurement question below.
+
+Do not rewrite the historical inventory to pretend it never made that conclusion. Treat its exhaustion/status paragraph as superseded. A new final inventory is allowed only after the remaining candidate/measurement lanes below are closed.
 
 ## Accepted progress — preserve unless owner source changes
 
@@ -157,7 +168,9 @@ Before any future `queue exhausted`, compare every current implemented/candidate
 - disabled/policy/environment-only and no executable review question;
 - still missing a concrete independent challenge.
 
-Do not invent review work after all executable surfaces are actually covered. If the inventory shows no remaining concrete local review/repair, no new live question, and all remaining gates are policy/environment/external authority, then queue exhaustion may finally be recorded truthfully.
+The exact `e10b6f` inventory is explicitly not sufficient for this final decision because it omitted executable PLPMTUD/FEC candidate coverage and missed the benchmark percentile inconsistency.
+
+Do not invent review work after all executable surfaces are actually covered. If the corrected inventory shows no remaining concrete local review/repair, no new live question, and all remaining gates are policy/environment/external authority, then queue exhaustion may finally be recorded truthfully.
 
 ## Policy/external gates that remain outside autonomous repair
 
