@@ -3451,7 +3451,11 @@ fn lab(args: &[String]) {
     // packet suppression, receiver ACKs, PTO retransmit, fresh-evidence health
     // and automatic warm-TCP fallback. Emits structured counters; --json for a
     // machine-readable run. Controlled suppression is not natural loss.
-    if args.iter().any(|a| a == "--reliable-udp") {
+    // R8: `neko lab --scenario reliable-udp` — a bounded executable reliable-UDP
+    // local path (real loopback sockets + ReliableUdpRuntime + SessionRuntime
+    // dedup + automatic warm-TCP fallback). No-scenario `lab` keeps its
+    // socket-free deterministic behavior.
+    if parse(args, "--scenario", None) == "reliable-udp" {
         lab_reliable_udp(args, json);
         return;
     }
