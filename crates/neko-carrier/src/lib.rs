@@ -4093,9 +4093,9 @@ pub enum PathRecoveryError {
     GenerationMismatch,
     /// Congestion window refused admission — the send records nothing.
     CongestionWindowFull,
-    /// A duplicate delivery carried different bytes for the same logical
-    /// identity — fail closed.
-    DeliveryConflict,
+    /// The bounded carrier-local plaintext owner refused the frame: capacity,
+    /// oversized frame, or a conflicting copy for the same stable FrameId.
+    Retransmit(RetransmitError),
 }
 
 impl From<neko_reliable::Error> for PathRecoveryError {
@@ -4459,15 +4459,6 @@ pub struct ReliableUdpRuntime {
     /// Which stable frames each sent packet carries — packet number is fresh
     /// per transmission while frame identity is stable across retransmits.
     packet_frames: BTreeMap<u64, Vec<neko_reliable::FrameId>>,
-    /// Receiver-side application dedup keyed by the stable Session logical
-    /// identity `(stream, offset)` — independent of the fresh packet number /
-    /// AEAD nonce a retransmission used. First delivery is retained; a later
-    /// duplicate with identical bytes is suppressed (counted), and a duplicate
-    /// with different bytes fails closed as a conflict.
-    delivered: BTreeMap<(u32, u64), Vec<u8>>,
-    /// Exact-duplicate deliveries suppressed (application-visible count stays
-    /// one per stable identity). Packet ACK stays separate from this dedup.
-    pub dedup_suppressed: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4515,8 +4506,6 @@ impl ReliableUdpRuntime {
                 .map_err(|_| PathRecoveryError::GenerationMismatch)?,
             manager,
             packet_frames: BTreeMap::new(),
-            delivered: BTreeMap::new(),
-            dedup_suppressed: 0,
         })
     }
 
@@ -4552,9 +4541,6 @@ impl ReliableUdpRuntime {
     /// Deliver an authenticated application payload under its stable Session
     /// logical identity `(stream, offset)`. The first delivery is retained and
     /// reported; a later duplicate carrying the SAME bytes is suppressed and
-    /// counted (`dedup_suppressed`), and a duplicate carrying DIFFERENT bytes
-    /// for the same identity fails closed. Packet ACK/recovery never marks
-    /// Session delivery — this logical-identity dedup is the delivery path.
     /// Record that packet `number` (fresh AEAD nonce/sequence) was sent carrying
     /// the stable `frame` identity — only after `can_send` admits the bytes.
     /// Refuses (without charging recovery or tracking plaintext) when cwnd is
@@ -4575,12 +4561,14 @@ impl ReliableUdpRuntime {
         }
         // Transactional plaintext ownership: reserve the bounded retransmit
         // plaintext FIRST so a capacity/conflict/oversize rejection leaves no
-        // recovery packet, no Reno charge, and no packet->frame entry.
+        // recovery packet, no Reno charge, and no packet->frame entry. The
+        // typed owner error is preserved, never collapsed or discarded.
+        let already_retained = self.retransmit.get(frame).is_some();
         self.retransmit
             .track(frame, frame_plaintext)
-            .map_err(|_| PathRecoveryError::DeliveryConflict)?;
-        // A failure to record the packet rolls back ONLY the freshly reserved
-        // copy (and only if we actually added a new one this call).
+            .map_err(PathRecoveryError::Retransmit)?;
+        // A failure to record the packet rolls back ONLY a copy this call newly
+        // reserved — an identical frame retained before this attempt survives.
         match self.recovery.on_sent(neko_reliable::SentPacket {
             number,
             sent_at_us,
@@ -4590,7 +4578,9 @@ impl ReliableUdpRuntime {
         }) {
             Ok(()) => {}
             Err(e) => {
-                self.retransmit.release(frame);
+                if !already_retained {
+                    self.retransmit.release(frame);
+                }
                 return Err(e);
             }
         }
@@ -4604,28 +4594,6 @@ impl ReliableUdpRuntime {
     /// counted (`dedup_suppressed`), and a duplicate carrying DIFFERENT bytes
     /// for the same identity fails closed. Packet ACK/recovery never marks
     /// Session delivery — this logical-identity dedup is the delivery path.
-    pub fn deliver_logical(
-        &mut self,
-        stream: u32,
-        offset: u64,
-        data: &[u8],
-    ) -> Result<bool, PathRecoveryError> {
-        match self.delivered.entry((stream, offset)) {
-            std::collections::btree_map::Entry::Vacant(v) => {
-                v.insert(data.to_vec());
-                Ok(true) // first delivery
-            }
-            std::collections::btree_map::Entry::Occupied(o) => {
-                if o.get() == data {
-                    self.dedup_suppressed = self.dedup_suppressed.saturating_add(1);
-                    Ok(false) // exact duplicate suppressed
-                } else {
-                    Err(PathRecoveryError::DeliveryConflict) // conflict fails closed
-                }
-            }
-        }
-    }
-
     /// Record an authenticated received packet: `ack_eliciting` distinguishes
     /// Data (creates a pending ACK) from ACK-only records (no ACK-of-ACK).
     pub fn on_packet_received(
@@ -4741,6 +4709,12 @@ impl ReliableUdpRuntime {
         bytes: u64,
         frame: neko_reliable::FrameId,
     ) -> Result<(), PathRecoveryError> {
+        // Fail before recording a packet unless the stable frame still has
+        // retained resealable plaintext ownership: no outstanding recovery
+        // packet may exist without the bytes needed to re-encode it.
+        if self.retransmit.get(frame).is_none() {
+            return Err(PathRecoveryError::Retransmit(RetransmitError::Conflict));
+        }
         self.recovery.on_sent(neko_reliable::SentPacket {
             number: packet_number,
             sent_at_us,
@@ -4750,6 +4724,14 @@ impl ReliableUdpRuntime {
         })?;
         self.packet_frames.insert(packet_number, vec![frame]);
         Ok(())
+    }
+
+    /// Deterministic path/generation teardown: drop the packet->frame map and
+    /// the one bounded plaintext owner together, so no stale frame ownership
+    /// outlives the runtime's recovery state.
+    pub fn teardown(&mut self) {
+        self.packet_frames.clear();
+        self.retransmit.clear();
     }
 
     pub fn manager(&self) -> &ConcurrentCarrierManager {
@@ -5184,22 +5166,90 @@ mod path_recovery_tests {
     }
 
     #[test]
-    fn retransmit_late_original_dedups_by_stable_logical_identity() {
+    fn runtime_plaintext_ownership_refusals_are_atomic_and_typed() {
         let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
-        // The replacement (retransmit, fresh nonce/packet number) delivers the
-        // stable logical identity (stream=1, offset=40) FIRST.
-        assert!(rt.deliver_logical(1, 40, b"app-bytes").unwrap());
-        // The delayed ORIGINAL packet (different packet number/nonce) arrives
-        // later carrying the same logical identity + bytes -> suppressed.
-        assert!(!rt.deliver_logical(1, 40, b"app-bytes").unwrap());
-        assert_eq!(rt.dedup_suppressed, 1);
-        // A duplicate with different bytes for the same identity fails closed.
+        // Oversized frame: typed refusal, no recovery charge, no packet entry.
         assert_eq!(
-            rt.deliver_logical(1, 40, b"tampered"),
-            Err(PathRecoveryError::DeliveryConflict)
+            rt.on_packet_sent(0, 0, 400, FrameId(1), &[b'x'; 8193]),
+            Err(PathRecoveryError::Retransmit(
+                RetransmitError::FrameTooLarge
+            ))
         );
-        // Distinct logical identity still delivers.
-        assert!(rt.deliver_logical(1, 41, b"next").unwrap());
+        assert_eq!(rt.in_flight(), 0);
+        assert_eq!(rt.recovery_bytes_in_flight(), 0);
+        rt.on_packet_sent(0, 0, 400, FrameId(1), b"payload")
+            .unwrap();
+        // Conflicting bytes for an already-retained FrameId: typed refusal, and
+        // the failed attempt records no packet and charges no extra bytes.
+        assert_eq!(
+            rt.on_packet_sent(1, 1000, 400, FrameId(1), b"different"),
+            Err(PathRecoveryError::Retransmit(RetransmitError::Conflict))
+        );
+        assert_eq!(rt.in_flight(), 1, "conflict recorded no packet");
+        assert_eq!(rt.recovery_bytes_in_flight(), 400);
+        // An identical overlapping copy is the accepted retransmit shape.
+        rt.on_packet_sent(1, 1000, 400, FrameId(1), b"payload")
+            .unwrap();
+        assert_eq!(rt.in_flight(), 2);
+    }
+
+    #[test]
+    fn recovery_rejection_rolls_back_only_the_new_reservation() {
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.on_packet_sent(5, 0, 400, FrameId(1), b"first").unwrap();
+        // A non-increasing packet number is rejected by the recovery engine
+        // AFTER the plaintext reservation: only the new frame rolls back.
+        assert_eq!(
+            rt.on_packet_sent(3, 1000, 400, FrameId(2), b"second"),
+            Err(PathRecoveryError::Recovery(
+                neko_reliable::Error::InvalidRange
+            ))
+        );
+        assert_eq!(rt.in_flight(), 1, "rejected packet was not recorded");
+        assert_eq!(rt.recovery_bytes_in_flight(), 400);
+        // The rolled-back frame no longer owns plaintext: retransmitting it must
+        // fail closed instead of assuming ownership.
+        assert_eq!(
+            rt.on_retransmit_sent(6, 2000, 400, FrameId(2)),
+            Err(PathRecoveryError::Retransmit(RetransmitError::Conflict))
+        );
+    }
+
+    #[test]
+    fn recovery_rejection_preserves_an_already_retained_identical_frame() {
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.on_packet_sent(5, 0, 400, FrameId(1), b"first").unwrap();
+        // Same stable frame + identical bytes is already retained; the failed
+        // packet attempt must NOT delete the pre-existing ownership.
+        assert_eq!(
+            rt.on_packet_sent(3, 1000, 400, FrameId(1), b"first"),
+            Err(PathRecoveryError::Recovery(
+                neko_reliable::Error::InvalidRange
+            ))
+        );
+        assert_eq!(
+            rt.pto_probe(),
+            vec![(FrameId(1), b"first".to_vec())],
+            "pre-existing plaintext ownership survived the failed attempt"
+        );
+    }
+
+    #[test]
+    fn retransmit_requires_retained_ownership_and_teardown_is_deterministic() {
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        let before = rt.in_flight();
+        assert_eq!(
+            rt.on_retransmit_sent(0, 0, 400, FrameId(77)),
+            Err(PathRecoveryError::Retransmit(RetransmitError::Conflict))
+        );
+        assert_eq!(rt.in_flight(), before, "no packet without ownership");
+        rt.on_packet_sent(0, 0, 400, FrameId(9), b"kept").unwrap();
+        assert_eq!(rt.on_retransmit_sent(1, 500, 400, FrameId(9)).unwrap(), ());
+        rt.teardown();
+        assert!(
+            rt.pto_probe().is_empty(),
+            "teardown dropped the bounded plaintext owner"
+        );
     }
 
     #[test]

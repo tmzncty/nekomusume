@@ -52,6 +52,18 @@ struct ReliableUdpPeer<'a> {
     session: SecureSession,
     rt: neko_carrier::ReliableUdpRuntime,
     obs: Producer,
+    /// Session-layer logical delivery owner. Bounded stream/offset delivery,
+    /// exact-duplicate suppression and conflicting-duplicate fail-closed live
+    /// here — above the Carrier, never inside packet recovery.
+    session_rt: neko_session::SessionRuntime,
+    /// Application deliveries accepted by the Session layer.
+    session_delivered: u64,
+    /// Exact logical duplicates suppressed by Session-layer semantics.
+    session_duplicates: u64,
+    /// Fail-closed Session rejections (e.g. conflicting duplicate bytes).
+    session_conflicts: u64,
+    /// Last Session rejection, retained so it is never silently swallowed.
+    last_session_error: Option<neko_session::RuntimeError>,
     /// Application logical stream for stable delivery identity.
     stream: u32,
     /// Next application offset — the stable Session logical identity.
@@ -65,6 +77,22 @@ impl<'a> ReliableUdpPeer<'a> {
             session,
             rt: neko_carrier::ReliableUdpRuntime::new(generation, 1200).unwrap(),
             obs: Producer::new(SessionId(1), 256).unwrap(),
+            session_rt: {
+                let mut session_rt = neko_session::SessionRuntime::new(
+                    SessionId(1),
+                    neko_session::RuntimeLimits::default(),
+                    0,
+                )
+                .unwrap();
+                session_rt
+                    .open_stream(neko_session::StreamId(1), 0)
+                    .unwrap();
+                session_rt
+            },
+            session_delivered: 0,
+            session_duplicates: 0,
+            session_conflicts: 0,
+            last_session_error: None,
             stream: 1,
             next_offset: 0,
         }
@@ -75,11 +103,31 @@ impl<'a> ReliableUdpPeer<'a> {
     /// `FrameId(offset)` while the packet carries a fresh AEAD nonce/number.
     /// Respects the cwnd admission gate before sealing.
     fn send_data(&mut self, now_us: u64, payload: &[u8]) -> Option<u64> {
+        let offset = self.next_offset;
+        self.next_offset += 1;
+        self.send_data_at(now_us, offset, payload)
+    }
+
+    /// Send at an explicit stable logical offset — used by the conflict fixture
+    /// so the same Session identity can be re-used with different bytes.
+    fn send_data_at(&mut self, now_us: u64, offset: u64, payload: &[u8]) -> Option<u64> {
+        self.send_data_frame(now_us, offset, FrameId(offset), payload)
+    }
+
+    /// Send with an explicit carrier-side stable frame identity. The Session
+    /// logical identity in the payload is independent of the Carrier FrameId,
+    /// which is what lets the conflict fixture reuse one logical identity with
+    /// different bytes under a distinct frame.
+    fn send_data_frame(
+        &mut self,
+        now_us: u64,
+        offset: u64,
+        frame: FrameId,
+        payload: &[u8],
+    ) -> Option<u64> {
         if !self.rt.can_send(1200) {
             return None; // congestion gate refused — nothing is sent/tracked
         }
-        let offset = self.next_offset;
-        self.next_offset += 1;
         // Application data carries a stable Session logical identity inside
         // ProcessMessage::Data so retransmits dedup on (stream, offset).
         let msg = neko_session::ProcessMessage::Data {
@@ -100,7 +148,7 @@ impl<'a> ReliableUdpPeer<'a> {
         let sealed = self.session.seal(&record).unwrap();
         let n = packet_number(&sealed);
         self.rt
-            .on_packet_sent(n, now_us, sealed.len() as u64, FrameId(offset), payload)
+            .on_packet_sent(n, now_us, sealed.len() as u64, frame, payload)
             .unwrap();
         self.sock.send_datagram(&sealed).unwrap();
         Some(n)
@@ -137,13 +185,36 @@ impl<'a> ReliableUdpPeer<'a> {
                 if let Ok(neko_session::ProcessMessage::Data { record, .. }) =
                     neko_session::ProcessMessage::decode(&rec.payload)
                 {
-                    // Dedup by the stable Session logical identity
-                    // (stream, offset) — independent of fresh packet number.
-                    let _ = self.rt.deliver_logical(
-                        record.stream.0 as u32,
-                        record.offset,
-                        &record.data,
-                    );
+                    // Session-layer ownership: bounded stream/offset delivery.
+                    // An exact duplicate of an already-delivered logical
+                    // identity is suppressed by Session semantics; conflicting
+                    // bytes for the same identity are a fail-closed error that
+                    // is recorded here rather than swallowed with `let _`.
+                    let before = self.session_rt.events().count();
+                    match self.session_rt.receive(
+                        neko_session::InboundRecord {
+                            stream: record.stream,
+                            offset: record.offset,
+                            data: record.data.clone(),
+                        },
+                        now_us,
+                    ) {
+                        Ok(()) => {
+                            let duplicate =
+                                self.session_rt.events().skip(before).any(|e| {
+                                    e.kind == neko_session::RuntimeEventKind::DuplicateDedup
+                                });
+                            if duplicate {
+                                self.session_duplicates += 1;
+                            } else {
+                                self.session_delivered += 1;
+                            }
+                        }
+                        Err(error) => {
+                            self.session_conflicts += 1;
+                            self.last_session_error = Some(error);
+                        }
+                    }
                 }
                 Some(n)
             }
@@ -364,4 +435,56 @@ fn runtime_event_loop_recovers_loss_and_drives_degradation_only_on_new_evidence(
     // The fresh-evidence health bridge already drove the automatic fallback
     // inside poll_health: UDP failed and the warm TCP standby is now active.
     assert_eq!(client.rt.manager().active(), Some(TCP));
+}
+
+#[test]
+fn session_layer_suppresses_exact_duplicates_and_fails_closed_on_conflict() {
+    let (client_sock, server_sock) = UdpLoopbackPair::new(UdpLimits {
+        max_datagram_bytes: 4600,
+    })
+    .unwrap();
+    let (cs, ss) = pair(&client_sock, &server_sock);
+    let mut client = ReliableUdpPeer::new(&client_sock, cs, 1);
+    let mut server = ReliableUdpPeer::new(&server_sock, ss, 1);
+
+    // First delivery of logical identity (stream 1, offset 0).
+    client.send_data_at(0, 0, b"alpha");
+    server.recv_once(0);
+    assert_eq!(server.session_delivered, 1, "first delivery accepted");
+    assert_eq!(server.session_conflicts, 0);
+
+    // An exact duplicate of the same logical identity is suppressed by Session
+    // semantics: delivered once, counted once, never an error.
+    client.send_data_at(1000, 0, b"alpha");
+    server.recv_once(1000);
+    assert_eq!(
+        server.session_delivered, 1,
+        "exact duplicate of a delivered identity is not redelivered"
+    );
+    assert_eq!(server.session_duplicates, 1, "exact duplicate counted once");
+    assert_eq!(server.session_conflicts, 0);
+
+    // Conflicting bytes for the same logical identity fail closed and are
+    // retained for inspection — never swallowed. A distinct Carrier frame keeps
+    // carrier plaintext ownership legal while the Session identity collides.
+    client.send_data_frame(2000, 0, FrameId(5000), b"tampered");
+    server.recv_once(2000);
+    assert_eq!(
+        server.session_conflicts, 1,
+        "conflicting duplicate fails closed at the Session layer"
+    );
+    assert_eq!(
+        server.session_delivered, 1,
+        "a conflicting duplicate is never delivered"
+    );
+    assert!(
+        server.last_session_error.is_some(),
+        "the Session rejection is retained, not swallowed with `let _`"
+    );
+
+    // Packet recovery/ACK evidence remains separate from Session delivery.
+    server.send_ack();
+    client.recv_once(3000);
+    assert_eq!(server.session_delivered, 1);
+    assert_eq!(server.session_conflicts, 1);
 }
