@@ -203,6 +203,80 @@ fn malformed_ack_record_never_reaches_recovery() {
 }
 
 #[test]
+fn lost_packet_retransmits_frame_level_and_delivers_exactly_once() {
+    let (client, server) = UdpLoopbackPair::new(UdpLimits {
+        max_datagram_bytes: 4600,
+    })
+    .unwrap();
+    let (mut cs, mut ss) = pair(&client, &server);
+    let mut recovery = PathRecovery::new(PathId(1), 1, 1200).unwrap();
+
+    // Record 4 sent packets but DELIBERATELY drop packet 0 on the wire —
+    // deterministic loss, not timing. Packets 1..3 actually transmit.
+    let mut dropped = Vec::new();
+    for i in 0..4u64 {
+        let sealed = cs.seal(&data_record(format!("m{i}").as_bytes())).unwrap();
+        let n = num(&sealed);
+        recovery
+            .on_sent(SentPacket {
+                number: n,
+                sent_at_us: n * 1_000,
+                bytes: sealed.len() as u64,
+                ack_eliciting: true,
+                frames: vec![FrameId(n)],
+            })
+            .unwrap();
+        if i == 0 {
+            dropped.push(sealed); // held back — never sent on the wire
+        } else {
+            client.send_datagram(&sealed).unwrap();
+        }
+    }
+
+    // Server receives only 1,2,3 and ACKs exactly those. Packet 0 was never
+    // on the wire, so its loss is genuine (bounded below the loss threshold).
+    for _ in 0..3 {
+        ss.open(&recv(&server)).unwrap();
+    }
+    server
+        .send_datagram(&ss.seal(&ack_record(&[(1, 3)], 0)).unwrap())
+        .unwrap();
+    let plain = cs.open(&recv(&client)).unwrap();
+    let ack = decode_ack(&decode(&plain).unwrap().payload).unwrap();
+    let mut ranges = AckRanges::new(8).unwrap();
+    for r in &ack.ranges {
+        for n in r.start..=r.end {
+            ranges.insert(n).unwrap();
+        }
+    }
+    let out = recovery.on_ack(1, &ranges, 40_000, ack.ack_delay_us).unwrap();
+    assert_eq!(out.acked_packets, vec![1, 2, 3]);
+    // Packet 0 is declared lost -> its frame is scheduled for retransmit.
+    assert_eq!(out.lost_packets, vec![0]);
+    assert_eq!(out.retransmit_frames, vec![FrameId(0)]);
+
+    // Retransmit = re-encode the frame into a FRESH packet (new nonce/image),
+    // never resend the old encrypted packet image.
+    let re_sealed = cs.seal(&data_record(b"m0")).unwrap();
+    let rn = num(&re_sealed);
+    assert_ne!(rn, 0, "retransmit uses a fresh packet number");
+    recovery
+        .on_sent(SentPacket {
+            number: rn,
+            sent_at_us: rn * 1_000,
+            bytes: re_sealed.len() as u64,
+            ack_eliciting: true,
+            frames: vec![FrameId(0)],
+        })
+        .unwrap();
+    client.send_datagram(&re_sealed).unwrap();
+    let delivered = ss.open(&recv(&server)).unwrap();
+    assert_eq!(decode(&delivered).unwrap().payload, b"m0");
+    // The dropped original image is never sent, so it cannot double-deliver.
+    drop(dropped);
+}
+
+#[test]
 fn closed_socket_rejects_send_and_recv_cleans_up() {
     let (client, server) = UdpLoopbackPair::new(UdpLimits {
         max_datagram_bytes: 64,
