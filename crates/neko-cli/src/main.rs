@@ -3975,11 +3975,6 @@ fn lab_reliable_udp(args: &[String], json: bool) {
         st.now_us = st.now_us.saturating_add(LAB_STEP_US);
         lab_pump(&mut rt, &mut client_sess, &client_sock, &mut cbuf, &mut st);
     }
-    let settled = st.outstanding.is_empty();
-    if !settled {
-        st.partial = true;
-    }
-
     server_done.store(true, Ordering::Release);
     let server_c = match server_join.join() {
         Ok(c) => c,
@@ -4006,8 +4001,14 @@ fn lab_reliable_udp(args: &[String], json: bool) {
     drop(client_sock);
     let cleanup_ok = UdpSocket::bind(client_addr).is_ok() && UdpSocket::bind(server_addr).is_ok();
 
+    // Settlement is judged against the runtime's authoritative in-flight view as
+    // well as the lab's own ownership map, so `ok` cannot rest on lab-local
+    // bookkeeping that has drifted from actual recovery state.
+    let settled = st.outstanding.is_empty() && remaining_in_flight == 0;
+    let partial = st.partial || !settled;
+
     let ok = settled
-        && !st.partial
+        && !partial
         && c.conflicts == 0
         && c.acks_rejected == 0
         && c.recv_rejected == 0
@@ -4029,7 +4030,7 @@ fn lab_reliable_udp(args: &[String], json: bool) {
         j.push_str(r#","settled":"#);
         j.push_str(if settled { "true" } else { "false" });
         j.push_str(r#","partial":"#);
-        j.push_str(if st.partial { "true" } else { "false" });
+        j.push_str(if partial { "true" } else { "false" });
         j.push_str(r#","session":{"delivered":"#);
         j.push_str(&c.delivered.to_string());
         j.push_str(r#","duplicates":"#);
@@ -4086,8 +4087,7 @@ fn lab_reliable_udp(args: &[String], json: bool) {
         println!("{j}");
     } else {
         println!(
-            "scenario=reliable-udp ok={ok} rounds={rounds} settled={settled} partial={}",
-            st.partial
+            "scenario=reliable-udp ok={ok} rounds={rounds} settled={settled} partial={partial}"
         );
         println!(
             "session delivered={} duplicates={} conflicts={} application_bytes={}",

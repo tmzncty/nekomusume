@@ -4004,6 +4004,42 @@ fn lab_reliable_udp_scenarios_are_truthful_and_legacy_lab_is_preserved() {
 }
 
 #[test]
+fn lab_reliable_udp_reports_partial_and_exits_nonzero_when_delivery_is_unfinished() {
+    // The declared invariant is that ok=true is unreachable with unfinished
+    // delivery. Force the bound to expire before recovery settles and pin the
+    // truthful outcome: partial, ok=false, nonzero exit.
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let out = Command::new(bin)
+        .args([
+            "lab",
+            "--scenario",
+            "reliable-udp",
+            "--rounds",
+            "8",
+            "--drop-every",
+            "0",
+            "--drop-ack-every",
+            "1",
+            "--settle-ms",
+            "1",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains(r#""ok":false"#), "{s}");
+    assert!(s.contains(r#""settled":false"#), "{s}");
+    assert!(s.contains(r#""partial":true"#), "{s}");
+    assert!(!s.contains(r#""ok":true"#), "{s}");
+}
+
+#[test]
 fn lab_scenario_arguments_fail_closed_before_sockets() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     for args in [
