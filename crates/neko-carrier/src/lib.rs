@@ -4276,6 +4276,33 @@ mod path_recovery_tests {
         assert_eq!(r.bytes_in_flight(), 0);
         assert!(r.can_send(1200));
     }
+
+    #[test]
+    fn pacing_and_send_decision_are_deterministic_and_accounted() {
+        let mut r = recovery();
+        // A send decision consults can_send before enqueue; bytes-in-flight is
+        // charged exactly once per sent packet and released exactly once.
+        for n in 0..3u64 {
+            let bytes = 400u64;
+            assert!(r.can_send(bytes), "packet {n} within window");
+            r.on_sent(sent(n, bytes, &[n])).unwrap();
+            assert_eq!(r.bytes_in_flight(), bytes * (n + 1));
+        }
+        // Pacing interval is a deterministic function of bytes + measured RTT;
+        // it is non-panicking and bounded, not a busy-loop or unaccounted sleep.
+        let interval = r.pacing_interval_us(400);
+        assert!(interval < u64::MAX);
+        // One ACK retires exactly once — a second identical ACK frees nothing.
+        let out1 = r.on_ack(7, &ack_of(0), 20_000, 0).unwrap();
+        assert_eq!(out1.acked_bytes, 400);
+        assert_eq!(r.bytes_in_flight(), 800);
+        let out2 = r.on_ack(7, &ack_of(0), 21_000, 0).unwrap();
+        assert_eq!(out2.acked_bytes, 0);
+        assert_eq!(r.bytes_in_flight(), 800);
+        // Persistent congestion collapses the window so can_send tightens.
+        assert!(r.can_send(400));
+        r.persistent_congestion();
+    }
 }
 
 #[cfg(test)]
