@@ -4060,6 +4060,11 @@ pub struct PathRecovery {
     /// a distinct bad health observation merely by sending more packets.
     outcome_epoch: u64,
     health_epoch: Option<u64>,
+    /// Counters at the last consumed health observation — the manager-facing
+    /// sample is the *delta* since then, so an old cumulative loss is never
+    /// replayed as a fresh bad observation by a later clean outcome.
+    last_health_sent: u64,
+    last_health_lost: u64,
 }
 
 /// Outcome of applying an authenticated packet ACK to a path.
@@ -4103,6 +4108,8 @@ impl PathRecovery {
             // Start as if outcome_epoch 0 were already consumed: with no
             // resolved outcome yet there is nothing fresh to observe.
             health_epoch: Some(0),
+            last_health_sent: 0,
+            last_health_lost: 0,
             charged: BTreeMap::new(),
         })
     }
@@ -4252,7 +4259,23 @@ impl PathRecovery {
             return None;
         }
         self.health_epoch = Some(self.outcome_epoch);
-        Some(self.raw_health_sample())
+        // Manager-facing evidence is the resolved *interval delta*, not the
+        // lifetime cumulative ratio — an old loss burst is never replayed as a
+        // new bad observation by a subsequent clean outcome.
+        let delta_sent = self.packets_sent.saturating_sub(self.last_health_sent);
+        let delta_lost = self.packets_lost.saturating_sub(self.last_health_lost);
+        self.last_health_sent = self.packets_sent;
+        self.last_health_lost = self.packets_lost;
+        let loss_per_mille = delta_lost
+            .saturating_mul(1000)
+            .checked_div(delta_sent)
+            .map(|r| r.min(u16::MAX as u64) as u16)
+            .unwrap_or(0);
+        Some(HealthSample {
+            rtt_us: self.recovery.rtt.smoothed_us,
+            loss_per_mille,
+            pto: self.recovery.pto_count.min(u16::MAX as u32) as u16,
+        })
     }
 
     /// Read-only raw counters for observability/diagnostics. This is NOT a
@@ -4429,6 +4452,9 @@ pub struct ReliableUdpRuntime {
     manager: ConcurrentCarrierManager,
     /// Frames currently retained for retransmission by plaintext.
     frame_plaintext: BTreeMap<neko_reliable::FrameId, Vec<u8>>,
+    /// Which stable frames each sent packet carries — packet number is fresh
+    /// per transmission while frame identity is stable across retransmits.
+    packet_frames: BTreeMap<u64, Vec<neko_reliable::FrameId>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4472,6 +4498,7 @@ impl ReliableUdpRuntime {
                 .map_err(|_| PathRecoveryError::GenerationMismatch)?,
             manager,
             frame_plaintext: BTreeMap::new(),
+            packet_frames: BTreeMap::new(),
         })
     }
 
@@ -4490,16 +4517,18 @@ impl ReliableUdpRuntime {
             .activate(self.path, SwitchReason::OperatorRequest, now_ms, false);
     }
 
-    /// Record that a packet `number` was sent carrying `frame` plaintext.
-    /// Retains the frame for possible fresh re-encoding on loss.
+    /// Record that packet `number` (fresh AEAD nonce/sequence) was sent carrying
+    /// the stable `frame` identity. Frame identity is independent of packet
+    /// number: a retransmission keeps the same `frame` under a fresh number.
+    /// Retains the frame's plaintext for fresh re-encoding on loss.
     pub fn on_packet_sent(
         &mut self,
         number: u64,
         sent_at_us: u64,
         bytes: u64,
+        frame: neko_reliable::FrameId,
         frame_plaintext: &[u8],
     ) -> Result<(), PathRecoveryError> {
-        let frame = neko_reliable::FrameId(number);
         self.recovery.on_sent(neko_reliable::SentPacket {
             number,
             sent_at_us,
@@ -4509,6 +4538,8 @@ impl ReliableUdpRuntime {
         })?;
         let _ = self.retransmit.track(frame, frame_plaintext);
         let _ = self.frame_plaintext.insert(frame, frame_plaintext.to_vec());
+        // Record which stable frames this packet number carried.
+        self.packet_frames.insert(number, vec![frame]);
         Ok(())
     }
 
@@ -4540,9 +4571,19 @@ impl ReliableUdpRuntime {
         let out = self
             .recovery
             .on_ack(self.generation, ack, now_us, ack_delay_us)?;
-        for n in &out.acked_packets {
-            let f = neko_reliable::FrameId(*n);
-            if !self.recovery.frame_outstanding(f) {
+        // Resolve the real frames carried by each retired packet — frame
+        // identity is looked up, never reconstructed as FrameId(packet_no).
+        let mut candidates: Vec<neko_reliable::FrameId> = Vec::new();
+        for n in out.acked_packets.iter().chain(out.lost_packets.iter()) {
+            candidates.extend(self.packet_frames.get(n).cloned().unwrap_or_default());
+            self.packet_frames.remove(n);
+        }
+        let scheduled: std::collections::BTreeSet<_> =
+            out.retransmit_frames.iter().copied().collect();
+        for f in candidates {
+            // Release only when no outstanding copy remains AND the frame is
+            // not currently scheduled for retransmission.
+            if !self.recovery.frame_outstanding(f) && !scheduled.contains(&f) {
                 self.retransmit.release(f);
                 self.frame_plaintext.remove(&f);
             }
@@ -4580,17 +4621,40 @@ impl ReliableUdpRuntime {
         }
     }
 
-    /// Fire a PTO and return the plaintext frames to re-encode fresh.
-    pub fn pto_probe(&mut self) -> Vec<Vec<u8>> {
+    /// Fire a PTO and return the `(stable FrameId, plaintext)` pairs to
+    /// re-encode under a FRESH packet number — the caller re-sends the same
+    /// frame identity, not a new FrameId keyed by the new packet number.
+    pub fn pto_probe(&mut self) -> Vec<(neko_reliable::FrameId, Vec<u8>)> {
         self.recovery
             .on_pto(4)
             .map(|frames| {
                 frames
                     .iter()
-                    .filter_map(|f| self.frame_plaintext.get(f).cloned())
+                    .filter_map(|f| self.frame_plaintext.get(f).cloned().map(|b| (*f, b)))
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Record a fresh retransmission packet carrying a stable frame identity.
+    /// The caller supplies a fresh packet number/nonce; the frame id stays the
+    /// original stable id so overlapping-copy accounting stays truthful.
+    pub fn on_retransmit_sent(
+        &mut self,
+        packet_number: u64,
+        sent_at_us: u64,
+        bytes: u64,
+        frame: neko_reliable::FrameId,
+    ) -> Result<(), PathRecoveryError> {
+        self.recovery.on_sent(neko_reliable::SentPacket {
+            number: packet_number,
+            sent_at_us,
+            bytes,
+            ack_eliciting: true,
+            frames: vec![frame],
+        })?;
+        self.packet_frames.insert(packet_number, vec![frame]);
+        Ok(())
     }
 
     pub fn manager(&self) -> &ConcurrentCarrierManager {
@@ -4809,18 +4873,33 @@ mod path_recovery_tests {
         // Bare sends and same-epoch polls must NOT produce another observation
         // — on_sent does not advance outcome_epoch, so historical cumulative
         // loss cannot be replayed by just sending more traffic.
-        for n in 8..11u64 {
-            r.on_sent(sent(n, 400, &[n])).unwrap();
-            assert!(
-                r.fresh_health_sample().is_none(),
-                "a bare send with no resolved outcome must not emit a sample"
-            );
-        }
+        r.on_sent(sent(8, 400, &[8])).unwrap();
+        assert!(
+            r.fresh_health_sample().is_none(),
+            "a bare send with no resolved outcome must not emit a sample"
+        );
         // One resolved bad outcome counts once; below degrade_after(=2) the
         // single bad sample cannot reach Degraded, and replays yield none.
         let st = health.path(PathId(1)).unwrap();
         assert_eq!(st.consecutive_bad, 1, "exactly one bad observation counted");
         assert_ne!(st.state, HealthState::Degraded);
+        // H-RUDP-001C: a subsequent CLEAN resolved outcome must NOT replay the
+        // old cumulative loss. ACK every still-outstanding packet (5,6,7,8,9)
+        // so the interval delta has zero new loss, not the old 625/mille.
+        r.on_sent(sent(9, 400, &[9])).unwrap();
+        let mut a2 = AckRanges::new(8).unwrap();
+        for n in 5..=9u64 {
+            a2.insert(n).unwrap();
+        }
+        r.on_ack(7, &a2, 50_000, 0).unwrap();
+        let clean = r.fresh_health_sample().expect("new resolved outcome");
+        assert_eq!(
+            clean.loss_per_mille, 0,
+            "clean interval must not replay old cumulative loss"
+        );
+        // That clean outcome advances progress, not the bad streak.
+        let _ = health.observe(PathId(1), clean).unwrap();
+        assert_eq!(health.path(PathId(1)).unwrap().consecutive_bad, 0);
     }
 
     #[test]
@@ -4936,7 +5015,9 @@ mod path_recovery_tests {
         rt.activate_udp(1);
         // Send packets -> observe -> ACK emits once -> apply -> in-flight drains.
         for n in 0..4u64 {
-            rt.on_packet_sent(n, n * 1000, 400, b"data").unwrap();
+            // Frame identity is deliberately distinct from packet number.
+            rt.on_packet_sent(n, n * 1000, 400, FrameId(1000 + n), b"data")
+                .unwrap();
         }
         assert_eq!(rt.in_flight(), 4);
         // Receiver observes each as ack-eliciting Data -> pending ACK.
@@ -4961,10 +5042,20 @@ mod path_recovery_tests {
         assert!(rt.poll_outgoing_ack(0).is_none());
         // Distinct PTO epochs drive automatic fallback through the bridge.
         let mut fell = false;
+        // One monotonically increasing packet-number source for both primary
+        // sends and retransmissions (the real source is the crypto sequence).
+        let mut pn = 10u64;
         for i in 0..8u64 {
-            rt.on_packet_sent(10 + i, 100_000 + i * 1000, 400, b"x")
+            rt.on_packet_sent(pn, 100_000 + i * 1000, 400, FrameId(2000 + i), b"x")
                 .unwrap();
-            rt.pto_probe();
+            pn += 1;
+            // PTO probe frames re-send under a FRESH packet number with the
+            // SAME stable FrameId.
+            for (frame, _plaintext) in rt.pto_probe() {
+                rt.on_retransmit_sent(pn, 110_000 + i * 1000, 400, frame)
+                    .unwrap();
+                pn += 1;
+            }
             if rt.poll_health(200 + i) == RuntimeEvent::WarmFallback {
                 fell = true;
                 break;
