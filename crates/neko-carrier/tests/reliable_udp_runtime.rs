@@ -149,6 +149,20 @@ impl<'a> ReliableUdpPeer<'a> {
         Some(number)
     }
 
+    /// Record which Session byte offset a Carrier frame carries. Re-binding one
+    /// `FrameId` to a different offset fails loudly instead of silently keeping
+    /// the last value.
+    fn note_frame_offset(&mut self, frame: FrameId, offset: u64) {
+        if let Some(existing) = self.frame_offsets.get(&frame) {
+            assert_eq!(
+                *existing, offset,
+                "FrameId {frame:?} is already bound to Session offset {existing}, not {offset}"
+            );
+            return;
+        }
+        self.frame_offsets.insert(frame, offset);
+    }
+
     /// Send at an explicit stable logical offset — used by the conflict fixture
     /// so the same Session identity can be re-used with different bytes.
     fn send_data_at(&mut self, now_us: u64, offset: u64, payload: &[u8]) -> Option<u64> {
@@ -191,8 +205,10 @@ impl<'a> ReliableUdpPeer<'a> {
         self.rt
             .on_packet_sent(n, now_us, sealed.len() as u64, frame, payload)
             .unwrap();
-        // Remember the Session identity this Carrier frame carries.
-        self.frame_offsets.insert(frame, offset);
+        // Remember the Session identity this Carrier frame carries. A frame id
+        // may not be re-bound to a different Session offset: that would make a
+        // later retransmission re-encode the wrong logical identity.
+        self.note_frame_offset(frame, offset);
         self.sock.send_datagram(&sealed).unwrap();
         Some(n)
     }
@@ -428,9 +444,15 @@ fn runtime_event_loop_recovers_loss_and_drives_degradation_only_on_new_evidence(
             )
             .unwrap(),
     );
+    // The dropped packet is built through the raw runtime API, so its Carrier
+    // frame gets no offset from the send path: record the Session identity it
+    // would carry, otherwise a PTO selecting it would fail loudly.
+    let dropped_frame = FrameId(9001);
+    let dropped_offset = client.next_offset;
+    client.note_frame_offset(dropped_frame, dropped_offset);
     client
         .rt
-        .on_packet_sent(dropped_num, 60_000, 400, FrameId(9001), b"lost")
+        .on_packet_sent(dropped_num, 60_000, 400, dropped_frame, b"lost")
         .unwrap();
     // never sent on the wire
     for i in 0..3u64 {
@@ -868,5 +890,86 @@ fn scenario_cwnd_refusal_consumes_no_session_byte_offset() {
     assert_eq!(
         server.session_conflicts, 0,
         "a refused send must not create a Session byte-offset gap"
+    );
+}
+
+#[test]
+fn scenario_pto_only_sample_does_not_erase_a_later_resolved_loss_in_the_coherent_path() {
+    let (client_sock, server_sock) = UdpLoopbackPair::new(UdpLimits {
+        max_datagram_bytes: 4600,
+    })
+    .unwrap();
+    let (cs, ss) = pair(&client_sock, &server_sock);
+    let mut client = ReliableUdpPeer::new(&client_sock, cs, 1);
+    let mut server = ReliableUdpPeer::new(&server_sock, ss, 1);
+    // A ready warm standby makes degradation observable as a real switch event.
+    activate_with_ready_standby(&mut client);
+
+    let mut degraded = false;
+    let mut bad_intervals = 0u32;
+    for round in 0..6u64 {
+        let base = 1_000 + round * 3_000;
+        // Six small records give the recovery engine enough spread to declare
+        // the older packets lost when only the newest one is acknowledged.
+        let mut numbers = Vec::new();
+        for i in 0..6u64 {
+            numbers.push(
+                client
+                    .send_data(base + i * 10, b"L")
+                    .expect("cwnd admits a fresh send"),
+            );
+        }
+        for _ in 0..6 {
+            server.recv_once(base);
+        }
+
+        if round == 0 {
+            // One PTO-only interval keeps pto_count = 1 < 3, so this sample is a
+            // loss-based observation, never a pto-threshold failure.
+            client.pto_retransmit(base + 100);
+            match client.poll_health(base + 110) {
+                neko_carrier::RuntimeEvent::HealthSample(state) => assert!(
+                    !matches!(
+                        state,
+                        neko_carrier::HealthState::Degraded | neko_carrier::HealthState::Failed
+                    ),
+                    "a single PTO interval must not degrade the path by itself"
+                ),
+                other => panic!("expected a fresh PTO health sample, got {other:?}"),
+            }
+        }
+
+        // With no intervening send, this ACK newly declares the older packets
+        // lost. A PTO-only sample must not have consumed this loss interval: if
+        // the resolved loss were erased to zero, consecutive_bad would never
+        // accumulate and Degraded would be unreachable.
+        let mut only_newest = AckRanges::new(8).unwrap();
+        only_newest.insert(*numbers.last().unwrap()).unwrap();
+        client.rt.apply_ack(&only_newest, base + 200, 0).unwrap();
+        match client.poll_health(base + 210) {
+            neko_carrier::RuntimeEvent::Idle => {
+                panic!("the resolved-loss epoch must remain observable after the PTO sample")
+            }
+            neko_carrier::RuntimeEvent::HealthSample(state) => {
+                if matches!(
+                    state,
+                    neko_carrier::HealthState::Degraded | neko_carrier::HealthState::Failed
+                ) {
+                    degraded = true;
+                    break;
+                }
+                bad_intervals += 1;
+            }
+            neko_carrier::RuntimeEvent::WarmFallback(_)
+            | neko_carrier::RuntimeEvent::FallbackFailed => {
+                degraded = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        degraded,
+        "two consecutive resolved-loss intervals must reach Degraded \
+         (pto_count stays < 3, so this is the loss branch; bad_intervals={bad_intervals})"
     );
 }
