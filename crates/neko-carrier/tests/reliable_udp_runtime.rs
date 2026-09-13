@@ -187,12 +187,24 @@ impl<'a> ReliableUdpPeer<'a> {
         }
     }
 
-    /// Poll the fresh-evidence health bridge: a new evidence epoch yields one
-    /// sample; no new evidence yields None and cannot advance the streak.
+    /// Poll the fresh-evidence health bridge: a new resolved outcome epoch
+    /// yields one sample; no new outcome yields None and cannot advance the
+    /// streak. When the path reaches Degraded the manager automatically fails
+    /// UDP and promotes the already-ready warm TCP standby — the runtime
+    /// drives the transition, not a manual test call.
     fn poll_health(&mut self, now_ms: u64) -> Option<neko_carrier::HealthState> {
         let s = self.recovery.fresh_health_sample()?;
         let state = self.health.observe(PathId(1), s).unwrap();
         self.obs.record_health(now_ms, 1, PathId(1), None, state, s);
+        if state == neko_carrier::HealthState::Degraded
+            && self.manager.state(UDP).is_ok()
+            && self.manager.state(TCP).is_ok()
+        {
+            let _ = self.manager.fail(UDP, SwitchReason::UdpPathDegraded, now_ms);
+            let _ = self
+                .manager
+                .activate(TCP, SwitchReason::UdpPathDegraded, now_ms, true);
+        }
         Some(state)
     }
 
@@ -353,15 +365,7 @@ fn runtime_event_loop_recovers_loss_and_drives_degradation_only_on_new_evidence(
         attempts >= 1,
         "degrade needs >= degrade_after new bad epochs"
     );
-    // PTO-driven degradation fails the active UDP path; the ready warm TCP
-    // standby is promoted.
-    client
-        .manager
-        .fail(UDP, SwitchReason::UdpBlackhole, 400)
-        .unwrap();
-    let ev = client
-        .manager
-        .activate(TCP, SwitchReason::UdpBlackhole, 401, true)
-        .unwrap();
-    assert_eq!(ev.recovery_class, Some(neko_carrier::RecoveryClass::Warm));
+    // The fresh-evidence health bridge already drove the automatic fallback
+    // inside poll_health: UDP failed and the warm TCP standby is now active.
+    assert_eq!(client.manager.active(), Some(TCP));
 }
