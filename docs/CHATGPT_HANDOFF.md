@@ -1,125 +1,201 @@
-# ChatGPT reviewer handoff — adapter review accepted; challenge SessionRuntime terminal cleanup next
+# ChatGPT reviewer handoff — reconcile SessionRuntime evidence, then continue deep item-4 core review
 
 ## Reviewed repository truth
 
-- Current default branch before this refresh includes reviewer handoff `8d443d3cc48eaa49c4a2b8c8e4cfc3162d2044d1` and concurrent bounded carrier-adapter review `31c17695c695747c2e46f4cf43f9fd10a17d2927`.
-- Latest developer source/test head remains exact `8e11de0e5915efa43591069172b97f311aae2c6e` (`fix(observe): close stable-v1 event schema and drop-evidence contract`).
-- Exact `8e11de0` has clean developer-local exact-tree provenance; hosted `stable checks` and `nightly decode fuzz smoke` also succeeded. Hosted CI remains extra cross-evidence only.
-- No VPS/WAN experiment, release flag, production state or live classification changed.
-- Governance remains: item 3 incomplete, item 4 incomplete, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, D019 policy-blocked, `READY_LIVE: none`.
+- Current default branch before this refresh: exact `4b66a444941f85a93865d209f3a6b1f9e850cc14` (`docs(release): index 2026-09-13 deep item-4 core review sweep`).
+- The previous handoff is stale: after it, the developer/reviewer sequence completed the SessionRuntime review/repair, package/release-script review, dependency/build-surface review, CLI portability/output review, and one release-packet reconciliation.
+- Latest source/test change is reachable exact `9697ee7a0045b39c6ef46c1951fefea486ccf13b` (`fix(session): symmetric terminal cleanup on idle-timeout and close-deadline`). GitHub-hosted `stable checks` and `nightly decode fuzz smoke` are green for that exact SHA. Hosted CI is extra cross-evidence only, not a replacement for developer-local exact-tree provenance.
+- No new VPS/WAN experiment occurred. Governance remains unchanged: item 3 incomplete, item 4 incomplete, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, D019 policy-blocked, `READY_LIVE: none`.
 
-## Accepted completed slices — do not repeat
+## Accepted progress since the previous handoff
 
-### Observability stable-v1 closure — ACCEPT
+The high-throughput core review strategy is working and must continue. Preserve these completed surfaces unless their source changes:
 
-Exact source `8e11de0` plus independent re-close `18f7c58` closes O2/O3/O4/O5/O6. Sequence exhaustion, schema-valid `resource.limit_hit`, drop diagnostics, exact drop accounting, retained floor, bounded huge deltas and mixed datagram attribution are closed on that reachable tree. Do not reopen unless later source/schema changes touch this surface.
+1. reliable UDP recovery / future and never-sent ACK rejection (`531c82d`, `02b6eaa` plus independent close notes);
+2. `CarrierState` generation / validation / hysteresis;
+3. CarrierManager / migration-back, including switch-margin overflow and negative-margin repairs (`a14cf47`, `91f8cd8`);
+4. FairScheduler / flow-control accounting;
+5. observability projection/buffer/drop/schema repairs through exact `8e11de0` and independent re-close;
+6. carrier adapter close/error/resource review;
+7. package/reproducibility release-script review at `8e11de0` — ACCEPT_AS_BOUNDED_SUPPORT;
+8. dependency/build-surface review at `8e11de0` — ACCEPT_AS_BOUNDED_SUPPORT;
+9. CLI portability + machine/human/exit-code review at `8e11de0` — ACCEPT_AS_BOUNDED_SUPPORT.
 
-### Carrier adapter review `31c1769` — ACCEPT_AS_BOUNDED_SUPPORT
+These remain bounded item-4 support, not a security audit or release approval.
 
-The independent review of Memory/UDP/TCP adapters on exact `8e11de0` is retained as useful item-4 support. It finds no repairable defect in bounded message/allocation checks, local close idempotence, memory queued-data drain, UDP connectionless close behavior, TCP framing/truncation, mutex poison/I/O mapping or evidence-domain separation. Do not redo this review unless adapter code changes.
+## EVIDENCE-INTEGRITY HIGH — SessionRuntime review must be reconciled
 
-The reviewer had specifically challenged UDP local-close mapping. `31c1769` resolves that current bounded adapter contract as acceptable: UDP is connectionless and has no queued-drain/peer-close contract; local close stops sends and makes receive terminal for that adapter without creating Session/path evidence. No new cross-adapter framework is warranted from current semantics.
+The independent note `docs/reviews/independent-session-runtime-8e11de0-20260913.md` contains a concrete false no-finding for its claimed exact source anchor. It says that at exact `8e11de0`, idle-timeout and close-deadline `tick()` already cleared `received`, `confirmed`, per-stream inflight/window maps, session-level window counters, and queues consistently with `close_remote()` / `cancel()`.
 
-## Already completed core-review surfaces — preserve
+That statement is contradicted by the later source repair exact `9697ee7`: the repair correctly records that the two `tick()` terminal paths at `8e11de0` cleared only `send`, `recv`, and `queued_bytes`, retaining dedup history, confirmation watermarks, and window/inflight accounting until object drop. Exact `9697ee7` adds shared `clear_runtime_state()` plus focused idle-timeout and close-deadline regressions.
 
-1. UDP recovery review plus future/never-sent ACK repairs (`531c82d`, `02b6eaa` and independent close notes);
-2. `CarrierState` generation/validation/hysteresis (`0831443` at source `8f93b93`);
-3. CarrierManager/migration-back plus switch-margin overflow/negative-domain repairs (`a14cf47`, `91f8cd8`, `5f1cb8d`);
-4. FairScheduler/flow-control (`496258d` at source `91f8cd8`);
-5. observability projection/buffer/drop/schema (`8f93b93`, `8a4e465`, `ece67b8`, `8e11de0`, re-close `18f7c58`);
-6. carrier adapter close/error/resource review (`31c1769` at source `8e11de0`).
+Do **not** rewrite the historical exact-`8e11de0` review note as though it had been correct. Supersede/reconcile it truthfully.
 
-These remain bounded review support, not release/security approval or item-4 completion.
+A second evidence-integrity issue is the current release-packet wording that the listed repair SHAs, including `9697ee7`, each have their own exact-tree gate. GitHub currently exposes green hosted checks for exact `9697ee7`, but this reviewer pass did not find a repository-persisted developer-local clean exact-tree provenance note for that repair. Do not infer that no local run happened; the narrower problem is that the shared repository surface does not currently reproduce that local-gate claim.
 
-## Deep pre-authorized queue — continue without reviewer wait
+### MUST_EXECUTE_LOCAL 1 — close exact `9697ee7` provenance
 
-### REVIEW_LOCAL 1 — `SessionRuntime` lifecycle/resource/DeliveryAck accounting
+On a clean checkout/worktree of pushed exact `9697ee7` run at minimum:
 
-Primary owner: `crates/neko-session/src/lib.rs` runtime/process-message surfaces plus applicable specs/tests.
+```bash
+cargo test -p neko-session
+PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
+git diff --check
+git status --short
+```
+
+Persist sanitized provenance: exact SHA, commands, UTC start/end, exit codes, OS/arch, stable Rust version, initial/final clean-tree state. Do not include secrets, private endpoint topology, or unnecessary absolute paths.
+
+If the local gate fails, repair the actual failure first and move the tested-tree anchor to the new reachable pushed source SHA. Do not preserve `9697ee7` as a green local anchor if it was not green.
+
+### MUST_EXECUTE_LOCAL 2 — truthful SessionRuntime evidence reconciliation
+
+After the exact source gate is green:
+
+1. Add one concise reconciliation/supersession note that identifies the incorrect exact-`8e11de0` cleanup sentence and points to the reachable corrected source/test SHA.
+2. Update `docs/release-security-review-packet.md` and, where useful, `docs/reviews/release-item4-subgates-20260909.md` so they do not present the old cleanup no-finding as accepted current truth.
+3. Keep the historical note immutable except for an explicit superseded/quarantined marker only if the repository's documentation practice requires it; do not rewrite its historical test commands/timestamps or pretend it described a different tree.
+4. State hosted CI and developer-local exact-tree evidence separately.
+5. No release flag changes follow.
+
+This HIGH is evidence correctness, not a reason to reopen already-closed reliable/Carrier/observability work.
+
+## POLICY/SECURITY GAP — SessionRuntime event retention requires maintainer choice
+
+The SessionRuntime review also found a distinct retained-state issue that remains real on current source: `SessionRuntime.events: Vec<RuntimeEvent>` grows on every event and is not drained or capped, while `SECURITY.md` requires per-connection/global memory, CPU and rate bounds.
+
+The existence of **some** bound/retention mechanism follows from the committed security boundary, but the repository does not currently choose the policy shape or value. Do not invent a numeric cap, TTL, LRU/history size, ring capacity, or evidence-loss semantics. Plausible policy families include a bounded ring with explicit dropped-event evidence, an explicit drain/consumer contract with a hard fallback cap, or another reviewed bounded retention design; selecting among them is maintainer/security policy.
+
+Classify this as `POLICY_BLOCKED_RESOURCE_BOUND`, keep item 4 open, and continue all independent non-dependent work below. Do not let this one policy choice idle the agent.
+
+## Deep pre-authorized queue after HIGH closure
+
+The repository-wide inventory still has substantive implemented surfaces without a dedicated deep independent challenge. Continue through these without reviewer wait.
+
+### REVIEW_LOCAL 3 — DeliveryLedger deep independent challenge
+
+Primary owner: the delivery-ledger half of `crates/neko-session/src/lib.rs` plus `docs/specs/nekomusume-session-v0.md` and existing ledger tests/evidence.
+
+Challenge, independently from the prior developer review:
+
+- insertion/merge/bridge behavior and byte-exact overlap;
+- `Unsent -> InFlight -> Uncertain/Confirmed` ownership;
+- ledger-global context monotonicity and atomic rejection;
+- watermark advancement under out-of-order confirmation;
+- per-stream/global resource accounting and offset/reorder/overflow bounds;
+- advanced-state exact duplicates versus novel-byte overlap;
+- no packet/path observation manufacturing Session delivery evidence.
+
+Concrete contradiction -> smallest repair/regression. No finding -> dedicated bounded no-finding note with exact reachable source anchor.
+
+### REVIEW_LOCAL 4 — ProcessMessage / Resume / readiness codec boundary
+
+Primary owner: `ProcessMessage`, `ResumeWireBinding`, `ReadinessRequest/Response` encode/decode in `neko-session`, plus direct CLI call sites/tests.
 
 Challenge:
 
-- stream/session windows and queue/total byte accounting;
-- send/receive offset arithmetic and atomicity;
-- DeliveryAck release semantics and duplicate/conflict behavior;
-- idle/close/deadline/cancel cleanup;
-- terminal transition idempotence;
-- process-message decode bounds and malformed/trailing behavior;
-- separation of packet ACK from Session delivery evidence.
+- exact length and trailing-byte rejection;
+- `usize`/`u64` conversion and offset/length overflow;
+- malformed `admitted` values;
+- Data/DeliveryAck/Resume semantic separation;
+- session/path-generation/delivery-epoch tuple preservation;
+- no decode success silently creating authentication, admission, delivery, or readiness evidence;
+- deterministic round-trip and unknown-kind/version failure.
 
-**Concrete cleanup candidate to test first:** current exact `8e11de0` has asymmetric terminal cleanup paths. `close_remote()` and `cancel()` clear `send`, `recv`, `received`, `confirmed`, `send_inflight`, `recv_window_used`, session send/receive window accounting and `queued_bytes`. In contrast, `tick()` when idle timeout closes the Session, and `tick()` when the graceful-close deadline expires, currently clear only `send`, `recv` and `queued_bytes` before entering `Closed`; they appear to retain dedup history (`received`), confirmation state, per-stream inflight/window maps and session-level window counters until the closed runtime object itself is dropped.
+If code changes touch this external byte decoder/framing surface, use repository pinned decode fuzz policy as applicable; do not broaden wire semantics.
 
-Do not pre-judge this as a bug. First build focused in-module regressions that populate receive/dedup and send/window state, then trigger:
+### REVIEW_LOCAL 5 — bounded unreliable `DatagramRuntime`
 
-1. idle timeout terminalization;
-2. graceful-close deadline terminalization;
-3. existing `close_remote()`/`cancel()` as control paths.
+Primary owner: `DatagramRuntime` / `DatagramCounters` and `docs/spec/m2-unreliable-datagram.md`.
 
-Determine from current committed runtime/resource semantics whether all terminal paths are required to release the same bounded runtime-owned retained state. If yes, this is a concrete resource-cleanup correctness defect: make the smallest shared cleanup or equivalent local repair and prove terminal state, counters/maps/queues, events and later operation failures remain correct. Do **not** reset lifetime/cumulative facts whose semantics intentionally survive terminalization, and do not redesign Session lifecycle. If current semantics intentionally retain dedup/window state after timeout closure, document the exact committed reason and continue.
+Challenge:
 
-Also challenge `event()` sequence arithmetic (`next_event += 1`) near exhaustion as part of this review only if a current public path can reach it under bounded runtime operation; do not manufacture a new event policy absent a reachable contradiction.
+- admitted/opened/dropped/oversize/queue-drop counter relationships;
+- closed-state behavior and queue release;
+- payload/queue bounds before allocation;
+- no ACK/retransmit/order/delivery-evidence promotion;
+- mixed reliable/unreliable resource separation where implemented;
+- saturating counters cannot fabricate a stronger claim.
 
-Focused minimum: `cargo test -p neko-session`; code change -> exact pushed SHA full local gate/provenance before continuing.
+The prior observability mixed-drop fix is downstream projection; do not treat it as a substitute for reviewing the runtime itself.
 
-### REVIEW_LOCAL 2 — package / reproducibility / operator implementation
+### REVIEW_LOCAL 6 — crypto integration/API boundary, no cryptanalysis
 
-Primary owners: current `scripts/release/` implementation/tests plus package/operator evidence.
+Primary owner: `neko-crypto` and directly relevant call sites/tests.
 
-Challenge implementation behavior, not policy invention:
+This is a dedicated independent implementation/API challenge, not cipher/Noise cryptanalysis and not dependency suitability approval. Check current implemented semantics for:
 
-- clean-source refusal occurs before build/output mutation;
-- archive member type/root/path/mode/checksum validation is fail-closed and ordered safely;
-- reproducible archive/binary identity claims match actual script behavior;
-- installed-package lifecycle and A/B/A evidence boundaries remain truthful;
-- cleanup/listener/process-residue handling does not overwrite partial/negative evidence;
-- retained logs/evidence are secret-safe;
-- interrupted/partial paths do not silently claim complete success.
+- Noise pattern/prologue/transcript binding actually used at both roles;
+- trust/authz before protected data admission;
+- direction/context/epoch/key-phase separation;
+- nonce uniqueness/exhaustion and replay/old-phase rejection;
+- synchronized/unsynchronized key update state transitions;
+- secret-safe error/debug/display surfaces;
+- any API shape that permits current committed invariants to be bypassed without changing architecture.
 
-Do not invent signing, key-custody, SBOM or publication-trust policy. No VPS rerun merely to review scripts.
+D019/persistent replay policy and cryptographic primitive selection remain outside this lane.
 
-### REVIEW_LOCAL 3 — dependency/build independent pass
+### REVIEW_LOCAL 7 — `neko-bench` local evidence semantics
 
-Inspect Cargo manifests, lockfile, feature selections, build scripts/native hooks and workspace lint inheritance.
+Primary owner: `crates/neko-bench/src/main.rs` plus any schema/docs that consume `era4-i-performance.v1`.
 
-Challenge executable dependency graph against factual docs, unexpected build/native behavior, feature drift/default-feature expansion, workspace `unsafe_code = "forbid"` inheritance, and platform-specific hooks/cfg boundaries. No scanner framework, dependency upgrade, SBOM/signing policy or cryptographic suitability approval.
+Challenge measurement/evidence correctness, not speed:
 
-### REVIEW_LOCAL 4 — cross-platform CLI/process semantics
+- iteration clamp/bounds and allocation proportionality;
+- whether failed operations are included in latency distributions and whether docs/schema state that truthfully;
+- median/P95 indexing semantics and empty/failure behavior;
+- crypto setup/nonces do not accidentally invalidate repeated samples;
+- benchmark names/units/claims match what is measured;
+- scheduler/recovery samples do not overclaim end-to-end behavior;
+- no superiority or WAN claim from local microbenchmark.
 
-Challenge remaining OS-artifact assumptions: socket terminal outcomes only where committed contract permits them; filesystem permission/rename/unlink behavior and cfg boundaries; signals/shutdown/process exit/status; listener release/rebind; platform error/timeout mapping. Preserve fail-closed semantics; do not broaden accepted errors merely for portability.
+Do not redesign benchmarking or run comparative WAN performance unless a new concrete live question becomes READY.
 
-### REVIEW_LOCAL 5 — CLI machine/human/exit-code contract
+### REVIEW_LOCAL 8 — remaining CLI subcommands / command-specific truth boundaries
 
-Challenge success JSON timing, rejected/blocked/invalid nonzero exits, human `喵~！` / `喵呜呜呜呜…` versus machine authority, secret-safe stderr, READY/DRAINING/STOPPED stage truth, and benchmark partial/blocked result semantics. Concrete contradiction -> smallest repair/regression; otherwise bounded review note.
+The recent CLI portability review was broad but static. Inventory major subcommands/runners for command-specific factual boundaries not already independently challenged, especially capability/probe/failover/periodic/multistream/key-update/package-facing output paths. Look for success/READY before actual completion, partial-result loss, exit-code inconsistency, secret-bearing debug/error paths, and inconsistent config-validation-before-side-effect ordering.
 
-### REVIEW_LOCAL 6 — algorithmic resource boundedness, static/deterministic only
+Do not redo already-closed pre-auth responder inventory or TCP EOF/RST semantics absent changed source.
 
-Across implemented core owners, search for external-magnitude loops, allocation/clone before validated bounds, retry loops without bounded progress/deadline, collection growth beyond retained limits, arithmetic overflow/saturation that can invert gates or fabricate evidence/state, and diagnostic work growing faster than bounded retained state.
+### REVIEW_LOCAL 9 — static algorithmic resource boundedness cross-sweep
 
-This is not RSEC-001 capacity/adversarial-load testing and sets no new policy values or pressure conditions.
+Across implemented core owners, search for:
 
-### REVIEW_SUPPORT 7 — release/item-4 factual reconciliation
+- external-magnitude loops where retained state is bounded but work is not;
+- allocation/clone before validated length/count bounds;
+- retries without bounded progress/deadline;
+- counters/arithmetic saturation or overflow that can invert a security/selection gate;
+- maps/queues/history that exceed declared hard limits;
+- diagnostic/evidence work that scales with attacker-controlled magnitudes.
 
-After roughly 3–4 more coherent source/review slices, reconcile `docs/release-security-review-packet.md`, `docs/reviews/release-item4-subgates-20260909.md`, review indexes, and `docs/status.md` only where current facts require changes. Index reachable accepted evidence from reliable recovery, CarrierState, CarrierManager, FairScheduler, observability and adapter reviews as appropriate. Preserve exclusions and exact tested-tree anchors. Do not self-declare independent security approval or item-4 completion.
+Do not convert this into RSEC-001 pressure/capacity testing and do not choose new policy values. Record policy-dependent gaps separately.
 
-### REVIEW_LOCAL 8 — broad core-surface inventory before any future `queue exhausted`
+### REVIEW_LOCAL 10 — benchmark/result validators and evidence-prefix preservation
 
-Inventory every implemented core crate and release tool for remaining substantial surfaces without dedicated bounded independent challenge. Include crypto API/record boundary versus existing scope, wire/parser versus independent wire review, reliable/Carrier/Session/observe coverage, benchmark/result validators, release scripts, package/operator/reproducibility and CLI/process/output boundaries.
+Review deterministic/netns/result-validator paths not already exhausted by the HY2 methodology review. Challenge schema/producer consistency, partial-prefix preservation, failure classification, cleanup truth, sample-count/median/P95 suppression for incomplete data, and immutable negative artifacts. Avoid re-reviewing the already closed HY2 key-exclusivity/schema defect unless source changed.
 
-Only classify `queue exhausted` if this repository-wide inventory finds no unreviewed implemented core surface, no concrete defect, no READY review-support and no READY live question, with every remaining item genuinely external/policy/environment/release-authority gated.
+### REVIEW_SUPPORT 11 — second deep-sweep reconciliation
+
+After roughly 3–4 additional coherent slices (or sooner if another HIGH appears), update the release packet/subgate index so accepted independent reviews and repairs have reachable anchors and precise exclusions. `docs/status.md` changes only if a capability/governance status actually changes.
+
+Do not self-declare item 4 complete merely because more sub-surfaces have been reviewed.
+
+### REVIEW_LOCAL 12 — broad repository-wide core inventory before any `queue exhausted`
+
+Inventory every implemented core crate and release tool against the independent-review index. Only declare queue exhaustion when all substantial implemented core surfaces have a dedicated bounded challenge or an explicit reason they are already subsumed, no concrete repairable defect remains, no READY review-support exists, no READY live question exists, and remaining items are genuinely policy/environment/external-release-authority gates.
 
 ## Queue discipline
 
-- Observability HIGH is closed; carrier adapter review is complete. `SessionRuntime` is the next core lane.
-- Preserve completed no-finding reviews; do not redo them unless source changes.
-- Preserve this deep queue across small commits; do not collapse it to one task.
+- The evidence-integrity HIGH is first. Close it without waiting for hosted CI.
+- After that, continue REVIEW_LOCAL 3 onward immediately; the policy-blocked event-retention question does not block them.
+- Preserve prior accepted no-finding reviews; do not redo them unless their owner source changes.
 - A bounded no-finding independent challenge of a previously unreviewed implemented core surface is valid item-4 support, not filler.
-- Every concrete defect with an answer fixed by current committed semantics becomes immediate smallest repair -> regression -> push -> exact-tree local gate/provenance -> continue.
-- Every code/test repair requires clean exact pushed developer SHA validation with at least `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean-tree confirmation and sanitized provenance. Hosted CI is extra cross-evidence, not a wait condition.
-- Wire decoder/parser/crypto framing changes require pinned decode fuzz per repository policy; ordinary Session/package/CLI/docs reviews do not mechanically require fuzz.
+- Any concrete existing-semantics defect becomes smallest repair -> regression -> pushed exact-tree local gate/provenance -> continue.
+- Preserve a deep queue; do not collapse the handoff to one ticket after each small commit.
 
-Stop only for unresolved BLOCKER/HIGH, core architecture/policy decision, destructive/canonical migration, action outside standing authorization, production/third-party action, new credential/server permission, maintainer-valued capacity/pressure conditions, repository breakage or actual runtime/tool-budget exhaustion.
+Stop only for unresolved correctness/security/evidence BLOCKER/HIGH that contaminates downstream work, core architecture/policy decision, destructive/canonical migration, action outside standing authorization, production/third-party action, new credentials/server permission, maintainer-valued pressure/capacity conditions, repository breakage, or actual runtime/tool exhaustion.
 
-## Live / policy boundary
+## Live / release boundary
 
 - item 3 incomplete;
 - item 4 incomplete;
@@ -128,8 +204,9 @@ Stop only for unresolved BLOCKER/HIGH, core architecture/policy decision, destru
 - `FREEZE=false`;
 - `RELEASED=false`;
 - D019 remains maintainer policy/value;
+- `SessionRuntime.events` retention is `POLICY_BLOCKED_RESOURCE_BOUND` pending maintainer/security choice;
 - RSEC-001 representative adversarial-load/capacity suitability remains unestablished and is not converted into a local pressure test;
 - signing/key custody/SBOM/publication trust and previous-frozen-release interoperability remain separate gates/dependencies;
 - `READY_LIVE: none` remains authoritative.
 
-Standing VPS authorization remains valid, but current repository truth creates no dependency-ready live question. Do not mechanically rerun HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint migration, key update, IPv6, PLPMTUD or Experimental Track work.
+Standing VPS authorization remains valid, but current repository truth creates no new dependency-ready live question. Do not mechanically rerun HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint migration, key update, IPv6, PLPMTUD or Experimental Track work.
