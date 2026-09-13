@@ -4086,6 +4086,8 @@ pub enum PathRecoveryError {
     Recovery(neko_reliable::Error),
     /// The ACK/generation does not belong to this path generation.
     GenerationMismatch,
+    /// Congestion window refused admission — the send records nothing.
+    CongestionWindowFull,
 }
 
 impl From<neko_reliable::Error> for PathRecoveryError {
@@ -4503,10 +4505,26 @@ impl ReliableUdpRuntime {
             .activate(self.path, SwitchReason::OperatorRequest, now_ms, false);
     }
 
+    /// Congestion admission gate: is there cwnd capacity for `bytes`? Callers
+    /// must consult this before sealing/sending — a refused send records no
+    /// recovery charge and consumes no frame/plaintext ownership (fail-closed:
+    /// nothing is sent-but-untracked). Pacing is the deterministic
+    /// `pacing_interval_us` deadline the caller honors between admissions.
+    pub fn can_send(&self, bytes: u64) -> bool {
+        self.recovery.can_send(bytes)
+    }
+    /// Deterministic pacing deadline between admissions (microseconds) for a
+    /// `bytes`-sized send.
+    pub fn pacing_interval_us(&self, bytes: u64) -> u64 {
+        self.recovery.pacing_interval_us(bytes)
+    }
+
     /// Record that packet `number` (fresh AEAD nonce/sequence) was sent carrying
-    /// the stable `frame` identity. Frame identity is independent of packet
-    /// number: a retransmission keeps the same `frame` under a fresh number.
-    /// Retains the frame's plaintext for fresh re-encoding on loss.
+    /// the stable `frame` identity — only after `can_send` admits the bytes.
+    /// Refuses (without charging recovery or tracking plaintext) when cwnd is
+    /// full, so no sent-but-untracked packet can result. Frame identity is
+    /// independent of packet number: a retransmission keeps the same `frame`
+    /// under a fresh number.
     pub fn on_packet_sent(
         &mut self,
         number: u64,
@@ -4515,6 +4533,10 @@ impl ReliableUdpRuntime {
         frame: neko_reliable::FrameId,
         frame_plaintext: &[u8],
     ) -> Result<(), PathRecoveryError> {
+        // Congestion admission: refused sends charge/record nothing.
+        if !self.recovery.can_send(bytes) {
+            return Err(PathRecoveryError::CongestionWindowFull);
+        }
         self.recovery.on_sent(neko_reliable::SentPacket {
             number,
             sent_at_us,
@@ -4648,6 +4670,10 @@ impl ReliableUdpRuntime {
     }
     pub fn in_flight(&self) -> usize {
         self.recovery.in_flight()
+    }
+    /// Congestion bytes currently charged to Reno bytes-in-flight.
+    pub fn recovery_bytes_in_flight(&self) -> u64 {
+        self.recovery.bytes_in_flight()
     }
     pub fn packets_lost(&self) -> u64 {
         self.recovery.packets_lost()
@@ -5058,6 +5084,37 @@ mod path_recovery_tests {
                 generation: PathGeneration(1)
             })
         );
+    }
+
+    #[test]
+    fn runtime_send_admission_refuses_when_cwnd_full_and_recovers_on_ack() {
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        // Fill the congestion window (initial cwnd = 10*mss = 12000).
+        let mut n = 0u64;
+        let mut sent = 0u64;
+        while rt.can_send(400) && n < 40 {
+            rt.on_packet_sent(n, n * 1000, 400, FrameId(3000 + n), b"x")
+                .unwrap();
+            sent += 1;
+            n += 1;
+        }
+        assert!(sent > 0);
+        assert_eq!(sent, 30, "cwnd 12000 / 400B = 30 admitted");
+        // Next send is refused at the gate: no charge, no tracked plaintext.
+        assert!(!rt.can_send(400));
+        assert_eq!(
+            rt.on_packet_sent(n, 0, 400, FrameId(9999), b"no"),
+            Err(PathRecoveryError::CongestionWindowFull)
+        );
+        assert_eq!(rt.in_flight() as u64, sent, "refused send recorded nothing");
+        // ACK the tail (largest) so no packet is declared lost by the reorder
+        // window — the freed bytes-in-flight reopen cwnd admission.
+        let mut a = AckRanges::new(8).unwrap();
+        for p in 20..30u64 {
+            a.insert(p).unwrap();
+        }
+        rt.apply_ack(&a, 50_000, 0).unwrap();
+        assert!(rt.can_send(400), "ACK opens cwnd admission");
     }
 
     #[test]
