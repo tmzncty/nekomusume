@@ -906,8 +906,11 @@ fn scenario_pto_only_sample_does_not_erase_a_later_resolved_loss_in_the_coherent
     activate_with_ready_standby(&mut client);
 
     let mut degraded = false;
+    // Counts resolved-loss intervals observed as a bad observation. It is
+    // asserted below so the test cannot pass while the interval the defect
+    // corrupts is silently tolerated.
     let mut bad_intervals = 0u32;
-    for round in 0..6u64 {
+    for round in 0..2u64 {
         let base = 1_000 + round * 3_000;
         // Six small records give the recovery engine enough spread to declare
         // the older packets lost when only the newest one is acknowledged.
@@ -967,9 +970,17 @@ fn scenario_pto_only_sample_does_not_erase_a_later_resolved_loss_in_the_coherent
             }
         }
     }
+    // The first resolved-loss interval must itself be a bad observation. Under
+    // the removed send-time denominator that interval computes 0/mille Progress,
+    // so this assertion fails even though a later round would still degrade.
+    assert!(
+        bad_intervals >= 1,
+        "the first resolved-loss interval must be observed as bad \
+         (pto_count stays < 3, so this is the loss branch)"
+    );
     assert!(
         degraded,
         "two consecutive resolved-loss intervals must reach Degraded \
-         (pto_count stays < 3, so this is the loss branch; bad_intervals={bad_intervals})"
+         (bad_intervals={bad_intervals})"
     );
 }
