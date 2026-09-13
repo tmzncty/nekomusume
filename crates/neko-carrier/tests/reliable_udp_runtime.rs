@@ -906,10 +906,17 @@ fn scenario_pto_only_sample_does_not_erase_a_later_resolved_loss_in_the_coherent
     activate_with_ready_standby(&mut client);
 
     let mut degraded = false;
-    // Counts resolved-loss intervals observed as a bad observation. It is
-    // asserted below so the test cannot pass while the interval the defect
-    // corrupts is silently tolerated.
-    let mut bad_intervals = 0u32;
+    // How many resolved-loss intervals were observed WITHOUT reaching Degraded.
+    // `CarrierHealth` leaves the state unchanged for a single bad observation
+    // while `consecutive_bad < degrade_after`, so the state itself cannot show
+    // whether an interval was counted as bad. What it does show is that the
+    // second consecutive bad interval crosses `degrade_after`: with the fix the
+    // first interval is counted and the second degrades, so exactly one
+    // non-degraded sample precedes it. The removed send-time denominator erases
+    // the first interval to 0/mille Progress, which resets the bad streak and
+    // makes the second interval non-degrading too — two non-degraded samples
+    // and no degradation inside the bound.
+    let mut non_degraded_samples = 0u32;
     for round in 0..2u64 {
         let base = 1_000 + round * 3_000;
         // Six small records give the recovery engine enough spread to declare
@@ -961,7 +968,7 @@ fn scenario_pto_only_sample_does_not_erase_a_later_resolved_loss_in_the_coherent
                     degraded = true;
                     break;
                 }
-                bad_intervals += 1;
+                non_degraded_samples += 1;
             }
             neko_carrier::RuntimeEvent::WarmFallback(_)
             | neko_carrier::RuntimeEvent::FallbackFailed => {
@@ -970,17 +977,17 @@ fn scenario_pto_only_sample_does_not_erase_a_later_resolved_loss_in_the_coherent
             }
         }
     }
-    // The first resolved-loss interval must itself be a bad observation. Under
-    // the removed send-time denominator that interval computes 0/mille Progress,
-    // so this assertion fails even though a later round would still degrade.
-    assert!(
-        bad_intervals >= 1,
-        "the first resolved-loss interval must be observed as bad \
-         (pto_count stays < 3, so this is the loss branch)"
+    // Both consecutive loss intervals must actually be counted by the health
+    // model: exactly one non-degraded sample precedes the degrading second
+    // interval. Under the removed send-time denominator the first interval is
+    // erased to Progress, so this count is 2 and nothing degrades.
+    assert_eq!(
+        non_degraded_samples, 1,
+        "the loss branch must count the first interval and degrade on the second \
+         (pto_count stays < 3, so this is not the pto-threshold branch)"
     );
     assert!(
         degraded,
-        "two consecutive resolved-loss intervals must reach Degraded \
-         (bad_intervals={bad_intervals})"
+        "two consecutive resolved-loss intervals must reach Degraded"
     );
 }
