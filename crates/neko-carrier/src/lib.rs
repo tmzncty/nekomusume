@@ -4194,12 +4194,10 @@ impl PathRecovery {
     /// recovery observations (RTT/loss/PTO); it cannot validate a Path or
     /// confirm Session delivery.
     pub fn health_sample(&self) -> HealthSample {
-        let loss_per_mille = if self.packets_sent == 0 {
-            0
-        } else {
-            ((self.packets_lost.saturating_mul(1000)) / self.packets_sent).min(u16::MAX as u64)
-                as u16
-        };
+        let loss_per_mille = (self.packets_lost.saturating_mul(1000))
+            .checked_div(self.packets_sent)
+            .map(|r| r.min(u16::MAX as u64) as u16)
+            .unwrap_or(0);
         HealthSample {
             rtt_us: self.recovery.rtt.smoothed_us,
             loss_per_mille,
