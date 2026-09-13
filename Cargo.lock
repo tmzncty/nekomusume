@@ -291,6 +291,7 @@ dependencies = [
  "libc",
  "neko-carrier",
  "neko-crypto",
+ "neko-reliable",
  "neko-session",
  "neko-wire",
  "sha2",
