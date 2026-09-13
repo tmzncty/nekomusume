@@ -4088,6 +4088,9 @@ pub enum PathRecoveryError {
     GenerationMismatch,
     /// Congestion window refused admission — the send records nothing.
     CongestionWindowFull,
+    /// A duplicate delivery carried different bytes for the same logical
+    /// identity — fail closed.
+    DeliveryConflict,
 }
 
 impl From<neko_reliable::Error> for PathRecoveryError {
@@ -4443,6 +4446,15 @@ pub struct ReliableUdpRuntime {
     /// Which stable frames each sent packet carries — packet number is fresh
     /// per transmission while frame identity is stable across retransmits.
     packet_frames: BTreeMap<u64, Vec<neko_reliable::FrameId>>,
+    /// Receiver-side application dedup keyed by the stable Session logical
+    /// identity `(stream, offset)` — independent of the fresh packet number /
+    /// AEAD nonce a retransmission used. First delivery is retained; a later
+    /// duplicate with identical bytes is suppressed (counted), and a duplicate
+    /// with different bytes fails closed as a conflict.
+    delivered: BTreeMap<(u32, u64), Vec<u8>>,
+    /// Exact-duplicate deliveries suppressed (application-visible count stays
+    /// one per stable identity). Packet ACK stays separate from this dedup.
+    pub dedup_suppressed: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4491,6 +4503,8 @@ impl ReliableUdpRuntime {
             manager,
             frame_plaintext: BTreeMap::new(),
             packet_frames: BTreeMap::new(),
+            delivered: BTreeMap::new(),
+            dedup_suppressed: 0,
         })
     }
 
@@ -4523,6 +4537,12 @@ impl ReliableUdpRuntime {
         self.recovery.pacing_interval_us(bytes)
     }
 
+    /// Deliver an authenticated application payload under its stable Session
+    /// logical identity `(stream, offset)`. The first delivery is retained and
+    /// reported; a later duplicate carrying the SAME bytes is suppressed and
+    /// counted (`dedup_suppressed`), and a duplicate carrying DIFFERENT bytes
+    /// for the same identity fails closed. Packet ACK/recovery never marks
+    /// Session delivery — this logical-identity dedup is the delivery path.
     /// Record that packet `number` (fresh AEAD nonce/sequence) was sent carrying
     /// the stable `frame` identity — only after `can_send` admits the bytes.
     /// Refuses (without charging recovery or tracking plaintext) when cwnd is
@@ -4553,6 +4573,34 @@ impl ReliableUdpRuntime {
         // Record which stable frames this packet number carried.
         self.packet_frames.insert(number, vec![frame]);
         Ok(())
+    }
+
+    /// Deliver an authenticated application payload under its stable Session
+    /// logical identity `(stream, offset)`. The first delivery is retained and
+    /// reported; a later duplicate carrying the SAME bytes is suppressed and
+    /// counted (`dedup_suppressed`), and a duplicate carrying DIFFERENT bytes
+    /// for the same identity fails closed. Packet ACK/recovery never marks
+    /// Session delivery — this logical-identity dedup is the delivery path.
+    pub fn deliver_logical(
+        &mut self,
+        stream: u32,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<bool, PathRecoveryError> {
+        match self.delivered.entry((stream, offset)) {
+            std::collections::btree_map::Entry::Vacant(v) => {
+                v.insert(data.to_vec());
+                Ok(true) // first delivery
+            }
+            std::collections::btree_map::Entry::Occupied(o) => {
+                if o.get() == data {
+                    self.dedup_suppressed = self.dedup_suppressed.saturating_add(1);
+                    Ok(false) // exact duplicate suppressed
+                } else {
+                    Err(PathRecoveryError::DeliveryConflict) // conflict fails closed
+                }
+            }
+        }
     }
 
     /// Record an authenticated received packet: `ack_eliciting` distinguishes
@@ -5101,6 +5149,25 @@ mod path_recovery_tests {
                 generation: PathGeneration(1)
             })
         );
+    }
+
+    #[test]
+    fn retransmit_late_original_dedups_by_stable_logical_identity() {
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        // The replacement (retransmit, fresh nonce/packet number) delivers the
+        // stable logical identity (stream=1, offset=40) FIRST.
+        assert!(rt.deliver_logical(1, 40, b"app-bytes").unwrap());
+        // The delayed ORIGINAL packet (different packet number/nonce) arrives
+        // later carrying the same logical identity + bytes -> suppressed.
+        assert!(!rt.deliver_logical(1, 40, b"app-bytes").unwrap());
+        assert_eq!(rt.dedup_suppressed, 1);
+        // A duplicate with different bytes for the same identity fails closed.
+        assert_eq!(
+            rt.deliver_logical(1, 40, b"tampered"),
+            Err(PathRecoveryError::DeliveryConflict)
+        );
+        // Distinct logical identity still delivers.
+        assert!(rt.deliver_logical(1, 41, b"next").unwrap());
     }
 
     #[test]
