@@ -65,6 +65,8 @@ struct ReliableUdpPeer<'a> {
     session_conflicts: u64,
     /// Last Session rejection, retained so it is never silently swallowed.
     last_session_error: Option<neko_session::RuntimeError>,
+    /// Congestion probe size consulted before sealing a send.
+    cwnd_probe: u64,
     /// Application logical stream for stable delivery identity.
     stream: u32,
     /// Next application offset — the stable Session logical identity.
@@ -73,10 +75,33 @@ struct ReliableUdpPeer<'a> {
 
 impl<'a> ReliableUdpPeer<'a> {
     fn new(sock: &'a dyn UdpCarrier, session: SecureSession, generation: u64) -> Self {
+        Self::with_mss(sock, session, generation, 1200)
+    }
+
+    /// Same composition with an explicit MSS, so a test can reach a small
+    /// congestion window deterministically without long send loops.
+    fn with_mss(
+        sock: &'a dyn UdpCarrier,
+        session: SecureSession,
+        generation: u64,
+        mss: u64,
+    ) -> Self {
+        Self::with_limits(sock, session, generation, mss, 1200)
+    }
+
+    /// Same composition with an explicit MSS and admitted-send probe size.
+    fn with_limits(
+        sock: &'a dyn UdpCarrier,
+        session: SecureSession,
+        generation: u64,
+        mss: u64,
+        cwnd_probe: u64,
+    ) -> Self {
         Self {
             sock,
             session,
-            rt: neko_carrier::ReliableUdpRuntime::new(generation, 1200).unwrap(),
+            rt: neko_carrier::ReliableUdpRuntime::new(generation, mss).unwrap(),
+            cwnd_probe,
             obs: Producer::new(SessionId(1), 256).unwrap(),
             session_rt: {
                 let mut session_rt = neko_session::SessionRuntime::new(
@@ -104,11 +129,14 @@ impl<'a> ReliableUdpPeer<'a> {
     /// `FrameId(offset)` while the packet carries a fresh AEAD nonce/number.
     /// Respects the cwnd admission gate before sealing.
     fn send_data(&mut self, now_us: u64, payload: &[u8]) -> Option<u64> {
-        // Session logical offsets are *byte* offsets within the stream, so the
-        // next identity advances by the payload length, not by one record.
+        // Session logical identity is (SessionId, stream, byte_offset): the next
+        // identity advances by the payload length, not by one record. The new
+        // offset is committed only AFTER the send passed the Carrier admission
+        // boundary, so a refused send consumes no Session byte space.
         let offset = self.next_offset;
-        self.next_offset += payload.len() as u64;
-        self.send_data_at(now_us, offset, payload)
+        let number = self.send_data_at(now_us, offset, payload)?;
+        self.next_offset = self.next_offset.checked_add(payload.len() as u64)?;
+        Some(number)
     }
 
     /// Send at an explicit stable logical offset — used by the conflict fixture
@@ -128,7 +156,7 @@ impl<'a> ReliableUdpPeer<'a> {
         frame: FrameId,
         payload: &[u8],
     ) -> Option<u64> {
-        if !self.rt.can_send(1200) {
+        if !self.rt.can_send(self.cwnd_probe) {
             return None; // congestion gate refused — nothing is sent/tracked
         }
         // Application data carries a stable Session logical identity inside
@@ -521,15 +549,19 @@ fn scenario_no_loss_round_trip_drains_in_flight_and_reports_zero_loss() {
     let mut server = ReliableUdpPeer::new(&server_sock, ss, 1);
     activate_with_ready_standby(&mut client);
 
-    for i in 0..3u64 {
+    // Variable-length records: the byte offsets used are 0, 2, 5, 6. Under
+    // message-index offsets the second record would land below next_receive and
+    // be rejected by the Session layer.
+    let payloads: [&[u8]; 4] = [b"aa", b"bbb", b"c", b"dddd"];
+    for (i, payload) in payloads.iter().enumerate() {
         assert!(
             client
-                .send_data(10_000 + i * 1000, format!("a{i}").as_bytes())
+                .send_data(10_000 + i as u64 * 1000, payload)
                 .is_some(),
             "cwnd admits a fresh send"
         );
     }
-    for i in 0..3 {
+    for i in 0..4 {
         server.recv_once(1000 + i * 100);
     }
     server.send_ack();
@@ -537,9 +569,22 @@ fn scenario_no_loss_round_trip_drains_in_flight_and_reports_zero_loss() {
 
     assert_eq!(client.rt.in_flight(), 0, "all packets retired");
     assert_eq!(client.rt.packets_lost(), 0, "no loss is declared");
-    assert_eq!(server.session_delivered, 3, "three logical deliveries");
-    assert_eq!(server.session_duplicates, 0, "no duplicate suppression");
-    assert_eq!(server.session_conflicts, 0, "no conflict");
+    assert_eq!(
+        server.session_delivered, 4,
+        "four byte-accurate logical deliveries"
+    );
+    assert_eq!(
+        server.session_duplicates, 0,
+        "no duplicate suppression on a clean flow"
+    );
+    assert_eq!(
+        server.session_conflicts, 0,
+        "no Session rejection: the byte offsets are contiguous"
+    );
+    assert!(
+        server.last_session_error.is_none(),
+        "a clean flow retains no Session error"
+    );
     match client.poll_health(100) {
         neko_carrier::RuntimeEvent::HealthSample(state) => assert!(
             !matches!(
@@ -750,5 +795,60 @@ fn scenario_invalid_standby_never_produces_a_false_switch() {
         client.rt.manager().active(),
         Some(TCP),
         "TCP must never become active without a ready standby"
+    );
+}
+
+#[test]
+fn scenario_cwnd_refusal_consumes_no_session_byte_offset() {
+    let (client_sock, server_sock) = UdpLoopbackPair::new(UdpLimits {
+        max_datagram_bytes: 4600,
+    })
+    .unwrap();
+    let (cs, ss) = pair(&client_sock, &server_sock);
+    // Small MSS -> small congestion window, so refusal is reached quickly.
+    let mut client = ReliableUdpPeer::with_limits(&client_sock, cs, 1, 120, 32);
+    let mut server = ReliableUdpPeer::new(&server_sock, ss, 1);
+
+    // Fill the window with single-byte records; the first refused send must not
+    // consume Session byte space.
+    let mut admitted = 0u64;
+    for i in 0..64u64 {
+        if client.send_data(i * 100, b"p").is_none() {
+            break;
+        }
+        admitted += 1;
+    }
+    assert!(admitted > 0, "some sends are admitted");
+    assert!(admitted < 64, "the congestion window refuses eventually");
+    assert!(
+        client.send_data(9_000, b"p").is_none(),
+        "a refused send returns None and records nothing"
+    );
+
+    // Free the window: the receiver ACKs everything it actually saw.
+    for _ in 0..admitted {
+        server.recv_once(0);
+    }
+    server.send_ack();
+    client.recv_once(20_000);
+    assert_eq!(
+        server.session_delivered, admitted,
+        "every admitted record was delivered exactly once"
+    );
+
+    // The next admitted send must reuse the byte offset the refused attempt
+    // would have used. If the refusal had consumed the offset, this record would
+    // arrive above the Session next_receive and be rejected as a protocol gap.
+    let number = client.send_data(25_000, b"q");
+    assert!(number.is_some(), "the freed window admits the next send");
+    server.recv_once(25_000);
+    assert_eq!(
+        server.session_delivered,
+        admitted + 1,
+        "the post-refusal record is delivered, not skipped"
+    );
+    assert_eq!(
+        server.session_conflicts, 0,
+        "a refused send must not create a Session byte-offset gap"
     );
 }
