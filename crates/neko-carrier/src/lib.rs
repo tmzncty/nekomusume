@@ -4061,10 +4061,15 @@ pub struct PathRecovery {
     outcome_epoch: u64,
     health_epoch: Option<u64>,
     /// Counters at the last consumed health observation — the manager-facing
-    /// sample is the *delta* since then, so an old cumulative loss is never
-    /// replayed as a fresh bad observation by a later clean outcome.
+    /// sample is the *delta* of resolved packets since then, so an old
+    /// cumulative loss is never replayed as a fresh bad observation.
     last_health_sent: u64,
     last_health_lost: u64,
+    /// Packets resolved (acked or declared lost) and those resolved as lost —
+    /// the loss-delta denominator is keyed to *resolved outcomes*, not sends,
+    /// so a PTO that consumed no resolved packets can't zero out a later loss.
+    resolved_packets: u64,
+    resolved_lost: u64,
 }
 
 /// Outcome of applying an authenticated packet ACK to a path.
@@ -4115,6 +4120,8 @@ impl PathRecovery {
             health_epoch: Some(0),
             last_health_sent: 0,
             last_health_lost: 0,
+            resolved_packets: 0,
+            resolved_lost: 0,
             charged: BTreeMap::new(),
         })
     }
@@ -4169,6 +4176,14 @@ impl PathRecovery {
         self.reno.lost(released_lost);
         self.packets_lost = self
             .packets_lost
+            .saturating_add(r.lost_packets.len() as u64);
+        // Resolved-outcome counters for the interval-delta health denominator:
+        // keyed to acked+lost packets, never to bare sends.
+        self.resolved_packets = self
+            .resolved_packets
+            .saturating_add((r.acked_packets.len() + r.lost_packets.len()) as u64);
+        self.resolved_lost = self
+            .resolved_lost
             .saturating_add(r.lost_packets.len() as u64);
         // A resolved ACK outcome (any retired/lost/retransmitted work) is a
         // fresh observation; an empty ACK that changed nothing is not.
@@ -4267,10 +4282,10 @@ impl PathRecovery {
         // Manager-facing evidence is the resolved *interval delta*, not the
         // lifetime cumulative ratio — an old loss burst is never replayed as a
         // new bad observation by a subsequent clean outcome.
-        let delta_sent = self.packets_sent.saturating_sub(self.last_health_sent);
-        let delta_lost = self.packets_lost.saturating_sub(self.last_health_lost);
-        self.last_health_sent = self.packets_sent;
-        self.last_health_lost = self.packets_lost;
+        let delta_sent = self.resolved_packets.saturating_sub(self.last_health_sent);
+        let delta_lost = self.resolved_lost.saturating_sub(self.last_health_lost);
+        self.last_health_sent = self.resolved_packets;
+        self.last_health_lost = self.resolved_lost;
         let loss_per_mille = delta_lost
             .saturating_mul(1000)
             .checked_div(delta_sent)
@@ -4441,8 +4456,6 @@ pub struct ReliableUdpRuntime {
     retransmit: RetransmitBuffer,
     health: CarrierHealth,
     manager: ConcurrentCarrierManager,
-    /// Frames currently retained for retransmission by plaintext.
-    frame_plaintext: BTreeMap<neko_reliable::FrameId, Vec<u8>>,
     /// Which stable frames each sent packet carries — packet number is fresh
     /// per transmission while frame identity is stable across retransmits.
     packet_frames: BTreeMap<u64, Vec<neko_reliable::FrameId>>,
@@ -4501,7 +4514,6 @@ impl ReliableUdpRuntime {
             health: CarrierHealth::new(HealthLimits::default())
                 .map_err(|_| PathRecoveryError::GenerationMismatch)?,
             manager,
-            frame_plaintext: BTreeMap::new(),
             packet_frames: BTreeMap::new(),
             delivered: BTreeMap::new(),
             dedup_suppressed: 0,
@@ -4561,16 +4573,27 @@ impl ReliableUdpRuntime {
         if !self.recovery.can_send(bytes) {
             return Err(PathRecoveryError::CongestionWindowFull);
         }
-        self.recovery.on_sent(neko_reliable::SentPacket {
+        // Transactional plaintext ownership: reserve the bounded retransmit
+        // plaintext FIRST so a capacity/conflict/oversize rejection leaves no
+        // recovery packet, no Reno charge, and no packet->frame entry.
+        self.retransmit
+            .track(frame, frame_plaintext)
+            .map_err(|_| PathRecoveryError::DeliveryConflict)?;
+        // A failure to record the packet rolls back ONLY the freshly reserved
+        // copy (and only if we actually added a new one this call).
+        match self.recovery.on_sent(neko_reliable::SentPacket {
             number,
             sent_at_us,
             bytes,
             ack_eliciting: true,
             frames: vec![frame],
-        })?;
-        let _ = self.retransmit.track(frame, frame_plaintext);
-        let _ = self.frame_plaintext.insert(frame, frame_plaintext.to_vec());
-        // Record which stable frames this packet number carried.
+        }) {
+            Ok(()) => {}
+            Err(e) => {
+                self.retransmit.release(frame);
+                return Err(e);
+            }
+        }
         self.packet_frames.insert(number, vec![frame]);
         Ok(())
     }
@@ -4645,7 +4668,6 @@ impl ReliableUdpRuntime {
             // not currently scheduled for retransmission.
             if !self.recovery.frame_outstanding(f) && !scheduled.contains(&f) {
                 self.retransmit.release(f);
-                self.frame_plaintext.remove(&f);
             }
         }
         Ok(out)
@@ -4703,7 +4725,7 @@ impl ReliableUdpRuntime {
             .map(|frames| {
                 frames
                     .iter()
-                    .filter_map(|f| self.frame_plaintext.get(f).cloned().map(|b| (*f, b)))
+                    .filter_map(|f| self.retransmit.get(*f).map(|b| (*f, b.to_vec())))
                     .collect()
             })
             .unwrap_or_default()
@@ -4953,7 +4975,9 @@ mod path_recovery_tests {
         let first = r
             .fresh_health_sample()
             .expect("resolved outcome yields one");
-        assert_eq!(first.loss_per_mille, 625);
+        // Interval denominator is *resolved* packets: 1 acked + 5 lost = 6
+        // resolved, 5 lost -> 833/mille (not the lifetime 5/8=625).
+        assert_eq!(first.loss_per_mille, 833);
         health.observe(PathId(1), first).unwrap();
         // Bare sends and same-epoch polls must NOT produce another observation
         // — on_sent does not advance outcome_epoch, so historical cumulative
