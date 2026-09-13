@@ -15,3 +15,4 @@ neko-session = { path = "../neko-session" }
 
 neko-wire = { path = "../neko-wire" }
 neko-crypto = { path = "../neko-crypto" }
+neko-observe = { path = "../neko-observe" }

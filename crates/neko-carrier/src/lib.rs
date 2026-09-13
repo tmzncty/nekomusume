@@ -4058,6 +4058,8 @@ pub struct RecoveryAckOutcome {
     pub retransmit_frames: Vec<neko_reliable::FrameId>,
     pub acked_bytes: u64,
     pub lost_bytes: u64,
+    /// The engine's raw result — retained for observability mapping.
+    pub result: neko_reliable::RecoveryResult,
 }
 
 /// Errors from the path-local recovery seam.
@@ -4135,11 +4137,12 @@ impl PathRecovery {
             .packets_lost
             .saturating_add(r.lost_packets.len() as u64);
         Ok(RecoveryAckOutcome {
-            acked_packets: r.acked_packets,
-            lost_packets: r.lost_packets,
-            retransmit_frames: r.retransmit_frames,
+            acked_packets: r.acked_packets.clone(),
+            lost_packets: r.lost_packets.clone(),
+            retransmit_frames: r.retransmit_frames.clone(),
             acked_bytes: r.acked_bytes,
             lost_bytes: r.lost_bytes,
+            result: r,
         })
     }
 
@@ -4163,6 +4166,12 @@ impl PathRecovery {
     pub fn pacing_interval_us(&self, bytes: u64) -> u64 {
         self.reno
             .pacing_interval_us(self.recovery.rtt.smoothed_us, bytes)
+    }
+
+    /// Read-only access to the underlying recovery engine for observability
+    /// projection (`neko_observe::record_recovery_ack`/`record_pto`).
+    pub fn recovery(&self) -> &neko_reliable::Recovery {
+        &self.recovery
     }
 
     pub fn path(&self) -> PathId {
