@@ -1,199 +1,176 @@
-# ChatGPT reviewer handoff — reconcile SessionRuntime evidence, then continue deep item-4 core review
+# ChatGPT reviewer handoff — close benchmark measurement semantics, then finish remaining independent candidate inventory
 
 ## Reviewed repository truth
 
-- Current default branch before this refresh: exact `4b66a444941f85a93865d209f3a6b1f9e850cc14` (`docs(release): index 2026-09-13 deep item-4 core review sweep`).
-- The previous handoff is stale: after it, the developer/reviewer sequence completed the SessionRuntime review/repair, package/release-script review, dependency/build-surface review, CLI portability/output review, and one release-packet reconciliation.
-- Latest source/test change is reachable exact `9697ee7a0045b39c6ef46c1951fefea486ccf13b` (`fix(session): symmetric terminal cleanup on idle-timeout and close-deadline`). GitHub-hosted `stable checks` and `nightly decode fuzz smoke` are green for that exact SHA. Hosted CI is extra cross-evidence only, not a replacement for developer-local exact-tree provenance.
-- No new VPS/WAN experiment occurred. Governance remains unchanged: item 3 incomplete, item 4 incomplete, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, D019 policy-blocked, `READY_LIVE: none`.
+- Current default branch before this reviewer refresh: exact `335246340bb764e458ca89c75ec92a35ed38fc6e` (`docs(release): index second-half 2026-09-13 deep item-4 sweep`).
+- Previous handoff `ef1338b9965ce9f640531a10d02604c98b88f017` is stale and is superseded by this queue.
+- The sequence after `ef1338b` closed the prior SessionRuntime evidence-integrity HIGH, then completed dedicated independent bounded reviews for DeliveryLedger, ProcessMessage/Resume/readiness codec, DatagramRuntime, crypto integration/API, CLI command truth boundaries, and static resource/result-validator surfaces.
+- The only source/test change in that sequence is reachable exact `01b24a07ef81e9427d14f953fbf04b239b4015ce` (`fix(bench): exclude failed ops from median/P95 latency distribution`). It correctly stops failed operations from depressing successful-sample latency statistics. GitHub-hosted `stable checks` and `nightly decode fuzz smoke` are green for exact `01b24a0`; hosted CI is extra cross-evidence only.
+- Exact `3352463` now indexes the second-half deep sweep in `docs/release-security-review-packet.md`.
+- No VPS/WAN experiment occurred. Governance remains unchanged: item 3 incomplete, item 4 incomplete, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, D019 policy-blocked, `SessionRuntime.events` remains `POLICY_BLOCKED_RESOURCE_BOUND`, and `READY_LIVE: none`.
 
-## Accepted progress since the previous handoff
+## Accepted progress — preserve unless owner source changes
 
-The high-throughput core review strategy is working and must continue. Preserve these completed surfaces unless their source changes:
+The following deep independent surfaces are now accepted as bounded item-4 support and must not be mechanically re-reviewed:
 
-1. reliable UDP recovery / future and never-sent ACK rejection (`531c82d`, `02b6eaa` plus independent close notes);
-2. `CarrierState` generation / validation / hysteresis;
-3. CarrierManager / migration-back, including switch-margin overflow and negative-margin repairs (`a14cf47`, `91f8cd8`);
-4. FairScheduler / flow-control accounting;
-5. observability projection/buffer/drop/schema repairs through exact `8e11de0` and independent re-close;
-6. carrier adapter close/error/resource review;
-7. package/reproducibility release-script review at `8e11de0` — ACCEPT_AS_BOUNDED_SUPPORT;
-8. dependency/build-surface review at `8e11de0` — ACCEPT_AS_BOUNDED_SUPPORT;
-9. CLI portability + machine/human/exit-code review at `8e11de0` — ACCEPT_AS_BOUNDED_SUPPORT.
+- reliable UDP recovery / future and never-sent ACK rejection;
+- CarrierState generation/validation/hysteresis;
+- CarrierManager / migration-back / margin-domain repairs;
+- FairScheduler / flow-control accounting;
+- observability projection/ring/drop/schema closure;
+- carrier adapters;
+- SessionRuntime lifecycle/resource/terminal-cleanup, with the historical false cleanup sentence explicitly superseded and exact `9697ee7` developer-local provenance recorded;
+- package/reproducibility/release scripts;
+- dependency/build surface;
+- CLI portability/output and command-specific truth boundaries;
+- DeliveryLedger;
+- ProcessMessage / Resume / readiness codec;
+- DatagramRuntime;
+- crypto integration/API (not cryptanalysis);
+- static algorithmic retained-state boundedness + result-validator cross-sweep.
 
-These remain bounded item-4 support, not a security audit or release approval.
+These are not a security audit or release approval. The known `SessionRuntime.events` retention policy gap remains open and policy-blocked; do not invent its cap/TTL/ring/drop semantics.
 
-## EVIDENCE-INTEGRITY HIGH — SessionRuntime review must be reconciled
+## MEDIUM — `neko-bench` P95 convention is inconsistent with existing repository benchmark semantics
 
-The independent note `docs/reviews/independent-session-runtime-8e11de0-20260913.md` contains a concrete false no-finding for its claimed exact source anchor. It says that at exact `8e11de0`, idle-timeout and close-deadline `tick()` already cleared `received`, `confirmed`, per-stream inflight/window maps, session-level window counters, and queues consistently with `close_remote()` / `cancel()`.
+Primary owner: `crates/neko-bench/src/main.rs::stat`, with `docs/era4-i-performance.md` and `scripts/bench/run-netns.sh` as current evidence/measurement contracts.
 
-That statement is contradicted by the later source repair exact `9697ee7`: the repair correctly records that the two `tick()` terminal paths at `8e11de0` cleared only `send`, `recv`, and `queued_bytes`, retaining dedup history, confirmation watermarks, and window/inflight accounting until object drop. Exact `9697ee7` adds shared `clear_runtime_state()` plus focused idle-timeout and close-deadline regressions.
+Exact `01b24a0` correctly changed latency distributions to successful samples only. However, current Rust `stat()` computes:
 
-Do **not** rewrite the historical exact-`8e11de0` review note as though it had been correct. Supersede/reconcile it truthfully.
+```rust
+p95: xs.get(n.saturating_mul(95) / 100)
+```
 
-A second evidence-integrity issue is the current release-packet wording that the listed repair SHAs, including `9697ee7`, each have their own exact-tree gate. GitHub currently exposes green hosted checks for exact `9697ee7`, but this reviewer pass did not find a repository-persisted developer-local clean exact-tree provenance note for that repair. Do not infer that no local run happened; the narrower problem is that the shared repository surface does not currently reproduce that local-gate claim.
+while the existing netns benchmark computes P95 from sorted non-null samples using:
 
-### MUST_EXECUTE_LOCAL 1 — close exact `9697ee7` provenance
+```text
+round((length - 1) * 0.95)
+```
 
-On a clean checkout/worktree of pushed exact `9697ee7` run at minimum:
+For 100 successful samples this selects different order statistics (Rust index 95 versus netns index 94); for 1000 it is 950 versus 949. The repository does not currently document a deliberate reason for two P95 conventions. This is measurement/evidence consistency, not performance tuning.
+
+### MUST_EXECUTE_LOCAL 1 — prove and repair percentile semantics
+
+1. Add focused deterministic tests around several sample counts (include at least 1, 2, 20, 100, 1000) that make the selected order statistic unambiguous.
+2. Preserve the already-correct exact-`01b24a0` behavior:
+   - failed operations increment `failures`;
+   - failed timings never enter median/P95;
+   - empty successful distribution remains non-panicking and reports the documented zero/null-equivalent local convention;
+   - per-operation `iterations` remains the successful sample count unless an existing committed schema contradicts it.
+3. Align `neko-bench` P95 with the already-existing repository convention used by `run-netns.sh`, unless a stronger current committed benchmark specification proves a different convention. Do not invent a third percentile definition.
+4. Keep median semantics consistent with current repository convention; do not broaden this into a statistics framework.
+5. Update `docs/era4-i-performance.md` only as needed to state the chosen order-statistic convention precisely enough to reproduce it.
+
+This is bench-only measurement code. No decoder/crypto framing changes are expected, so no fuzz rerun is required solely for this repair.
+
+### MUST_EXECUTE_LOCAL 2 — exact-tree closure for final benchmark source
+
+After the percentile source shape is final, commit/push it and validate that exact pushed source SHA in a clean checkout/worktree:
 
 ```bash
-cargo test -p neko-session
+cargo test -p neko-bench
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
 git diff --check
 git status --short
 ```
 
-Persist sanitized provenance: exact SHA, commands, UTC start/end, exit codes, OS/arch, stable Rust version, initial/final clean-tree state. Do not include secrets, private endpoint topology, or unnecessary absolute paths.
+Persist sanitized developer-local provenance with exact reachable SHA, commands, UTC start/end, exits, OS/arch, stable Rust version, and initial/final clean-tree state. Hosted CI may be cited separately if available; do not substitute it for the local anchor.
 
-If the local gate fails, repair the actual failure first and move the tested-tree anchor to the new reachable pushed source SHA. Do not preserve `9697ee7` as a green local anchor if it was not green.
+If investigation proves current Rust P95 is already the explicitly committed intended convention and `run-netns.sh` is the inconsistent owner instead, repair the inconsistent owner rather than forcing Rust to match. The invariant is one reproducible repository convention, not a predetermined implementation.
 
-### MUST_EXECUTE_LOCAL 2 — truthful SessionRuntime evidence reconciliation
+### REVIEW_LOCAL 3 — independent benchmark re-close on final source
 
-After the exact source gate is green:
+On the final reachable source anchor, independently challenge `neko-bench` evidence semantics:
 
-1. Add one concise reconciliation/supersession note that identifies the incorrect exact-`8e11de0` cleanup sentence and points to the reachable corrected source/test SHA.
-2. Update `docs/release-security-review-packet.md` and, where useful, `docs/reviews/release-item4-subgates-20260909.md` so they do not present the old cleanup no-finding as accepted current truth.
-3. Keep the historical note immutable except for an explicit superseded/quarantined marker only if the repository's documentation practice requires it; do not rewrite its historical test commands/timestamps or pretend it described a different tree.
-4. State hosted CI and developer-local exact-tree evidence separately.
-5. No release flag changes follow.
+- requested iteration clamp versus successful sample count;
+- median/P95 exact order-statistic behavior for small/large `n`;
+- failure exclusion and empty/all-failure behavior;
+- crypto setup/nonce use across repeated samples;
+- units/names match actual timed operation boundaries;
+- scheduler/recovery microbench rows do not imply end-to-end/WAN behavior;
+- output cannot be read as HY2 superiority evidence.
 
-This HIGH is evidence correctness, not a reason to reopen already-closed reliable/Carrier/observability work.
+Concrete defect -> smallest repair/regression/local gate. No finding -> one dedicated bounded no-finding note.
 
-## POLICY/SECURITY GAP — SessionRuntime event retention requires maintainer choice
+## Remaining genuine independent candidate lanes
 
-The SessionRuntime review also found a distinct retained-state issue that remains real on current source: `SessionRuntime.events: Vec<RuntimeEvent>` grows on every event and is not drained or capped, while `SECURITY.md` requires per-connection/global memory, CPU and rate bounds.
+The broad inventory now covers nearly all release-relevant core crates. The following implemented candidates still have executable state but no dedicated independent bounded review visible in the accepted review index. Continue without reviewer wait after benchmark closure.
 
-The existence of **some** bound/retention mechanism follows from the committed security boundary, but the repository does not currently choose the policy shape or value. Do not invent a numeric cap, TTL, LRU/history size, ring capacity, or evidence-loss semantics. Plausible policy families include a bounded ring with explicit dropped-event evidence, an explicit drain/consumer contract with a hard fallback cap, or another reviewed bounded retention design; selecting among them is maintainer/security policy.
+### REVIEW_LOCAL 4 — PLPMTUD candidate state model
 
-Classify this as `POLICY_BLOCKED_RESOURCE_BOUND`, keep item 4 open, and continue all independent non-dependent work below. Do not let this one policy choice idle the agent.
+Primary owner: `neko-reliable::Plpmtud` and `docs/spec/m2-plpmtud.md`.
 
-## Deep pre-authorized queue after HIGH closure
+Challenge only the current socket-free candidate semantics:
 
-The repository-wide inventory still has substantive implemented surfaces without a dedicated deep independent challenge. Continue through these without reviewer wait.
+- base/max MTU and configuration validation;
+- binary-search arithmetic near `u16` edges;
+- one outstanding probe and total probe-limit ordering;
+- checked probe-ID exhaustion and atomic failure;
+- ACK binding to exact generation/id/size;
+- stale/duplicate/wrong-size rejection without mutation;
+- timeout/retry/upper-bound reduction;
+- generation reset discards stale evidence;
+- blackhole fallback cannot become path-failure evidence;
+- `on_emsgsize` cannot raise confirmed MTU or fabricate authenticated probe evidence.
 
-### REVIEW_LOCAL 3 — DeliveryLedger deep independent challenge
+Do not connect PLPMTUD to live sockets/ICMP or create a live experiment from this review. Concrete existing-semantics defect -> smallest repair/regression. No finding -> dedicated bounded review note.
 
-Primary owner: the delivery-ledger half of `crates/neko-session/src/lib.rs` plus `docs/specs/nekomusume-session-v0.md` and existing ledger tests/evidence.
+### REVIEW_LOCAL 5 — disabled XOR FEC candidate
 
-Challenge, independently from the prior developer review:
+Primary owner: `FecConfig` / `FecBlock` in `neko-reliable` and `docs/spec/m2-fec.md`.
 
-- insertion/merge/bridge behavior and byte-exact overlap;
-- `Unsent -> InFlight -> Uncertain/Confirmed` ownership;
-- ledger-global context monotonicity and atomic rejection;
-- watermark advancement under out-of-order confirmation;
-- per-stream/global resource accounting and offset/reorder/overflow bounds;
-- advanced-state exact duplicates versus novel-byte overlap;
-- no packet/path observation manufacturing Session delivery evidence.
+FEC remains disabled; this lane does **not** enable it. Challenge:
 
-Concrete contradiction -> smallest repair/regression. No finding -> dedicated bounded no-finding note with exact reachable source anchor.
+- block/symbol/config bounds before allocation/copy;
+- block-id/max-block semantics against the committed candidate spec/tests;
+- parity/recovery byte exactness;
+- single-loss recovery only, multi-loss fail-closed;
+- duplicate/out-of-range missing-symbol handling;
+- reorder independence where claimed;
+- no FEC result becomes ACK, Session delivery, congestion, or enablement evidence.
 
-### REVIEW_LOCAL 4 — ProcessMessage / Resume / readiness codec boundary
+Do not add adaptive FEC, performance tuning or enablement policy.
 
-Primary owner: `ProcessMessage`, `ResumeWireBinding`, `ReadinessRequest/Response` encode/decode in `neko-session`, plus direct CLI call sites/tests.
+### REVIEW_LOCAL 6 — disabled-gate enforcement (`0-RTT`, concurrent heterogeneous multipath)
 
-Challenge:
+Review the executable/config/CLI surfaces against the already-committed disabled gates:
 
-- exact length and trailing-byte rejection;
-- `usize`/`u64` conversion and offset/length overflow;
-- malformed `admitted` values;
-- Data/DeliveryAck/Resume semantic separation;
-- session/path-generation/delivery-epoch tuple preservation;
-- no decode success silently creating authentication, admission, delivery, or readiness evidence;
-- deterministic round-trip and unknown-kind/version failure.
+- no early application data / 0-RTT path is accidentally reachable;
+- no ordinary config/CLI path silently enables concurrent UDP+TCP application striping or heterogeneous aggregation;
+- warm/standby readiness/control traffic is not misclassified as application striping;
+- disabled-gate docs/status claims match executable capability discovery/output.
 
-If code changes touch this external byte decoder/framing surface, use repository pinned decode fuzz policy as applicable; do not broaden wire semantics.
+This is enforcement verification, not a proposal to implement the disabled features. If there is no executable enable path, record bounded no-finding support and stop there.
 
-### REVIEW_LOCAL 5 — bounded unreliable `DatagramRuntime`
+### REVIEW_SUPPORT 7 — post-benchmark/candidate reconciliation
 
-Primary owner: `DatagramRuntime` / `DatagramCounters` and `docs/spec/m2-unreliable-datagram.md`.
+After benchmark closure plus roughly two of REVIEW_LOCAL 4–6, update the release packet/subgate index once with reachable anchors and precise exclusions. The second-half `3352463` reconciliation already indexes DeliveryLedger/codec/Datagram/crypto/CLI/boundedness; do not duplicate that work.
 
-Challenge:
+Only add the final benchmark repair/review/provenance and genuinely new candidate reviews.
 
-- admitted/opened/dropped/oversize/queue-drop counter relationships;
-- closed-state behavior and queue release;
-- payload/queue bounds before allocation;
-- no ACK/retransmit/order/delivery-evidence promotion;
-- mixed reliable/unreliable resource separation where implemented;
-- saturating counters cannot fabricate a stronger claim.
+### REVIEW_LOCAL 8 — repository-wide independent-review inventory
 
-The prior observability mixed-drop fix is downstream projection; do not treat it as a substitute for reviewing the runtime itself.
+Before any future `queue exhausted`, compare every current implemented/candidate crate/tool/status row against the independent-review index and classify each as:
 
-### REVIEW_LOCAL 6 — crypto integration/API boundary, no cryptanalysis
+- dedicated independent bounded challenge complete;
+- legitimately subsumed by a named broader review;
+- disabled/policy/environment-only and no executable review question;
+- still missing a concrete independent challenge.
 
-Primary owner: `neko-crypto` and directly relevant call sites/tests.
+Do not invent review work after all executable surfaces are actually covered. If the inventory shows no remaining concrete local review/repair, no new live question, and all remaining gates are policy/environment/external authority, then queue exhaustion may finally be recorded truthfully.
 
-This is a dedicated independent implementation/API challenge, not cipher/Noise cryptanalysis and not dependency suitability approval. Check current implemented semantics for:
+## Policy/external gates that remain outside autonomous repair
 
-- Noise pattern/prologue/transcript binding actually used at both roles;
-- trust/authz before protected data admission;
-- direction/context/epoch/key-phase separation;
-- nonce uniqueness/exhaustion and replay/old-phase rejection;
-- synchronized/unsynchronized key update state transitions;
-- secret-safe error/debug/display surfaces;
-- any API shape that permits current committed invariants to be bypassed without changing architecture.
+Do not let these block independent work above, but do not invent answers:
 
-D019/persistent replay policy and cryptographic primitive selection remain outside this lane.
-
-### REVIEW_LOCAL 7 — `neko-bench` local evidence semantics
-
-Primary owner: `crates/neko-bench/src/main.rs` plus any schema/docs that consume `era4-i-performance.v1`.
-
-Challenge measurement/evidence correctness, not speed:
-
-- iteration clamp/bounds and allocation proportionality;
-- whether failed operations are included in latency distributions and whether docs/schema state that truthfully;
-- median/P95 indexing semantics and empty/failure behavior;
-- crypto setup/nonces do not accidentally invalidate repeated samples;
-- benchmark names/units/claims match what is measured;
-- scheduler/recovery samples do not overclaim end-to-end behavior;
-- no superiority or WAN claim from local microbenchmark.
-
-Do not redesign benchmarking or run comparative WAN performance unless a new concrete live question becomes READY.
-
-### REVIEW_LOCAL 8 — remaining CLI subcommands / command-specific truth boundaries
-
-The recent CLI portability review was broad but static. Inventory major subcommands/runners for command-specific factual boundaries not already independently challenged, especially capability/probe/failover/periodic/multistream/key-update/package-facing output paths. Look for success/READY before actual completion, partial-result loss, exit-code inconsistency, secret-bearing debug/error paths, and inconsistent config-validation-before-side-effect ordering.
-
-Do not redo already-closed pre-auth responder inventory or TCP EOF/RST semantics absent changed source.
-
-### REVIEW_LOCAL 9 — static algorithmic resource boundedness cross-sweep
-
-Across implemented core owners, search for:
-
-- external-magnitude loops where retained state is bounded but work is not;
-- allocation/clone before validated length/count bounds;
-- retries without bounded progress/deadline;
-- counters/arithmetic saturation or overflow that can invert a security/selection gate;
-- maps/queues/history that exceed declared hard limits;
-- diagnostic/evidence work that scales with attacker-controlled magnitudes.
-
-Do not convert this into RSEC-001 pressure/capacity testing and do not choose new policy values. Record policy-dependent gaps separately.
-
-### REVIEW_LOCAL 10 — benchmark/result validators and evidence-prefix preservation
-
-Review deterministic/netns/result-validator paths not already exhausted by the HY2 methodology review. Challenge schema/producer consistency, partial-prefix preservation, failure classification, cleanup truth, sample-count/median/P95 suppression for incomplete data, and immutable negative artifacts. Avoid re-reviewing the already closed HY2 key-exclusivity/schema defect unless source changed.
-
-### REVIEW_SUPPORT 11 — second deep-sweep reconciliation
-
-After roughly 3–4 additional coherent slices (or sooner if another HIGH appears), update the release packet/subgate index so accepted independent reviews and repairs have reachable anchors and precise exclusions. `docs/status.md` changes only if a capability/governance status actually changes.
-
-Do not self-declare item 4 complete merely because more sub-surfaces have been reviewed.
-
-### REVIEW_LOCAL 12 — broad repository-wide core inventory before any `queue exhausted`
-
-Inventory every implemented core crate and release tool against the independent-review index. Only declare queue exhaustion when all substantial implemented core surfaces have a dedicated bounded challenge or an explicit reason they are already subsumed, no concrete repairable defect remains, no READY review-support exists, no READY live question exists, and remaining items are genuinely policy/environment/external-release-authority gates.
-
-## Queue discipline
-
-- The evidence-integrity HIGH is first. Close it without waiting for hosted CI.
-- After that, continue REVIEW_LOCAL 3 onward immediately; the policy-blocked event-retention question does not block them.
-- Preserve prior accepted no-finding reviews; do not redo them unless their owner source changes.
-- A bounded no-finding independent challenge of a previously unreviewed implemented core surface is valid item-4 support, not filler.
-- Any concrete existing-semantics defect becomes smallest repair -> regression -> pushed exact-tree local gate/provenance -> continue.
-- Preserve a deep queue; do not collapse the handoff to one ticket after each small commit.
-
-Stop only for unresolved correctness/security/evidence BLOCKER/HIGH that contaminates downstream work, core architecture/policy decision, destructive/canonical migration, action outside standing authorization, production/third-party action, new credentials/server permission, maintainer-valued pressure/capacity conditions, repository breakage, or actual runtime/tool exhaustion.
+- `SessionRuntime.events` retention bound: `POLICY_BLOCKED_RESOURCE_BOUND`;
+- D019 source-retention/no-reset policy;
+- RSEC-001 representative adversarial-load/capacity suitability and maintainer-selected pressure conditions;
+- item 3 natural-loss/long-lived/HY2/IPv6/environment evidence where current lines are frozen or blocked;
+- signing, key custody, SBOM/publication trust;
+- previous-frozen-release interoperability dependency;
+- independent final security/release judgment;
+- RC/freeze/release/production authority.
 
 ## Live / release boundary
 
@@ -203,10 +180,14 @@ Stop only for unresolved correctness/security/evidence BLOCKER/HIGH that contami
 - `PRODUCTION_READY=false`;
 - `FREEZE=false`;
 - `RELEASED=false`;
-- D019 remains maintainer policy/value;
-- `SessionRuntime.events` retention is `POLICY_BLOCKED_RESOURCE_BOUND` pending maintainer/security choice;
-- RSEC-001 representative adversarial-load/capacity suitability remains unestablished and is not converted into a local pressure test;
-- signing/key custody/SBOM/publication trust and previous-frozen-release interoperability remain separate gates/dependencies;
 - `READY_LIVE: none` remains authoritative.
 
-Standing VPS authorization remains valid, but current repository truth creates no new dependency-ready live question. Do not mechanically rerun HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint migration, key update, IPv6, PLPMTUD or Experimental Track work.
+Standing VPS authorization remains valid, but current repository truth creates no new dependency-ready live question. Do not mechanically rerun HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint migration, key update, IPv6, PLPMTUD or other Experimental Track work.
+
+## Queue discipline
+
+- MEDIUM benchmark measurement consistency is first; it does not require maintainer input.
+- Continue REVIEW_LOCAL 3–6 sequentially or in non-conflicting independent lanes; source changes always move subsequent tested-tree anchors forward.
+- Preserve completed reviews; do not re-review unchanged owners for volume.
+- A bounded no-finding review of an actually unreviewed executable candidate is valid item-4 support.
+- Stop only for unresolved BLOCKER/HIGH that contaminates downstream work, core architecture/policy choice, destructive/canonical migration, action outside standing authorization, production/third-party action, new credentials/server permission, maintainer-valued pressure/capacity conditions, repository breakage, or actual runtime/tool exhaustion.
