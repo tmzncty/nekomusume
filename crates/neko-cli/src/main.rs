@@ -2092,6 +2092,33 @@ fn failover_client(args: &[String]) {
         1,
         &format!(",\"ciphertext_bytes\":{}", n),
     );
+    // R9-2 multi-record: under --reliable-udp the second reliable-owned record
+    // also receives its own independent Session DeliveryAck confirmation —
+    // two distinct logical records, two independent Session ACKs.
+    if reliable_udp && let Some(rec1) = records.get(1) {
+        let n2 = recv_udp_delivery_ack(
+            &u,
+            target,
+            &mut us,
+            rec1,
+            &negotiation_response,
+            &noise_response,
+            application_deadline,
+            &mut admission_diagnostic,
+            rt.as_mut(),
+        )
+        .unwrap_or_else(|e| fail(&format!("r9 second UDP DeliveryAck failed: {e:?}")));
+        delivery
+            .delivery_ack(rec1.stream, rec1.offset, rec1.data.len(), count as u64 + 3)
+            .unwrap();
+        emit_diagnostic(
+            args,
+            "client",
+            "r9_udp_delivery_ack_validated",
+            1,
+            &format!(",\"ciphertext_bytes\":{},\"offset\":{}", n2, rec1.offset),
+        );
+    }
     // R9 settlement: drain authenticated Carrier packet ACKs until the runtime
     // reports zero in-flight, or the bounded application deadline passes.
     if let Some(rt) = rt.as_mut() {
@@ -2163,22 +2190,24 @@ fn failover_client(args: &[String]) {
     } else {
         records.len()
     };
-    for uncertain in records
-        .iter()
-        .skip(if reliable_udp { 2 } else { 1 })
-        .take(uncertain_end.saturating_sub(1))
-    {
+    // H-R9-002 + H-R9-005: under --reliable-udp, records[0]/[1] are reliable-
+    // owned, so the legacy uncertain subset starts at index 2. The start index
+    // must ALSO respect `uncertain_end` — under migration-back/recovery the
+    // final record (index == uncertain_end) is reserved/unassigned and must be
+    // neither tracked nor wire-sent before the post-promotion return-to-UDP.
+    let uncertain_start = if reliable_udp { 2 } else { 1 };
+    let uncertain_count = uncertain_end.saturating_sub(uncertain_start);
+    for uncertain in records.iter().skip(uncertain_start).take(uncertain_count) {
         failover
             .track_uncertain(DataId(uncertain.offset), &uncertain.data)
             .unwrap();
     }
-    // H-R9-002: under --reliable-udp, records[0] and records[1] are already
-    // owned by the reliable-UDP runtime — they must not ALSO take the legacy
-    // untracked udp_uncertain_range_sent path (two owners for one Session
-    // range would manufacture baseline duplicates and confound loss evidence).
-    // The uncertain send starts at the first non-reliable-owned record.
-    let uncertain_idx = if reliable_udp { 2 } else { 1 };
-    if let Some(uncertain) = records.get(uncertain_idx) {
+    // Direct uncertain send only when the start index is strictly below the
+    // reserved `uncertain_end` boundary — a reserved final record is never
+    // consumed early.
+    if uncertain_start < uncertain_end
+        && let Some(uncertain) = records.get(uncertain_start)
+    {
         let logical = ProcessMessage::Data {
             session: SessionId(7001),
             record: uncertain.clone(),

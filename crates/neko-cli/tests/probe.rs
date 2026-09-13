@@ -1929,8 +1929,17 @@ fn reliable_udp_failover_settles_packet_acks_to_zero_in_flight() {
         "{client_log}"
     );
     assert!(client_log.contains("\"offset\":16"), "{client_log}");
+    // Record 1 receives its own independent Session DeliveryAck.
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_delivery_ack_validated\""),
+        "{client_log}"
+    );
     // Under --reliable-udp records[1] (offset 16) is reliable-owned, so the
     // uncertain direct-send must start at records[2] (offset 32), not offset 16.
+    assert!(
+        client_log.contains("\"event\":\"udp_uncertain_range_sent\",\"seq\":2,\"ciphertext_bytes\":96,\"stream\":1,\"offset\":32"),
+        "{client_log}"
+    );
     assert!(
         !client_log.contains("\"event\":\"udp_uncertain_range_sent\",\"seq\":2,\"ciphertext_bytes\":96,\"stream\":1,\"offset\":16"),
         "{client_log}"
