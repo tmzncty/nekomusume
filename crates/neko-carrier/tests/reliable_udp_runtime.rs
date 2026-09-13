@@ -127,7 +127,8 @@ impl<'a> ReliableUdpPeer<'a> {
         match rec.record_type {
             RecordType::Data => {
                 let n = packet_number(&bytes);
-                self.acks.observe_packet(self.generation, n).unwrap();
+                // A Data record is ack-eliciting; it creates an ACK obligation.
+                self.acks.observe_packet(self.generation, n, true).unwrap();
                 Some(n)
             }
             RecordType::Ack => {
@@ -170,9 +171,11 @@ impl<'a> ReliableUdpPeer<'a> {
         }
     }
 
-    /// Emit a receiver ACK record sealing the current canonical ranges.
+    /// Emit a receiver ACK record sealing the current canonical ranges —
+    /// consumes the pending obligation so a second poll without new eligible
+    /// evidence emits nothing (no ACK-of-ACK).
     fn send_ack(&mut self) {
-        if let Some(payload) = self.acks.build_ack(0) {
+        if let Some(payload) = self.acks.take_ack(0) {
             let record = encode(&Record {
                 record_type: RecordType::Ack,
                 flags: 0,

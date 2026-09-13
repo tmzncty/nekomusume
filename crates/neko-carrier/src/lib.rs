@@ -4300,6 +4300,10 @@ pub struct PacketAckTracker {
     ranges: neko_reliable::AckRanges,
     /// Largest packet number observed (drives `largest_observed`).
     largest_observed: Option<u64>,
+    /// Set when an ack-eliciting packet was observed and not yet consumed by
+    /// `take_ack`. An ACK-only (non-ack-eliciting) packet never sets this, so
+    /// an ACK packet cannot trigger an ACK-of-ACK ping-pong.
+    pending_ack: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4319,16 +4323,21 @@ impl PacketAckTracker {
             // AckPayload always fits the canonical grammar.
             ranges: neko_reliable::AckRanges::new(32).expect("valid cap"),
             largest_observed: None,
+            pending_ack: false,
         }
     }
 
     /// Record an authenticated packet observation. `generation` must match the
     /// tracker's path generation — a record for another generation is rejected
-    /// before any ACK state changes. Duplicate/reordered numbers are no-ops.
+    /// before any ACK state changes. `ack_eliciting` distinguishes a real
+    /// DATA/control packet (which creates a pending ACK obligation) from an
+    /// ACK-only packet (which is recorded for range completeness but never by
+    /// itself schedules a response — no ACK-of-ACK).
     pub fn observe_packet(
         &mut self,
         generation: u64,
         packet_number: u64,
+        ack_eliciting: bool,
     ) -> Result<(), AckTrackerError> {
         if generation != self.path_generation {
             return Err(AckTrackerError::GenerationMismatch);
@@ -4340,12 +4349,31 @@ impl PacketAckTracker {
             self.largest_observed
                 .map_or(packet_number, |l| l.max(packet_number)),
         );
+        if ack_eliciting {
+            self.pending_ack = true;
+        }
         Ok(())
+    }
+
+    /// Consume the pending ACK obligation: yields the canonical `AckPayload`
+    /// to seal back at most once per new ack-eliciting evidence, then returns
+    /// `None` until another eligible packet is observed. An ACK-only packet
+    /// does not create an obligation, so this never ACKs an ACK.
+    pub fn take_ack(&mut self, ack_delay_us: u64) -> Option<neko_wire::AckPayload> {
+        if !self.pending_ack {
+            return None;
+        }
+        self.pending_ack = false;
+        self.current_ack_payload(ack_delay_us)
     }
 
     /// Render the canonical `AckPayload` for sealing back to the sender.
     /// Returns `None` until at least one packet has been observed.
     pub fn build_ack(&self, ack_delay_us: u64) -> Option<neko_wire::AckPayload> {
+        self.current_ack_payload(ack_delay_us)
+    }
+
+    fn current_ack_payload(&self, ack_delay_us: u64) -> Option<neko_wire::AckPayload> {
         let largest = self.largest_observed?;
         Some(neko_wire::AckPayload {
             largest_observed: largest,
@@ -4365,6 +4393,10 @@ impl PacketAckTracker {
     /// Whether any packet has been observed yet.
     pub fn has_observations(&self) -> bool {
         self.largest_observed.is_some()
+    }
+    /// Whether an ack-eliciting packet is waiting for an ACK emission.
+    pub fn pending_ack(&self) -> bool {
+        self.pending_ack
     }
 }
 
@@ -4651,12 +4683,13 @@ mod path_recovery_tests {
     fn ack_tracker_observes_only_matching_generation_and_yields_canonical_ack() {
         let mut t = PacketAckTracker::new(7);
         assert!(t.build_ack(0).is_none());
+        assert!(t.take_ack(0).is_none());
         // Duplicate/reordered/wrong-generation observations.
-        t.observe_packet(7, 2).unwrap();
-        t.observe_packet(7, 0).unwrap(); // reorder
-        t.observe_packet(7, 2).unwrap(); // duplicate no-op
+        t.observe_packet(7, 2, true).unwrap();
+        t.observe_packet(7, 0, true).unwrap(); // reorder
+        t.observe_packet(7, 2, true).unwrap(); // duplicate no-op
         assert_eq!(
-            t.observe_packet(8, 5),
+            t.observe_packet(8, 5, true),
             Err(AckTrackerError::GenerationMismatch)
         );
         let ack = t.build_ack(12).unwrap();
@@ -4667,6 +4700,29 @@ mod path_recovery_tests {
         // The encoded payload must decode back to identical canonical ranges.
         let enc = neko_wire::encode_ack(&ack).unwrap();
         assert_eq!(neko_wire::decode_ack(&enc).unwrap(), ack);
+    }
+
+    #[test]
+    fn ack_of_ack_never_scheduled_and_pending_consumed_once() {
+        let mut t = PacketAckTracker::new(7);
+        // An ack-eliciting DATA packet creates one pending obligation.
+        t.observe_packet(7, 0, true).unwrap();
+        assert!(t.pending_ack());
+        let first = t.take_ack(0).expect("one obligation");
+        assert_eq!(first.largest_observed, 0);
+        // Polling again with no new eligible packet emits nothing.
+        assert!(t.take_ack(0).is_none());
+        assert!(!t.pending_ack());
+        // An ACK-only packet (ack_eliciting=false) is recorded but does NOT
+        // create a new obligation — no ACK-of-ACK ping-pong.
+        t.observe_packet(7, 1, false).unwrap();
+        assert!(!t.pending_ack());
+        assert!(t.take_ack(0).is_none());
+        // A new ack-eliciting packet re-arms exactly one obligation.
+        t.observe_packet(7, 5, true).unwrap();
+        assert!(t.pending_ack());
+        assert_eq!(t.take_ack(0).unwrap().largest_observed, 5);
+        assert!(t.take_ack(0).is_none());
     }
 
     #[test]
