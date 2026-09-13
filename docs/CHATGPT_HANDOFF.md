@@ -1,126 +1,237 @@
-# ChatGPT reviewer handoff — candidate/measurement sweep accepted; repository-wide local queue exhausted
+# ChatGPT reviewer handoff — open Core Live Reliable-UDP Integration phase
 
-## Reviewed repository truth
+## Why the queue is open again
 
-- Default branch before this refresh: exact `b6fac41c782f303e4ef98ec5a076ba41816d9381` (`docs(review): corrected item-4 core inventory including candidate/measurement lanes`).
-- Previous handoff content was stale: its benchmark P95 repair and PLPMTUD/FEC/disabled-gate review lanes have all been completed.
-- The only new source/test change after the prior deep-sweep handoff is reachable exact `757e0b6c056f0bac39c1fb00e24d54cab55f3f72` (`fix(bench): align P95 order statistic with repository netns convention`). Later commits through `b6fac41` are review/evidence/index documentation only.
-- Exact `757e0b6` has developer-local clean exact-tree provenance in `docs/local-gate-757e0b6-20260913.md`: `cargo test -p neko-bench`, `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, and clean initial/final tree all passed. GitHub-hosted `stable checks` and `nightly decode fuzz smoke` also passed and remain extra cross-evidence only.
-- No VPS/WAN experiment occurred in this sequence. Open pull requests: none.
-- Governance remains unchanged: item 3 incomplete, item 4 incomplete, `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`, D019 policy-blocked, `SessionRuntime.events` remains `POLICY_BLOCKED_RESOURCE_BOUND`, and `READY_LIVE: none`.
+The prior exact `3d88ac956e6a8b9616a215178b4db12c8fd3be94` handoff correctly concluded that the **existing implemented/candidate surfaces under the then-current semantics** had been repository-wide bounded-reviewed and that no mechanically repairable defect remained.
 
-## Reviewer verdict on new work
+That did **not** mean the project itself was complete. The maintainer has now explicitly directed the project to continue advancing rather than remain parked at the current bounded-research plateau.
 
-### Benchmark P95 repair `757e0b6` — ACCEPT
+The next high-value mainline gap is concrete and repository-visible:
 
-The prior measurement-consistency MEDIUM is closed.
+- `neko-reliable` contains the socket-free UDP recovery engine (packet number, ACK ranges, RTT/loss/PTO, frame retransmission, Reno/pacing and deterministic fault models).
+- `neko-cli` currently does **not** depend on `neko-reliable`.
+- `neko-carrier` currently does **not** depend on `neko-reliable`.
+- The candidate outer wire already has `RecordType::Ack`, but its payload is still opaque and no live UDP recovery integration exists.
+- `docs/status.md` truthfully describes `reliable-udp` as a bounded deterministic packet-recovery model with no live service / Session-delivery promotion.
+- Item 3 still lacks natural-loss / packet-recovery-driven degradation evidence; the accepted warm fallback is application reply cessation, not PTO/packet-loss evidence.
 
-`neko-bench::stat` now uses the same repository order-statistic convention as `scripts/bench/run-netns.sh`: `p95 = xs[round((n - 1) * 0.95)]` on sorted successful samples. Deterministic tests pin `n = 1, 2, 20, 100, 1000`; failed operations remain excluded from latency distributions while being counted separately; all-failure/empty distributions remain non-panicking. `docs/era4-i-performance.md` now states the convention.
+Therefore the previous `queue exhausted` state is superseded by a **new implementation phase**, not by another review-filler sweep.
 
-The independent re-close `docs/reviews/independent-bench-reclose-757e0b6-20260913.md` also rechecked iteration/sample accounting, failure exclusion, crypto sample setup/nonce progression, units/timed boundaries, and the no-HY2-superiority claim. No remaining defect in that bounded scope.
+## Phase objective
 
-### PLPMTUD candidate review `76b14da` — ACCEPT
+Integrate the existing `neko-reliable` recovery semantics into the real UDP Carrier path in a bounded, locally testable way, then use that new implementation/instrumentation to create a genuinely new real-network hypothesis for item 3.
 
-Dedicated independent bounded review found no defect in the socket-free candidate: config/base/max bounds, u16-edge search arithmetic, one-outstanding-probe and probe-budget ordering, checked probe-ID exhaustion, exact generation/id/size ACK binding, stale/duplicate/wrong-size atomic rejection, timeout/upper-bound reduction, generation reset, bounded blackhole fallback, and EMSGSIZE lowering semantics all match the committed candidate contract.
+This phase must preserve existing architecture:
 
-This does not create a live PMTUD path or a `READY_LIVE` question.
+- Session remains above Carrier.
+- UDP packet ACK/recovery is Carrier-local and must never call or imply Session `DeliveryLedger::confirm_received`.
+- TCP does not gain a second packet-ACK layer.
+- Existing Noise/authz/Session-delivery semantics are not redesigned.
+- No concurrent UDP+TCP striping, 0-RTT, FEC enablement or unrelated Experimental Track work.
+- Existing D019, `SessionRuntime.events` retention and RSEC-001 policy gates remain open and **must not block this independent implementation lane**.
 
-### Disabled XOR FEC candidate review `167f1db` — ACCEPT
+## Continuous READY_LOCAL queue
 
-Dedicated independent bounded review found no defect in config/block/symbol bounds before allocation, inclusive block-id identity space, byte-exact XOR parity/single-loss recovery, multi-loss fail-closed behavior, duplicate/out-of-range missing-symbol handling, reorder independence, or evidence-domain separation. FEC remains disabled; no enablement/performance claim follows.
+The external coding agent should execute continuously. A coherent source/test slice -> focused tests -> pushed developer commit -> developer-local clean exact-tree gate/provenance -> immediately continue to the next dependency-ready slice. Do not wait for reviewer cadence unless a listed stop condition is reached.
 
-### Disabled-gate enforcement review `6e04684` — ACCEPT
+### S1 — Define the Carrier-local live-recovery integration boundary
 
-Current executable/config/CLI surfaces expose no 0-RTT/early application-data path and no concurrent heterogeneous UDP+TCP application striping path. Warm/standby readiness/control traffic remains distinct from application striping. This is enforcement verification only; disabled features remain disabled.
+**Goal:** introduce the smallest ownership seam that lets a UDP Carrier own `neko_reliable::Recovery` without coupling packet ACK to Session delivery.
 
-### Release indexing and corrected inventory — ACCEPT_WITH_BOUNDARIES
+**Owner:** `crates/neko-carrier` + manifests; `neko-reliable` remains its own engine crate.
 
-Exact `4e21520` correctly adds the benchmark/candidate lanes to `docs/release-security-review-packet.md` without changing release flags or claiming security approval.
+**Actions:**
+- add `neko-reliable` as a normal dependency of the carrier layer (not only CLI glue) unless exact-current structure proves a smaller equally layered seam;
+- define a minimal path-local recovery wrapper/state for packet numbers, sent packets, ACK application, PTO and retransmit-frame output;
+- no socket behavior yet if a socket-free integration seam is the smallest safe first slice;
+- tests must prove packet feedback cannot mutate Session delivery evidence.
 
-Exact `b6fac41` supersedes the earlier premature `e10b6f` exhaustion inventory. The corrected inventory now includes PLPMTUD, FEC, benchmark P95 closure and disabled-gate enforcement.
+**Do not:** create a new crate, redesign Session ACKs, invent new congestion policy values.
 
-I independently reverse-checked the inventory against:
+### S2 — Specify and implement a bounded candidate UDP packet/ACK payload grammar
 
-- all eight workspace crates (`neko-bench`, `neko-carrier`, `neko-cli`, `neko-crypto`, `neko-observe`, `neko-reliable`, `neko-session`, `neko-wire`);
-- current `docs/status.md` candidate rows, including reliable UDP, unreliable datagram, PLPMTUD, FEC, manager, 0-RTT and concurrent-multipath gates;
-- release/package/dependency/CLI/validator/benchmark tooling already covered by named broader reviews;
-- canonical corpus, HY2 methodology, pre-auth/resource-abuse and wire/parser independent review surfaces;
-- current open PR set (none).
+**Goal:** assign a deterministic bounded grammar to the already-existing outer `RecordType::Ack` and the matching UDP Data packet metadata required by `neko-reliable`.
 
-No additional implemented/candidate core surface lacking a dedicated bounded challenge was found.
+**Owner:** `neko-wire` + `docs/spec/` candidate documentation + golden/negative tests.
 
-## Repository-wide local queue status — genuinely exhausted for current semantics
+**Requirements:**
+- packet number identity is explicit and bounded;
+- ACK ranges encode canonical sorted/merged inclusive ranges with hard count limits;
+- reject malformed, noncanonical, duplicate/overlapping noncanonical forms, range inversion, truncation, overflow and trailing bytes;
+- do not encode Session delivery acknowledgement in this format;
+- current outer version remains candidate/non-frozen unless an unavoidable version change is justified by an explicit ADR.
 
-This exhaustion decision is repository-wide, not the earlier narrow pre-auth proposal sweep.
+**Validation:** focused wire tests + full `scripts/check.sh`; because decoder/parser changes are expected, run pinned decode fuzz smoke required by repository policy.
 
-There is currently:
+### S3 — Bind recovery metadata to authenticated UDP records
 
-- no unresolved mechanically repairable correctness/security/evidence defect;
-- no implemented/candidate core surface lacking a dedicated independent bounded challenge;
-- no READY review-support lane left by the corrected inventory;
-- no open PR requiring review/merge;
-- no dependency-ready live question (`READY_LIVE: none`).
+**Goal:** packet number / ACK evidence must be authenticated under the existing crypto/transcript/AAD boundary before it can affect recovery state.
 
-The external coding agent should synchronize to current `main` and remain idle **unless one of the resume triggers below occurs**. Do not manufacture another checker/schema/framework/docs sweep solely to keep the agent busy, and do not re-review unchanged owners for volume.
+**Owner:** carrier/crypto integration and tests.
 
-## Remaining real gates / stop conditions
+**Requirements:**
+- unauthenticated or tampered packet/ACK material cannot advance RTT, retire packets, declare loss, schedule retransmit or affect Carrier health;
+- duplicate/old/future ACK behavior remains fail-closed according to current `neko-reliable` semantics;
+- no Session delivery evidence is produced.
 
-### 1. `SessionRuntime.events` retained-state bound — `POLICY_BLOCKED_RESOURCE_BOUND`
+**Stop if:** this requires changing the core Noise construction or Session/Carrier architecture rather than integrating existing authenticated record ownership.
 
-`SECURITY.md` requires per-connection/global memory, CPU and rate bounds. `SessionRuntime.events: Vec<RuntimeEvent>` is the one known retained collection without a hard lifetime bound.
+### S4 — Local loopback live reliable-UDP exchange
 
-This is not silently repairable from current semantics because the repository does not decide what happens when event retention reaches a limit: evict-oldest with explicit drop evidence, external drain/consumer plus fallback cap, hard logging refusal, or another retention contract. Reusing an unrelated queue constant would still invent retention semantics. Do not choose a numeric cap, TTL/LRU, or drop policy autonomously.
+**Goal:** run actual UDP sockets through packet numbering + ACK + recovery state rather than a socket-free simulator.
 
-A maintainer/security decision on retention semantics makes this local slice READY immediately; then implement the smallest bounded design with deterministic overflow/drop tests and exact-tree provenance.
+**Owner:** `neko-carrier` integration tests and, only where needed, bounded CLI test fixture support.
 
-### 2. D019 source-retention / no-reset policy
+**Positive coverage:** multi-record authenticated exchange, ACK retirement, RTT sample, no spurious retransmit.
 
-Still a maintainer policy/value decision. Do not invent TTL, LRU/history-size, external-retention authority, or weakened no-reset semantics.
+**Negative coverage:** duplicate ACK, old ACK, future ACK, malformed ACK, tamper, wrong generation/context, socket close/timeout cleanup.
 
-### 3. RSEC-001 representative adversarial-load / capacity suitability
+This is loopback evidence only; do not update WAN/release claims.
 
-Engineering controls are independently bounded-reviewed, but representative pressure/capacity suitability remains unestablished. Selecting meaningful load/concurrency/capacity conditions is a maintainer/security judgment and may exceed ordinary standing authorization when the purpose becomes pressure/capacity testing. Do not create a pseudo-capacity result from ordinary bounded unit/process tests.
+### S5 — Deterministic local loss/reorder integration
 
-### 4. Item 3 / environment / frozen live lines
+**Goal:** prove the live integration actually drives `neko-reliable` loss/PTO/retransmit behavior under controlled loss rather than merely carrying ACK-shaped bytes.
 
-Item 3 remains incomplete. Current repository truth still has no `READY_LIVE` row: natural-loss/long-lived/HY2/IPv6 and related current lines are blocked/frozen or already sufficient only for narrower bounded questions. Standing authorization remains valid, but authorization alone does not create a new scientific question.
+Prefer deterministic local fault injection / netns existing harness over sleeps or ad-hoc timing.
 
-Do not mechanically rerun HY2, repeated warm failover, periodic/soak, package lifecycle, migration-back, endpoint migration, key update, IPv6, PLPMTUD or Experimental Track work. A materially new implementation/instrumentation/configuration/hypothesis/path condition may create a new READY live row later.
+Cover at least:
+- one lost Data packet -> frame-level retransmission -> exact application data once;
+- ACK loss -> safe retry without false Session confirmation;
+- bounded reorder below loss threshold;
+- blackhole -> PTO/probe evidence without fabricating packet loss beyond current semantics;
+- recovery state cleanup and bounded memory.
 
-### 5. Release-policy / authority gates
+### S6 — Congestion/pacing integration checkpoint
 
-Signing, key custody, SBOM/publication trust, previous-frozen-release interoperability, final independent security/release judgment, RC, protocol/release freeze, release and production readiness remain separate decisions/dependencies. No local review result changes them automatically.
+**Goal:** connect existing Reno / bytes-in-flight / pacing calculations to the live UDP send decision in the smallest deterministic form.
 
-## Item-4 status
+**Requirements:**
+- do not busy-loop or use a simple unaccounted sleep loop as a pacing implementation;
+- bytes-in-flight accounting must retire exactly once on ACK/loss;
+- packet retransmission must remain frame-level re-encoding, never resend an old encrypted packet image;
+- deterministic/netns evidence first; no performance superiority claim.
 
-The bounded **local independent-review support inventory is now exhausted and internally reconciled**, but item 4 itself remains unchecked because its own stated scope includes resource/abuse-limit judgment and independent release/security judgment, while `SessionRuntime.events`, D019 and RSEC-001/final judgment remain open.
+If the existing synchronous architecture cannot support a truthful pacing seam without choosing a new runtime/timer architecture, record that as a concrete design stop and continue any independent slices that do not depend on it.
 
-Do not mark item 4 complete merely because every current executable core surface has been bounded-reviewed.
+### S7 — Carrier health bridge from real recovery evidence
 
-## Resume triggers
+**Goal:** feed authenticated packet-level recovery observations into the existing Carrier health/manager domain without crossing into Session delivery.
 
-Resume continuous execution immediately if repository truth gains any of:
+Map current evidence only:
+- RTT/loss/PTO -> health observations;
+- recovery events may mark/degrade Carrier health only through existing manager semantics;
+- packet ACK cannot validate a Path and cannot confirm Session delivery;
+- hysteresis/single-active invariants remain unchanged.
 
-1. a new developer source/test commit or open PR;
-2. a concrete regression/failure contradicting an accepted review;
-3. a new implemented/candidate core surface not covered by the corrected inventory;
-4. a maintainer decision resolving `SessionRuntime.events` retention semantics or D019;
-5. maintainer-selected RSEC-001 pressure/capacity conditions within authorized scope;
-6. a materially changed live hypothesis/instrumentation/path/environment creating a genuine `READY_LIVE` row;
-7. a release-policy decision that turns signing/SBOM/frozen-release interoperability into executable work.
+Add focused cross-layer negative tests.
 
-On a new mechanically determined defect: smallest repair -> bounded regression -> commit/push -> clean exact pushed-tree `scripts/check.sh` + `git diff --check` + provenance -> continue through all dependency-safe follow-ups without waiting for reviewer cadence.
+### S8 — Packet-loss-driven UDP degradation -> existing TCP fallback locally
 
-## Live / release boundary
+**Goal:** replace the current application-reply-cessation-only trigger in at least one local integration fixture with a true packet-recovery/health-driven degradation signal feeding the already accepted warm TCP fallback path.
 
-- item 3 incomplete;
-- item 4 incomplete;
+Requirements:
+- TCP standby still proves readiness independently;
+- Session uncertain/replay/dedup semantics remain the existing D064 contract;
+- report failure decision time, first resumed data, uncertain/replayed/duplicate/lost application bytes;
+- no TCP packet ACK layer;
+- positive + fail-closed negative tests.
+
+This is the first slice that can materially create a new item-3 live hypothesis.
+
+### S9 — Observability and result truth boundary for live recovery
+
+**Goal:** expose secret-free structured events/counters needed to distinguish:
+- packet sent / ACKed / lost;
+- PTO fired;
+- frame retransmitted;
+- Carrier degraded / switch decision;
+- Session confirmed/uncertain application bytes.
+
+Reuse existing `neko-observe`; do not add a parallel logging framework. Packet recovery events must not be mislabeled as logical delivery.
+
+### S10 — Independent bounded review of the new integrated surface
+
+After S1-S9 are coherent and green, perform a dedicated independent bounded challenge of the new live reliable-UDP integration:
+- authentication/evidence-domain separation;
+- future/unsent/duplicate ACK;
+- packet/frame exact-once accounting;
+- retransmission crypto freshness;
+- timeout/PTO/loss state transitions;
+- memory/queue bounds;
+- manager/fallback boundary;
+- secret-safe observability.
+
+Concrete defect -> smallest repair + regression + exact-tree closure. No finding -> retain a precise no-finding review note.
+
+### S11 — Create a genuinely new READY_LIVE row
+
+Only after S10 accepts the local integration, reconcile item 3. The implementation change itself creates a materially new hypothesis, so a new bounded self-owned VPS experiment may become READY under standing authorization.
+
+Preferred first live question:
+
+> Does authenticated live UDP packet-recovery evidence detect a bounded controlled packet-loss/blackhole condition and trigger the existing warm TCP fallback while preserving Session delivery/dedup invariants?
+
+Use the minimum experiment that answers this question; keep within standing authorization; preserve cleanup and exact binary/commit provenance. Do not rerun the old application-reply-cessation sample and call it new evidence.
+
+If production qdisc/route/firewall changes would be required to create the loss condition, stop that live mechanism and use an already authorized/non-production isolated injection method or keep the row blocked; do not modify production networking.
+
+### S12 — Item-3 / item-4 reconciliation and next queue refill
+
+After a new live result (positive or negative):
+- update status/evidence boundary honestly;
+- distinguish controlled packet loss from natural Internet degradation;
+- do not convert one sample into a reliability/performance rate;
+- preserve D019, RSEC-001, `SessionRuntime.events`, signing/SBOM/RC authority as separate gates;
+- refill the next engineering queue from the new evidence, not from speculative Experimental Track features.
+
+## Required gates
+
+For every coherent code slice, the developer-local clean exact pushed-tree gate is primary:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
+git diff --check
+clean initial/final tree
+```
+
+Persist sanitized provenance: exact SHA, commands, UTC start/end, exits, OS/arch, stable Rust, clean-tree state. GitHub Actions is optional extra cross-evidence and never a waiting condition.
+
+Wire decoder/parser changes require the repository's pinned decode fuzz build/run (`-max_total_time=30 -max_len=8192`). Ordinary carrier/docs-only slices do not.
+
+## Policy gates deliberately left open
+
+This new phase is authorized by the maintainer's direction to continue project engineering; it does **not** silently decide the following:
+
+- `SessionRuntime.events` retained-state policy (`POLICY_BLOCKED_RESOURCE_BOUND`);
+- D019 terminal source-retention/no-reset policy;
+- RSEC-001 capacity/suitability pressure profile;
+- signing/key custody/SBOM/publication policy;
+- previous-frozen-release interoperability policy;
+- RC/freeze/release/production authority.
+
+Those remain separate decisions and should not block the independent reliable-UDP integration queue above.
+
+## Stop conditions
+
+Stop the affected lane only for:
+- unresolved correctness/security/evidence BLOCKER/HIGH;
+- a required change to core Session/Carrier/ACK/crypto architecture not already determined by committed semantics;
+- destructive/canonical-meaning migration;
+- a new safety numeric/policy choice;
+- action outside standing authorization or affecting production/third parties;
+- new credentials/server permissions;
+- real repository breakage or actual runtime/tool exhaustion.
+
+Otherwise continue S1 -> S12 without waiting for the next reviewer pass.
+
+## Governance remains unchanged
+
+Opening this engineering phase changes no release flag:
+
+- item 3 remains incomplete;
+- item 4 remains incomplete;
 - `RELEASE_CANDIDATE=false`;
 - `PRODUCTION_READY=false`;
 - `FREEZE=false`;
 - `RELEASED=false`;
-- D019 remains policy-blocked;
-- `SessionRuntime.events` remains `POLICY_BLOCKED_RESOURCE_BOUND`;
-- `READY_LIVE: none` remains authoritative.
-
-Standing VPS authorization remains valid and unchanged. Current lack of live work is a question/dependency classification, not a missing-permission problem.
+- `READY_LIVE: none` remains authoritative **until S10/S11 create and review a new concrete live question**.
