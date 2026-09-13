@@ -9,10 +9,9 @@ workspace = true
 
 [dependencies]
 neko-reliable = { path = "../neko-reliable" }
+neko-wire = { path = "../neko-wire" }
 
 [dev-dependencies]
 neko-session = { path = "../neko-session" }
-
-neko-wire = { path = "../neko-wire" }
 neko-crypto = { path = "../neko-crypto" }
 neko-observe = { path = "../neko-observe" }

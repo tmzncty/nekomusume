@@ -4258,6 +4258,89 @@ impl PathRecovery {
     }
 }
 
+/// Bounded receiver-side packet-ACK tracker for the UDP recovery runtime.
+///
+/// The receiver observes the packet number of each authenticated record only
+/// after a successful `SecureSession::open` (the sequence is the AEAD nonce).
+/// Observed numbers are accumulated into canonical bounded `AckRanges`; a
+/// duplicate/reordered packet is a no-op, and malformed/tampered records never
+/// reach this tracker because `open` fails first. `build_ack` renders the
+/// canonical `AckPayload` to be sealed back to the sender. The tracker is
+/// Carrier-local and produces no Session delivery evidence.
+#[derive(Debug)]
+pub struct PacketAckTracker {
+    path_generation: u64,
+    ranges: neko_reliable::AckRanges,
+    /// Largest packet number observed (drives `largest_observed`).
+    largest_observed: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AckTrackerError {
+    /// The observed packet does not belong to this path generation.
+    GenerationMismatch,
+    /// The bounded ACK range set overflowed its limit.
+    RangeLimit,
+}
+
+impl PacketAckTracker {
+    /// Create a receiver tracker bound to one path generation.
+    pub fn new(path_generation: u64) -> Self {
+        Self {
+            path_generation,
+            // Bound the ACK range set to the wire's hard cap so an encoded
+            // AckPayload always fits the canonical grammar.
+            ranges: neko_reliable::AckRanges::new(32).expect("valid cap"),
+            largest_observed: None,
+        }
+    }
+
+    /// Record an authenticated packet observation. `generation` must match the
+    /// tracker's path generation — a record for another generation is rejected
+    /// before any ACK state changes. Duplicate/reordered numbers are no-ops.
+    pub fn observe_packet(
+        &mut self,
+        generation: u64,
+        packet_number: u64,
+    ) -> Result<(), AckTrackerError> {
+        if generation != self.path_generation {
+            return Err(AckTrackerError::GenerationMismatch);
+        }
+        self.ranges
+            .insert(packet_number)
+            .map_err(|_| AckTrackerError::RangeLimit)?;
+        self.largest_observed = Some(
+            self.largest_observed
+                .map_or(packet_number, |l| l.max(packet_number)),
+        );
+        Ok(())
+    }
+
+    /// Render the canonical `AckPayload` for sealing back to the sender.
+    /// Returns `None` until at least one packet has been observed.
+    pub fn build_ack(&self, ack_delay_us: u64) -> Option<neko_wire::AckPayload> {
+        let largest = self.largest_observed?;
+        Some(neko_wire::AckPayload {
+            largest_observed: largest,
+            ack_delay_us,
+            ranges: self
+                .ranges
+                .ranges()
+                .iter()
+                .map(|r| neko_wire::AckRangeWire {
+                    start: r.start,
+                    end: r.end,
+                })
+                .collect(),
+        })
+    }
+
+    /// Whether any packet has been observed yet.
+    pub fn has_observations(&self) -> bool {
+        self.largest_observed.is_some()
+    }
+}
+
 #[cfg(test)]
 mod path_recovery_tests {
     use super::*;
@@ -4430,6 +4513,28 @@ mod path_recovery_tests {
             300,
             "acking an uncharged packet must not drain another packet's bytes"
         );
+    }
+
+    #[test]
+    fn ack_tracker_observes_only_matching_generation_and_yields_canonical_ack() {
+        let mut t = PacketAckTracker::new(7);
+        assert!(t.build_ack(0).is_none());
+        // Duplicate/reordered/wrong-generation observations.
+        t.observe_packet(7, 2).unwrap();
+        t.observe_packet(7, 0).unwrap(); // reorder
+        t.observe_packet(7, 2).unwrap(); // duplicate no-op
+        assert_eq!(
+            t.observe_packet(8, 5),
+            Err(AckTrackerError::GenerationMismatch)
+        );
+        let ack = t.build_ack(12).unwrap();
+        assert_eq!(ack.largest_observed, 2);
+        assert_eq!(ack.ack_delay_us, 12);
+        // Ranges are canonical merged: {0},{2} observed -> two ranges.
+        assert_eq!(ack.ranges.len(), 2);
+        // The encoded payload must decode back to identical canonical ranges.
+        let enc = neko_wire::encode_ack(&ack).unwrap();
+        assert_eq!(neko_wire::decode_ack(&enc).unwrap(), ack);
     }
 
     #[test]
