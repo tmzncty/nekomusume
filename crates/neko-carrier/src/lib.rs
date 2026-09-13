@@ -4043,7 +4043,6 @@ impl ConcurrentCarrierManager {
 pub struct PathRecovery {
     path: PathId,
     path_generation: u64,
-    next_packet_number: u64,
     recovery: neko_reliable::Recovery,
     reno: neko_reliable::Reno,
     packets_sent: u64,
@@ -4073,8 +4072,6 @@ pub struct RecoveryAckOutcome {
 pub enum PathRecoveryError {
     /// The recovery engine rejected the input (invalid range, capacity, etc.).
     Recovery(neko_reliable::Error),
-    /// Packet number allocation overflowed the u64 space.
-    PacketNumberExhausted,
     /// The ACK/generation does not belong to this path generation.
     GenerationMismatch,
 }
@@ -4091,7 +4088,6 @@ impl PathRecovery {
         Ok(Self {
             path,
             path_generation,
-            next_packet_number: 0,
             recovery: neko_reliable::Recovery::default(),
             reno: neko_reliable::Reno::new(mss)?,
             packets_sent: 0,
@@ -4101,18 +4097,9 @@ impl PathRecovery {
         })
     }
 
-    /// Allocate the next monotonically increasing packet number for this path.
-    /// Fails closed on u64 exhaustion — a number is never reused.
-    pub fn allocate_packet_number(&mut self) -> Result<u64, PathRecoveryError> {
-        let n = self.next_packet_number;
-        self.next_packet_number = self
-            .next_packet_number
-            .checked_add(1)
-            .ok_or(PathRecoveryError::PacketNumberExhausted)?;
-        Ok(n)
-    }
-
     /// Record a sent packet's number/bytes/frames and charge bytes-in-flight.
+    /// The packet number is the authenticated `SecureSession` record sequence
+    /// (the AEAD nonce) — the single source of truth, never a second allocator.
     /// `frames` are Carrier-level `FrameId`s owned by the caller; this seam
     /// does not interpret them as Session delivery units.
     pub fn on_sent(&mut self, packet: neko_reliable::SentPacket) -> Result<(), PathRecoveryError> {
@@ -4272,20 +4259,6 @@ mod path_recovery_tests {
         let mut a = AckRanges::new(8).unwrap();
         a.insert(n).unwrap();
         a
-    }
-
-    #[test]
-    fn packet_number_is_monotonic_and_fail_closed() {
-        let mut r = recovery();
-        assert_eq!(r.allocate_packet_number(), Ok(0));
-        assert_eq!(r.allocate_packet_number(), Ok(1));
-        // u64::MAX is the exhaustion sentinel: it is never handed out, and the
-        // allocator fails closed rather than wrapping or reusing a number.
-        r.next_packet_number = u64::MAX;
-        assert_eq!(
-            r.allocate_packet_number(),
-            Err(PathRecoveryError::PacketNumberExhausted)
-        );
     }
 
     #[test]
