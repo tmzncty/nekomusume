@@ -200,7 +200,9 @@ impl<'a> ReliableUdpPeer<'a> {
             && self.manager.state(UDP).is_ok()
             && self.manager.state(TCP).is_ok()
         {
-            let _ = self.manager.fail(UDP, SwitchReason::UdpPathDegraded, now_ms);
+            let _ = self
+                .manager
+                .fail(UDP, SwitchReason::UdpPathDegraded, now_ms);
             let _ = self
                 .manager
                 .activate(TCP, SwitchReason::UdpPathDegraded, now_ms, true);
