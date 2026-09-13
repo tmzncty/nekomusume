@@ -4202,6 +4202,14 @@ impl PathRecovery {
             .pacing_interval_us(self.recovery.rtt.smoothed_us, bytes)
     }
 
+    /// Authoritative final-copy retirement signal: is `frame` still carried by
+    /// at least one outstanding packet copy? Under overlapping original and
+    /// retransmit copies, a frame's retained plaintext is releasable only when
+    /// this returns false.
+    pub fn frame_outstanding(&self, frame: neko_reliable::FrameId) -> bool {
+        self.recovery.frame_outstanding(frame)
+    }
+
     /// Read-only access to the underlying recovery engine for observability
     /// projection (`neko_observe::record_recovery_ack`/`record_pto`).
     pub fn recovery(&self) -> &neko_reliable::Recovery {
@@ -4723,6 +4731,43 @@ mod path_recovery_tests {
         assert!(t.pending_ack());
         assert_eq!(t.take_ack(0).unwrap().largest_observed, 5);
         assert!(t.take_ack(0).is_none());
+    }
+
+    #[test]
+    fn overlapping_retransmit_copies_hold_frame_until_last_retires() {
+        let mut r = recovery();
+        let mut buf = RetransmitBuffer::new(8, 256).unwrap();
+        // Original packet 0 carries frame F=9; retain its plaintext.
+        r.on_sent(sent(0, 400, &[9])).unwrap();
+        buf.track(FrameId(9), b"payload").unwrap();
+        // PTO retransmits F under fresh packet 1 while packet 0 still
+        // outstanding -> two copies of frame 9 outstanding.
+        let probes = r.on_pto(1).unwrap();
+        assert_eq!(probes, vec![FrameId(9)]);
+        r.on_sent(sent(1, 400, &[9])).unwrap(); // second copy of frame 9
+        assert!(r.frame_outstanding(FrameId(9)));
+        // ACK only the retransmit copy (packet 1): frame 9 still outstanding
+        // via packet 0 -> NOT releasable.
+        let mut a1 = AckRanges::new(8).unwrap();
+        a1.insert(1).unwrap();
+        r.on_ack(7, &a1, 10_000, 0).unwrap();
+        assert!(
+            r.frame_outstanding(FrameId(9)),
+            "one outstanding copy remains -> frame must not release"
+        );
+        assert_eq!(buf.get(FrameId(9)), Some(&b"payload"[..]));
+        // ACK the final outstanding copy (packet 0) -> frame 9 releasable.
+        let mut a0 = AckRanges::new(8).unwrap();
+        a0.insert(0).unwrap();
+        r.on_ack(7, &a0, 11_000, 0).unwrap();
+        assert!(
+            !r.frame_outstanding(FrameId(9)),
+            "last copy retired -> frame releasable"
+        );
+        assert!(buf.release(FrameId(9)));
+        assert_eq!(buf.retained(), 0);
+        // Late/duplicate evidence must not double-release or resurrect.
+        assert!(!buf.release(FrameId(9)));
     }
 
     #[test]

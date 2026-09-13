@@ -359,6 +359,15 @@ impl Recovery {
             None => false,
         }
     }
+    /// Authoritative query: does `frame` still have at least one outstanding
+    /// packet copy in flight? A frame is finally releasable (its retransmit
+    /// plaintext may be freed) only when this returns false — i.e. every copy
+    /// of the frame has been ACKed or declared lost. Lets a runtime retire
+    /// retained plaintext correctly under overlapping original/retransmit
+    /// copies without maintaining a second divergent copy counter.
+    pub fn frame_outstanding(&self, frame: FrameId) -> bool {
+        self.outstanding_frames.contains_key(&frame)
+    }
     /// PTO schedules at most `max_probe_frames` oldest outstanding frames. It
     /// does not declare packets lost and does not create Session delivery evidence.
     pub fn on_pto(&mut self, max_probe_frames: usize) -> Result<Vec<FrameId>, Error> {
