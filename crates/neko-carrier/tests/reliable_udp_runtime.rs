@@ -67,6 +67,10 @@ struct ReliableUdpPeer<'a> {
     last_session_error: Option<neko_session::RuntimeError>,
     /// Congestion probe size consulted before sealing a send.
     cwnd_probe: u64,
+    /// Recorded Carrier `FrameId` -> Session byte offset. Frame identity and
+    /// Session logical offset are separate identities; retransmission must read
+    /// the offset from this map instead of assuming `FrameId.0` is the offset.
+    frame_offsets: std::collections::BTreeMap<FrameId, u64>,
     /// Application logical stream for stable delivery identity.
     stream: u32,
     /// Next application offset — the stable Session logical identity.
@@ -102,6 +106,7 @@ impl<'a> ReliableUdpPeer<'a> {
             session,
             rt: neko_carrier::ReliableUdpRuntime::new(generation, mss).unwrap(),
             cwnd_probe,
+            frame_offsets: std::collections::BTreeMap::new(),
             obs: Producer::new(SessionId(1), 256).unwrap(),
             session_rt: {
                 let mut session_rt = neko_session::SessionRuntime::new(
@@ -135,7 +140,12 @@ impl<'a> ReliableUdpPeer<'a> {
         // boundary, so a refused send consumes no Session byte space.
         let offset = self.next_offset;
         let number = self.send_data_at(now_us, offset, payload)?;
-        self.next_offset = self.next_offset.checked_add(payload.len() as u64)?;
+        // The send already happened: advancing the identity must not turn a
+        // completed send into a `None` that callers read as "refused".
+        self.next_offset = self
+            .next_offset
+            .checked_add(payload.len() as u64)
+            .expect("fixture Session byte offset overflowed u64");
         Some(number)
     }
 
@@ -181,6 +191,8 @@ impl<'a> ReliableUdpPeer<'a> {
         self.rt
             .on_packet_sent(n, now_us, sealed.len() as u64, frame, payload)
             .unwrap();
+        // Remember the Session identity this Carrier frame carries.
+        self.frame_offsets.insert(frame, offset);
         self.sock.send_datagram(&sealed).unwrap();
         Some(n)
     }
@@ -304,12 +316,18 @@ impl<'a> ReliableUdpPeer<'a> {
     fn pto_retransmit(&mut self, now_us: u64) {
         for (frame, plaintext) in self.rt.pto_probe() {
             // Re-encode the retained plaintext under a fresh nonce; the frame
-            // keeps its stable identity so overlapping-copy accounting holds.
+            // keeps its stable Carrier identity. The Session byte offset comes
+            // from the recorded mapping — never from `FrameId.0`, which need not
+            // be the offset for every frame.
+            let offset = *self
+                .frame_offsets
+                .get(&frame)
+                .expect("retransmitted frame has a recorded Session byte offset");
             let msg = neko_session::ProcessMessage::Data {
                 session: SessionId(1),
                 record: neko_session::OutboundRecord {
                     stream: neko_session::StreamId(u64::from(self.stream)),
-                    offset: frame.0, // frame id IS the stable logical offset
+                    offset,
                     data: plaintext.clone(),
                 },
             };
