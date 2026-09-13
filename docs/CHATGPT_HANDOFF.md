@@ -1,12 +1,23 @@
-# ChatGPT reviewer handoff — Q7 provenance accepted; repair R7 Session byte-offset ownership before Q4 expansion
+# ChatGPT reviewer handoff — Q4 CLOSED and R7 accepted (bounded local scope); R8/R9 next
 
 ## Reviewed repository truth
 
-- Exact current `main`: `23b1cf60cd5f4cf870a4c9f66ef25e618201310f` (`docs: record exact-tree gates for Q7 cleanup and H-RUDP-001D regression`).
+- Exact current `main`: `403886b40be19f0526e91c09fa9690309694afef` (docs-only gate/timestamp records). Reviewed source/test: `92514277ebf6874428c365a53435833b3eb49f3e`. Production `crates/neko-carrier/src/lib.rs` (up to `#[cfg(test)]`) is **byte-identical** to the verified `e0729d9` repair (sha256 `dcfa66b60ec34ed6e29619254624f1adcaa8a3aab98277b1d960fa3a3fce95fc`); all later changes are comment-, test-, or docs-only.
 - Since the previous reviewer handoff, production source remains the accepted `e0729d96f59988e7b918d21cfb19579c319b0733` carrier-layer repair plus test-only `901991d3c9abfde25ef76927b33ee7bc69f4ee23` and comment/provenance-only descendants. There is no new VPS/WAN evidence and no open PR.
 - `docs/local-gate-901991d-20260913.md` is accepted as **developer-persisted local exact-tree provenance**: clean detached `252a59d` and `901991d` each report `scripts/check.sh` exit 0, `git diff --check` exit 0, clean initial/final tree, Linux x86_64 and rustc 1.98.0. This is not reviewer-executed local CI.
 - GitHub-hosted checks on exact `23b1cf6` are green: `stable checks` and `nightly decode fuzz smoke`. They remain additional hosted cross-evidence only.
 - Governance is unchanged: item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`; `READY_LIVE: none`; D019, `SessionRuntime.events`, RSEC-001, signing/SBOM and final release authority remain separate gates.
+
+## Q4 CLOSURE and R7 acceptance (bounded local scope) — 2026-09-13
+
+Recorded by the independent bounded review at `docs/reviews/independent-carrier-q4-closure-r7-challenge-9251427-20260913.md`.
+
+- **H-RUDP-014** (fixture byte-offset ownership) — CLOSED. Byte-accurate `next_offset` advanced by `payload.len()`, committed only after Carrier admission so a cwnd refusal consumes no Session byte space; coherent no-loss scenario uses variable-length records `2,3,1,4` -> offsets `0,2,5,6`.
+- **Q4-F** (PTO-only sample must not erase a later resolved loss, in the coherent path) — CLOSED, and **independently reproduced in both directions**: the scenario PASSES as committed and FAILS with only the health math reverted to the send-time denominator (`bad_intervals=2`), while the same revert also breaks the `901991d` unit test (`1 acked + 1 lost` vs `0/500`), proving the revert faithful. Negative control exists.
+- **R7 independent bounded challenge — no concrete defect found** across transactional owner, retained-state bounds, resolved-health math, Session/Carrier layering, duplicate/conflict propagation, nonce/FrameId separation, cwnd/pacing, fallback truthfulness, and ACK-vs-Session evidence separation. Fixture suite 10/10; `cargo test -p neko-carrier --all-targets` all 15 targets green; clippy warning-free.
+- **Q4 is closed** and **R8/R9 may proceed**. Two residuals are disclosed and accepted at this scope: (a) Q4-E **plaintext**-side refusal is proven at the unit seam rather than through the socket composition; (b) Q4-B ("one recoverable packet loss") has no standalone scenario — it is covered jointly by `scenario_replacement_delivered_first_suppresses_the_late_original`. If a dedicated data-loss scenario is wanted, add it; it is not a correctness defect.
+- **Open LOW test-quality nit (non-blocking):** the added `bad_intervals >= 1` assertion in `reliable_udp_runtime.rs` is inert and mis-named — it counts *non-degraded* samples, and it passes under the restored defect, so the test's discriminating power comes solely from the `0..2` loop bound. Optional repair: count in the `Degraded|Failed` branch, or assert round 0's post-ACK state is not `Healthy`/`Unknown`.
+- This acceptance is a bounded local review decision only: it is **not** independent maintainer/security approval, cryptanalysis, adversarial-load suitability, WAN/VPS evidence, or release authorization. `SessionRuntime.events`, D019, RSEC-001, signing/key-custody/SBOM, previous-frozen-release interoperability, item 3, item 4 and RC/freeze/release/production authority remain open.
 
 ## Accepted closure from the previous lane
 
@@ -114,7 +125,7 @@ Do not wait for reviewer cadence between these dependency-ready slices. Preserve
 8. **Q4-G clean resolved outcome after historical loss:** old cumulative loss must not replay as a new bad sample.
 9. **Q4-H sustained distinct bad resolved outcomes:** only genuinely fresh bad evidence can cross hysteresis and produce a real `WarmFallback` switch event.
 10. **Q4-I invalid/unready TCP standby:** degradation must never fabricate a successful switch; return `FallbackFailed`/non-success truthfully.
-11. **Q4 closure package:** exact-tree local gate/provenance, then one independent bounded R7 challenge covering byte-offset ownership, packet/session evidence separation, retransmit ownership, health freshness, cwnd/pacing and fallback truthfulness. Repair any concrete defect immediately.
+11. **Q4 closure package:** DONE — exact-tree local gate/provenance plus one independent bounded R7 challenge (see the Q4 CLOSURE block above). Two residuals disclosed: Q4-E plaintext side at the unit seam, and no standalone Q4-B scenario.
 12. **R8 CLI/local-lab integration:** expose the accepted reliable-UDP runtime through a bounded executable CLI/lab path; do not add a production daemon or public listener.
 13. **R9 process/socket acceptance:** real process boundary, authenticated UDP packet recovery, bounded timeouts/cleanup, then packet-recovery-driven degradation -> warm TCP fallback using the same logical Session.
 14. **Q10 observability/release-boundary integration:** recovery RTT/loss/PTO/retransmit and switch events are structured and bounded; no packet ACK promotion to logical delivery.
