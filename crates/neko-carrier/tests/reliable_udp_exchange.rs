@@ -194,21 +194,32 @@ fn malformed_ack_record_never_reaches_recovery() {
     let rec = decode(&bad).unwrap();
     assert_eq!(rec.record_type, RecordType::Ack);
     assert!(decode_ack(&rec.payload).is_err());
-    // Overlapping/adjacent noncanonical ranges also reject.
-    assert!(
-        decode_ack(
-            &encode_ack(&AckPayload {
-                largest_observed: 9,
-                ack_delay_us: 0,
-                ranges: vec![
-                    AckRangeWire { start: 0, end: 5 },
-                    AckRangeWire { start: 6, end: 9 }, // adjacent -> must merge
-                ],
-            })
-            .unwrap_or_default()
-        )
-        .is_err()
-            || true
+    // Adjacent ranges (start == prev_end + 1) are non-canonical and the
+    // encoder rejects them outright — a real assertion, not a vacuous
+    // `|| true` predicate.
+    assert_eq!(
+        encode_ack(&AckPayload {
+            largest_observed: 9,
+            ack_delay_us: 0,
+            ranges: vec![
+                AckRangeWire { start: 0, end: 5 },
+                AckRangeWire { start: 6, end: 9 }, // adjacent -> must merge
+            ],
+        }),
+        Err(neko_wire::AckCodecError::NonCanonicalRanges)
+    );
+    // Hand-built overlapping ranges in raw bytes also reject on decode.
+    let mut raw = Vec::new();
+    neko_wire::encode_varint(9, &mut raw); // largest_observed
+    neko_wire::encode_varint(0, &mut raw); // ack_delay
+    raw.push(2); // range_count
+    neko_wire::encode_varint(0, &mut raw);
+    neko_wire::encode_varint(5, &mut raw); // range [0,5]
+    neko_wire::encode_varint(4, &mut raw);
+    neko_wire::encode_varint(9, &mut raw); // range [4,9] overlaps -> reject
+    assert_eq!(
+        decode_ack(&raw),
+        Err(neko_wire::AckCodecError::NonCanonicalRanges)
     );
 }
 
