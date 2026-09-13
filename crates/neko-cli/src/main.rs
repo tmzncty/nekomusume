@@ -2023,36 +2023,36 @@ fn failover_client(args: &[String]) {
     // reliable-UDP transport (cwnd admission + on_packet_sent + send) to prove
     // multi-record once-delivery; the remaining records keep their existing
     // uncertain/failover ownership so the no-loss path stays coherent.
-    if let Some(rt) = rt.as_mut() {
-        if let Some(rec) = records.get(1) {
-            let l2 = ProcessMessage::Data {
-                session: SessionId(7001),
-                record: rec.clone(),
-            }
-            .encode()
-            .unwrap();
-            let e2 = us.seal_unreliable(&l2).unwrap();
-            if !rt.can_send(e2.len() as u64) {
-                fail("r9 cwnd refused second send");
-            }
-            let pn = u64::from_be_bytes(e2[..8].try_into().unwrap());
-            rt.on_packet_sent(
-                pn,
-                0,
-                e2.len() as u64,
-                neko_reliable::FrameId(rec.offset),
-                &rec.data,
-            )
-            .unwrap_or_else(|_| fail("r9 record send"));
-            u.send_to(&e2, target).unwrap();
-            emit_diagnostic(
-                args,
-                "client",
-                "r9_udp_record_sent",
-                0,
-                &format!(",\"offset\":{}", rec.offset),
-            );
+    if let Some(rt) = rt.as_mut()
+        && let Some(rec) = records.get(1)
+    {
+        let l2 = ProcessMessage::Data {
+            session: SessionId(7001),
+            record: rec.clone(),
         }
+        .encode()
+        .unwrap();
+        let e2 = us.seal_unreliable(&l2).unwrap();
+        if !rt.can_send(e2.len() as u64) {
+            fail("r9 cwnd refused second send");
+        }
+        let pn = u64::from_be_bytes(e2[..8].try_into().unwrap());
+        rt.on_packet_sent(
+            pn,
+            0,
+            e2.len() as u64,
+            neko_reliable::FrameId(rec.offset),
+            &rec.data,
+        )
+        .unwrap_or_else(|_| fail("r9 record send"));
+        u.send_to(&e2, target).unwrap();
+        emit_diagnostic(
+            args,
+            "client",
+            "r9_udp_record_sent",
+            0,
+            &format!(",\"offset\":{}", rec.offset),
+        );
     }
     let application_deadline = Instant::now() + Duration::from_secs(secs);
     let mut admission_diagnostic = |reason| {
