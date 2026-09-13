@@ -13,7 +13,12 @@ NEKO_BENCH_ITERS=1000 ./scripts/bench/run-era4-i.sh
 
 The harness clamps its own default to 1,000 and accepts 1–10,000 iterations.
 Each operation is timed with `std::time::Instant`; output is JSON Lines with
-median, P95, and failures in nanoseconds. The workload is local and synchronous:
+median, P95, and failures in nanoseconds. Median and P95 are computed from the
+**successful** samples only — a failed operation is counted in `failures` and
+excluded from the latency distribution, so a failure cannot depress the median
+or fabricate a faster result. The per-operation `iterations` field reports the
+number of successful samples actually timed (equal to the requested iteration
+count when `failures == 0`). The workload is local and synchronous:
 wire frame encode/decode, outer record encode/decode, Noise transport seal/open,
 `FairScheduler::next_frame`, and deterministic recovery ACK/loss processing.
 `instrumentation_counter` is only a proxy for the cost of one explicit counter

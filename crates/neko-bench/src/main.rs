@@ -34,10 +34,11 @@ fn sample<F: FnMut() -> Result<(), ()>>(iters: usize, mut f: F) -> Stat {
     let mut failures = 0;
     for _ in 0..iters {
         let t = Instant::now();
-        if f().is_err() {
+        if f().is_ok() {
+            xs.push(t.elapsed().as_nanos());
+        } else {
             failures += 1;
         }
-        xs.push(t.elapsed().as_nanos());
     }
     stat(xs, failures)
 }
@@ -174,4 +175,32 @@ fn main() {
     println!(
         "{{\"resource_note\":\"CPU/memory process-wide accounting is intentionally not reported: this slice has no stable cross-platform sampler.\"}}"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_operations_are_excluded_from_latency_distribution() {
+        // median/P95 must come from successful samples only; a failing op must
+        // count in `failures` but never depress the latency distribution.
+        let mut call = 0usize;
+        let s = sample(10, || {
+            call += 1;
+            // First half succeed after a tiny busy window; second half fail fast.
+            if call <= 5 { Ok(()) } else { Err(()) }
+        });
+        assert_eq!(s.n, 5, "only successful samples are timed");
+        assert_eq!(s.failures, 5);
+    }
+
+    #[test]
+    fn empty_distribution_reports_zero_not_panic() {
+        let s = stat(Vec::new(), 3);
+        assert_eq!(s.n, 0);
+        assert_eq!(s.median, 0);
+        assert_eq!(s.p95, 0);
+        assert_eq!(s.failures, 3);
+    }
 }
