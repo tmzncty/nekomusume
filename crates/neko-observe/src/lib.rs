@@ -395,18 +395,15 @@ impl Producer {
             .unwrap_or(self.next_sequence)
     }
 
-    /// Appends one event, evicting oldest-first on overflow. When
-    /// `count_eviction` is true the eviction is real dropped evidence and
-    /// increments `dropped_total`; a `diagnostic.events_dropped` report passes
-    /// false so that reporting a drop does not itself inflate the count or
-    /// recursively re-report. Returns true when this append evicted an event.
-    fn push_inner(&mut self, item: Event, count_eviction: bool) -> bool {
+    /// Appends one event, evicting oldest-first on overflow. Every evicted
+    /// retained event is real dropped evidence and increments `dropped_total`.
+    /// Returns true when this append evicted an event. Never recurses into
+    /// drop diagnostics — the caller decides whether to coalesce a report.
+    fn push_inner(&mut self, item: Event) -> bool {
         let evicted = self.events.len() == self.capacity;
         if evicted {
             self.events.pop_front();
-            if count_eviction {
-                self.dropped_total = self.dropped_total.saturating_add(1);
-            }
+            self.dropped_total = self.dropped_total.saturating_add(1);
         }
         self.events.push_back(item);
         evicted
@@ -434,11 +431,12 @@ impl Producer {
                     severity: "error",
                     correlation: self.session_correlation(),
                     data: format!(
-                        "{{\"resource\":\"event_sequence\",\"limit\":\"u64_max\",\"observed\":{}}}",
+                        "{{\"resource\":\"event_sequence\",\"limit\":{},\"observed\":{}}}",
+                        u64::MAX,
                         self.next_sequence
                     ),
                 };
-                self.push_inner(limit_item, true);
+                self.push_inner(limit_item);
             }
             // The ordinary event could not be assigned a fresh sequence.
             self.dropped_total = self.dropped_total.saturating_add(1);
@@ -453,40 +451,46 @@ impl Producer {
             data,
         };
         self.next_sequence = self.next_sequence.saturating_add(1);
-        if self.push_inner(item, true) {
-            // A real (non-diagnostic) event was just evicted; count it toward
-            // the next coalesced drop report.
+        if self.push_inner(item) {
+            // A real (non-diagnostic) retained event was just evicted; count
+            // it toward the next coalesced drop report.
             self.drops_since_report = self.drops_since_report.saturating_add(1);
         }
         self.flush_drop_report(at_ms);
     }
 
-    /// Emits one coalesced `diagnostic.events_dropped` for the evictions
+    /// Emits one coalesced `diagnostic.events_dropped` for the drops
     /// accumulated since the last report, if any. The diagnostic occupies the
-    /// ring but does not itself count as a drop or re-report.
+    /// ring; any retained event it displaces is genuine lost evidence and is
+    /// counted via `push_inner`, but the diagnostic itself does not re-report
+    /// (no recursion). Its `oldest_sequence` reflects the retained floor after
+    /// the diagnostic is present.
     fn flush_drop_report(&mut self, at_ms: u64) {
         if self.drops_since_report == 0 || self.next_sequence == u64::MAX {
             return;
         }
-        let reported = self.drops_since_report;
         self.drops_since_report = 0;
-        self.push_inner(
-            Event {
-                sequence: self.next_sequence,
-                observed_at_ms: at_ms,
-                event: "diagnostic.events_dropped",
-                severity: "warn",
-                correlation: self.session_correlation(),
-                data: format!(
-                    "{{\"dropped_total\":{},\"dropped_since_last\":{},\"oldest_sequence\":{}}}",
-                    self.dropped_total,
-                    reported,
-                    self.oldest_sequence()
-                ),
-            },
-            false,
-        );
+        // `push_inner` counts the diagnostic's own displacement of a retained
+        // event as a real drop (O5); it does not recurse into another report.
+        self.push_inner(Event {
+            sequence: self.next_sequence,
+            observed_at_ms: at_ms,
+            event: "diagnostic.events_dropped",
+            severity: "warn",
+            correlation: self.session_correlation(),
+            data: String::new(),
+        });
         self.next_sequence = self.next_sequence.saturating_add(1);
+        // Report the post-insertion retained floor (O6): the diagnostic is now
+        // the back of the ring, so the front is the true oldest retained seq.
+        let floor = self.oldest_sequence();
+        let total = self.dropped_total;
+        if let Some(back) = self.events.back_mut() {
+            back.data = format!(
+                "{{\"dropped_total\":{},\"oldest_sequence\":{}}}",
+                total, floor
+            );
+        }
     }
     fn session_correlation(&self) -> Correlation {
         Correlation {
@@ -644,10 +648,11 @@ mod tests {
             Some((neko_carrier::StreamId(4), StreamPriority::Bulk)),
             true,
         );
-        // `dropped_total` counts only real (non-diagnostic) evictions; the
-        // emitted drop diagnostic occupies the ring but does not inflate it.
+        // `dropped_total` counts every retained event evicted on overflow,
+        // including the retained event displaced to make room for the drop
+        // diagnostic itself (O5). The diagnostic never counts itself.
         assert_eq!(p.retained(), 5);
-        assert_eq!(p.dropped_total(), 1);
+        assert_eq!(p.dropped_total(), 2);
         assert_eq!(p.dequeue_totals(), (0, 1, 1));
         assert_eq!(p.resource_high_water(), (1, 3));
         let lines: Vec<_> = p.events().map(Event::to_json_line).collect();
@@ -712,6 +717,24 @@ mod tests {
             p.events()
                 .any(|e| e.event == "resource.limit_hit" && e.sequence == u64::MAX)
         );
+        // O4: limit_hit data must be schema-valid — `limit` is the integer
+        // counter u64::MAX, not the string "u64_max"; resource uses the
+        // append-only `event_sequence` enum value.
+        let hit = p
+            .events()
+            .find(|e| e.event == "resource.limit_hit")
+            .unwrap();
+        assert!(
+            hit.data.contains("\"resource\":\"event_sequence\""),
+            "{}",
+            hit.data
+        );
+        assert!(
+            hit.data.contains("\"limit\":18446744073709551615"),
+            "{}",
+            hit.data
+        );
+        assert!(!hit.data.contains("u64_max\""), "{}", hit.data);
     }
 
     #[test]
@@ -737,6 +760,23 @@ mod tests {
         // sequences still strictly increasing
         let seqs: Vec<u64> = p.events().map(|e| e.sequence).collect();
         assert!(seqs.windows(2).all(|w| w[0] < w[1]), "seqs={seqs:?}");
+        // O6: the diagnostic's oldest_sequence must equal the actual oldest
+        // retained sequence AFTER the diagnostic is present (post-insertion
+        // floor), and it must carry only schema-valid dropped_total +
+        // oldest_sequence (no dropped_since_last).
+        let diag = p
+            .events()
+            .find(|e| e.event == "diagnostic.events_dropped")
+            .expect("drop diagnostic present");
+        let actual_floor = p.events().next().unwrap().sequence;
+        assert!(
+            diag.data
+                .contains(&format!("\"oldest_sequence\":{}", actual_floor)),
+            "diag={} actual_floor={}",
+            diag.data,
+            actual_floor
+        );
+        assert!(!diag.data.contains("dropped_since_last"), "{}", diag.data);
     }
 
     #[test]
