@@ -1921,6 +1921,20 @@ fn reliable_udp_failover_settles_packet_acks_to_zero_in_flight() {
         client_log.contains("\"remaining_in_flight\":0"),
         "{client_log}"
     );
+    // M-R9-004: genuinely multi-record — record 1 (offset 16) also rides the
+    // reliable-UDP runtime AND is NOT also sent on the legacy untracked
+    // udp_uncertain_range_sent path (no double owner for one Session range).
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_record_sent\""),
+        "{client_log}"
+    );
+    assert!(client_log.contains("\"offset\":16"), "{client_log}");
+    // Under --reliable-udp records[1] (offset 16) is reliable-owned, so the
+    // uncertain direct-send must start at records[2] (offset 32), not offset 16.
+    assert!(
+        !client_log.contains("\"event\":\"udp_uncertain_range_sent\",\"seq\":2,\"ciphertext_bytes\":96,\"stream\":1,\"offset\":16"),
+        "{client_log}"
+    );
     assert!(
         server_log.contains("\"event\":\"udp_packet_ack_sent\""),
         "{server_log}"

@@ -1323,15 +1323,6 @@ fn failover_server(args: &[String]) {
                 );
                 let reliable_udp = args.iter().any(|a| a == "--reliable-udp");
                 if let Ok(plain) = ss.open_unreliable(&buf[..n]) {
-                    // R9: the authenticated outer AEAD sequence is the Carrier
-                    // recovery packet number — record receipt and emit a packet
-                    // ACK as Carrier feedback alongside the Session DeliveryAck.
-                    let pn = u64::from_be_bytes(buf[..8].try_into().unwrap_or([0; 8]));
-                    if reliable_udp {
-                        server_rt
-                            .on_packet_received(pn, true)
-                            .unwrap_or_else(|_| fail("r9 server on_packet_received"));
-                    }
                     if let Ok(ProcessMessage::Data { session, record }) =
                         ProcessMessage::decode(&plain)
                     {
@@ -1350,6 +1341,16 @@ fn failover_server(args: &[String]) {
                                 )
                                 .is_ok()
                         {
+                            // H-R9-003: only a valid authenticated Data packet
+                            // that reached Session delivery is recorded in the
+                            // recovery/ACK tracker — non-Data/malformed packets
+                            // never enter the outgoing R9 ACK range.
+                            let pn = u64::from_be_bytes(buf[..8].try_into().unwrap_or([0; 8]));
+                            if reliable_udp {
+                                server_rt
+                                    .on_packet_received(pn, true)
+                                    .unwrap_or_else(|_| fail("r9 server on_packet_received"));
+                            }
                             let logical = ProcessMessage::DeliveryAck {
                                 session,
                                 stream,
@@ -2162,12 +2163,22 @@ fn failover_client(args: &[String]) {
     } else {
         records.len()
     };
-    for uncertain in records.iter().skip(1).take(uncertain_end.saturating_sub(1)) {
+    for uncertain in records
+        .iter()
+        .skip(if reliable_udp { 2 } else { 1 })
+        .take(uncertain_end.saturating_sub(1))
+    {
         failover
             .track_uncertain(DataId(uncertain.offset), &uncertain.data)
             .unwrap();
     }
-    if let Some(uncertain) = records.get(1) {
+    // H-R9-002: under --reliable-udp, records[0] and records[1] are already
+    // owned by the reliable-UDP runtime — they must not ALSO take the legacy
+    // untracked udp_uncertain_range_sent path (two owners for one Session
+    // range would manufacture baseline duplicates and confound loss evidence).
+    // The uncertain send starts at the first non-reliable-owned record.
+    let uncertain_idx = if reliable_udp { 2 } else { 1 };
+    if let Some(uncertain) = records.get(uncertain_idx) {
         let logical = ProcessMessage::Data {
             session: SessionId(7001),
             record: uncertain.clone(),
