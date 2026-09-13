@@ -4341,6 +4341,106 @@ impl PacketAckTracker {
     }
 }
 
+/// Bounded carrier-local retransmission frame ownership (R6).
+///
+/// `RetransmitBuffer` maps each outstanding `FrameId` to its bounded plaintext
+/// frame bytes so a runtime can re-encode lost frames into a *fresh* packet —
+/// never resend an old encrypted packet image. A frame's bytes are released
+/// exactly when no outstanding copy remains (acked) or when the owner drops the
+/// buffer on path/generation teardown. Hard-bounded by the recovery engine's
+/// frame limits; produces no Session delivery evidence.
+#[derive(Debug)]
+pub struct RetransmitBuffer {
+    frames: BTreeMap<neko_reliable::FrameId, Vec<u8>>,
+    max_frames: usize,
+    max_bytes: usize,
+    bytes: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetransmitError {
+    /// The buffer is at its frame or byte capacity.
+    Capacity,
+    /// The frame id is already tracked with different bytes.
+    Conflict,
+    /// A single frame exceeds the per-buffer byte bound.
+    FrameTooLarge,
+}
+
+impl RetransmitBuffer {
+    /// Create a buffer bounded to at most `max_frames` frames / `max_bytes`
+    /// total retained plaintext bytes.
+    pub fn new(max_frames: usize, max_bytes: usize) -> Result<Self, RetransmitError> {
+        if max_frames == 0 || max_bytes == 0 {
+            return Err(RetransmitError::Capacity);
+        }
+        Ok(Self {
+            frames: BTreeMap::new(),
+            max_frames,
+            max_bytes,
+            bytes: 0,
+        })
+    }
+
+    /// Track `frame`'s plaintext for potential retransmission. Re-tracking the
+    /// same id with identical bytes is a no-op; different bytes is a Conflict.
+    pub fn track(
+        &mut self,
+        frame: neko_reliable::FrameId,
+        bytes: &[u8],
+    ) -> Result<(), RetransmitError> {
+        if let Some(old) = self.frames.get(&frame) {
+            return if old == bytes {
+                Ok(())
+            } else {
+                Err(RetransmitError::Conflict)
+            };
+        }
+        if bytes.len() > self.max_bytes {
+            return Err(RetransmitError::FrameTooLarge);
+        }
+        if self.frames.len() >= self.max_frames
+            || self.bytes.saturating_add(bytes.len()) > self.max_bytes
+        {
+            return Err(RetransmitError::Capacity);
+        }
+        self.bytes = self.bytes.saturating_add(bytes.len());
+        self.frames.insert(frame, bytes.to_vec());
+        Ok(())
+    }
+
+    /// Fetch the plaintext for a frame scheduled for retransmission. The caller
+    /// re-encodes it into a fresh packet; the entry is retained until released.
+    pub fn get(&self, frame: neko_reliable::FrameId) -> Option<&[u8]> {
+        self.frames.get(&frame).map(Vec::as_slice)
+    }
+
+    /// Release a frame's retained bytes once it is fully ACKed/retired.
+    /// Returns whether the frame was tracked.
+    pub fn release(&mut self, frame: neko_reliable::FrameId) -> bool {
+        match self.frames.remove(&frame) {
+            Some(b) => {
+                self.bytes = self.bytes.saturating_sub(b.len());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Drop all retained frames (path/generation teardown).
+    pub fn clear(&mut self) {
+        self.frames.clear();
+        self.bytes = 0;
+    }
+
+    pub fn retained(&self) -> usize {
+        self.frames.len()
+    }
+    pub fn retained_bytes(&self) -> usize {
+        self.bytes
+    }
+}
+
 #[cfg(test)]
 mod path_recovery_tests {
     use super::*;
@@ -4535,6 +4635,40 @@ mod path_recovery_tests {
         // The encoded payload must decode back to identical canonical ranges.
         let enc = neko_wire::encode_ack(&ack).unwrap();
         assert_eq!(neko_wire::decode_ack(&enc).unwrap(), ack);
+    }
+
+    #[test]
+    fn retransmit_buffer_tracks_releases_and_bounds() {
+        let mut buf = RetransmitBuffer::new(4, 64).unwrap();
+        buf.track(FrameId(0), b"frame-zero").unwrap();
+        buf.track(FrameId(1), b"frame-one").unwrap();
+        assert_eq!(buf.retained(), 2);
+        assert_eq!(buf.get(FrameId(0)), Some(&b"frame-zero"[..]));
+        // Re-track same id+bytes is a no-op; different bytes is a conflict.
+        buf.track(FrameId(0), b"frame-zero").unwrap();
+        assert_eq!(
+            buf.track(FrameId(0), b"different"),
+            Err(RetransmitError::Conflict)
+        );
+        // Release frees exactly the tracked bytes once.
+        assert!(buf.release(FrameId(0)));
+        assert!(!buf.release(FrameId(0)));
+        assert_eq!(buf.retained(), 1);
+        // Capacity bounds.
+        let mut tight = RetransmitBuffer::new(1, 8).unwrap();
+        assert_eq!(
+            tight.track(FrameId(9), b"123456789"),
+            Err(RetransmitError::FrameTooLarge)
+        );
+        tight.track(FrameId(9), b"1234").unwrap();
+        assert_eq!(
+            tight.track(FrameId(10), b"x"),
+            Err(RetransmitError::Capacity)
+        );
+        // Clear on teardown.
+        buf.clear();
+        assert_eq!(buf.retained(), 0);
+        assert_eq!(buf.retained_bytes(), 0);
     }
 
     #[test]
