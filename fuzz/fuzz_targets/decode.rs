@@ -2,7 +2,9 @@
 
 use libfuzzer_sys::fuzz_target;
 use neko_session::ProcessMessage;
-use neko_wire::{decode, encode, NegotiationRole, VersionNegotiator};
+use neko_wire::{
+    decode, decode_ack, decode_packet, encode, NegotiationRole, VersionNegotiator,
+};
 
 fuzz_target!(|input: &[u8]| {
     // The decoder owns its bounded payload copy. The fuzz oracle is that every
@@ -45,4 +47,26 @@ fuzz_target!(|input: &[u8]| {
         }
     });
     assert!(result.is_ok(), "negotiation parser panicked on fuzz input");
+
+    // Packet-recovery wire surfaces are peer-controlled before authentication.
+    // The ACK range decoder and packet-header splitter must never panic,
+    // index out of bounds, or allocate unboundedly. Successful ACK decodes
+    // must re-encode to a canonical form (the canonical form may differ from
+    // the input if the input was noncanonical-but-accepted — canonical ACK
+    // decode only accepts canonical bytes, so decode==encode for accepted
+    // inputs).
+    let result = std::panic::catch_unwind(|| {
+        if let Ok(ack) = decode_ack(input) {
+            assert!(ack.ranges.len() <= neko_wire::MAX_ACK_RANGES);
+            let encoded = neko_wire::encode_ack(&ack)
+                .expect("decoder accepts canonical ACK payloads");
+            assert_eq!(encoded.as_slice(), input, "canonical ACK round-trip");
+        }
+        if let Ok((_n, rest)) = decode_packet(input) {
+            // The packet header consumes exactly 8 bytes; the remainder is the
+            // untouched record bytes.
+            assert_eq!(rest.len(), input.len().saturating_sub(8));
+        }
+    });
+    assert!(result.is_ok(), "packet-recovery decoder panicked on fuzz input");
 });

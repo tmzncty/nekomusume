@@ -771,6 +771,258 @@ fn decode_response(input: &[u8]) -> Result<u16, NegotiationError> {
     Ok(u16::from_be_bytes([input[4], input[5]]))
 }
 
+// --- Candidate UDP packet recovery grammar (RecordType::Ack + packet number) ---
+//
+// A UDP datagram is `packet_header || one NK record`. The packet header carries
+// the Carrier-local packet number; the NK record payload is unchanged. ACK
+// payloads on `RecordType::Ack` carry packet-number ranges, never Session
+// delivery acknowledgements. All integers are canonical little-endian varints.
+
+/// Maximum ACK ranges a single Ack record may carry (hard count bound).
+pub const MAX_ACK_RANGES: usize = 32;
+/// Byte length of the UDP packet-number header.
+pub const PACKET_HEADER_LEN: usize = 8;
+
+/// One inclusive acknowledged packet-number range `[start, end]`, `start <= end`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AckRangeWire {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// A bounded canonical packet-ACK payload: the largest packet number the peer
+/// has observed, the receiver's ACK delay, and up to `MAX_ACK_RANGES` sorted,
+/// non-overlapping, non-adjacent inclusive ranges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AckPayload {
+    pub largest_observed: u64,
+    pub ack_delay_us: u64,
+    pub ranges: Vec<AckRangeWire>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AckCodecError {
+    Truncated,
+    NonCanonicalInteger,
+    IntegerOverflow,
+    /// More than `MAX_ACK_RANGES` ranges were offered or decoded.
+    TooManyRanges,
+    /// A range has `start > end`.
+    RangeInversion,
+    /// Ranges are not strictly ascending or they overlap/touch (must merge).
+    NonCanonicalRanges,
+    /// `largest_observed` is below the highest range end.
+    LargestBelowRanges,
+    /// Bytes remain after the declared range_count ranges.
+    TrailingBytes,
+}
+
+/// Encode a bounded canonical ACK payload. Ranges must already be sorted,
+/// non-overlapping and non-adjacent — encoding rejects non-canonical input.
+pub fn encode_ack(ack: &AckPayload) -> Result<Vec<u8>, AckCodecError> {
+    if ack.ranges.len() > MAX_ACK_RANGES {
+        return Err(AckCodecError::TooManyRanges);
+    }
+    let mut prev_end: Option<u64> = None;
+    for r in &ack.ranges {
+        if r.start > r.end {
+            return Err(AckCodecError::RangeInversion);
+        }
+        if let Some(pe) = prev_end {
+            // Canonical form requires a real gap: overlapping (`start <= pe`)
+            // or merely adjacent (`start == pe + 1`) ranges must already have
+            // been merged by the producer into one inclusive range.
+            if r.start <= pe.saturating_add(1) {
+                return Err(AckCodecError::NonCanonicalRanges);
+            }
+        }
+        prev_end = Some(r.end);
+    }
+    if let Some(max_end) = prev_end {
+        if ack.largest_observed < max_end {
+            return Err(AckCodecError::LargestBelowRanges);
+        }
+    }
+    let mut out = Vec::new();
+    encode_varint(ack.largest_observed, &mut out);
+    encode_varint(ack.ack_delay_us, &mut out);
+    out.push(ack.ranges.len() as u8);
+    for r in &ack.ranges {
+        encode_varint(r.start, &mut out);
+        encode_varint(r.end, &mut out);
+    }
+    Ok(out)
+}
+
+/// Decode one bounded canonical ACK payload. Rejects truncation, overflow,
+/// noncanonical integers, count>32, range inversion, unsorted/overlapping/
+/// adjacent ranges, trailing bytes, and a `largest_observed` below the ranges.
+pub fn decode_ack(input: &[u8]) -> Result<AckPayload, AckCodecError> {
+    let (largest, used1) = decode_varint(input).map_err(map_decode_err)?;
+    let (delay, used2) = decode_varint(&input[used1..]).map_err(map_decode_err)?;
+    let rest = &input[used1 + used2..];
+    if rest.is_empty() {
+        return Err(AckCodecError::Truncated);
+    }
+    let count = rest[0] as usize;
+    if count > MAX_ACK_RANGES {
+        return Err(AckCodecError::TooManyRanges);
+    }
+    let mut offset = 1;
+    let mut ranges = Vec::with_capacity(count);
+    let mut prev_end: Option<u64> = None;
+    for _ in 0..count {
+        let (start, s) = decode_varint(rest.get(offset..).ok_or(AckCodecError::Truncated)?)
+            .map_err(map_decode_err)?;
+        let (end, e) = decode_varint(rest.get(offset + s..).ok_or(AckCodecError::Truncated)?)
+            .map_err(map_decode_err)?;
+        offset += s + e;
+        if start > end {
+            return Err(AckCodecError::RangeInversion);
+        }
+        if let Some(pe) = prev_end {
+            if start <= pe.saturating_add(1) {
+                return Err(AckCodecError::NonCanonicalRanges);
+            }
+        }
+        prev_end = Some(end);
+        ranges.push(AckRangeWire { start, end });
+    }
+    if offset != rest.len() {
+        return Err(AckCodecError::TrailingBytes);
+    }
+    if let Some(max_end) = prev_end {
+        if largest < max_end {
+            return Err(AckCodecError::LargestBelowRanges);
+        }
+    }
+    Ok(AckPayload {
+        largest_observed: largest,
+        ack_delay_us: delay,
+        ranges,
+    })
+}
+
+fn map_decode_err(e: DecodeError) -> AckCodecError {
+    match e {
+        DecodeError::Truncated => AckCodecError::Truncated,
+        DecodeError::NonCanonicalInteger => AckCodecError::NonCanonicalInteger,
+        DecodeError::IntegerOverflow => AckCodecError::IntegerOverflow,
+        _ => AckCodecError::Truncated,
+    }
+}
+
+/// Encode a UDP datagram: `packet_number (8-byte BE) || record_bytes`.
+pub fn encode_packet(packet_number: u64, record_bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(PACKET_HEADER_LEN + record_bytes.len());
+    out.extend_from_slice(&packet_number.to_be_bytes());
+    out.extend_from_slice(record_bytes);
+    out
+}
+
+/// Split a UDP datagram into `(packet_number, record_bytes)`. The record bytes
+/// are returned unvalidated — the caller decodes the NK record separately.
+pub fn decode_packet(input: &[u8]) -> Result<(u64, &[u8]), DecodeError> {
+    if input.len() < PACKET_HEADER_LEN {
+        return Err(DecodeError::Truncated);
+    }
+    let number = u64::from_be_bytes(input[..PACKET_HEADER_LEN].try_into().expect("8 bytes"));
+    Ok((number, &input[PACKET_HEADER_LEN..]))
+}
+
+#[cfg(test)]
+mod ack_packet_tests {
+    use super::*;
+
+    fn payload(ranges: &[(u64, u64)]) -> AckPayload {
+        AckPayload {
+            largest_observed: ranges.last().map(|r| r.1).unwrap_or(0),
+            ack_delay_us: 5,
+            ranges: ranges
+                .iter()
+                .map(|(s, e)| AckRangeWire { start: *s, end: *e })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn ack_roundtrip_single_and_merged_ranges() {
+        for ranges in [
+            vec![(0u64, 0u64)],
+            vec![(0, 3), (5, 5), (10, 20)],
+            vec![(u64::MAX - 1, u64::MAX)],
+        ] {
+            let a = payload(&ranges);
+            let enc = encode_ack(&a).unwrap();
+            assert_eq!(decode_ack(&enc), Ok(a));
+        }
+    }
+
+    #[test]
+    fn ack_rejects_noncanonical_overlap_adjacency_and_inversion() {
+        // Overlapping ranges must already be merged.
+        assert_eq!(
+            encode_ack(&payload(&[(0, 5), (4, 9)])),
+            Err(AckCodecError::NonCanonicalRanges)
+        );
+        // Merely-adjacent ranges (start == prev_end + 1) must also be merged
+        // — only a real gap (start >= prev_end + 2) is canonical.
+        assert_eq!(
+            encode_ack(&payload(&[(0, 5), (6, 9)])),
+            Err(AckCodecError::NonCanonicalRanges)
+        );
+        let a = payload(&[(0, 5), (7, 9)]);
+        assert_eq!(decode_ack(&encode_ack(&a).unwrap()), Ok(a));
+        // Inverted range.
+        assert_eq!(
+            encode_ack(&payload(&[(9, 3)])),
+            Err(AckCodecError::RangeInversion)
+        );
+        // Unsorted.
+        assert_eq!(
+            encode_ack(&payload(&[(10, 12), (0, 5)])),
+            Err(AckCodecError::NonCanonicalRanges)
+        );
+    }
+
+    #[test]
+    fn ack_rejects_over_count_truncation_trailing_and_largest_below() {
+        let many: Vec<(u64, u64)> = (0..33u64).map(|i| (i * 4, i * 4)).collect();
+        assert_eq!(
+            encode_ack(&payload(&many)),
+            Err(AckCodecError::TooManyRanges)
+        );
+        // Truncated payload.
+        let good = encode_ack(&payload(&[(1, 5), (8, 9)])).unwrap();
+        for cut in 0..good.len() {
+            assert!(decode_ack(&good[..cut]).is_err(), "cut={cut} must fail");
+        }
+        // Trailing bytes.
+        let mut trailing = good.clone();
+        trailing.push(0);
+        assert_eq!(decode_ack(&trailing), Err(AckCodecError::TrailingBytes));
+        // largest_observed below a range end.
+        let mut a = payload(&[(1, 5)]);
+        a.largest_observed = 3;
+        assert_eq!(encode_ack(&a), Err(AckCodecError::LargestBelowRanges));
+    }
+
+    #[test]
+    fn packet_header_roundtrip_and_truncation() {
+        let rec = encode(&Record {
+            record_type: RecordType::Data,
+            flags: 0,
+            payload: vec![1, 2, 3],
+        })
+        .unwrap();
+        let pkt = encode_packet(0x0102_0304_0506_0708, &rec);
+        let (n, bytes) = decode_packet(&pkt).unwrap();
+        assert_eq!(n, 0x0102_0304_0506_0708);
+        assert_eq!(decode(bytes).unwrap().payload, vec![1, 2, 3]);
+        assert_eq!(decode_packet(&pkt[..4]), Err(DecodeError::Truncated));
+    }
+}
+
 #[cfg(test)]
 mod negotiation_tests {
     use super::*;
