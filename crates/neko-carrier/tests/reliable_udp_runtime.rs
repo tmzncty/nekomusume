@@ -327,19 +327,22 @@ fn runtime_event_loop_recovers_loss_and_drives_degradation_only_on_new_evidence(
         "same epoch must not replay"
     );
 
-    // Distinct bad evidence epochs drive degradation through the hysteresis:
-    // each round fires a real PTO (no ACK arrives), pto_count climbs past the
-    // >=3 bad threshold, and each new epoch yields one bad observation. The
-    // manager then fails UDP and promotes the warm TCP standby.
+    // Distinct bad evidence epochs drive degradation: each round sends a real
+    // outstanding packet and fires a PTO with no ACK (blackhole), so pto_count
+    // climbs past the >=3 bad threshold and each resolved PTO epoch yields one
+    // fresh bad observation. Polling the same epoch replays nothing.
     let mut attempts = 0u64;
     loop {
-        // A new PTO epoch is genuine new recovery evidence.
-        client.pto_retransmit(200_000 + attempts * 50_000);
+        client.send_data(
+            200_000 + attempts * 50_000,
+            format!("bh{attempts}").as_bytes(),
+        );
+        client.pto_retransmit(201_000 + attempts * 50_000);
         if client.poll_health(300 + attempts) == Some(neko_carrier::HealthState::Degraded) {
             break;
         }
         attempts += 1;
-        if attempts > 12 {
+        if attempts > 16 {
             panic!("no degradation under distinct new bad evidence");
         }
     }

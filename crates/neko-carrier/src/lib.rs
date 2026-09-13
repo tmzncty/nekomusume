@@ -4033,7 +4033,9 @@ impl ConcurrentCarrierManager {
 ///
 /// `PathRecovery` lets a UDP carrier own `neko_reliable::Recovery` plus the
 /// Reno/bytes-in-flight model for one `(path_id, path_generation)` without
-/// coupling packet-level ACK to Session delivery. It owns packet-number
+/// coupling packet-level ACK to Session delivery. Packet numbers come from the
+/// authenticated `SecureSession` record sequence (the AEAD nonce) — the single
+/// source of truth — so `PathRecovery` records rather than allocates them. It owns
 /// allocation, sent-packet bookkeeping, authenticated ACK application, PTO
 /// probe selection and frame-level retransmit output — all as Carrier-local
 /// `FrameId` recovery signals. It deliberately carries no `SessionRuntime`,
@@ -4051,11 +4053,12 @@ pub struct PathRecovery {
     /// packets). Lets `on_ack` release exactly the charged bytes for each
     /// retired packet instead of draining another packet's charge.
     charged: BTreeMap<u64, u64>,
-    /// Bumped each time packet-recovery evidence changes (sent/ACK/PTO/loss).
-    /// A health observation may be consumed at most once per evidence epoch so
-    /// that repeated polling of one cumulative snapshot cannot be replayed as
-    /// several distinct bad observations.
-    evidence_epoch: u64,
+    /// Bumped only when a *resolved* recovery outcome arrives — an ACK that
+    /// retires/loses/retransmits work, or a PTO that schedules probe frames.
+    /// A bare `on_sent` is new traffic, not a resolved observation, so it does
+    /// NOT bump this; an unchanged cumulative snapshot cannot be replayed as
+    /// a distinct bad health observation merely by sending more packets.
+    outcome_epoch: u64,
     health_epoch: Option<u64>,
 }
 
@@ -4096,8 +4099,10 @@ impl PathRecovery {
             reno: neko_reliable::Reno::new(mss)?,
             packets_sent: 0,
             packets_lost: 0,
-            evidence_epoch: 0,
-            health_epoch: None,
+            outcome_epoch: 0,
+            // Start as if outcome_epoch 0 were already consumed: with no
+            // resolved outcome yet there is nothing fresh to observe.
+            health_epoch: Some(0),
             charged: BTreeMap::new(),
         })
     }
@@ -4117,7 +4122,8 @@ impl PathRecovery {
         };
         self.charged.insert(packet.number, charge);
         self.packets_sent = self.packets_sent.saturating_add(1);
-        self.evidence_epoch = self.evidence_epoch.saturating_add(1);
+        // A bare send is new traffic, not a resolved recovery outcome — it does
+        // NOT advance outcome_epoch, so it cannot replay old cumulative loss.
         Ok(())
     }
 
@@ -4152,7 +4158,14 @@ impl PathRecovery {
         self.packets_lost = self
             .packets_lost
             .saturating_add(r.lost_packets.len() as u64);
-        self.evidence_epoch = self.evidence_epoch.saturating_add(1);
+        // A resolved ACK outcome (any retired/lost/retransmitted work) is a
+        // fresh observation; an empty ACK that changed nothing is not.
+        if !r.acked_packets.is_empty()
+            || !r.lost_packets.is_empty()
+            || !r.retransmit_frames.is_empty()
+        {
+            self.outcome_epoch = self.outcome_epoch.saturating_add(1);
+        }
         Ok(RecoveryAckOutcome {
             acked_packets: r.acked_packets.clone(),
             lost_packets: r.lost_packets.clone(),
@@ -4171,7 +4184,10 @@ impl PathRecovery {
         max_probe_frames: usize,
     ) -> Result<Vec<neko_reliable::FrameId>, PathRecoveryError> {
         let frames = self.recovery.on_pto(max_probe_frames)?;
-        self.evidence_epoch = self.evidence_epoch.saturating_add(1);
+        // A PTO that actually schedules probe frames is a resolved outcome.
+        if !frames.is_empty() {
+            self.outcome_epoch = self.outcome_epoch.saturating_add(1);
+        }
         Ok(frames)
     }
 
@@ -4216,26 +4232,37 @@ impl PathRecovery {
     pub fn rtt_us(&self) -> u64 {
         self.recovery.rtt.smoothed_us
     }
-    /// Fresh-evidence health bridge: returns the current `HealthSample` only
-    /// when packet-recovery evidence changed since the last consumption. The
-    /// same cumulative snapshot cannot be replayed into multiple distinct bad
-    /// observations — a runtime loop that polls with no new sent/ACK/PTO/loss
-    /// evidence gets `None` and cannot advance the bad-observation streak.
-    /// Packet feedback still cannot validate a Path or confirm Session
-    /// delivery; it only produces a packet-level health observation.
+    /// The public, freshness-enforced health bridge: yields a `HealthSample`
+    /// only when a *resolved* recovery outcome (an ACK that retired/lost/
+    /// retransmitted work, or a PTO that scheduled probes) arrived since the
+    /// last consumption. Polling with no new resolved outcome returns `None`
+    /// — and a bare send is not a resolved outcome, so it cannot replay a
+    /// historical cumulative loss into extra bad observations. Packet
+    /// feedback still cannot validate a Path or confirm Session delivery.
     pub fn fresh_health_sample(&mut self) -> Option<HealthSample> {
-        if self.health_epoch == Some(self.evidence_epoch) {
+        if self.health_epoch == Some(self.outcome_epoch) {
             return None;
         }
-        self.health_epoch = Some(self.evidence_epoch);
-        Some(self.health_sample())
+        self.health_epoch = Some(self.outcome_epoch);
+        Some(self.raw_health_sample())
     }
 
-    /// Map authenticated packet-level recovery evidence into a `HealthSample`
-    /// for the existing Carrier health domain. This carries only packet
-    /// recovery observations (RTT/loss/PTO); it cannot validate a Path or
-    /// confirm Session delivery.
-    pub fn health_sample(&self) -> HealthSample {
+    /// Read-only raw counters for observability/diagnostics. This is NOT a
+    /// manager-health input: feeding this cumulative snapshot directly to
+    /// `CarrierHealth::observe` bypasses the freshness guard. Use
+    /// `fresh_health_sample()` for manager evidence.
+    pub fn diagnostics(&self) -> (u64, u64, u64, u32) {
+        (
+            self.packets_sent,
+            self.packets_lost,
+            self.recovery.rtt.smoothed_us,
+            self.recovery.pto_count,
+        )
+    }
+
+    /// Cumulative snapshot used internally by `fresh_health_sample`. Private
+    /// so a runtime cannot feed a replayable snapshot straight to the manager.
+    fn raw_health_sample(&self) -> HealthSample {
         let loss_per_mille = (self.packets_lost.saturating_mul(1000))
             .checked_div(self.packets_sent)
             .map(|r| r.min(u16::MAX as u64) as u16)
@@ -4525,34 +4552,39 @@ mod path_recovery_tests {
     }
 
     #[test]
-    fn recovery_evidence_maps_to_health_sample_without_session_delivery() {
+    fn fresh_health_bridge_emits_one_observation_per_resolved_outcome() {
         let mut r = recovery();
         let mut health = CarrierHealth::new(HealthLimits::default()).unwrap();
-        // Baseline: no traffic -> clean sample, path goes Healthy on Progress.
-        let clean = r.health_sample();
-        assert_eq!(clean.loss_per_mille, 0);
-        assert_eq!(health.observe(PathId(1), clean), Ok(HealthState::Healthy));
-        // Send 8; ACK only the largest so packets 0..4 fall out of the reorder
-        // window (largest - n >= PACKET_THRESHOLD=3) -> 5/8 lost = 625/mille.
+        // No traffic yet -> no resolved outcome -> nothing to consume.
+        assert!(r.fresh_health_sample().is_none());
+        // A resolved ACK outcome produces exactly one fresh sample; repeated
+        // polls of the same epoch return None and cannot replay it.
         for n in 0..8u64 {
             r.on_sent(sent(n, 400, &[n])).unwrap();
         }
         let mut ack = AckRanges::new(8).unwrap();
         ack.insert(7).unwrap();
         r.on_ack(7, &ack, 40_000, 0).unwrap();
-        let bad = r.health_sample();
-        assert_eq!(bad.loss_per_mille, 625);
-        // Feed it as packet-recovery evidence: this is a MeasuredSample health
-        // observation on the Carrier path, not Path validation or Session
-        // delivery — observe() degrades on enough bad samples.
-        let mut degraded_seen = false;
-        for _ in 0..4 {
-            if health.observe(PathId(1), bad).unwrap() == HealthState::Degraded {
-                degraded_seen = true;
-                break;
-            }
+        let first = r
+            .fresh_health_sample()
+            .expect("resolved outcome yields one");
+        assert_eq!(first.loss_per_mille, 625);
+        health.observe(PathId(1), first).unwrap();
+        // Bare sends and same-epoch polls must NOT produce another observation
+        // — on_sent does not advance outcome_epoch, so historical cumulative
+        // loss cannot be replayed by just sending more traffic.
+        for n in 8..11u64 {
+            r.on_sent(sent(n, 400, &[n])).unwrap();
+            assert!(
+                r.fresh_health_sample().is_none(),
+                "a bare send with no resolved outcome must not emit a sample"
+            );
         }
-        assert!(degraded_seen, "sustained 250/mille loss degrades the path");
+        // One resolved bad outcome counts once; below degrade_after(=2) the
+        // single bad sample cannot reach Degraded, and replays yield none.
+        let st = health.path(PathId(1)).unwrap();
+        assert_eq!(st.consecutive_bad, 1, "exactly one bad observation counted");
+        assert_ne!(st.state, HealthState::Degraded);
     }
 
     #[test]

@@ -53,7 +53,9 @@ fn packet_recovery_events_are_layered_and_not_session_delivery() {
         PathId(1),
         None,
         neko_carrier::HealthState::Degraded,
-        recovery.health_sample(),
+        recovery
+            .fresh_health_sample()
+            .expect("resolved outcome sample"),
     );
     // A PTO probe produces recovery.pto_fired.
     let probes = recovery.on_pto(2).unwrap();

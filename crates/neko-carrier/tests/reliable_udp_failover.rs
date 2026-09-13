@@ -149,7 +149,9 @@ fn clean_recovery_evidence_does_not_trigger_fallback() {
         ack.insert(n).unwrap();
     }
     recovery.on_ack(1, &ack, 40_000, 0).unwrap();
-    let sample = recovery.health_sample();
+    let sample = recovery
+        .fresh_health_sample()
+        .expect("resolved clean outcome");
     assert_eq!(sample.loss_per_mille, 0);
     // A clean packet-recovery sample keeps the path Healthy — no fallback.
     assert_eq!(
