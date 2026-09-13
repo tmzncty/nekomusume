@@ -4047,6 +4047,10 @@ pub struct PathRecovery {
     reno: neko_reliable::Reno,
     packets_sent: u64,
     packets_lost: u64,
+    /// Bytes actually charged to `reno` per sent packet (0 for non-ack-eliciting
+    /// packets). Lets `on_ack` release exactly the charged bytes for each
+    /// retired packet instead of draining another packet's charge.
+    charged: BTreeMap<u64, u64>,
     /// Bumped each time packet-recovery evidence changes (sent/ACK/PTO/loss).
     /// A health observation may be consumed at most once per evidence epoch so
     /// that repeated polling of one cumulative snapshot cannot be replayed as
@@ -4094,6 +4098,7 @@ impl PathRecovery {
             packets_lost: 0,
             evidence_epoch: 0,
             health_epoch: None,
+            charged: BTreeMap::new(),
         })
     }
 
@@ -4104,9 +4109,13 @@ impl PathRecovery {
     /// does not interpret them as Session delivery units.
     pub fn on_sent(&mut self, packet: neko_reliable::SentPacket) -> Result<(), PathRecoveryError> {
         self.recovery.on_sent(packet.clone())?;
-        if packet.ack_eliciting {
+        let charge = if packet.ack_eliciting {
             self.reno.sent(packet.bytes);
-        }
+            packet.bytes
+        } else {
+            0
+        };
+        self.charged.insert(packet.number, charge);
         self.packets_sent = self.packets_sent.saturating_add(1);
         self.evidence_epoch = self.evidence_epoch.saturating_add(1);
         Ok(())
@@ -4127,8 +4136,19 @@ impl PathRecovery {
             return Err(PathRecoveryError::GenerationMismatch);
         }
         let r = self.recovery.on_ack(ack, now_us, ack_delay_us)?;
-        self.reno.acked(r.acked_bytes);
-        self.reno.lost(r.lost_bytes);
+        // Release exactly the bytes each retired packet actually charged —
+        // a non-ack-eliciting packet was charged 0 and must not drain another
+        // packet's congestion bytes.
+        let mut released_acked = 0u64;
+        let mut released_lost = 0u64;
+        for n in &r.acked_packets {
+            released_acked = released_acked.saturating_add(self.charged.remove(n).unwrap_or(0));
+        }
+        for n in &r.lost_packets {
+            released_lost = released_lost.saturating_add(self.charged.remove(n).unwrap_or(0));
+        }
+        self.reno.acked(released_acked);
+        self.reno.lost(released_lost);
         self.packets_lost = self
             .packets_lost
             .saturating_add(r.lost_packets.len() as u64);
@@ -4350,6 +4370,66 @@ mod path_recovery_tests {
             }
         }
         assert!(degraded_seen, "sustained 250/mille loss degrades the path");
+    }
+
+    #[test]
+    fn non_ack_eliciting_packet_does_not_drain_uncharged_congestion_bytes() {
+        let mut r = recovery();
+        // A non-ack-eliciting packet is recorded for recovery but is NOT
+        // charged to Reno bytes-in-flight (it cannot elicit an ACK by itself).
+        let non_ack = SentPacket {
+            number: 0,
+            sent_at_us: 0,
+            bytes: 200,
+            ack_eliciting: false,
+            frames: vec![FrameId(0)],
+        };
+        r.on_sent(non_ack).unwrap();
+        assert_eq!(
+            r.bytes_in_flight(),
+            0,
+            "non-ack-eliciting packet must not charge bytes-in-flight"
+        );
+        // If it is later ACKed, the released bytes must not exceed what was
+        // charged — otherwise bytes_in_flight is drained below its real value.
+        let mut ack = AckRanges::new(8).unwrap();
+        ack.insert(0).unwrap();
+        let out = r.on_ack(7, &ack, 10_000, 0).unwrap();
+        // The ACK retires packet 0's bytes from recovery, but bytes_in_flight
+        // must only be reduced by bytes that were actually charged (none).
+        assert_eq!(
+            r.bytes_in_flight(),
+            0,
+            "acking a non-ack-eliciting packet must not deflate bytes-in-flight"
+        );
+        assert_eq!(out.acked_packets, vec![0]);
+    }
+
+    #[test]
+    fn acking_non_ack_packet_does_not_drain_another_packets_charged_bytes() {
+        let mut r = recovery();
+        // packet 0: non-ack-eliciting, 200B — recorded but NOT charged.
+        r.on_sent(SentPacket {
+            number: 0,
+            sent_at_us: 0,
+            bytes: 200,
+            ack_eliciting: false,
+            frames: vec![FrameId(0)],
+        })
+        .unwrap();
+        // packet 1: ack-eliciting, 300B — charged to bytes-in-flight.
+        r.on_sent(sent(1, 300, &[1])).unwrap();
+        assert_eq!(r.bytes_in_flight(), 300);
+        // ACK only packet 0 (the uncharged one). bytes_in_flight must stay 300:
+        // packet 1 is still in flight and only its own charged bytes release it.
+        let mut ack = AckRanges::new(8).unwrap();
+        ack.insert(0).unwrap();
+        r.on_ack(7, &ack, 10_000, 0).unwrap();
+        assert_eq!(
+            r.bytes_in_flight(),
+            300,
+            "acking an uncharged packet must not drain another packet's bytes"
+        );
     }
 
     #[test]
