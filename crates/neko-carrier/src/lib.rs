@@ -4279,7 +4279,7 @@ impl PathRecovery {
     }
 
     /// Read-only raw counters for observability/diagnostics. This is NOT a
-    /// manager-health input: feeding this cumulative snapshot directly to
+    /// manager-health input: feeding cumulative state directly to
     /// `CarrierHealth::observe` bypasses the freshness guard. Use
     /// `fresh_health_sample()` for manager evidence.
     pub fn diagnostics(&self) -> (u64, u64, u64, u32) {
@@ -4289,20 +4289,6 @@ impl PathRecovery {
             self.recovery.rtt.smoothed_us,
             self.recovery.pto_count,
         )
-    }
-
-    /// Cumulative snapshot used internally by `fresh_health_sample`. Private
-    /// so a runtime cannot feed a replayable snapshot straight to the manager.
-    fn raw_health_sample(&self) -> HealthSample {
-        let loss_per_mille = (self.packets_lost.saturating_mul(1000))
-            .checked_div(self.packets_sent)
-            .map(|r| r.min(u16::MAX as u64) as u16)
-            .unwrap_or(0);
-        HealthSample {
-            rtt_us: self.recovery.rtt.smoothed_us,
-            loss_per_mille,
-            pto: self.recovery.pto_count.min(u16::MAX as u32) as u16,
-        }
     }
 
     /// Mark persistent congestion after repeated PTOs and collapse the window.
