@@ -47,6 +47,7 @@ use std::{
 const USAGE: &str = "Usage: neko <server|client|probe|health-observe|failover|multistream|scheduler-fairness|key-update|periodic-server|periodic-client|lab|workload|endpoint-rebind-server|endpoint-rebind-client|keygen|capabilities> [bounded options]
 
   probe --matrix --target LOOPBACK:PORT --transport tcp|udp --ip-version ipv4|ipv6 [--timeout-ms 1-5000] [--bytes 1-1200] [--json]: local-loopback only
+  lab --scenario reliable-udp [--rounds 4-64] [--drop-every 0|2-16] [--drop-ack-every 0-16] [--settle-ms 1-20000] [--json]: bounded loopback reliable-UDP fixture (controlled suppression is not natural loss; manager decision only, no TCP socket; not production)
   --count N: bounded authenticated exchanges (1-64; periodic 1-600)\n  periodic-*: one TCP Session, duration 1-600s, interval 100-5000ms, <=1MiB app data; reconnect unsupported\n  failover --role server|client: canonical bounded failover command\n  failover-server|failover-client: legacy aliases for failover\n  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
 const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
@@ -117,6 +118,9 @@ fn capabilities(args: &[String]) {
         );
         println!(
             "commands research=client,server,probe,periodic-server,periodic-client experimental=health-observe,failover,multistream,endpoint-rebind-server,endpoint-rebind-client fixtures=scheduler-fairness,key-update,lab,workload utilities=keygen,capabilities aliases=failover-server,failover-client"
+        );
+        println!(
+            "fixture_scenarios command=lab scenario=reliable-udp maturity=fixture scope=bounded-loopback-controlled-suppression-manager-decision-only-no-tcp-socket"
         );
         println!("report_secret_free=true");
     }
@@ -3453,11 +3457,16 @@ fn lab(args: &[String]) {
     // machine-readable run. Controlled suppression is not natural loss.
     // R8: `neko lab --scenario reliable-udp` — a bounded executable reliable-UDP
     // local path (real loopback sockets + ReliableUdpRuntime + SessionRuntime
-    // dedup + automatic warm-TCP fallback). No-scenario `lab` keeps its
-    // socket-free deterministic behavior.
-    if parse(args, "--scenario", None) == "reliable-udp" {
-        lab_reliable_udp(args, json);
-        return;
+    // dedup + manager-level warm-TCP decision). Omitting `--scenario` keeps the
+    // legacy socket-free deterministic failover demo; an unknown, duplicated or
+    // value-less scenario fails before any socket or identity side effect.
+    match parse_scenario(args).as_deref() {
+        None => {}
+        Some("reliable-udp") => {
+            lab_reliable_udp(args, json);
+            return;
+        }
+        Some(other) => fail(&format!("unknown lab scenario: {other}")),
     }
     let timeline = [
         ("udp", "active", 0u64),
@@ -3490,11 +3499,206 @@ fn lab(args: &[String]) {
     }
 }
 
-/// R8 bounded executable reliable-UDP lab. A real loopback UDP socket pair and
-/// a `ReliableUdpRuntime` drive authenticated packet send/recv, receiver ACKs,
-/// deterministic sender-side packet suppression, PTO retransmit, fresh-evidence
-/// health and automatic warm-TCP fallback — then emit structured counters.
-/// Controlled suppression is not natural Internet loss; lab-only.
+/// Bounded counters for the R8 reliable-UDP lab. A success counter is
+/// incremented only after the corresponding operation actually succeeded, so no
+/// fabricated success evidence can be emitted from a discarded result.
+#[derive(Default)]
+struct LabCounters {
+    delivered: u64,
+    duplicates: u64,
+    conflicts: u64,
+    application_bytes: u64,
+    initial_admitted: u64,
+    initial_wire_sent: u64,
+    initial_suppressed: u64,
+    cwnd_refusals: u64,
+    acks_emitted: u64,
+    acks_wire_sent: u64,
+    acks_suppressed: u64,
+    acks_failed: u64,
+    acks_applied: u64,
+    acks_rejected: u64,
+    pto_due: u64,
+    pto_fired: u64,
+    retransmit_attempts: u64,
+    retransmit_wire_sent: u64,
+    retransmit_refused: u64,
+    newly_lost: u64,
+    unauthenticated: u64,
+    recv_rejected: u64,
+}
+
+/// Mutable state of one bounded R8 lab run. The lab runs on a deterministic
+/// logical clock, so a PTO is fired only once the recovery deadline derived from
+/// the current RTT estimate and PTO count has actually been reached.
+#[derive(Default)]
+struct LabState {
+    now_us: u64,
+    next_admit_us: u64,
+    outstanding: std::collections::BTreeMap<u64, u64>,
+    c: LabCounters,
+    manager_switch: bool,
+    partial: bool,
+}
+
+const LAB_STEP_US: u64 = 25_000;
+const LAB_PTO_GRANULARITY_US: u64 = 1_000;
+const LAB_MAX_ACK_DELAY_US: u64 = 0;
+const LAB_MAX_SEND_BYTES: u64 = 1200;
+
+/// Optional-value parser used only for `--scenario`. Returns `None` when the key
+/// is absent, so the repository required-value `parse` semantics elsewhere are
+/// untouched. A missing value or a duplicate key fails deterministically before
+/// any socket or identity side effect.
+fn parse_scenario(args: &[String]) -> Option<String> {
+    let mut found: Option<String> = None;
+    let mut i = 1usize;
+    while i < args.len() {
+        if args[i] == "--scenario" {
+            if found.is_some() {
+                fail("duplicate --scenario");
+            }
+            let value = match args.get(i + 1) {
+                Some(v) if !v.starts_with("--") => v.clone(),
+                _ => fail("missing --scenario value"),
+            };
+            found = Some(value);
+            i += 1;
+        }
+        i += 1;
+    }
+    found
+}
+
+/// One bounded lab step: drain every currently available authenticated ACK, then
+/// fire a PTO only if the current recovery deadline has been reached. Returns
+/// `true` when no recovery work remains outstanding.
+fn lab_pump(
+    rt: &mut neko_carrier::ReliableUdpRuntime,
+    sess: &mut neko_crypto::SecureSession,
+    sock: &UdpSocket,
+    buf: &mut [u8],
+    st: &mut LabState,
+) -> bool {
+    while let Ok(n) = sock.recv(buf) {
+        let plain = match sess.open(&buf[..n]) {
+            Ok(p) => p,
+            Err(_) => {
+                st.c.unauthenticated += 1;
+                continue;
+            }
+        };
+        let rec = match neko_wire::decode(&plain) {
+            Ok(r) => r,
+            Err(_) => {
+                st.c.acks_rejected += 1;
+                continue;
+            }
+        };
+        if rec.record_type != neko_wire::RecordType::Ack {
+            continue;
+        }
+        let ack = match neko_wire::decode_ack(&rec.payload) {
+            Ok(a) => a,
+            Err(_) => {
+                st.c.acks_rejected += 1;
+                continue;
+            }
+        };
+        let wire_ranges: Vec<neko_reliable::AckRange> = ack
+            .ranges
+            .iter()
+            .map(|w| neko_reliable::AckRange {
+                start: w.start,
+                end: w.end,
+            })
+            .collect();
+        let ranges = match neko_reliable::AckRanges::from_ranges(32, &wire_ranges) {
+            Ok(r) => r,
+            Err(_) => {
+                st.c.acks_rejected += 1;
+                continue;
+            }
+        };
+        match rt.apply_ack(&ranges, st.now_us, ack.ack_delay_us) {
+            Ok(out) => {
+                st.c.acks_applied += 1;
+                st.c.newly_lost += out.lost_packets.len() as u64;
+                for n in out.acked_packets.iter().chain(out.lost_packets.iter()) {
+                    st.outstanding.remove(n);
+                }
+            }
+            Err(_) => st.c.acks_rejected += 1,
+        }
+    }
+    let rtt = rt.recovery_engine().rtt;
+    let pto_count = rt.recovery_engine().pto_count;
+    if let Some(oldest) = st.outstanding.values().next().copied() {
+        let deadline = oldest.saturating_add(rtt.pto_us(
+            LAB_PTO_GRANULARITY_US,
+            LAB_MAX_ACK_DELAY_US,
+            pto_count,
+        ));
+        if st.now_us >= deadline {
+            st.c.pto_due += 1;
+            let probes = rt.pto_probe();
+            if !probes.is_empty() {
+                st.c.pto_fired += 1;
+            }
+            for (frame, plaintext) in probes {
+                st.c.retransmit_attempts += 1;
+                if !rt.can_send(plaintext.len() as u64) {
+                    st.c.retransmit_refused += 1;
+                    continue;
+                }
+                let msg = ProcessMessage::Data {
+                    session: SessionId(1),
+                    record: OutboundRecord {
+                        stream: StreamId(1),
+                        offset: frame.0,
+                        data: plaintext.clone(),
+                    },
+                };
+                let wire = neko_wire::encode(&neko_wire::Record {
+                    record_type: neko_wire::RecordType::Data,
+                    flags: 0,
+                    payload: msg.encode().expect("bounded process message"),
+                })
+                .expect("bounded record");
+                let sealed = match sess.seal(&wire) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+                let rpn = u64::from_be_bytes(sealed[..8].try_into().expect("sequence prefix"));
+                if rt
+                    .on_retransmit_sent(rpn, st.now_us, sealed.len() as u64, frame)
+                    .is_err()
+                {
+                    continue;
+                }
+                if sock.send(&sealed).is_ok() {
+                    st.c.retransmit_wire_sent += 1;
+                }
+                st.outstanding.insert(rpn, st.now_us);
+            }
+        }
+    }
+    if matches!(
+        rt.poll_health(st.now_us / 1000),
+        neko_carrier::RuntimeEvent::WarmFallback(_)
+    ) {
+        st.manager_switch = true;
+    }
+    rt.in_flight() == 0
+}
+
+/// R8 bounded executable reliable-UDP lab. A real loopback UDP socket pair and a
+/// `ReliableUdpRuntime` drive authenticated packet send/recv, receiver ACKs,
+/// deterministic sender-side packet suppression, deadline-driven PTO retransmit,
+/// fresh-evidence health and the manager warm-TCP decision, then emit structured
+/// counters. The manager decision is NOT a real TCP transport switch: this
+/// command opens no TCP socket. Controlled suppression is not natural Internet
+/// loss; lab-only, never a proxy or tunnel.
 fn lab_reliable_udp(args: &[String], json: bool) {
     let rounds = parse(args, "--rounds", Some("12"))
         .parse::<usize>()
@@ -3502,20 +3706,32 @@ fn lab_reliable_udp(args: &[String], json: bool) {
     let drop_every = parse(args, "--drop-every", Some("5"))
         .parse::<usize>()
         .unwrap_or_else(|_| fail("invalid drop-every"));
+    let drop_ack_every = parse(args, "--drop-ack-every", Some("0"))
+        .parse::<usize>()
+        .unwrap_or_else(|_| fail("invalid drop-ack-every"));
+    let settle_ms = parse(args, "--settle-ms", Some("3000"))
+        .parse::<u64>()
+        .unwrap_or_else(|_| fail("invalid settle-ms"));
     if !(4..=64).contains(&rounds) {
         fail("rounds outside 4-64");
     }
-    if !(2..=16).contains(&drop_every) {
-        fail("drop-every outside 2-16");
+    if drop_every != 0 && !(2..=16).contains(&drop_every) {
+        fail("drop-every outside 0 or 2-16");
     }
-    // Real loopback UDP sockets for client and server.
+    if drop_ack_every > 16 {
+        fail("drop-ack-every outside 0-16");
+    }
+    if !(1..=20_000).contains(&settle_ms) {
+        fail("settle-ms outside 1-20000");
+    }
+
     let client_sock = UdpSocket::bind("127.0.0.1:0").unwrap_or_else(|_| fail("client bind"));
     let server_sock = UdpSocket::bind("127.0.0.1:0").unwrap_or_else(|_| fail("server bind"));
     client_sock
-        .set_read_timeout(Some(Duration::from_millis(200)))
+        .set_read_timeout(Some(Duration::from_millis(10)))
         .unwrap_or_else(|_| fail("client timeout"));
     server_sock
-        .set_read_timeout(Some(Duration::from_millis(50)))
+        .set_read_timeout(Some(Duration::from_millis(10)))
         .unwrap_or_else(|_| fail("server timeout"));
     let server_addr = server_sock
         .local_addr()
@@ -3530,7 +3746,6 @@ fn lab_reliable_udp(args: &[String], json: bool) {
         .connect(client_addr)
         .unwrap_or_else(|_| fail("server connect"));
 
-    // Authenticated sessions over the real loopback pair.
     let ci = LocalIdentity::generate().unwrap_or_else(|_| fail("client identity"));
     let si = LocalIdentity::generate().unwrap_or_else(|_| fail("server identity"));
     let policy = TrustPolicy::new(vec![TrustRecord {
@@ -3552,114 +3767,127 @@ fn lab_reliable_udp(args: &[String], json: bool) {
         .send(&ih.first_message().unwrap_or_else(|_| fail("first msg")))
         .unwrap_or_else(|_| fail("send first"));
     let rh = ResponderHandshake::new(&si, policy, b"rel").unwrap_or_else(|_| fail("responder"));
-    let mut buf = [0u8; 8192];
-    let (n1, _) = loop {
-        match server_sock.recv_from(&mut buf) {
+    let mut sbuf = [0u8; 8192];
+    let n1 = loop {
+        match server_sock.recv(&mut sbuf) {
             Ok(v) => break v,
             Err(e) if e.kind() == ErrorKind::WouldBlock => continue,
             Err(_) => fail("server handshake recv"),
         }
     };
     let (resp, mut server_sess) = rh
-        .receive_first(&buf[..n1], ctx)
+        .receive_first(&sbuf[..n1], ctx)
         .unwrap_or_else(|_| fail("receive_first"));
     server_sock
         .send(&resp)
         .unwrap_or_else(|_| fail("send resp"));
+    let mut cbuf = [0u8; 8192];
     let n2 = loop {
-        match client_sock.recv(&mut buf) {
+        match client_sock.recv(&mut cbuf) {
             Ok(v) => break v,
             Err(e) if e.kind() == ErrorKind::WouldBlock => continue,
             Err(_) => fail("client handshake recv"),
         }
     };
     let mut client_sess = ih
-        .finish(&buf[..n2], ctx)
+        .finish(&cbuf[..n2], ctx)
         .unwrap_or_else(|_| fail("client finish"));
 
-    // Server thread: receive authenticated Data -> deliver by stable Session
-    // identity -> emit one ACK back. Counts deliveries/suppressed duplicates.
     let server_done = Arc::new(AtomicBool::new(false));
     let sd = Arc::clone(&server_done);
-    // The server runs a real SessionRuntime for Session-level dedup/delivery —
-    // the Carrier runtime never owns Session dedup (packet ACK is not Session
-    // delivery); SessionRuntime::receive suppresses a duplicate logical record.
     let mut server_session_rt = SessionRuntime::new(SessionId(1), RuntimeLimits::default(), 0)
         .unwrap_or_else(|_| fail("server session rt"));
     server_session_rt
         .open_stream(StreamId(1), 0)
         .unwrap_or_else(|_| fail("open stream"));
     let server_join = thread::spawn(move || {
-        let mut rt = neko_carrier::ReliableUdpRuntime::new(1, 1200).unwrap();
-        let mut delivered = 0u64;
-        let mut duplicates = 0u64;
-        let mut acks_sent = 0u64;
+        let mut rt =
+            neko_carrier::ReliableUdpRuntime::new(1, 1200).unwrap_or_else(|_| fail("server rt"));
+        let mut c = LabCounters::default();
+        let mut ack_seq = 0u64;
         while !sd.load(Ordering::Acquire) {
-            match server_sock.recv(&mut buf) {
-                Ok(n) => {
-                    let plain = match server_sess.open(&buf[..n]) {
-                        Ok(p) => p,
-                        Err(_) => continue, // unauthenticated: drop
-                    };
-                    let rec = match neko_wire::decode(&plain) {
-                        Ok(r) => r,
-                        Err(_) => continue,
-                    };
-                    if rec.record_type == neko_wire::RecordType::Data {
-                        let pn = u64::from_be_bytes(plain[..8].try_into().unwrap_or([0; 8]));
-                        let _ = rt.on_packet_received(pn, true);
-                        if let Ok(neko_session::ProcessMessage::Data { record, .. }) =
-                            neko_session::ProcessMessage::decode(&rec.payload)
-                        {
-                            // Session dedup lives in SessionRuntime, not Carrier:
-                            // a first delivery enqueues a receive record; an
-                            // identical re-delivery is absorbed idempotently
-                            // (Ok but nothing queued); a conflict fails closed.
-                            let recv = server_session_rt.receive(
-                                InboundRecord {
-                                    stream: record.stream,
-                                    offset: record.offset,
-                                    data: record.data,
-                                },
-                                0,
-                            );
-                            match recv {
-                                Ok(()) => {
-                                    // pop_receive yields Some only for a real
-                                    // first delivery; a suppressed duplicate
-                                    // left the queue empty.
-                                    match server_session_rt.pop_receive(0) {
-                                        Ok(Some(_)) => delivered += 1,
-                                        Ok(None) => duplicates += 1,
-                                        Err(_) => duplicates += 1,
-                                    }
-                                }
-                                Err(_) => duplicates += 1,
-                            }
+            let n = match server_sock.recv(&mut sbuf) {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            if n < 8 {
+                c.unauthenticated += 1;
+                continue;
+            }
+            let seq = u64::from_be_bytes(sbuf[..8].try_into().expect("sequence prefix"));
+            let plain = match server_sess.open(&sbuf[..n]) {
+                Ok(p) => p,
+                Err(_) => {
+                    c.unauthenticated += 1;
+                    continue;
+                }
+            };
+            let rec = match neko_wire::decode(&plain) {
+                Ok(r) => r,
+                Err(_) => {
+                    c.unauthenticated += 1;
+                    continue;
+                }
+            };
+            if rec.record_type != neko_wire::RecordType::Data {
+                continue;
+            }
+            match rt.on_packet_received(seq, true) {
+                Ok(()) => {}
+                Err(_) => {
+                    c.recv_rejected += 1;
+                    continue;
+                }
+            }
+            if let Ok(ProcessMessage::Data { record, .. }) = ProcessMessage::decode(&rec.payload) {
+                match server_session_rt.receive(
+                    InboundRecord {
+                        stream: record.stream,
+                        offset: record.offset,
+                        data: record.data,
+                    },
+                    0,
+                ) {
+                    Ok(()) => match server_session_rt.pop_receive(0) {
+                        Ok(Some(r)) => {
+                            c.delivered += 1;
+                            c.application_bytes += r.data.len() as u64;
                         }
-                        if let Some(ack) = rt.poll_outgoing_ack(0) {
-                            let arec = neko_wire::encode(&neko_wire::Record {
-                                record_type: neko_wire::RecordType::Ack,
-                                flags: 0,
-                                payload: neko_wire::encode_ack(&ack).unwrap(),
-                            })
-                            .unwrap();
-                            if let Ok(sealed) = server_sess.seal(&arec) {
-                                let _ = server_sock.send(&sealed);
-                                acks_sent += 1;
-                            }
+                        Ok(None) => c.duplicates += 1,
+                        Err(_) => c.conflicts += 1,
+                    },
+                    Err(_) => c.conflicts += 1,
+                }
+            }
+            if let Some(ack) = rt.poll_outgoing_ack(0) {
+                ack_seq += 1;
+                let fault = drop_ack_every != 0 && ack_seq.is_multiple_of(drop_ack_every as u64);
+                let arec = neko_wire::encode(&neko_wire::Record {
+                    record_type: neko_wire::RecordType::Ack,
+                    flags: 0,
+                    payload: neko_wire::encode_ack(&ack).expect("bounded ack"),
+                })
+                .expect("bounded ack record");
+                match server_sess.seal(&arec) {
+                    Ok(sealed) => {
+                        c.acks_emitted += 1;
+                        if fault {
+                            c.acks_suppressed += 1;
+                        } else if server_sock.send(&sealed).is_ok() {
+                            c.acks_wire_sent += 1;
+                        } else {
+                            c.acks_failed += 1;
                         }
                     }
+                    Err(_) => c.acks_failed += 1,
                 }
-                Err(_) => continue,
             }
         }
-        (delivered, duplicates, acks_sent)
+        c
     });
 
-    // Client: bounded rounds of sends; every `drop_every`-th datagram is
-    // suppressed (sealed + recorded but never sent) to create controlled loss.
-    let mut rt = neko_carrier::ReliableUdpRuntime::new(1, 1200).unwrap();
+    let mut rt =
+        neko_carrier::ReliableUdpRuntime::new(1, 1200).unwrap_or_else(|_| fail("client rt"));
     rt.ready_standby(0);
     let udp_key = neko_carrier::ConcurrentPathKey {
         path: PathId(1),
@@ -3673,18 +3901,33 @@ fn lab_reliable_udp(args: &[String], json: bool) {
         let _ = rt.manager_mut().observe_readiness(udp_key, true, true, i);
     }
     rt.activate_udp(2);
-    let mut packets_sent = 0u64;
-    let mut suppressed = 0u64;
-    let mut retransmits = 0u64;
-    let mut fallback = false;
+
+    let mut st = LabState::default();
     let mut offset = 0u64;
+
     for r in 0..rounds as u64 {
-        let payload = format!("lab-{r}").into_bytes();
-        let suppress = (r + 1) % drop_every as u64 == 0;
-        if !suppress && !rt.can_send(1200) {
-            continue; // cwnd refused: no send, no offset consumed
+        if !rt.can_send(LAB_MAX_SEND_BYTES) {
+            for _ in 0..64 {
+                st.now_us = st.now_us.saturating_add(LAB_STEP_US);
+                if lab_pump(&mut rt, &mut client_sess, &client_sock, &mut cbuf, &mut st) {
+                    break;
+                }
+            }
         }
-        let frame_offset = offset; // stable logical byte offset = frame identity
+        if !rt.can_send(LAB_MAX_SEND_BYTES) {
+            st.c.cwnd_refusals += 1;
+            st.partial = true;
+            break;
+        }
+        let interval = rt.pacing_interval_us(LAB_MAX_SEND_BYTES);
+        if st.now_us < st.next_admit_us {
+            st.now_us = st.next_admit_us;
+        }
+        st.next_admit_us = st.now_us.saturating_add(interval);
+
+        let payload = format!("lab-{r}").into_bytes();
+        let suppress = drop_every != 0 && (r + 1).is_multiple_of(drop_every as u64);
+        let frame_offset = offset;
         let msg = ProcessMessage::Data {
             session: SessionId(1),
             record: OutboundRecord {
@@ -3693,110 +3936,195 @@ fn lab_reliable_udp(args: &[String], json: bool) {
                 data: payload.clone(),
             },
         };
-        offset += payload.len() as u64;
         let wire = neko_wire::encode(&neko_wire::Record {
             record_type: neko_wire::RecordType::Data,
             flags: 0,
-            payload: msg.encode().unwrap(),
+            payload: msg.encode().expect("bounded process message"),
         })
-        .unwrap();
+        .expect("bounded record");
         let sealed = client_sess.seal(&wire).unwrap_or_else(|_| fail("seal"));
-        let pn = u64::from_be_bytes(sealed[..8].try_into().unwrap());
+        let pn = u64::from_be_bytes(sealed[..8].try_into().expect("sequence prefix"));
         rt.on_packet_sent(
             pn,
-            r * 1000,
+            st.now_us,
             sealed.len() as u64,
             neko_reliable::FrameId(frame_offset),
             &payload,
         )
         .unwrap_or_else(|_| fail("record send"));
-        packets_sent += 1;
-        if !suppress {
-            client_sock
-                .send(&sealed)
-                .unwrap_or_else(|_| fail("send data"));
-        } else {
-            suppressed += 1; // sealed but never sent: controlled packet loss
+        st.c.initial_admitted += 1;
+        st.outstanding.insert(pn, st.now_us);
+        offset = offset
+            .checked_add(payload.len() as u64)
+            .expect("lab Session byte offset overflowed u64");
+        if suppress {
+            st.c.initial_suppressed += 1;
+        } else if client_sock.send(&sealed).is_ok() {
+            st.c.initial_wire_sent += 1;
         }
-        // Drain any ACKs.
-        while let Ok(n) = client_sock.recv(&mut buf) {
-            let plain = match client_sess.open(&buf[..n]) {
-                Ok(p) => p,
-                Err(_) => break,
-            };
-            let rec = match neko_wire::decode(&plain) {
-                Ok(r) => r,
-                Err(_) => break,
-            };
-            if rec.record_type == neko_wire::RecordType::Ack
-                && let Ok(ack) = neko_wire::decode_ack(&rec.payload)
-            {
-                let ranges = neko_reliable::AckRanges::from_ranges(
-                    32,
-                    &ack.ranges
-                        .iter()
-                        .map(|w| neko_reliable::AckRange {
-                            start: w.start,
-                            end: w.end,
-                        })
-                        .collect::<Vec<_>>(),
-                )
-                .unwrap();
-                let _ = rt.apply_ack(&ranges, (r + 1) * 1000, ack.ack_delay_us);
+        for _ in 0..8 {
+            st.now_us = st.now_us.saturating_add(LAB_STEP_US);
+            if lab_pump(&mut rt, &mut client_sess, &client_sock, &mut cbuf, &mut st) {
+                break;
             }
-        }
-        // PTO: retransmit lost frames under fresh packet numbers.
-        for (frame, pt) in rt.pto_probe() {
-            let rmsg = ProcessMessage::Data {
-                session: SessionId(1),
-                record: OutboundRecord {
-                    stream: StreamId(1),
-                    offset: frame.0,
-                    data: pt.clone(),
-                },
-            };
-            let rw = neko_wire::encode(&neko_wire::Record {
-                record_type: neko_wire::RecordType::Data,
-                flags: 0,
-                payload: rmsg.encode().unwrap(),
-            })
-            .unwrap();
-            if let Ok(s) = client_sess.seal(&rw) {
-                let rpn = u64::from_be_bytes(s[..8].try_into().unwrap());
-                let _ = rt.on_retransmit_sent(rpn, (r + 1) * 1000, s.len() as u64, frame);
-                let _ = client_sock.send(&s);
-                retransmits += 1;
-            }
-        }
-        if matches!(
-            rt.poll_health(1000 + r),
-            neko_carrier::RuntimeEvent::WarmFallback(_)
-        ) {
-            fallback = true;
         }
     }
+
+    let settle_deadline_us = st.now_us.saturating_add(settle_ms.saturating_mul(1000));
+    while !st.outstanding.is_empty() && st.now_us < settle_deadline_us {
+        st.now_us = st.now_us.saturating_add(LAB_STEP_US);
+        lab_pump(&mut rt, &mut client_sess, &client_sock, &mut cbuf, &mut st);
+    }
+    let settled = st.outstanding.is_empty();
+    if !settled {
+        st.partial = true;
+    }
+
     server_done.store(true, Ordering::Release);
-    let (delivered, duplicates, acks_sent) = server_join.join().unwrap_or((0, 0, 0));
-    let active_tcp = rt.manager().active() == Some(tcp_key);
+    let server_c = match server_join.join() {
+        Ok(c) => c,
+        Err(_) => fail("server thread panicked"),
+    };
+    st.c.delivered = server_c.delivered;
+    st.c.duplicates = server_c.duplicates;
+    st.c.conflicts = server_c.conflicts;
+    st.c.application_bytes = server_c.application_bytes;
+    st.c.acks_emitted = server_c.acks_emitted;
+    st.c.acks_wire_sent = server_c.acks_wire_sent;
+    st.c.acks_suppressed = server_c.acks_suppressed;
+    st.c.acks_failed = server_c.acks_failed;
+    st.c.unauthenticated += server_c.unauthenticated;
+    st.c.recv_rejected += server_c.recv_rejected;
+
+    let c = &st.c;
+    let remaining_in_flight = rt.in_flight();
+    let active_path = match rt.manager().active() {
+        Some(k) if k == tcp_key => "tcp",
+        Some(k) if k == udp_key => "udp",
+        _ => "none",
+    };
+    drop(client_sock);
+    let cleanup_ok = UdpSocket::bind(client_addr).is_ok() && UdpSocket::bind(server_addr).is_ok();
+
+    let ok = settled
+        && !st.partial
+        && c.conflicts == 0
+        && c.acks_rejected == 0
+        && c.recv_rejected == 0
+        && c.delivered == rounds as u64
+        && cleanup_ok;
+
     if json {
-        println!(
-            "{{\"ok\":true,\"mode\":\"reliable-udp\",\"packets_sent\":{},\"suppressed\":{},\"retransmits\":{},\"acks_sent\":{},\"delivered\":{},\"duplicates\":{},\"fallback\":{},\"active_tcp\":{}}}",
-            packets_sent,
-            suppressed,
-            retransmits,
-            acks_sent,
-            delivered,
-            duplicates,
-            fallback,
-            active_tcp
-        );
+        let mut j = String::new();
+        j.push_str(r#"{"ok":"#);
+        j.push_str(if ok { "true" } else { "false" });
+        j.push_str(r#","schema":"nekomusume.reliable-udp-lab.v1","scenario":"reliable-udp","mode":"loopback-controlled","rounds":"#);
+        j.push_str(&rounds.to_string());
+        j.push_str(r#","drop_every":"#);
+        j.push_str(&drop_every.to_string());
+        j.push_str(r#","drop_ack_every":"#);
+        j.push_str(&drop_ack_every.to_string());
+        j.push_str(r#","offered":"#);
+        j.push_str(&rounds.to_string());
+        j.push_str(r#","settled":"#);
+        j.push_str(if settled { "true" } else { "false" });
+        j.push_str(r#","partial":"#);
+        j.push_str(if st.partial { "true" } else { "false" });
+        j.push_str(r#","session":{"delivered":"#);
+        j.push_str(&c.delivered.to_string());
+        j.push_str(r#","duplicates":"#);
+        j.push_str(&c.duplicates.to_string());
+        j.push_str(r#","conflicts":"#);
+        j.push_str(&c.conflicts.to_string());
+        j.push_str(r#","application_bytes":"#);
+        j.push_str(&c.application_bytes.to_string());
+        j.push_str(r#"},"initial":{"admitted":"#);
+        j.push_str(&c.initial_admitted.to_string());
+        j.push_str(r#","wire_sent":"#);
+        j.push_str(&c.initial_wire_sent.to_string());
+        j.push_str(r#","suppressed":"#);
+        j.push_str(&c.initial_suppressed.to_string());
+        j.push_str(r#","cwnd_refusals":"#);
+        j.push_str(&c.cwnd_refusals.to_string());
+        j.push_str(r#"},"acks":{"emitted":"#);
+        j.push_str(&c.acks_emitted.to_string());
+        j.push_str(r#","wire_sent":"#);
+        j.push_str(&c.acks_wire_sent.to_string());
+        j.push_str(r#","suppressed":"#);
+        j.push_str(&c.acks_suppressed.to_string());
+        j.push_str(r#","failed":"#);
+        j.push_str(&c.acks_failed.to_string());
+        j.push_str(r#","applied":"#);
+        j.push_str(&c.acks_applied.to_string());
+        j.push_str(r#","rejected":"#);
+        j.push_str(&c.acks_rejected.to_string());
+        j.push_str(r#"},"recovery":{"pto_due":"#);
+        j.push_str(&c.pto_due.to_string());
+        j.push_str(r#","pto_fired":"#);
+        j.push_str(&c.pto_fired.to_string());
+        j.push_str(r#","retransmit_attempts":"#);
+        j.push_str(&c.retransmit_attempts.to_string());
+        j.push_str(r#","retransmit_wire_sent":"#);
+        j.push_str(&c.retransmit_wire_sent.to_string());
+        j.push_str(r#","retransmit_refused":"#);
+        j.push_str(&c.retransmit_refused.to_string());
+        j.push_str(r#","newly_lost":"#);
+        j.push_str(&c.newly_lost.to_string());
+        j.push_str(r#","remaining_in_flight":"#);
+        j.push_str(&remaining_in_flight.to_string());
+        j.push_str(r#"},"unauthenticated":"#);
+        j.push_str(&c.unauthenticated.to_string());
+        j.push_str(r#","recv_rejected":"#);
+        j.push_str(&c.recv_rejected.to_string());
+        j.push_str(r#","manager_switch":"#);
+        j.push_str(if st.manager_switch { "true" } else { "false" });
+        j.push_str(r#","manager_active_path":""#);
+        j.push_str(active_path);
+        j.push_str(r#"","manager_switch_scope":"manager decision only; this command opens no TCP socket","cleanup":""#);
+        j.push_str(if cleanup_ok { "verified" } else { "failed" });
+        j.push_str(r#""}"#);
+        println!("{j}");
     } else {
         println!(
-            "mode=reliable-udp packets_sent={packets_sent} suppressed={suppressed} retransmits={retransmits} acks_sent={acks_sent} delivered={delivered} duplicates={duplicates} fallback={fallback} active_tcp={active_tcp}"
+            "scenario=reliable-udp ok={ok} rounds={rounds} settled={settled} partial={}",
+            st.partial
+        );
+        println!(
+            "session delivered={} duplicates={} conflicts={} application_bytes={}",
+            c.delivered, c.duplicates, c.conflicts, c.application_bytes
+        );
+        println!(
+            "initial admitted={} wire_sent={} suppressed={} cwnd_refusals={}",
+            c.initial_admitted, c.initial_wire_sent, c.initial_suppressed, c.cwnd_refusals
+        );
+        println!(
+            "acks emitted={} wire_sent={} suppressed={} failed={} applied={} rejected={}",
+            c.acks_emitted,
+            c.acks_wire_sent,
+            c.acks_suppressed,
+            c.acks_failed,
+            c.acks_applied,
+            c.acks_rejected
+        );
+        println!(
+            "recovery pto_due={} pto_fired={} retransmit_attempts={} retransmit_wire_sent={} retransmit_refused={} newly_lost={} remaining_in_flight={}",
+            c.pto_due,
+            c.pto_fired,
+            c.retransmit_attempts,
+            c.retransmit_wire_sent,
+            c.retransmit_refused,
+            c.newly_lost,
+            remaining_in_flight
+        );
+        println!(
+            "manager_switch={} manager_active_path={active_path} manager_switch_scope=manager-decision-only-no-tcp-socket cleanup={}",
+            st.manager_switch,
+            if cleanup_ok { "verified" } else { "failed" }
         );
     }
-    // UdpSocket has no graceful shutdown; the server socket lives in the
-    // server thread (dropped on join), the client socket drops at scope end.
+    if !ok {
+        std::process::exit(1);
+    }
 }
 
 /// Deterministic, socket-free fairness fixture for authorized local/VPS validation.

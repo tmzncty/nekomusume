@@ -3895,3 +3895,146 @@ fn warm_readiness_failures_close_before_admission_or_application_data() {
         }
     }
 }
+
+#[test]
+fn lab_reliable_udp_scenarios_are_truthful_and_legacy_lab_is_preserved() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let legacy = Command::new(bin).args(["lab", "--json"]).output().unwrap();
+    assert!(legacy.status.success());
+    let legacy_out = String::from_utf8_lossy(&legacy.stdout);
+    assert!(legacy_out.contains(r#""demo":"failover""#), "{legacy_out}");
+
+    let clean = Command::new(bin)
+        .args([
+            "lab",
+            "--scenario",
+            "reliable-udp",
+            "--rounds",
+            "8",
+            "--drop-every",
+            "0",
+            "--settle-ms",
+            "1500",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        clean.status.success(),
+        "{}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+    let s = String::from_utf8_lossy(&clean.stdout);
+    assert!(s.contains(r#""ok":true"#), "{s}");
+    assert!(s.contains(r#""delivered":8"#), "{s}");
+    assert!(s.contains(r#""conflicts":0"#), "{s}");
+    assert!(s.contains(r#""pto_fired":0"#), "{s}");
+    assert!(s.contains(r#""retransmit_wire_sent":0"#), "{s}");
+    assert!(s.contains(r#""remaining_in_flight":0"#), "{s}");
+    assert!(s.contains(r#""cleanup":"verified""#), "{s}");
+    assert!(s.contains(r#""manager_active_path":"udp""#), "{s}");
+    assert!(
+        s.contains(
+            r#""manager_switch_scope":"manager decision only; this command opens no TCP socket""#
+        ),
+        "{s}"
+    );
+
+    let lossy = Command::new(bin)
+        .args([
+            "lab",
+            "--scenario",
+            "reliable-udp",
+            "--rounds",
+            "8",
+            "--drop-every",
+            "4",
+            "--settle-ms",
+            "4000",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        lossy.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lossy.stderr)
+    );
+    let s = String::from_utf8_lossy(&lossy.stdout);
+    assert!(s.contains(r#""ok":true"#), "{s}");
+    assert!(s.contains(r#""delivered":8"#), "{s}");
+    assert!(s.contains(r#""duplicates":0"#), "{s}");
+    assert!(s.contains(r#""suppressed":2"#), "{s}");
+    assert!(s.contains(r#""pto_fired":2"#), "{s}");
+    assert!(s.contains(r#""retransmit_wire_sent":2"#), "{s}");
+    assert!(s.contains(r#""remaining_in_flight":0"#), "{s}");
+
+    let ackloss = Command::new(bin)
+        .args([
+            "lab",
+            "--scenario",
+            "reliable-udp",
+            "--rounds",
+            "8",
+            "--drop-every",
+            "0",
+            "--drop-ack-every",
+            "3",
+            "--settle-ms",
+            "4000",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        ackloss.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ackloss.stderr)
+    );
+    let s = String::from_utf8_lossy(&ackloss.stdout);
+    assert!(s.contains(r#""ok":true"#), "{s}");
+    assert!(s.contains(r#""delivered":8"#), "{s}");
+    assert!(s.contains(r#""duplicates":3"#), "{s}");
+    assert!(
+        s.contains(r#""acks":{"emitted":11,"wire_sent":8,"suppressed":3,"failed":0,"applied":8,"rejected":0}"#),
+        "{s}"
+    );
+    assert!(s.contains(r#""pto_fired":3"#), "{s}");
+    assert!(s.contains(r#""remaining_in_flight":0"#), "{s}");
+}
+
+#[test]
+fn lab_scenario_arguments_fail_closed_before_sockets() {
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    for args in [
+        vec!["lab", "--scenario", "bogus"],
+        vec![
+            "lab",
+            "--scenario",
+            "reliable-udp",
+            "--scenario",
+            "reliable-udp",
+        ],
+        vec!["lab", "--scenario"],
+        vec!["lab", "--scenario", "reliable-udp", "--rounds", "3"],
+        vec!["lab", "--scenario", "reliable-udp", "--rounds", "65"],
+        vec!["lab", "--scenario", "reliable-udp", "--drop-every", "1"],
+        vec![
+            "lab",
+            "--scenario",
+            "reliable-udp",
+            "--drop-ack-every",
+            "17",
+        ],
+        vec!["lab", "--scenario", "reliable-udp", "--settle-ms", "0"],
+    ] {
+        let out = Command::new(bin).args(&args).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "args={args:?} stderr={}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.stdout.is_empty(), "args={args:?}");
+    }
+}
