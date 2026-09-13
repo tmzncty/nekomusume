@@ -4255,8 +4255,10 @@ impl PathRecovery {
     pub fn bytes_in_flight(&self) -> u64 {
         self.reno.bytes_in_flight
     }
-    /// Packet-recovery counters for health/observability — sent and declared
-    /// lost packet totals. Loss-per-mille is `packets_lost*1000/packets_sent`.
+    /// Lifetime packet-recovery counters for diagnostics only. They are NOT the
+    /// health denominator: manager-facing loss evidence is the resolved-outcome
+    /// interval delta computed in `fresh_health_sample()`, so a bare send can
+    /// never erase a later resolved loss.
     pub fn packets_sent(&self) -> u64 {
         self.packets_sent
     }
@@ -4538,9 +4540,6 @@ impl ReliableUdpRuntime {
         self.recovery.pacing_interval_us(bytes)
     }
 
-    /// Deliver an authenticated application payload under its stable Session
-    /// logical identity `(stream, offset)`. The first delivery is retained and
-    /// reported; a later duplicate carrying the SAME bytes is suppressed and
     /// Record that packet `number` (fresh AEAD nonce/sequence) was sent carrying
     /// the stable `frame` identity — only after `can_send` admits the bytes.
     /// Refuses (without charging recovery or tracking plaintext) when cwnd is
@@ -4588,12 +4587,6 @@ impl ReliableUdpRuntime {
         Ok(())
     }
 
-    /// Deliver an authenticated application payload under its stable Session
-    /// logical identity `(stream, offset)`. The first delivery is retained and
-    /// reported; a later duplicate carrying the SAME bytes is suppressed and
-    /// counted (`dedup_suppressed`), and a duplicate carrying DIFFERENT bytes
-    /// for the same identity fails closed. Packet ACK/recovery never marks
-    /// Session delivery — this logical-identity dedup is the delivery path.
     /// Record an authenticated received packet: `ack_eliciting` distinguishes
     /// Data (creates a pending ACK) from ACK-only records (no ACK-of-ACK).
     pub fn on_packet_received(
