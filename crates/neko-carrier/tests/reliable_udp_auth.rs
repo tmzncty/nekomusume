@@ -102,7 +102,7 @@ fn authenticated_packet_ack_advances_recovery_but_tamper_cannot() {
             .unwrap();
         client.send_datagram(&sealed).unwrap();
     }
-    assert_eq!(recovery.bytes_in_flight() > 0, true);
+    assert!(recovery.bytes_in_flight() > 0);
 
     // Receiver opens both; each yields an authenticated NK Data record.
     for _ in 0..2 {
