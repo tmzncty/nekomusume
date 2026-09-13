@@ -4408,6 +4408,202 @@ impl PacketAckTracker {
     }
 }
 
+/// A socket/crypto-agnostic reliable-UDP runtime orchestrator (R7/R8 core).
+///
+/// `ReliableUdpRuntime` composes the sender-side `PathRecovery`, receiver-side
+/// `PacketAckTracker`, `RetransmitBuffer` plaintext ownership, the
+/// freshness-enforced health bridge, and a `ConcurrentCarrierManager` — with no
+/// socket or `SecureSession` baked in. A caller (lab fixture, CLI, or service)
+/// supplies authenticated packet send/receive; this type owns the recovery,
+/// ACK-emission, and automatic health-driven failover decisions. Packet
+/// recovery evidence is layered and never becomes Session delivery.
+#[derive(Debug)]
+pub struct ReliableUdpRuntime {
+    path: ConcurrentPathKey,
+    tcp: ConcurrentPathKey,
+    generation: u64,
+    recovery: PathRecovery,
+    acks: PacketAckTracker,
+    retransmit: RetransmitBuffer,
+    health: CarrierHealth,
+    manager: ConcurrentCarrierManager,
+    /// Frames currently retained for retransmission by plaintext.
+    frame_plaintext: BTreeMap<neko_reliable::FrameId, Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeEvent {
+    /// A fresh health observation was produced for the path.
+    HealthSample(HealthState),
+    /// Degradation crossed the hysteresis and the warm TCP standby was
+    /// automatically promoted (UDP failed -> TCP active).
+    WarmFallback,
+    /// Nothing actionable this poll.
+    Idle,
+}
+
+impl ReliableUdpRuntime {
+    /// Create the runtime for a UDP path generation with a ready TCP standby.
+    pub fn new(path_generation: u64, mss: u64) -> Result<Self, PathRecoveryError> {
+        let udp = ConcurrentPathKey {
+            path: PathId(1),
+            generation: PathGeneration(path_generation),
+        };
+        let tcp = ConcurrentPathKey {
+            path: PathId(2),
+            generation: PathGeneration(path_generation),
+        };
+        let mut manager = ConcurrentCarrierManager::new(ConcurrentLimits::default()).unwrap();
+        manager
+            .register(udp, CarrierKind::Udp)
+            .map_err(|_| PathRecoveryError::GenerationMismatch)?;
+        manager
+            .register(tcp, CarrierKind::Tcp)
+            .map_err(|_| PathRecoveryError::GenerationMismatch)?;
+        Ok(Self {
+            path: udp,
+            tcp,
+            generation: path_generation,
+            recovery: PathRecovery::new(PathId(1), path_generation, mss)?,
+            acks: PacketAckTracker::new(path_generation),
+            retransmit: RetransmitBuffer::new(64, 8192)
+                .map_err(|_| PathRecoveryError::GenerationMismatch)?,
+            health: CarrierHealth::new(HealthLimits::default())
+                .map_err(|_| PathRecoveryError::GenerationMismatch)?,
+            manager,
+            frame_plaintext: BTreeMap::new(),
+        })
+    }
+
+    /// Mark TCP standby ready so a degradation can promote it.
+    pub fn ready_standby(&mut self, now_ms: u64) {
+        for i in 0..3 {
+            let _ = self
+                .manager
+                .observe_readiness(self.tcp, true, true, now_ms + i);
+        }
+    }
+    /// Activate UDP as the active path (caller drives admission order).
+    pub fn activate_udp(&mut self, now_ms: u64) {
+        let _ = self
+            .manager
+            .activate(self.path, SwitchReason::OperatorRequest, now_ms, false);
+    }
+
+    /// Record that a packet `number` was sent carrying `frame` plaintext.
+    /// Retains the frame for possible fresh re-encoding on loss.
+    pub fn on_packet_sent(
+        &mut self,
+        number: u64,
+        sent_at_us: u64,
+        bytes: u64,
+        frame_plaintext: &[u8],
+    ) -> Result<(), PathRecoveryError> {
+        let frame = neko_reliable::FrameId(number);
+        self.recovery.on_sent(neko_reliable::SentPacket {
+            number,
+            sent_at_us,
+            bytes,
+            ack_eliciting: true,
+            frames: vec![frame],
+        })?;
+        let _ = self.retransmit.track(frame, frame_plaintext);
+        let _ = self.frame_plaintext.insert(frame, frame_plaintext.to_vec());
+        Ok(())
+    }
+
+    /// Record an authenticated received packet: `ack_eliciting` distinguishes
+    /// Data (creates a pending ACK) from ACK-only records (no ACK-of-ACK).
+    pub fn on_packet_received(
+        &mut self,
+        packet_number: u64,
+        ack_eliciting: bool,
+    ) -> Result<(), AckTrackerError> {
+        self.acks
+            .observe_packet(self.generation, packet_number, ack_eliciting)
+    }
+
+    /// If an ack-eliciting packet awaits a response, return the canonical
+    /// `AckPayload` to seal back (consumed once; no ACK-of-ACK).
+    pub fn poll_outgoing_ack(&mut self, ack_delay_us: u64) -> Option<neko_wire::AckPayload> {
+        self.acks.take_ack(ack_delay_us)
+    }
+
+    /// Apply an authenticated ACK payload to recovery and release retired
+    /// frames' plaintext exactly once. Returns the engine outcome.
+    pub fn apply_ack(
+        &mut self,
+        ack: &neko_reliable::AckRanges,
+        now_us: u64,
+        ack_delay_us: u64,
+    ) -> Result<RecoveryAckOutcome, PathRecoveryError> {
+        let out = self
+            .recovery
+            .on_ack(self.generation, ack, now_us, ack_delay_us)?;
+        for n in &out.acked_packets {
+            let f = neko_reliable::FrameId(*n);
+            if !self.recovery.frame_outstanding(f) {
+                self.retransmit.release(f);
+                self.frame_plaintext.remove(&f);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Poll fresh health evidence and, on Degraded, automatically fail UDP and
+    /// promote the warm TCP standby. Returns the emitted event (or Idle).
+    pub fn poll_health(&mut self, now_ms: u64) -> RuntimeEvent {
+        match self.recovery.fresh_health_sample() {
+            None => RuntimeEvent::Idle,
+            Some(s) => {
+                let state = self
+                    .health
+                    .observe(PathId(1), s)
+                    .unwrap_or(HealthState::Unknown);
+                if state == HealthState::Degraded
+                    && self.manager.state(self.path).is_ok()
+                    && self.manager.state(self.tcp).is_ok()
+                {
+                    let _ = self
+                        .manager
+                        .fail(self.path, SwitchReason::UdpPathDegraded, now_ms);
+                    let _ = self.manager.activate(
+                        self.tcp,
+                        SwitchReason::UdpPathDegraded,
+                        now_ms,
+                        true,
+                    );
+                    return RuntimeEvent::WarmFallback;
+                }
+                RuntimeEvent::HealthSample(state)
+            }
+        }
+    }
+
+    /// Fire a PTO and return the plaintext frames to re-encode fresh.
+    pub fn pto_probe(&mut self) -> Vec<Vec<u8>> {
+        self.recovery
+            .on_pto(4)
+            .map(|frames| {
+                frames
+                    .iter()
+                    .filter_map(|f| self.frame_plaintext.get(f).cloned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn manager(&self) -> &ConcurrentCarrierManager {
+        &self.manager
+    }
+    pub fn in_flight(&self) -> usize {
+        self.recovery.in_flight()
+    }
+    pub fn packets_lost(&self) -> u64 {
+        self.recovery.packets_lost()
+    }
+}
+
 /// Bounded carrier-local retransmission frame ownership (R6).
 ///
 /// `RetransmitBuffer` maps each outstanding `FrameId` to its bounded plaintext
@@ -4731,6 +4927,60 @@ mod path_recovery_tests {
         assert!(t.pending_ack());
         assert_eq!(t.take_ack(0).unwrap().largest_observed, 5);
         assert!(t.take_ack(0).is_none());
+    }
+
+    #[test]
+    fn reliable_udp_runtime_orchestrates_send_ack_loss_and_auto_fallback() {
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.ready_standby(0);
+        rt.activate_udp(1);
+        // Send packets -> observe -> ACK emits once -> apply -> in-flight drains.
+        for n in 0..4u64 {
+            rt.on_packet_sent(n, n * 1000, 400, b"data").unwrap();
+        }
+        assert_eq!(rt.in_flight(), 4);
+        // Receiver observes each as ack-eliciting Data -> pending ACK.
+        for n in 0..4u64 {
+            rt.on_packet_received(n, true).unwrap();
+        }
+        let ack = rt.poll_outgoing_ack(0).expect("one obligation");
+        let ranges = AckRanges::from_ranges(
+            32,
+            &ack.ranges
+                .iter()
+                .map(|r| neko_reliable::AckRange {
+                    start: r.start,
+                    end: r.end,
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        rt.apply_ack(&ranges, 40_000, 0).unwrap();
+        assert_eq!(rt.in_flight(), 0);
+        // Second poll: pending consumed -> None (no ACK-of-ACK).
+        assert!(rt.poll_outgoing_ack(0).is_none());
+        // Distinct PTO epochs drive automatic fallback through the bridge.
+        let mut fell = false;
+        for i in 0..8u64 {
+            rt.on_packet_sent(10 + i, 100_000 + i * 1000, 400, b"x")
+                .unwrap();
+            rt.pto_probe();
+            if rt.poll_health(200 + i) == RuntimeEvent::WarmFallback {
+                fell = true;
+                break;
+            }
+        }
+        assert!(
+            fell,
+            "distinct PTO epochs must drive automatic warm fallback"
+        );
+        assert_eq!(
+            rt.manager().active(),
+            Some(ConcurrentPathKey {
+                path: PathId(2),
+                generation: PathGeneration(1)
+            })
+        );
     }
 
     #[test]
