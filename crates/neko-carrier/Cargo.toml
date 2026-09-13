@@ -7,6 +7,9 @@ license.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+neko-reliable = { path = "../neko-reliable" }
+
 [dev-dependencies]
 neko-session = { path = "../neko-session" }
 

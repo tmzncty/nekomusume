@@ -4029,6 +4029,255 @@ impl ConcurrentCarrierManager {
     }
 }
 
+/// Path-local live-recovery ownership seam for a single UDP path.
+///
+/// `PathRecovery` lets a UDP carrier own `neko_reliable::Recovery` plus the
+/// Reno/bytes-in-flight model for one `(path_id, path_generation)` without
+/// coupling packet-level ACK to Session delivery. It owns packet-number
+/// allocation, sent-packet bookkeeping, authenticated ACK application, PTO
+/// probe selection and frame-level retransmit output — all as Carrier-local
+/// `FrameId` recovery signals. It deliberately carries no `SessionRuntime`,
+/// `DeliveryLedger`, or `confirm_received` reference: a packet ACK retires a
+/// Carrier packet/frame, never a Session delivery.
+#[derive(Debug)]
+pub struct PathRecovery {
+    path: PathId,
+    path_generation: u64,
+    next_packet_number: u64,
+    recovery: neko_reliable::Recovery,
+    reno: neko_reliable::Reno,
+}
+
+/// Outcome of applying an authenticated packet ACK to a path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryAckOutcome {
+    pub acked_packets: Vec<u64>,
+    pub lost_packets: Vec<u64>,
+    pub retransmit_frames: Vec<neko_reliable::FrameId>,
+    pub acked_bytes: u64,
+    pub lost_bytes: u64,
+}
+
+/// Errors from the path-local recovery seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathRecoveryError {
+    /// The recovery engine rejected the input (invalid range, capacity, etc.).
+    Recovery(neko_reliable::Error),
+    /// Packet number allocation overflowed the u64 space.
+    PacketNumberExhausted,
+    /// The ACK/generation does not belong to this path generation.
+    GenerationMismatch,
+}
+
+impl From<neko_reliable::Error> for PathRecoveryError {
+    fn from(e: neko_reliable::Error) -> Self {
+        Self::Recovery(e)
+    }
+}
+
+impl PathRecovery {
+    /// Create a path-local recovery owner bound to one path generation.
+    pub fn new(path: PathId, path_generation: u64, mss: u64) -> Result<Self, PathRecoveryError> {
+        Ok(Self {
+            path,
+            path_generation,
+            next_packet_number: 0,
+            recovery: neko_reliable::Recovery::default(),
+            reno: neko_reliable::Reno::new(mss)?,
+        })
+    }
+
+    /// Allocate the next monotonically increasing packet number for this path.
+    /// Fails closed on u64 exhaustion — a number is never reused.
+    pub fn allocate_packet_number(&mut self) -> Result<u64, PathRecoveryError> {
+        let n = self.next_packet_number;
+        self.next_packet_number = self
+            .next_packet_number
+            .checked_add(1)
+            .ok_or(PathRecoveryError::PacketNumberExhausted)?;
+        Ok(n)
+    }
+
+    /// Record a sent packet's number/bytes/frames and charge bytes-in-flight.
+    /// `frames` are Carrier-level `FrameId`s owned by the caller; this seam
+    /// does not interpret them as Session delivery units.
+    pub fn on_sent(&mut self, packet: neko_reliable::SentPacket) -> Result<(), PathRecoveryError> {
+        self.recovery.on_sent(packet.clone())?;
+        if packet.ack_eliciting {
+            self.reno.sent(packet.bytes);
+        }
+        Ok(())
+    }
+
+    /// Apply an authenticated ACK range set. `generation` must match this
+    /// path's current generation — a stale/other-generation ACK is rejected
+    /// before any RTT/loss/PTO mutation. Returns Carrier-local recovery
+    /// outcome only; no Session delivery evidence is produced.
+    pub fn on_ack(
+        &mut self,
+        generation: u64,
+        ack: &neko_reliable::AckRanges,
+        now_us: u64,
+        ack_delay_us: u64,
+    ) -> Result<RecoveryAckOutcome, PathRecoveryError> {
+        if generation != self.path_generation {
+            return Err(PathRecoveryError::GenerationMismatch);
+        }
+        let r = self.recovery.on_ack(ack, now_us, ack_delay_us)?;
+        self.reno.acked(r.acked_bytes);
+        self.reno.lost(r.lost_bytes);
+        Ok(RecoveryAckOutcome {
+            acked_packets: r.acked_packets,
+            lost_packets: r.lost_packets,
+            retransmit_frames: r.retransmit_frames,
+            acked_bytes: r.acked_bytes,
+            lost_bytes: r.lost_bytes,
+        })
+    }
+
+    /// Select the bounded set of oldest outstanding frames for a PTO probe.
+    /// Probe frames are re-encoded by the caller into a *fresh* packet — the
+    /// old encrypted packet image is never resent.
+    pub fn on_pto(
+        &mut self,
+        max_probe_frames: usize,
+    ) -> Result<Vec<neko_reliable::FrameId>, PathRecoveryError> {
+        let frames = self.recovery.on_pto(max_probe_frames)?;
+        Ok(frames)
+    }
+
+    /// Whether `bytes` more may be sent under the Reno congestion window.
+    pub fn can_send(&self, bytes: u64) -> bool {
+        self.reno.can_send(bytes)
+    }
+
+    /// Current pacing interval in microseconds for `bytes` under the measured RTT.
+    pub fn pacing_interval_us(&self, bytes: u64) -> u64 {
+        self.reno
+            .pacing_interval_us(self.recovery.rtt.smoothed_us, bytes)
+    }
+
+    pub fn path(&self) -> PathId {
+        self.path
+    }
+    pub fn path_generation(&self) -> u64 {
+        self.path_generation
+    }
+    pub fn in_flight(&self) -> usize {
+        self.recovery.in_flight()
+    }
+    pub fn bytes_in_flight(&self) -> u64 {
+        self.reno.bytes_in_flight
+    }
+    /// Mark persistent congestion after repeated PTOs and collapse the window.
+    pub fn persistent_congestion(&mut self) -> bool {
+        if self.reno.persistent_congestion(self.recovery.pto_count) {
+            self.reno.on_persistent_congestion();
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod path_recovery_tests {
+    use super::*;
+    use neko_reliable::{AckRanges, FrameId, SentPacket};
+
+    fn recovery() -> PathRecovery {
+        PathRecovery::new(PathId(1), 7, 1200).unwrap()
+    }
+    fn sent(n: u64, bytes: u64, frames: &[u64]) -> SentPacket {
+        SentPacket {
+            number: n,
+            sent_at_us: n * 1000,
+            bytes,
+            ack_eliciting: true,
+            frames: frames.iter().map(|f| FrameId(*f)).collect(),
+        }
+    }
+    fn ack_of(n: u64) -> AckRanges {
+        let mut a = AckRanges::new(8).unwrap();
+        a.insert(n).unwrap();
+        a
+    }
+
+    #[test]
+    fn packet_number_is_monotonic_and_fail_closed() {
+        let mut r = recovery();
+        assert_eq!(r.allocate_packet_number(), Ok(0));
+        assert_eq!(r.allocate_packet_number(), Ok(1));
+        // u64::MAX is the exhaustion sentinel: it is never handed out, and the
+        // allocator fails closed rather than wrapping or reusing a number.
+        r.next_packet_number = u64::MAX;
+        assert_eq!(
+            r.allocate_packet_number(),
+            Err(PathRecoveryError::PacketNumberExhausted)
+        );
+    }
+
+    #[test]
+    fn ack_retires_bytes_in_flight_exactly_once_and_emits_no_session_evidence() {
+        let mut r = recovery();
+        r.on_sent(sent(0, 100, &[0])).unwrap();
+        r.on_sent(sent(1, 100, &[1])).unwrap();
+        assert_eq!(r.bytes_in_flight(), 200);
+        let out = r.on_ack(7, &ack_of(0), 10_000, 0).unwrap();
+        // Carrier-level outcome only: retired packet/frame ids, never a
+        // Session DeliveryLedger::confirm_received (none exists on this seam).
+        assert_eq!(out.acked_packets, vec![0]);
+        assert_eq!(out.acked_bytes, 100);
+        assert_eq!(r.bytes_in_flight(), 100);
+        // A duplicate ACK for the same packet cannot double-release bytes.
+        let again = r.on_ack(7, &ack_of(0), 11_000, 0).unwrap();
+        assert_eq!(again.acked_bytes, 0);
+        assert_eq!(r.bytes_in_flight(), 100);
+    }
+
+    #[test]
+    fn stale_generation_and_future_or_unsent_ack_are_rejected_atomically() {
+        let mut r = recovery();
+        r.on_sent(sent(0, 100, &[0])).unwrap();
+        // Wrong path generation -> reject before any recovery mutation.
+        assert_eq!(
+            r.on_ack(8, &ack_of(0), 10_000, 0),
+            Err(PathRecoveryError::GenerationMismatch)
+        );
+        assert_eq!(r.bytes_in_flight(), 100);
+        // Future ACK beyond largest_sent -> Recovery rejects; no in-flight loss.
+        assert!(r.on_ack(7, &ack_of(9), 10_000, 0).is_err());
+        assert_eq!(r.bytes_in_flight(), 100);
+        // ACK on a Recovery that never sent is also rejected.
+        let mut empty = recovery();
+        assert!(empty.on_ack(7, &ack_of(0), 1_000, 0).is_err());
+    }
+
+    #[test]
+    fn retransmit_frames_are_carrier_frame_ids_only() {
+        let mut r = recovery();
+        r.on_sent(sent(0, 100, &[5, 6])).unwrap();
+        r.on_sent(sent(1, 100, &[7])).unwrap();
+        // ACK packet 1 while packet 0 ages out past the loss threshold ->
+        // carrier-level retransmit frame ids {5,6}, not Session offsets.
+        let out = r.on_ack(7, &ack_of(1), 60_000, 0).unwrap();
+        assert_eq!(out.acked_packets, vec![1]);
+        assert!(out.retransmit_frames.iter().all(|f| [5, 6].contains(&f.0)));
+    }
+
+    #[test]
+    fn congestion_window_gates_send_and_releases_on_ack() {
+        let mut r = recovery();
+        assert!(r.can_send(100));
+        r.on_sent(sent(0, 1200, &[0])).unwrap();
+        // cwnd default is a few MSS; a huge send exceeds the window.
+        assert!(!r.can_send(u64::MAX));
+        r.on_ack(7, &ack_of(0), 10_000, 0).unwrap();
+        assert_eq!(r.bytes_in_flight(), 0);
+        assert!(r.can_send(1200));
+    }
+}
+
 #[cfg(test)]
 mod concurrent_manager_tests {
     use super::*;
