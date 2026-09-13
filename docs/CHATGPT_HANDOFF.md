@@ -1,47 +1,99 @@
-# ChatGPT reviewer handoff — R8 closed; execute R9 continuously on the existing failover process seam
+# ChatGPT reviewer handoff — R8 closed; R9 READY_LOCAL; source/test implementation must start now
 
 ## Reviewed repository truth
 
-- Current default branch before this refresh: exact `0a710d955f3a59d5f8d662a82601e4c97d10c0eb` (`docs: record exact-tree gate for R8 LOW follow-up repair`).
+- Current default branch before this refresh: exact `a28cc7de5c4541ebb2013cb228675a9807121a12` (`docs(handoff): accept R8 LOW follow-up and sharpen R9 ownership seam`).
+- There is **no new developer source/test commit after exact `0cb6aa2ddfbd8b218cfe01d98a2f1e934d96fd95`** and no open PR. The commits after `0cb6aa2` through `a28cc7d` are local-gate/review/handoff documentation only.
 - R8 executable closure remains accepted at exact `8c9f5848988c1e3062c1492f7d87818e3c31ce4a`, with independent bounded re-review at reviewer commit `108d7c096638fa793b2f7e522bedea2d72bc7ae1` and local exact-tree provenance in `docs/local-gate-8c9f584-20260914.md`.
-- R8 LOW 1/2 are now **landed, reachable and gated** at exact source/test `0cb6aa2ddfbd8b218cfe01d98a2f1e934d96fd95`, with provenance in `docs/local-gate-0cb6aa2-20260914.md`. The earlier identical `3795326` was local-only and must remain historical/non-shared; use `0cb6aa2` as the landed evidence anchor.
-- Exact `0cb6aa2` adds the built-binary forced partial-settlement regression and binds final `settled` to both the lab ownership map and authoritative `ReliableUdpRuntime::in_flight()`. Forced incomplete settlement is pinned to `ok=false`, `settled=false`, `partial=true`, exit `1`.
+- R8 LOW 1/2 are landed, reachable and gated at exact source/test `0cb6aa2`, with provenance in `docs/local-gate-0cb6aa2-20260914.md`. The earlier identical `3795326` was local-only and remains historical/non-shared.
 - Exact `0cb6aa2` clean-tree local gate: focused `neko-cli` process tests green (42 tests), workspace clippy with `-D warnings` green, `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean initial/final tree, Linux x86_64, rustc 1.98.0.
-- Current exact `0a710d9` GitHub-hosted `stable checks` and `nightly decode fuzz smoke` are green; hosted checks remain extra cross-evidence only.
-- Open PRs at this review: none.
-- No new WAN/VPS experiment occurred in this sequence.
+- No WAN/VPS experiment occurred in this sequence.
 - Governance remains unchanged: item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`; pre-R9 `READY_LIVE: none`.
 
-## Reviewer verdict on `0cb6aa2` — ACCEPT
+## Reviewer verdict on current state
 
-No BLOCKER/HIGH/MEDIUM was introduced by the R8 LOW follow-up.
+R8 remains closed. No R8 BLOCKER/HIGH/MEDIUM is open. LOW 3 (`SessionRuntime.events` retained-log policy) and LOW 4 remain non-blocking and must not delay R9.
 
-- The forced partial path is now a durable built-binary regression rather than an ad-hoc observation.
-- `settled` no longer trusts only lab-local bookkeeping; runtime in-flight state participates in the verdict.
-- The change does not alter wire, crypto, Carrier, Session, recovery or dependency semantics.
-- R8 remains closed. Do not create another R8 acceptance cycle unless a concrete regression appears.
+The absence of a new R9 commit is **not** evidence that R9 is blocked or exhausted. R9 has a concrete owner, existing process path, existing runtime, existing wire/crypto/session semantics and an explicit testable first slice. Under `AGENTS.md` §3.2 this is now implementation stagnation and must be corrected by starting source/test work, not by waiting for another reviewer cycle.
 
-LOW 3 remains deliberately deferred: `SessionRuntime.events` is an unbounded retained `Vec`, so reading event history for duplicate accounting would couple R8/R9 truth to the already-open retention-policy gap. The current exact inference does not require that unbounded history. LOW 4 remains inapplicable while all R8 frame IDs are offset-derived. Neither LOW may block R9.
+# STAGNATION OVERRIDE — the next shared commit must be R9 source/test work
 
-# Execution state — R9 is READY_LOCAL now
+One full coding/reviewer interval has elapsed after the prior sharpened R9 handoff without an R9 source/test commit or PR. There is no repository, CI, authorization, policy or architecture blocker on the first slice.
 
-The previous hour did not land an R9 source/test slice; only the non-blocking R8 LOW follow-up landed. This must **not** turn into idle waiting. `AGENTS.md` explicitly treats a dependency-ready lane with no real blocker as work that should continue, and current repository truth contains no R9 BLOCKER/HIGH.
+**Therefore:** do not create another proposal-only, reviewer-only, provenance-only or status-only commit before a source/test R9 slice lands. The next developer-owned shared commit should contain actual R9 implementation and focused process regression(s).
 
-External coding agent should synchronize to current `main` and execute the R9 queue continuously:
+The first slice is already narrow enough to implement directly:
 
-`inspect exact head -> implement coherent slice -> focused tests -> commit/push -> continue next dependency-ready slice -> final clean exact-tree gate at coherent boundary`.
+- primary owner: `crates/neko-cli/src/main.rs`;
+- focused regression owner: `crates/neko-cli/tests/probe.rs`;
+- `neko-cli` already depends on `neko-reliable` from R8, so do not add a second dependency seam or new crate;
+- reuse `ReliableUdpRuntime`; do not fork/copy the recovery engine;
+- reuse existing `failover_server` / `failover_client`; do not create a parallel server/client protocol;
+- keep the historical failover behavior unchanged unless the explicit experimental R9 mode is selected.
 
-Do not wait for reviewer cadence between R9 sub-slices. Preserve the downstream queue. Reviewer cadence is inspection cadence, not a work quota.
+## Exact implementation anchors for the first R9 slice
 
-# R9 ownership map — do not start from a blank design
+### Client seam
 
-R9 should reuse the **existing failover process path**, not invent a second protocol or a parallel process harness.
+In `failover_client`, canonical negotiation and UDP Noise already finish before the current first application path:
 
-## Existing process owners to reuse
+`let mut us = hs.finish(...)` -> build `ProcessMessage::Data` -> `us.seal_unreliable(...)` -> `u.send_to(...)` -> `recv_udp_delivery_ack(...)`.
+
+For the explicit R9 mode only, replace that **post-auth application transport seam** with the already-tested R8 reliable-UDP composition:
+
+1. create one `ReliableUdpRuntime` for the active UDP recovery owner;
+2. keep existing `SessionRuntime` / `OutboundRecord` stream+byte-offset identity;
+3. build one authenticated Data record, use the authenticated outer AEAD sequence prefix as the Carrier packet number, and call `can_send` before committing Session byte offset/recovery ownership;
+4. call `on_packet_sent` only after congestion admission and before/with the actual wire attempt according to the already-reviewed R8 ownership contract;
+5. receive authenticated Carrier ACK records, decode canonical `AckPayload`, call `apply_ack`, and settle to `in_flight()==0` under a finite deadline;
+6. preserve the existing **Session `DeliveryAck`** confirmation path separately. Carrier packet ACK must not stand in for Session delivery acknowledgement.
+
+Preferred CLI shape is a bounded experimental `--reliable-udp` flag on the existing `failover --role client|server` path because it preserves the historical command and matches the existing R8 terminology. An equivalent smaller flag spelling is acceptable if current parsing makes that cleaner; do not create a new top-level protocol command.
+
+### Server seam
+
+In `failover_server`, reuse the already-authenticated UDP application branch under the existing `if let Some((ref mut ss, peer)) = secure` ownership.
+
+For R9 mode only:
+
+1. authenticate/open the datagram first;
+2. only after authentication and structurally valid Data decode, derive/commit the authenticated outer AEAD sequence as the Carrier packet number;
+3. feed the logical `(session, stream, byte offset, bytes)` into the existing `SessionRuntime::receive` — Session remains above Carrier;
+4. record the received packet in the receiver ACK tracker / reliable runtime and emit canonical authenticated packet ACK feedback;
+5. separately retain the existing Session `DeliveryAck` behavior for logical confirmation;
+6. duplicate/reordered replacement handling must be Session-owned; Carrier must not gain a second `(stream, offset)` dedup map.
+
+### First durable process regression
+
+Land one separate-process no-loss test before adding fault injection. It must launch the existing failover server/client in R9 mode and prove:
+
+- canonical negotiation + Noise/trust/authz complete before application admission;
+- at least two bounded logical records are delivered exactly once;
+- Carrier packet ACKs retire all reliable-UDP in-flight state;
+- Session `DeliveryAck` remains a separate logical confirmation path;
+- zero PTO, zero retransmit, zero conflict in the no-loss case;
+- final `remaining_in_flight=0` (or equivalent authoritative runtime observation);
+- process/listener cleanup and same-address rebind remain valid where the current test harness already supports them.
+
+A coherent first commit does **not** need Data-loss, ACK-loss or real TCP promotion yet. Commit/push this no-loss process slice once focused tests are green, then immediately continue R9-3 onward without waiting for reviewer cadence.
+
+If implementation discovers only a missing typed helper/API whose semantics are already fixed by R7/R8, add the smallest helper and continue. Stop only if the required change genuinely alters core Session/Carrier/ACK/crypto/wire semantics.
+
+# Execution state — R9 is READY_LOCAL
+
+External coding agent should synchronize to current `main` and execute continuously:
+
+`inspect exact head -> implement coherent source/test slice -> focused tests -> commit/push -> next dependency-ready slice -> coherent clean exact-tree gate`.
+
+Do not wait for reviewer cadence between R9 sub-slices. Reviewer cadence is inspection cadence, not a work quota.
+
+# R9 ownership map — reuse the existing failover process seam
+
+## Existing process owners
 
 ### `crates/neko-cli/src/main.rs::failover_server`
 
-Already owns, in one bounded process path:
+Already owns:
 
 - UDP listener + TCP listener;
 - `--udp-bind` / `--tcp-bind` and bounded operator port range;
@@ -54,7 +106,7 @@ Already owns, in one bounded process path:
 - warm/resume semantics and actual TCP application Data after promotion;
 - bounded application/experiment deadlines;
 - diagnostics and cleanup behavior;
-- existing controlled application-level UDP reply-cessation seam.
+- historical controlled application-level UDP reply-cessation seam.
 
 ### `crates/neko-cli/src/main.rs::failover_client`
 
@@ -66,30 +118,11 @@ Already owns:
 - authenticated UDP application Data + Session `DeliveryAck` verification;
 - automatic-health-failover / warm/cold modes;
 - TCP connect, resume/readiness and post-promotion application flow;
-- bounded duration/count/bytes and diagnostic output.
-
-### Plain `server` / `client`
-
-These are useful references for the smallest ordinary UDP negotiation/Noise/socket lifecycle, but R9 should **not** fork another independent reliable-UDP protocol path from them if the failover path can host the integration. The R9 goal includes real TCP standby/promotion; `failover_server`/`failover_client` already own that composition.
+- bounded duration/count/bytes and diagnostics.
 
 ### `ReliableUdpRuntime`
 
-Keep packet number / ACK / RTT / loss / PTO / retransmission / Reno / pacing and plaintext-retransmit ownership Carrier-local. Do not move Session `(stream, offset)` dedup or logical confirmation into Carrier.
-
-## R9-1 concrete first implementation slice
-
-**Do this now; no docs-only proposal is required.**
-
-1. Add the smallest explicit R9 test/CLI switch on the existing failover command path so the historical application-level failover behavior stays unchanged unless selected. Prefer a bounded experimental flag/mode rather than a new top-level protocol command.
-2. Instantiate one `ReliableUdpRuntime` per active UDP recovery owner on client and the corresponding bounded receive/ACK state on server as required by the already-committed R7/R8 semantics.
-3. Replace only the selected R9-mode post-auth UDP application transport with the R8-tested reliable-UDP Data/ACK composition. Negotiation, Noise, trust/authz, bind/peer ownership and SessionRuntime stay where they already are.
-4. Keep Session delivery above Carrier: server passes authenticated decoded logical Data into existing `SessionRuntime::receive`; packet ACK is emitted only as Carrier feedback and must never call/stand in for Session confirmation.
-5. Reuse current `ProcessMessage::Data` / Session byte-offset identity rather than inventing a second application identity.
-6. Give setup/application/PTO/settlement work finite existing or test-only bounds. Do not introduce new production security/capacity constants.
-7. First focused test is **separate-process no-loss R9**. It must prove exact once application delivery, ACK retirement to zero in-flight, zero retransmit/PTO/conflict, and cleanup/rebind. This is the first source/test commit; do not wait to implement Data-loss before committing if the no-loss slice is coherent and green.
-8. After that commit/push, immediately continue R9-3 onward below. Do not stop merely because R9-2 has landed.
-
-If integrating `ReliableUdpRuntime` into `failover_*` exposes a missing API but the semantic answer is already fixed by R7/R8, use the smallest typed API/helper and continue. Stop only if the required change genuinely alters core Session/Carrier/ACK/crypto/wire semantics.
+Keep packet number / ACK / RTT / loss / PTO / retransmission / Reno / pacing and plaintext-retransmit ownership Carrier-local. Current runtime already exposes `can_send`, `pacing_interval_us`, `on_packet_sent`, `on_packet_received`, `poll_outgoing_ack`, `apply_ack`, `pto_probe`, `on_retransmit_sent`, `in_flight`, recovery observability, manager access and teardown. Reuse these APIs before adding new ones.
 
 # R9 rolling queue — preserve all slices
 
@@ -210,7 +243,7 @@ BLOCKER/HIGH -> smallest repair + regression + re-gate + continue. LOW/NOTE does
 
 ## Q10 — observability reconciliation
 
-Integrate any genuinely new R9 evidence into existing observability only where useful. Do not build a second logging framework. Preserve packet-recovery, Carrier health/switch and Session delivery as separate evidence domains.
+Integrate genuinely new R9 evidence into existing observability only where useful. Do not build a second logging framework. Preserve packet-recovery, Carrier health/switch and Session delivery as separate evidence domains.
 
 ## Q11 — status/release evidence + READY_LIVE decision
 
