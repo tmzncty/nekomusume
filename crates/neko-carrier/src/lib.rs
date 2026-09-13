@@ -4733,6 +4733,14 @@ impl ReliableUdpRuntime {
     pub fn manager(&self) -> &ConcurrentCarrierManager {
         &self.manager
     }
+    /// Mutable manager access for readiness/admission wiring by the harness.
+    pub fn manager_mut(&mut self) -> &mut ConcurrentCarrierManager {
+        &mut self.manager
+    }
+    /// Read-only recovery engine for observability projection.
+    pub fn recovery_engine(&self) -> &neko_reliable::Recovery {
+        self.recovery.recovery()
+    }
     pub fn in_flight(&self) -> usize {
         self.recovery.in_flight()
     }
