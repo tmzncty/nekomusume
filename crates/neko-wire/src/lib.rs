@@ -828,20 +828,16 @@ pub fn encode_ack(ack: &AckPayload) -> Result<Vec<u8>, AckCodecError> {
         if r.start > r.end {
             return Err(AckCodecError::RangeInversion);
         }
-        if let Some(pe) = prev_end {
-            // Canonical form requires a real gap: overlapping (`start <= pe`)
-            // or merely adjacent (`start == pe + 1`) ranges must already have
-            // been merged by the producer into one inclusive range.
-            if r.start <= pe.saturating_add(1) {
-                return Err(AckCodecError::NonCanonicalRanges);
-            }
+        // Canonical form requires a real gap: overlapping (`start <= pe`)
+        // or merely adjacent (`start == pe + 1`) ranges must already have
+        // been merged by the producer into one inclusive range.
+        if prev_end.is_some_and(|pe| r.start <= pe.saturating_add(1)) {
+            return Err(AckCodecError::NonCanonicalRanges);
         }
         prev_end = Some(r.end);
     }
-    if let Some(max_end) = prev_end {
-        if ack.largest_observed < max_end {
-            return Err(AckCodecError::LargestBelowRanges);
-        }
+    if prev_end.is_some_and(|max_end| ack.largest_observed < max_end) {
+        return Err(AckCodecError::LargestBelowRanges);
     }
     let mut out = Vec::new();
     encode_varint(ack.largest_observed, &mut out);
@@ -880,10 +876,8 @@ pub fn decode_ack(input: &[u8]) -> Result<AckPayload, AckCodecError> {
         if start > end {
             return Err(AckCodecError::RangeInversion);
         }
-        if let Some(pe) = prev_end {
-            if start <= pe.saturating_add(1) {
-                return Err(AckCodecError::NonCanonicalRanges);
-            }
+        if prev_end.is_some_and(|pe| start <= pe.saturating_add(1)) {
+            return Err(AckCodecError::NonCanonicalRanges);
         }
         prev_end = Some(end);
         ranges.push(AckRangeWire { start, end });
@@ -891,10 +885,8 @@ pub fn decode_ack(input: &[u8]) -> Result<AckPayload, AckCodecError> {
     if offset != rest.len() {
         return Err(AckCodecError::TrailingBytes);
     }
-    if let Some(max_end) = prev_end {
-        if largest < max_end {
-            return Err(AckCodecError::LargestBelowRanges);
-        }
+    if prev_end.is_some_and(|max_end| largest < max_end) {
+        return Err(AckCodecError::LargestBelowRanges);
     }
     Ok(AckPayload {
         largest_observed: largest,
