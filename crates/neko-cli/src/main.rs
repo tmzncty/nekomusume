@@ -1802,6 +1802,7 @@ fn failover_server(args: &[String]) {
                             // bounded post-return application datagram. This
                             // proves the owner transition carries DeliveryAck,
                             // not merely a readiness response.
+                            let reliable_udp = args.iter().any(|a| a == "--reliable-udp");
                             let post_deadline = Instant::now() + Duration::from_secs(2);
                             while Instant::now() < post_deadline {
                                 let Ok((n, post_source)) = udp.recv_from(&mut recovery_buf) else {
@@ -1847,6 +1848,18 @@ fn failover_server(args: &[String]) {
                                 }
                                 .encode()
                                 .unwrap();
+                                // H-R9-015: the post-return Data packet is also
+                                // Carrier-ACK owned — record receipt on the
+                                // server recovery owner and emit the canonical
+                                // packet ACK alongside the Session DeliveryAck.
+                                if reliable_udp {
+                                    let pn = u64::from_be_bytes(
+                                        recovery_buf[..8].try_into().unwrap_or([0; 8]),
+                                    );
+                                    server_rt.on_packet_received(pn, true).unwrap_or_else(|_| {
+                                        fail("r9 post-return on_packet_received")
+                                    });
+                                }
                                 let sealed_ack = udp_session.seal_unreliable(&ack).unwrap();
                                 udp.send_to(&sealed_ack, post_source).unwrap();
                                 emit_diagnostic(
@@ -1856,6 +1869,25 @@ fn failover_server(args: &[String]) {
                                     post_offset as usize / bytes.max(1),
                                     "",
                                 );
+                                if reliable_udp && let Some(ranges) = server_rt.poll_outgoing_ack(0)
+                                {
+                                    let pack = neko_wire::encode(&neko_wire::Record {
+                                        record_type: neko_wire::RecordType::Ack,
+                                        flags: 0,
+                                        payload: neko_wire::encode_ack(&ranges).unwrap(),
+                                    })
+                                    .unwrap();
+                                    if let Ok(sealed_pack) = udp_session.seal_unreliable(&pack) {
+                                        let _ = udp.send_to(&sealed_pack, post_source);
+                                        emit_diagnostic(
+                                            args,
+                                            "server",
+                                            "udp_return_packet_ack_sent",
+                                            0,
+                                            "",
+                                        );
+                                    }
+                                }
                                 if let Some(delivered) = runtime.pop_receive(5).unwrap() {
                                     app.extend_from_slice(&delivered.data);
                                 }
@@ -3147,41 +3179,59 @@ fn failover_client(args: &[String]) {
             );
         }
         u.send_to(&sealed, target).unwrap();
+        // H-R9-015: under --reliable-udp the post-return receive owner waits for
+        // BOTH the Session DeliveryAck (logical confirmation) AND the Carrier
+        // packet ACK to drain rt.in_flight to zero — a Carrier ACK arriving
+        // first is applied, never a protocol error; success requires both
+        // logical ownership retired and post-return recovery settled.
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut post_outstanding = vec![post_record.clone()];
-        // R9-2E: the post-return path also goes through the single bounded demux
-        // owner; only a real Session DeliveryAck for the post-return record is
-        // accepted here, and its confirmation is applied exactly once.
         let mut malformed = 0usize;
-        let ack_len = match recv_udp_delivery_ack(
-            &u,
-            target,
-            &mut us,
-            &mut post_outstanding,
-            &negotiation_response,
-            &noise_response,
-            deadline,
-            &mut |_| {},
-            rt.as_mut(),
-            &mut malformed,
-        )
-        .unwrap_or_else(|_| fail("post-return UDP DeliveryAck timeout"))
-        {
-            UdpAcknowledgement::Session { record, bytes } => {
-                delivery
-                    .delivery_ack(
-                        record.stream,
-                        record.offset,
-                        record.data.len(),
-                        count as u64 + 5,
-                    )
-                    .unwrap();
-                bytes
+        let mut ack_len = 0usize;
+        loop {
+            let session_done = post_outstanding.is_empty();
+            let carrier_done = rt.as_ref().is_none_or(|r| r.in_flight() == 0);
+            if session_done && carrier_done {
+                break;
             }
-            UdpAcknowledgement::Carrier { .. } => {
-                fail("post-return path requires a Session DeliveryAck, got a Carrier ACK")
+            if Instant::now() >= deadline {
+                fail("post-return reliable-UDP dual settlement timeout");
             }
-        };
+            match recv_udp_delivery_ack(
+                &u,
+                target,
+                &mut us,
+                &mut post_outstanding,
+                &negotiation_response,
+                &noise_response,
+                deadline,
+                &mut |_| {},
+                rt.as_mut(),
+                &mut malformed,
+            ) {
+                Ok(UdpAcknowledgement::Session { record, bytes }) => {
+                    delivery
+                        .delivery_ack(
+                            record.stream,
+                            record.offset,
+                            record.data.len(),
+                            count as u64 + 5,
+                        )
+                        .unwrap();
+                    ack_len = bytes;
+                }
+                Ok(UdpAcknowledgement::Carrier { applied }) => {
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "r9_udp_return_packet_ack",
+                        0,
+                        &format!(",\"applied\":{applied}"),
+                    );
+                }
+                Err(_) => fail("post-return UDP acknowledgement failed"),
+            }
+        }
         emit_diagnostic(
             args,
             "client",
