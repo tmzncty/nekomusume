@@ -3122,6 +3122,30 @@ fn failover_client(args: &[String]) {
         .encode()
         .unwrap();
         let sealed = us.seal_unreliable(&post).unwrap();
+        // H-R9-015: under --reliable-udp the post-return Data is reliable-owned
+        // — congestion admission + on_packet_sent + socket send, and its ACK
+        // drain reuses the same bounded demux owner (not a None rt).
+        if let Some(rt) = rt.as_mut() {
+            if !rt.can_send(sealed.len() as u64) {
+                fail("r9 post-return cwnd refused send");
+            }
+            let pn = u64::from_be_bytes(sealed[..8].try_into().unwrap());
+            rt.on_packet_sent(
+                pn,
+                0,
+                sealed.len() as u64,
+                neko_reliable::FrameId(post_record.offset),
+                &post_record.data,
+            )
+            .unwrap_or_else(|_| fail("r9 post-return record send"));
+            emit_diagnostic(
+                args,
+                "client",
+                "r9_udp_post_return_sent",
+                0,
+                &format!(",\"offset\":{}", post_record.offset),
+            );
+        }
         u.send_to(&sealed, target).unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut post_outstanding = vec![post_record.clone()];
@@ -3138,7 +3162,7 @@ fn failover_client(args: &[String]) {
             &noise_response,
             deadline,
             &mut |_| {},
-            None,
+            rt.as_mut(),
             &mut malformed,
         )
         .unwrap_or_else(|_| fail("post-return UDP DeliveryAck timeout"))
