@@ -907,20 +907,40 @@ fn delivery_ack_matches(plain: &[u8], expected: &OutboundRecord) -> bool {
     )
 }
 const MAX_POST_HANDSHAKE_MALFORMED: usize = 3;
+/// Outcome of one authenticated datagram classified by the reliable-mode receive
+/// owner. Every successfully authenticated plaintext is classified exactly once
+/// and never silently discarded.
+#[derive(Debug)]
+enum UdpAcknowledgement {
+    /// A Session `DeliveryAck` matched one outstanding reliable-owned logical
+    /// record. The caller applies exactly this record's confirmation once.
+    Session {
+        record: OutboundRecord,
+        bytes: usize,
+    },
+    /// A canonical Carrier packet ACK was classified; `applied` is the typed
+    /// `apply_ack` outcome. A rejection never mutated recovery.
+    Carrier { applied: bool },
+}
+
 #[allow(clippy::too_many_arguments)]
 fn recv_udp_delivery_ack(
     socket: &UdpSocket,
     peer: SocketAddr,
     secure: &mut neko_crypto::SecureSession,
-    expected: &OutboundRecord,
+    // R9-2E: the bounded set of outstanding reliable-owned logical records. An
+    // authenticated Session DeliveryAck matching any of them is consumed in
+    // arrival order, so a later record's confirmation is never swallowed while
+    // an earlier one is still awaited.
+    outstanding: &mut Vec<OutboundRecord>,
     negotiation_response: &[u8],
     noise_response: &[u8],
     deadline: Instant,
     diagnostic: &mut dyn FnMut(&'static str),
-    // R9: optional reliable-UDP runtime — authenticated packet ACK datagrams
-    // are fed to `apply_ack` while waiting for the Session DeliveryAck.
+    // R9: optional reliable-UDP runtime. Authenticated canonical Carrier packet
+    // ACKs are applied here and reported as a typed outcome.
     mut rt: Option<&mut neko_carrier::ReliableUdpRuntime>,
-) -> Result<usize, &'static str> {
+) -> Result<UdpAcknowledgement, &'static str> {
     let mut buf = [0u8; 65536];
     let mut malformed = 0usize;
     loop {
@@ -938,28 +958,59 @@ fn recv_udp_delivery_ack(
             }
             Ok((n, _)) if buf[..n] == *noise_response => diagnostic("duplicate_noise_response"),
             Ok((n, _)) => match secure.open_unreliable(&buf[..n]) {
-                Ok(plain) if delivery_ack_matches(&plain, expected) => return Ok(n),
                 Ok(plain) => {
-                    // An authenticated Carrier packet ACK — apply to recovery.
-                    if let Some(rt) = rt.as_deref_mut() {
-                        if let Ok(rec) = neko_wire::decode(&plain)
-                            && rec.record_type == neko_wire::RecordType::Ack
-                            && let Ok(ack) = neko_wire::decode_ack(&rec.payload)
-                            && let Ok(ranges) = neko_reliable::AckRanges::from_ranges(
-                                32,
-                                &ack.ranges
-                                    .iter()
-                                    .map(|w| neko_reliable::AckRange {
-                                        start: w.start,
-                                        end: w.end,
-                                    })
-                                    .collect::<Vec<_>>(),
-                            )
-                        {
-                            let _ = rt.apply_ack(&ranges, 0, ack.ack_delay_us);
+                    // Domain 1 — Session DeliveryAck for an outstanding logical
+                    // record. Order-independent: whichever record's confirmation
+                    // arrives first is consumed as a real match.
+                    if let Ok(ProcessMessage::DeliveryAck {
+                        session,
+                        stream,
+                        offset,
+                        len,
+                    }) = ProcessMessage::decode(&plain)
+                        && session == SessionId(7001)
+                    {
+                        if let Some(pos) = outstanding.iter().position(|r| {
+                            r.stream == stream && r.offset == offset && r.data.len() == len
+                        }) {
+                            let record = outstanding.remove(pos);
+                            return Ok(UdpAcknowledgement::Session { record, bytes: n });
+                        }
+                        // Authenticated but stale/duplicate/unexpected logical
+                        // ACK: a typed, bounded negative, never a match and
+                        // never an unbounded wait.
+                        diagnostic("unexpected_logical_ack");
+                        malformed += 1;
+                        if malformed >= MAX_POST_HANDSHAKE_MALFORMED {
+                            return Err("UDP delivery acknowledgement malformed bound exceeded");
                         }
                         continue;
                     }
+                    // Domain 2 — canonical Carrier packet ACK. Applied and
+                    // rejected outcomes are both typed and observable.
+                    if rt.is_some()
+                        && let Ok(rec) = neko_wire::decode(&plain)
+                        && rec.record_type == neko_wire::RecordType::Ack
+                        && let Ok(ack) = neko_wire::decode_ack(&rec.payload)
+                        && let Ok(ranges) = neko_reliable::AckRanges::from_ranges(
+                            32,
+                            &ack.ranges
+                                .iter()
+                                .map(|w| neko_reliable::AckRange {
+                                    start: w.start,
+                                    end: w.end,
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    {
+                        let applied = rt
+                            .as_deref_mut()
+                            .is_some_and(|r| r.apply_ack(&ranges, 0, ack.ack_delay_us).is_ok());
+                        return Ok(UdpAcknowledgement::Carrier { applied });
+                    }
+                    // Domain 3 — any other authenticated plaintext consumes the
+                    // finite malformed budget in reliable mode too, so a peer
+                    // cannot make this owner spin unboundedly.
                     malformed += 1;
                     diagnostic("malformed_or_unadmitted");
                     if malformed >= MAX_POST_HANDSHAKE_MALFORMED {
@@ -986,6 +1037,7 @@ fn recv_udp_delivery_ack(
         }
     }
 }
+
 fn readiness_admitted(runtime: &SessionRuntime, request: &ProcessMessage) -> bool {
     matches!(request, ProcessMessage::ReadinessRequest { session: SessionId(7001), target_path: 2, path_generation: 1, delivery_epoch: 1, challenge_id } if (1..=READINESS_PROBES).contains(challenge_id))
         && runtime.state() == neko_session::RuntimeState::Open
@@ -2065,60 +2117,87 @@ fn failover_client(args: &[String]) {
             &format!(",\"reason\":\"{}\"", reason),
         )
     };
-    let n = recv_udp_delivery_ack(
-        &u,
-        target,
-        &mut us,
-        &udp_record,
-        &negotiation_response,
-        &noise_response,
-        application_deadline,
-        &mut admission_diagnostic,
-        rt.as_mut(),
-    )
-    .unwrap_or_else(|e| fail(&format!("UDP health observation failed: {e:?}")));
-    delivery
-        .delivery_ack(
-            udp_record.stream,
-            udp_record.offset,
-            udp_record.data.len(),
-            count as u64 + 3,
-        )
-        .unwrap();
-    emit_diagnostic(
-        args,
-        "client",
-        "udp_delivery_ack_validated",
-        1,
-        &format!(",\"ciphertext_bytes\":{}", n),
-    );
-    // R9-2 multi-record: under --reliable-udp the second reliable-owned record
-    // also receives its own independent Session DeliveryAck confirmation —
-    // two distinct logical records, two independent Session ACKs.
+    // R9-2E: one bounded authenticated receive/demux owner. Every authenticated
+    // plaintext is classified exactly once — Session DeliveryAck for any
+    // outstanding logical record (order-independent), canonical Carrier packet
+    // ACK (typed applied/rejected), or a bounded malformed negative. Under
+    // --reliable-udp both reliable-owned records are awaited together, so a
+    // record-1 confirmation arriving before record-0 is consumed, not swallowed.
+    let mut outstanding = vec![udp_record.clone()];
     if reliable_udp && let Some(rec1) = records.get(1) {
-        let n2 = recv_udp_delivery_ack(
+        outstanding.push(rec1.clone());
+    }
+    let mut logical_confirmations = 0u64;
+    let mut packet_ack_applied = 0u64;
+    let mut packet_ack_rejected = 0u64;
+    while !outstanding.is_empty() {
+        let outcome = recv_udp_delivery_ack(
             &u,
             target,
             &mut us,
-            rec1,
+            &mut outstanding,
             &negotiation_response,
             &noise_response,
             application_deadline,
             &mut admission_diagnostic,
             rt.as_mut(),
         )
-        .unwrap_or_else(|e| fail(&format!("r9 second UDP DeliveryAck failed: {e:?}")));
-        delivery
-            .delivery_ack(rec1.stream, rec1.offset, rec1.data.len(), count as u64 + 3)
-            .unwrap();
-        emit_diagnostic(
-            args,
-            "client",
-            "r9_udp_delivery_ack_validated",
-            1,
-            &format!(",\"ciphertext_bytes\":{},\"offset\":{}", n2, rec1.offset),
-        );
+        .unwrap_or_else(|e| fail(&format!("UDP delivery acknowledgement failed: {e:?}")));
+        match outcome {
+            UdpAcknowledgement::Session { record, bytes } => {
+                // Exactly-once: apply the confirmation for the record that was
+                // actually acknowledged, whichever order it arrived in.
+                delivery
+                    .delivery_ack(
+                        record.stream,
+                        record.offset,
+                        record.data.len(),
+                        count as u64 + 3,
+                    )
+                    .unwrap();
+                logical_confirmations += 1;
+                if logical_confirmations == 1 {
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "udp_delivery_ack_validated",
+                        1,
+                        &format!(",\"ciphertext_bytes\":{bytes}"),
+                    );
+                } else {
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "r9_udp_delivery_ack_validated",
+                        1,
+                        &format!(
+                            ",\"ciphertext_bytes\":{},\"offset\":{}",
+                            bytes, record.offset
+                        ),
+                    );
+                }
+            }
+            UdpAcknowledgement::Carrier { applied } => {
+                if applied {
+                    packet_ack_applied += 1;
+                } else {
+                    packet_ack_rejected += 1;
+                    emit_diagnostic(args, "client", "r9_udp_packet_ack_rejected", 0, "");
+                }
+            }
+        }
     }
+    emit_diagnostic(
+        args,
+        "client",
+        "r9_udp_packet_ack_outcomes",
+        0,
+        &format!(
+            ",\"applied\":{},\"rejected\":{}",
+            packet_ack_applied, packet_ack_rejected
+        ),
+    );
+
     // R9 settlement: drain authenticated Carrier packet ACKs until the runtime
     // reports zero in-flight, or the bounded application deadline passes.
     if let Some(rt) = rt.as_mut() {
@@ -2128,27 +2207,26 @@ fn failover_client(args: &[String]) {
                 .unwrap_or(UdpWait::Deadline)
             {
                 UdpWait::Datagram(n2, peer2) if peer2 == target => {
-                    if let Ok(plain2) = us.open_unreliable(&buf[..n2]) {
-                        if let Ok(ProcessMessage::Data { .. }) = ProcessMessage::decode(&plain2) {
-                            // Session Data is not Carrier ACK — ignore here.
-                        }
-                        // Try to decode as a Carrier ACK record over the wire.
-                        if let Ok(rec) = neko_wire::decode(&plain2)
-                            && rec.record_type == neko_wire::RecordType::Ack
-                            && let Ok(ack) = neko_wire::decode_ack(&rec.payload)
-                            && let Ok(ranges) = neko_reliable::AckRanges::from_ranges(
-                                32,
-                                &ack.ranges
-                                    .iter()
-                                    .map(|w| neko_reliable::AckRange {
-                                        start: w.start,
-                                        end: w.end,
-                                    })
-                                    .collect::<Vec<_>>(),
-                            )
-                        {
-                            let _ = rt.apply_ack(&ranges, 0, ack.ack_delay_us);
-                        }
+                    // Only a canonical Carrier ACK record is applied here;
+                    // Session Data is not Carrier ACK feedback. A rejected
+                    // application is a typed, recorded negative.
+                    if let Ok(plain2) = us.open_unreliable(&buf[..n2])
+                        && let Ok(rec) = neko_wire::decode(&plain2)
+                        && rec.record_type == neko_wire::RecordType::Ack
+                        && let Ok(ack) = neko_wire::decode_ack(&rec.payload)
+                        && let Ok(ranges) = neko_reliable::AckRanges::from_ranges(
+                            32,
+                            &ack.ranges
+                                .iter()
+                                .map(|w| neko_reliable::AckRange {
+                                    start: w.start,
+                                    end: w.end,
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                        && rt.apply_ack(&ranges, 0, ack.ack_delay_us).is_err()
+                    {
+                        emit_diagnostic(args, "client", "r9_udp_packet_ack_rejected", 0, "");
                     }
                 }
                 _ => break,
@@ -2910,26 +2988,38 @@ fn failover_client(args: &[String]) {
         let sealed = us.seal_unreliable(&post).unwrap();
         u.send_to(&sealed, target).unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
-        let ack_len = recv_udp_delivery_ack(
+        let mut post_outstanding = vec![post_record.clone()];
+        // R9-2E: the post-return path also goes through the single bounded demux
+        // owner; only a real Session DeliveryAck for the post-return record is
+        // accepted here, and its confirmation is applied exactly once.
+        let ack_len = match recv_udp_delivery_ack(
             &u,
             target,
             &mut us,
-            &post_record,
+            &mut post_outstanding,
             &negotiation_response,
             &noise_response,
             deadline,
             &mut |_| {},
             None,
         )
-        .unwrap_or_else(|_| fail("post-return UDP DeliveryAck timeout"));
-        delivery
-            .delivery_ack(
-                post_record.stream,
-                post_record.offset,
-                post_record.data.len(),
-                count as u64 + 5,
-            )
-            .unwrap();
+        .unwrap_or_else(|_| fail("post-return UDP DeliveryAck timeout"))
+        {
+            UdpAcknowledgement::Session { record, bytes } => {
+                delivery
+                    .delivery_ack(
+                        record.stream,
+                        record.offset,
+                        record.data.len(),
+                        count as u64 + 5,
+                    )
+                    .unwrap();
+                bytes
+            }
+            UdpAcknowledgement::Carrier { .. } => {
+                fail("post-return path requires a Session DeliveryAck, got a Carrier ACK")
+            }
+        };
         emit_diagnostic(
             args,
             "client",
@@ -4858,11 +4948,13 @@ mod cli_regression_tests {
         server.send_to(b"noise", client_addr).unwrap();
         server.send_to(&sealed, client_addr).unwrap();
         let mut diagnostics = Vec::new();
-        let n = recv_udp_delivery_ack(
+        let expected_len = expected.data.len();
+        let mut outstanding = vec![expected.clone()];
+        let outcome = recv_udp_delivery_ack(
             &client,
             peer,
             &mut receiver,
-            &expected,
+            &mut outstanding,
             b"selection",
             b"noise",
             Instant::now() + Duration::from_secs(1),
@@ -4870,7 +4962,14 @@ mod cli_regression_tests {
             None,
         )
         .unwrap();
-        assert_eq!(n, sealed.len());
+        match outcome {
+            UdpAcknowledgement::Session { record, bytes } => {
+                assert_eq!(bytes, sealed.len());
+                assert_eq!(record.data.len(), expected_len);
+            }
+            UdpAcknowledgement::Carrier { .. } => panic!("expected a Session DeliveryAck"),
+        }
+        assert!(outstanding.is_empty(), "matched record must be retired");
         assert_eq!(
             diagnostics,
             [
@@ -4897,11 +4996,12 @@ mod cli_regression_tests {
                 .send_to(b"garbage", client.local_addr().unwrap())
                 .unwrap();
         }
+        let mut outstanding = vec![expected.clone()];
         let err = recv_udp_delivery_ack(
             &client,
             peer,
             &mut receiver,
-            &expected,
+            &mut outstanding,
             b"selection",
             b"noise",
             Instant::now() + Duration::from_secs(1),
@@ -4910,6 +5010,120 @@ mod cli_regression_tests {
         )
         .unwrap_err();
         assert_eq!(err, "UDP delivery acknowledgement malformed bound exceeded");
+    }
+
+    #[test]
+    fn reliable_demux_matches_a_later_record_ack_while_an_earlier_one_is_outstanding() {
+        // H-R9-001 discriminating regression: with two outstanding reliable-owned
+        // logical records, a Session DeliveryAck for the LATER record must be
+        // consumed as that record's confirmation even though the earlier one has
+        // not been acknowledged. The previous serial single-`expected` receiver
+        // did not match it, so the confirmation was swallowed and the wait timed
+        // out — this test fails under that shape.
+        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let peer = server.local_addr().unwrap();
+        let (mut sender, mut receiver) = secure_pair();
+        let rec0 = OutboundRecord {
+            stream: StreamId(1),
+            offset: 0,
+            data: vec![7; 16],
+        };
+        let rec1 = OutboundRecord {
+            stream: StreamId(1),
+            offset: 16,
+            data: vec![7; 16],
+        };
+        let ack1 = ProcessMessage::DeliveryAck {
+            session: SessionId(7001),
+            stream: StreamId(1),
+            offset: 16,
+            len: 16,
+        }
+        .encode()
+        .unwrap();
+        let sealed = sender.seal_unreliable(&ack1).unwrap();
+        server
+            .send_to(&sealed, client.local_addr().unwrap())
+            .unwrap();
+        let mut outstanding = vec![rec0.clone(), rec1.clone()];
+        let outcome = recv_udp_delivery_ack(
+            &client,
+            peer,
+            &mut receiver,
+            &mut outstanding,
+            b"selection",
+            b"noise",
+            Instant::now() + Duration::from_secs(1),
+            &mut |_| {},
+            None,
+        )
+        .unwrap();
+        match outcome {
+            UdpAcknowledgement::Session { record, bytes } => {
+                assert_eq!(
+                    record.offset, 16,
+                    "the later record ACK must be matched, not swallowed"
+                );
+                assert_eq!(bytes, sealed.len());
+            }
+            UdpAcknowledgement::Carrier { .. } => panic!("expected a Session DeliveryAck"),
+        }
+        assert_eq!(
+            outstanding.len(),
+            1,
+            "exactly the matched record is retired"
+        );
+        assert_eq!(
+            outstanding[0].offset, 0,
+            "the still-unacknowledged earlier record stays outstanding"
+        );
+    }
+
+    #[test]
+    fn reliable_demux_bounds_an_authenticated_unexpected_logical_ack() {
+        // A stale/duplicate/unexpected logical ACK is a typed bounded negative,
+        // never a match and never an unbounded wait — in reliable mode too.
+        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let peer = server.local_addr().unwrap();
+        let (mut sender, mut receiver) = secure_pair();
+        let rec0 = OutboundRecord {
+            stream: StreamId(1),
+            offset: 0,
+            data: vec![7; 16],
+        };
+        let unexpected = ProcessMessage::DeliveryAck {
+            session: SessionId(7001),
+            stream: StreamId(1),
+            offset: 4096,
+            len: 16,
+        }
+        .encode()
+        .unwrap();
+        let sealed = sender.seal_unreliable(&unexpected).unwrap();
+        for _ in 0..MAX_POST_HANDSHAKE_MALFORMED {
+            server
+                .send_to(&sealed, client.local_addr().unwrap())
+                .unwrap();
+        }
+        let mut outstanding = vec![rec0.clone()];
+        let mut reasons = Vec::new();
+        let err = recv_udp_delivery_ack(
+            &client,
+            peer,
+            &mut receiver,
+            &mut outstanding,
+            b"selection",
+            b"noise",
+            Instant::now() + Duration::from_secs(1),
+            &mut |d| reasons.push(d),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err, "UDP delivery acknowledgement malformed bound exceeded");
+        assert!(reasons.contains(&"unexpected_logical_ack"), "{reasons:?}");
+        assert_eq!(outstanding.len(), 1, "no unmatched ACK retires a record");
     }
 
     #[test]
