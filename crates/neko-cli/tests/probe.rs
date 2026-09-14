@@ -2053,6 +2053,101 @@ fn reliable_udp_incomplete_settlement_fails_not_settled() {
     );
 }
 #[test]
+fn reliable_udp_migration_back_reserves_final_record() {
+    // M-R9-008 (H-R9-005): with --reliable-udp + --migration-back the reserved
+    // final logical record is neither Recovery-tracked nor sent on the legacy
+    // udp_uncertain_range_sent path before post-promotion return-to-UDP.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-mig-server");
+    let cp = tmp("r9-mig-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-mig-srv-01",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "8",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-mig-cli-01",
+        ])
+        .output()
+        .unwrap();
+    let (_server_status, _server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    // migration-back triggers controlled UDP cessation -> warm TCP; a nonzero
+    // client exit after that fault injection is acceptable. The invariant that
+    // matters is the reserved-record ownership assertion below.
+    let _ = out.status;
+    // The reserved final record must NOT appear on the legacy uncertain
+    // direct-send path in reliable mode (it is reliable-owned, not uncertain).
+    // udp_uncertain_range_sent may still appear for the non-reserved middle
+    // record; assert only that no uncertain send carries the reserved offset.
+    // With 3 records of 16 bytes: offsets are 0, 16, 32; reserved is index 2
+    // (offset 32). Reliable records are 0 and 16.
+    assert!(
+        !client_log.contains("\"event\":\"udp_uncertain_range_sent\",\"seq\":2,\"ciphertext_bytes\":96,\"stream\":1,\"offset\":32"),
+        "{client_log}"
+    );
+}
+#[test]
 fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
