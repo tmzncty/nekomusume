@@ -2199,7 +2199,9 @@ fn failover_client(args: &[String]) {
     // is classified as a Carrier ACK or consumes the persistent malformed
     // budget; typed outcomes are counted.
     if let Some(rt) = rt.as_mut() {
-        let settle_deadline = Instant::now() + Duration::from_secs(secs.min(10));
+        // M-R9-009: settlement uses the SAME absolute application deadline —
+        // no fresh time budget just because Session confirmations landed first.
+        let settle_deadline = application_deadline;
         while rt.in_flight() > 0 && Instant::now() < settle_deadline {
             match recv_udp_delivery_ack(
                 &u,
@@ -2237,15 +2239,26 @@ fn failover_client(args: &[String]) {
                 rt.in_flight()
             ),
         );
-        // H-R9-007: settlement completion is emitted AFTER the drain — the
-        // authoritative in-flight view is the runtime's, emitted post-settle.
-        emit_diagnostic(
-            args,
-            "client",
-            "r9_udp_in_flight_settled",
-            0,
-            &format!(",\"remaining_in_flight\":{}", rt.in_flight()),
-        );
+        // H-R9-010: only emit the settled marker when in-flight is actually
+        // zero — a timeout/malformed-bound exit with remaining in-flight is a
+        // typed incomplete result, never a false settlement premise.
+        if rt.in_flight() == 0 {
+            emit_diagnostic(
+                args,
+                "client",
+                "r9_udp_in_flight_settled",
+                0,
+                ",\"remaining_in_flight\":0",
+            );
+        } else {
+            emit_diagnostic(
+                args,
+                "client",
+                "r9_udp_settlement_incomplete",
+                0,
+                &format!(",\"remaining_in_flight\":{}", rt.in_flight()),
+            );
+        }
     }
     let health_limits = HealthLimits {
         degrade_after: 2,
