@@ -1,91 +1,45 @@
-# ChatGPT reviewer handoff — `940b17f` fixes client post-return ownership; H-R9-015 remains HIGH on server + dual settlement
+# ChatGPT reviewer handoff — `34ae142` closes H-R9-015 source shape; finish R9-2H evidence gate, then continue deep R9 queue
 
 ## Current repository truth
 
-- Latest developer source/test SHA reviewed: exact `940b17f5450314acae1b87dd63440b540185395c` (`fix(cli): post-migration reliable-UDP ownership for reserved record (H-R9-015)`).
-- Independent bounded recheck: `docs/reviews/r9-2h-post-migration-reliable-ownership-recheck-940b17f-20260915.md` (reviewer commit `057673d`).
-- Hosted GitHub checks on exact `940b17f`: `stable checks` success; `nightly decode fuzz smoke` success. Hosted checks are supplementary only; no developer-local exact-tree provenance for this source SHA is accepted yet.
+- Latest developer source/test SHA reviewed: exact `34ae1426ec6af8dfed161f1fcc7ba3e9e7797236` (`fix(cli): post-return dual settlement + server packet-ACK ownership (H-R9-015)`).
+- Independent bounded recheck: `docs/reviews/r9-2h-post-return-dual-settlement-recheck-34ae142-20260915.md` (reviewer commit `fcc2ff7`).
+- Hosted GitHub checks on exact `34ae142`: `stable checks` success; `nightly decode fuzz smoke` success. Hosted checks are supplementary only; no developer-local clean exact-tree provenance for `34ae142` is accepted yet.
 - Open PRs: none. No new WAN/VPS experiment. `READY_LIVE: none` remains authoritative.
 - Governance unchanged: item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
-The coding agent is explicitly pre-authorized to close the remaining mechanically determined H-R9-015 pieces, finish R9-2H P1-P4 + exact-tree provenance, then continue through R9-3..R9-12 and Q10/Q11/Q12 without waiting for reviewer cadence.
+The coding agent is explicitly pre-authorized to finish R9-2H P1-P4 + exact-tree provenance, then continue through R9-3..R9-12 and Q10/Q11/Q12 without waiting for reviewer cadence. Reviewer cadence is not a work-ticket boundary.
 
-## Accepted progress through `940b17f`
+## Accepted progress through `34ae142`
 
 Prior R9-2H closures remain accepted:
 
 - H-R9-011: out-of-order later Session DeliveryAck is buffered and cannot cumulatively confirm earlier unconfirmed bytes.
 - H-R9-012/H-R9-013/H-R9-014: applied Session ACK evidence follows actual mutation order and carries exact `stream + offset`; buffered applied evidence carries `buffered=true`; logical `outstanding + pending_acks` must retire before Carrier-only settlement.
 - one operation-wide malformed counter; one absolute application deadline; Carrier packet ACK remains Carrier-local; incomplete Recovery settlement is terminal and cannot feed downstream health/failover as success.
+- `940b17f`: after successful migration-back the reserved final UDP record reuses the existing client `ReliableUdpRuntime`; `can_send` precedes ownership commit; `on_packet_sent` registers the exact secure-record sequence / bytes / stable `FrameId(record.offset)` / retained plaintext before socket send.
 
-`940b17f` additionally closes the **client send-registration half** of H-R9-015:
+### H-R9-015A/B implementation — ACCEPT
 
-- after successful migration-back, the reserved final UDP record reuses the existing client `ReliableUdpRuntime`;
-- `can_send` is checked before ownership commit;
-- `on_packet_sent` registers packet number / bytes / stable `FrameId(record.offset)` / retained plaintext before socket send;
-- the post-return receive helper now receives `rt.as_mut()` instead of `None`.
+`34ae142` closes the remaining post-return source ownership gap without changing Session/Carrier/ACK architecture:
 
-Do not regress those facts.
+- server post-return path creates a Carrier ACK obligation only after authenticated `open_unreliable`, exact `ProcessMessage::Data` decode, correct Session identity and successful `SessionRuntime::receive`;
+- the server uses the received SecureSession sequence as the same packet identity registered by the client and feeds it to the existing `server_rt.on_packet_received` owner;
+- Session DeliveryAck and canonical authenticated Carrier `RecordType::Ack` remain separate messages/evidence domains;
+- client post-return receive uses one absolute deadline and one malformed counter and succeeds only after both exact Session ownership is retired and `ReliableUdpRuntime.in_flight() == 0`;
+- valid Carrier ACK may arrive before or after the Session DeliveryAck; neither domain retires the other.
 
-# OPEN HIGH — H-R9-015 is only partially repaired
+The SecureSession framing already defines `sequence:u64be || Noise ciphertext`; `open` uses that sequence as the Noise transport nonce and validates AEAD + record context before replay state advances. Therefore `sealed[..8]` / received `record[..8]` names the same authenticated packet identity in this bounded path; no second packet-number scheme is introduced.
 
-## H-R9-015A — post-return server still emits no Carrier packet ACK
+No new BLOCKER/HIGH was found in this source scope. **Do not reopen H-R9-015 unless new process evidence contradicts it.**
 
-The existing primary reliable-UDP server path already shows the correct committed layering: after authenticated Data successfully reaches `SessionRuntime::receive`, it derives the received packet number, calls `server_rt.on_packet_received(pn, true)`, emits the Session `DeliveryAck`, and separately obtains `server_rt.poll_outgoing_ack(0)` to encode/seal/send a Carrier `RecordType::Ack`.
+# R9-2H evidence front — READY_LOCAL, execute continuously
 
-The post-migration recovery owner still does only:
-
-```text
-authenticated post-return Data
- -> SessionRuntime::receive
- -> Session DeliveryAck
- -> migration_back_complete=true
-```
-
-It does **not** call `server_rt.on_packet_received` for that packet and does not emit the canonical Carrier ACK. Therefore the client Recovery packet registered by `940b17f` has no truthful server-side Carrier-ACK obligation.
-
-### Smallest repair
-
-Reuse the existing primary reliable-UDP server pattern in the post-return owner. Only after authentication + exact Data decode + successful `SessionRuntime::receive`:
-
-1. derive the actual received packet number from the authenticated datagram framing;
-2. call `server_rt.on_packet_received(pn, true)`;
-3. emit the canonical authenticated Carrier packet ACK via `poll_outgoing_ack(0)` / existing ACK codec;
-4. emit the Session `DeliveryAck` separately;
-5. malformed/tampered/unadmitted/non-Data input creates neither Session delivery evidence nor Carrier ACK obligation.
-
-Do not invent a second ACK format or packet tracker.
-
-## H-R9-015B — post-return client is order-sensitive and does not require dual settlement
-
-The client currently calls `recv_udp_delivery_ack(...)` once and treats the first typed result as follows:
-
-- `Session` -> apply `SessionRuntime::delivery_ack` and continue;
-- `Carrier` -> fail (`post-return path requires a Session DeliveryAck, got a Carrier ACK`).
-
-Once H-R9-015A emits both independent acknowledgements, either authenticated datagram may arrive first. A valid Carrier ACK arriving before the Session DeliveryAck is not a protocol error.
-
-Also, after accepting the Session DeliveryAck, the current path does not require `rt.in_flight() == 0` before success. A missing/suppressed Carrier ACK can therefore leave Recovery ownership live while the command continues.
-
-### Smallest repair
-
-Under the existing post-return absolute deadline and malformed budget, run one bounded classifier owner until both are true:
-
-```text
-exact reserved Session DeliveryAck applied once
-AND
-post-return ReliableUdpRuntime.in_flight() == 0
-```
-
-Carrier ACK and Session DeliveryAck may arrive in either order. Apply/reject Carrier feedback through the existing runtime with typed evidence; apply Session confirmation only to the exact reserved record. Neither evidence domain may retire the other. Timeout/malformed-bound/receive failure with either domain incomplete is typed terminal/nonzero and emits no success/settled claim.
-
-No Session/Carrier/ACK/crypto/wire architecture change and no new TTL/LRU/capacity value is required.
-
-# R9-2H evidence front — execute continuously after H-R9-015
+The implementation is ahead of its acceptance evidence. Finish the following coherent evidence slices on real built binaries; do not stop after any one test.
 
 ## R9-2H-P1 — exact reversed-order built-process evidence
 
-Strengthen the real built-binary reversed ACK test so structured evidence proves all of:
+Strengthen `reliable_udp_reversed_ack_order_confirms_in_order` to parse exact structured events rather than broad substring/order matches. Require:
 
 1. successful client exit;
 2. exactly one `r9_udp_delivery_ack_buffered` with `stream=1`, `offset=16`, `watermark=0`;
@@ -97,20 +51,23 @@ Strengthen the real built-binary reversed ACK test so structured evidence proves
 8. logical outstanding/pending ownership is empty before Carrier settlement;
 9. final relevant Recovery settlement reaches `remaining_in_flight=0`.
 
-Use parsed/exact structured event assertions, not generic substring ordering that unrelated diagnostics can satisfy.
+Do not allow unrelated diagnostics containing `offset` to satisfy ordering assertions.
 
-## R9-2H-P2 — exact reserved post-migration ownership
+## R9-2H-P2 — exact reserved post-migration ownership + dual settlement
 
-Strengthen `reliable_udp_migration_back_reserves_final_record` for the exact reserved fixture record (`stream=1`, current offset `32`) to prove:
+Strengthen `reliable_udp_migration_back_reserves_final_record`. The current test originated as a negative reservation check: it permits nonzero client exit and only rejects one legacy `udp_uncertain_range_sent` shape for reserved offset 32. It does not yet prove the `940b17f`/`34ae142` source behavior.
 
-- no pre-promotion Recovery ownership;
-- no legacy pre-promotion `udp_uncertain_range_sent` ownership;
-- `udp_migrated_back` precedes reliable tracking/send;
-- exactly one post-promotion reliable ownership registration/send for that exact record;
-- server records the exact authenticated post-return packet and emits one independent Carrier ACK obligation;
-- exact Session DeliveryAck is independently applied once;
-- arrival order of Carrier ACK vs Session DeliveryAck does not affect correctness;
-- post-return Recovery reaches `in_flight=0` before command success.
+For exact reserved fixture record `stream=1, offset=32`, require successful built-binary completion and exact structured evidence that:
+
+1. no pre-promotion Recovery ownership exists for offset 32;
+2. no legacy pre-promotion `udp_uncertain_range_sent` owns offset 32;
+3. `udp_migrated_back` precedes exactly one `r9_udp_post_return_sent` for that exact record;
+4. server accepts that authenticated post-return Data and emits exactly one independent Session DeliveryAck and one independent Carrier packet ACK obligation;
+5. client applies the exact Session DeliveryAck once;
+6. client applies the Carrier ACK through Recovery and post-return `in_flight` reaches zero before success;
+7. Carrier ACK first and Session DeliveryAck first are both accepted ordering cases.
+
+A final structured evidence event such as `r9_udp_post_return_settled` carrying exact stream/offset and `remaining_in_flight=0` is acceptable if needed for unambiguous assertions. It is evidence only, not new protocol semantics.
 
 ## R9-2H-P3 — persistent malformed budget across valid Carrier feedback
 
@@ -125,20 +82,22 @@ malformed #3
 
 Malformed #3 must hit the existing `MAX_POST_HANDSHAKE_MALFORMED` ceiling. The valid Carrier ACK must not reset the operation-wide malformed counter. Termination must be typed, finite and non-spinning. A bounded test-only server seam may emit authenticated malformed plaintext; do not change the numeric limit.
 
-## R9-2H-P4 — preserve incomplete settlement terminality
+## R9-2H-P4 — preserve incomplete settlement terminality, including post-return
 
-Keep `reliable_udp_incomplete_settlement_fails_not_settled`: remaining in-flight != 0 is nonzero/terminal, emits incomplete, never emits `r9_udp_in_flight_settled`, and never feeds downstream health/failover from a false premise. Extend the same truth boundary to the post-migration reserved-record owner.
+Keep `reliable_udp_incomplete_settlement_fails_not_settled`: remaining in-flight != 0 is nonzero/terminal, emits incomplete, never emits `r9_udp_in_flight_settled`, and never feeds downstream health/failover from a false premise.
+
+Extend the same truth boundary to the post-migration reserved-record owner: suppress/miss one of the two independent evidence domains, require nonzero terminal outcome, no post-return settled/success claim, and no downstream continuation based on incomplete ownership.
 
 ## R9-2H-GATE — exact pushed-tree developer-local provenance
 
-After H-R9-015A/B and P1-P4 all land on one reachable source/test SHA, use a safe clean worktree and persist:
+After P1-P4 land together on one reachable source/test SHA, use a safe clean worktree and persist:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
 git diff --check
 ```
 
-Record exact pushed SHA, UTC start/end, Linux OS/arch, Rust stable version, both exit codes, and clean initial/final tree. No decoder/parser/crypto-framing change => do not invent a new fuzz obligation; hosted fuzz remains supplementary.
+Record exact pushed SHA, UTC start/end, Linux OS/arch, Rust stable version, both exit codes, and clean initial/final tree. No decoder/parser/crypto-framing change in `34ae142`; do not invent a new fuzz obligation. Hosted fuzz remains supplementary cross-evidence.
 
 R9-2H closes only when one reachable tree proves exact reversed logical confirmation, direct+buffered Session applied identity, bounded pending ownership, one operation-wide malformed budget/deadline, pre/post-migration reliable ownership, independent Session + Carrier settlement, exact reserved ownership and incomplete-settlement terminality.
 
@@ -146,7 +105,7 @@ R9-2H closes only when one reachable tree proves exact reversed logical confirma
 
 # Continuous queue after R9-2H
 
-Preserve this deep queue. Do not collapse it after one repair.
+Preserve this deep queue. Do not collapse it after one repair or one green test.
 
 ## R9-3 — process Data-loss recovery
 
@@ -202,7 +161,7 @@ Only after Q11 creates a specific `READY_LIVE` question, execute exactly one min
 
 # VPS opportunity
 
-**Not READY — implementation/evidence dependency.** Unlock chain: H-R9-015A/B -> R9-2H P1/P2/P3/P4 + local provenance -> R9-3..R9-12 -> Q10/Q11. Standing authorization already covers the eventual bounded self-owned TCP/UDP run once a specific `READY_LIVE` row exists; do not ask for generic WAN permission.
+**Not READY — local implementation/evidence dependency.** Unlock chain: R9-2H P1/P2/P3/P4 + clean exact-tree provenance -> R9-3..R9-12 -> Q10/Q11. Standing authorization already covers the eventual bounded self-owned TCP/UDP run once a specific `READY_LIVE` row exists; do not ask for generic WAN permission.
 
 # Non-blocking policy/authority gates
 
