@@ -4959,6 +4959,7 @@ mod cli_regression_tests {
         let mut diagnostics = Vec::new();
         let expected_len = expected.data.len();
         let mut outstanding = vec![expected.clone()];
+        let mut malformed = 0usize;
         let outcome = recv_udp_delivery_ack(
             &client,
             peer,
@@ -4969,6 +4970,7 @@ mod cli_regression_tests {
             Instant::now() + Duration::from_secs(1),
             &mut |d| diagnostics.push(d),
             None,
+            &mut malformed,
         )
         .unwrap();
         match outcome {
@@ -5006,6 +5008,7 @@ mod cli_regression_tests {
                 .unwrap();
         }
         let mut outstanding = vec![expected.clone()];
+        let mut malformed = 0usize;
         let err = recv_udp_delivery_ack(
             &client,
             peer,
@@ -5016,6 +5019,7 @@ mod cli_regression_tests {
             Instant::now() + Duration::from_secs(1),
             &mut |_| {},
             None,
+            &mut malformed,
         )
         .unwrap_err();
         assert_eq!(err, "UDP delivery acknowledgement malformed bound exceeded");
@@ -5056,6 +5060,7 @@ mod cli_regression_tests {
             .send_to(&sealed, client.local_addr().unwrap())
             .unwrap();
         let mut outstanding = vec![rec0.clone(), rec1.clone()];
+        let mut malformed = 0usize;
         let outcome = recv_udp_delivery_ack(
             &client,
             peer,
@@ -5066,6 +5071,7 @@ mod cli_regression_tests {
             Instant::now() + Duration::from_secs(1),
             &mut |_| {},
             None,
+            &mut malformed,
         )
         .unwrap();
         match outcome {
@@ -5118,6 +5124,7 @@ mod cli_regression_tests {
         }
         let mut outstanding = vec![rec0.clone()];
         let mut reasons = Vec::new();
+        let mut malformed = 0usize;
         let err = recv_udp_delivery_ack(
             &client,
             peer,
@@ -5128,6 +5135,7 @@ mod cli_regression_tests {
             Instant::now() + Duration::from_secs(1),
             &mut |d| reasons.push(d),
             None,
+            &mut malformed,
         )
         .unwrap_err();
         assert_eq!(err, "UDP delivery acknowledgement malformed bound exceeded");
