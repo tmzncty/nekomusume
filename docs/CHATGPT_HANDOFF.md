@@ -1,104 +1,89 @@
-# ChatGPT reviewer handoff — R9-2 implementation-stagnation override; execute authenticated demux repair now
+# ChatGPT reviewer handoff — R9-2E partially accepted; single-owner demux closure still required
 
 ## Reviewed repository truth
 
-- Current default branch before this refresh: exact `5d2d188f78c65e8f11009b0ccb50c84c1425bd57` (`docs(handoff): keep R9-3 blocked on authenticated demux closure`).
-- Latest developer source/test SHA remains exact `fb09cf59e81782a5b2ecf12466bf47f72a9e51d6` (`fix(cli): R9-2 multi-record demux + reserved-record ownership`). There has been no newer source/test commit or open PR for multiple reviewer cycles.
-- Exact `f74f1e6d711258bb2cba0853feed4359d799bee6` records the clean developer-local exact-tree gate for `fb09cf5`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean initial/final tree, Linux x86_64, rustc 1.98.0.
-- Current `5d2d188` has green GitHub-hosted `stable checks` and `nightly decode fuzz smoke`; hosted checks are extra cross-evidence only.
-- Independent reviewer recheck remains `docs/reviews/independent-r9-repair-recheck-fb09cf5-20260914.md`.
+- Latest developer source/test SHA: exact `8bd87e388745ae175f8b188f13936f1c1fe86ea4` (`fix(cli): R9-2E bounded authenticated receive/demux owner`).
+- Exact `42f0c9f14321994f17e6d91795743d62f6acada1` is a docs-only descendant recording local provenance for the same `crates/neko-cli/src/main.rs` blob.
+- This reviewer pass adds `docs/reviews/independent-r9-demux-recheck-8bd87e3-20260914.md` at docs-only exact `1a43e8aa56b72e598c227452f222af4e596d1487`.
+- Developer-local provenance records `cargo test -p neko-cli`, workspace clippy, `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, and clean-tree success for a code-identical measured tree; current hosted `stable checks` and `nightly decode fuzz smoke` are green and remain separate cross-evidence.
 - Open PRs: none. No WAN/VPS execution occurred in this sequence. `READY_LIVE: none` remains authoritative.
 - Governance unchanged: item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
-## Implementation stagnation verdict
+## Reviewer verdict on `8bd87e3`
 
-The current stop is **not** an external blocker and **not** a request for maintainer policy. `AGENTS.md` section 3.2 applies: the same mechanically repairable HIGH has remained at queue head across multiple review cycles while repository integrity and CI are green. The coding agent must stop waiting and implement the bounded demultiplexer now.
+### Original order-sensitive logical-ACK defect — PARTIALLY ACCEPTED
 
-Do not create another proposal-only/doc-only cycle for R9-2. The existing semantics already determine the repair shape closely enough for implementation.
+The new helper now accepts a Session `DeliveryAck` for any currently outstanding reliable-owned logical record and returns the actual matched `OutboundRecord`; the caller applies `SessionRuntime::delivery_ack` to that record. A later logical ACK is therefore no longer silently consumed merely because an earlier record is still outstanding.
 
-## H-R9-001 — OPEN HIGH and exact current defect
+The focused loopback/authenticated unit regression is discriminating for this matching bug. Carrier `apply_ack` rejection is also no longer discarded through `let _ = ...` at this first receive boundary.
 
-Current `crates/neko-cli/src/main.rs::recv_udp_delivery_ack` still accepts one `expected: &OutboundRecord` and loops until that one Session `DeliveryAck` arrives. In reliable mode:
+However R9-2 is **not closed**. The implementation still does not satisfy the single bounded authenticated demux-owner contract required before R9-3.
 
-- `fb09cf5` calls the helper serially for record 0 and then record 1;
-- an authenticated record-1 Session DeliveryAck arriving while the first call waits for record 0 fails `delivery_ack_matches(expected=record0)`, then enters the Carrier-ACK branch;
-- if it is not a canonical Carrier ACK, the `rt.is_some()` branch unconditionally `continue`s, consuming/discarding that legitimate logical confirmation;
-- authenticated unexpected/control/malformed plaintext therefore bypasses `MAX_POST_HANDSHAKE_MALFORMED` whenever reliable mode is active;
-- `rt.apply_ack(...)` errors are still discarded through `let _ = ...`, so rejected/future/stale Carrier feedback is not typed/observable at this boundary.
+## H-R9-006 — OPEN HIGH: malformed budget resets across valid/rejected Carrier ACKs
 
-This is a local correctness/evidence defect. No wire grammar, Session architecture, Carrier architecture, crypto design, security numeric policy, D019 decision or release authority is needed to fix it.
+`recv_udp_delivery_ack` owns `let mut malformed = 0usize` locally, then returns on every matched Session DeliveryAck **and every canonical Carrier ACK**, including `apply_ack` rejection. The caller invokes the helper again while logical confirmations remain.
 
-## R9-2E — required implementation shape (pre-authorized)
+Therefore `MAX_POST_HANDSHAKE_MALFORMED` is not a finite budget over the reliable receive operation. An authenticated peer can interleave, for example, two malformed/unexpected plaintexts with one canonical Carrier ACK and repeatedly reset the counter. Rejected Carrier ACKs also trigger the reset.
 
-Implement **one bounded authenticated receive/demux owner** in `neko-cli` integration glue for the reliable-owned logical records. Do not move Session semantics into `neko-carrier` and do not add a second delivery ledger.
+The absolute deadline bounds elapsed time but does not make the advertised malformed-count ceiling truthful.
 
-The current R9 slice has exactly two reliable-owned records (`records[0]` and `records[1]`), already bounded by the existing process workload. Build the outstanding logical-confirmation set from those existing records; do not invent a new retention/capacity policy value.
+### Required repair
 
-A helper may be named/structured differently, but it should have the equivalent ownership model of:
+Make invalid-input accounting persistent across the entire reliable receive/settlement owner. Prefer one stateful owner loop; if classification remains factored into a helper, pass one persistent mutable budget/counter state through every call.
 
-- socket + expected peer + authenticated `SecureSession`;
-- bounded outstanding Session DeliveryAck expectations keyed by exact `(session, stream, offset, len)`;
-- mutable `SessionRuntime` as the sole owner that applies logical `delivery_ack`;
-- mutable `ReliableUdpRuntime` as the sole owner that applies Carrier packet ACK feedback;
-- existing negotiation/noise duplicate inputs and one absolute bounded deadline;
-- existing finite malformed/ignored budget;
-- typed counters/events for logical ACK applied/duplicate/unexpected, Carrier ACK applied/rejected, and malformed/unexpected authenticated plaintext.
+Add a discriminating regression: authenticated malformed #1, malformed #2, canonical Carrier ACK, malformed #3 must still trip the third-malformed bound rather than reset after the ACK.
 
-For **every successfully authenticated plaintext, classify exactly once**:
+## H-R9-007 — OPEN HIGH: settlement is still a second untyped receive owner
 
-1. Try `ProcessMessage::decode` and accept only exact `DeliveryAck` for Session 7001 whose `(stream, offset, len)` exists in the outstanding reliable-owned set. Apply `SessionRuntime::delivery_ack` exactly once and retire that expectation. A duplicate/stale/unexpected logical ACK is typed and bounded; it is never silently consumed as Carrier feedback.
-2. Otherwise try canonical `neko_wire::decode` + `RecordType::Ack` + `decode_ack` + bounded `AckRanges`. Call `ReliableUdpRuntime::apply_ack`. Emit a typed applied or rejected outcome; an error must not be discarded and rejected feedback must not mutate recovery.
-3. Otherwise consume the existing authenticated malformed/ignored budget, emit a typed diagnostic, and fail once the finite bound is exhausted. Reliable mode must not have an unconditional silent `continue` for authenticated unknown plaintext.
+Once `outstanding` is empty, `failover_client` leaves the demux helper and starts a separate settlement loop. That loop reparses authenticated datagrams itself.
 
-The two grammars are already distinguishable without architecture change: `ProcessMessage` requires process version byte `1`, while the candidate outer `neko_wire` record currently uses wire version `0`. Do not add a new protocol tag merely for this repair.
+Current consequences:
 
-The demux loop may return success when **both** conditions hold:
+- authenticated non-ACK plaintext in settlement is silently ignored instead of consuming the same finite malformed/ignored budget and typed classification path;
+- successful Carrier ACK applications in settlement do not increment the earlier `packet_ack_applied` counter;
+- `r9_udp_packet_ack_outcomes` is emitted **before** settlement, so its totals may omit the ACKs that actually drain recovery;
+- the claimed invariant “every successfully authenticated plaintext is classified exactly once by one bounded owner” is therefore still false over the complete operation.
 
-- all required reliable-owned Session DeliveryAck expectations have been applied exactly once;
-- Carrier recovery reports `in_flight()==0`.
+### Required repair
 
-Otherwise it must end with an explicit bounded timeout/partial failure at the existing deadline. Do not manufacture Session confirmation from packet ACK and do not manufacture Carrier ACK from Session DeliveryAck.
+Use the same classifier/owner for logical-confirmation and Carrier-settlement phases. Do not keep a second ad-hoc Carrier-ACK decoder loop.
 
-Legacy non-`--reliable-udp` behavior may keep the simpler single-record helper if that minimizes change; reliable mode must use the single demux owner rather than two serial `recv_udp_delivery_ack` calls.
+The reliable receive owner completes only when:
 
-## R9-2F — discriminating regressions required in the same coherent repair
+1. all required reliable-owned Session DeliveryAck expectations have been applied exactly once; **and**
+2. `ReliableUdpRuntime::in_flight()==0`.
 
-Add bounded built-binary/process tests that would fail on the current serial helper.
+Otherwise it ends with explicit bounded timeout/partial failure. Final Carrier ACK applied/rejected totals are emitted only after settlement and include all ACKs processed by the owner.
 
-### 1. Reversed logical DeliveryAck order
+## M-R9-008 — OPEN MEDIUM: required built-binary/process regressions still incomplete
 
-Add a test-only server seam that retains the first reliable-owned **Session DeliveryAck** until the second reliable-owned Data has been accepted, then sends the second logical DeliveryAck before the first. Carrier packet ACK behavior can remain otherwise normal.
+`8bd87e3` changes only `crates/neko-cli/src/main.rs`. Its new discriminating tests are unit tests over real loopback UDP sockets and an authenticated `SecureSession`, not built-binary/process tests through the real `failover` command.
 
-Prove:
+Before R9-2 closure, retain the previous R9-2F requirement:
 
-- both logical confirmations are classified regardless of order;
-- both exact logical keys are applied to `SessionRuntime` exactly once;
-- no logical ACK is silently consumed as Carrier feedback;
-- final Carrier in-flight state settles to zero;
-- clean baseline uses zero PTO/retransmit and zero Session conflict; duplicate count is zero unless the test intentionally creates one and documents why.
+1. **Reversed logical DeliveryAck order through the built binary.** Add a test-only server seam that holds record 0's Session DeliveryAck until record 1 is accepted, then sends record 1 ACK before record 0. Prove both exact logical keys are applied once, no logical ACK becomes Carrier feedback, Carrier recovery settles, no conflict, and the baseline needs no PTO/retransmit unless deliberately injected.
+2. **`--reliable-udp + migration-back` reservation.** Prove the reserved final logical record is neither reliable-tracked nor legacy wire-sent before post-promotion return authorization; only its later explicit owner may send it.
 
-### 2. Reliable UDP + migration-back reservation
+The ordinary no-loss multi-record process test remains useful but is not a substitute for these two discriminating process cases.
 
-Run the existing recovery/migration-back path together with `--reliable-udp` and the minimum count that exercises the reserved final record. Prove the reserved final logical offset (the current three-record case is index 2 / offset 32 for 16-byte records) is neither reliable-tracked nor legacy wire-sent before the post-promotion return-to-UDP authorization milestone. It may be sent only by the explicitly authorized later owner.
+## R9-2H — coherent repair/closure package, pre-authorized now
 
-Also retain the ordinary no-loss multi-record test, but make its assertions discriminating: two reliable logical first-deliveries, two independent Session DeliveryAck applications, typed Carrier ACK outcomes, `remaining_in_flight:0`, zero PTO/retransmit, finite malformed budget, zero conflict, cleanup.
+Do not wait for another reviewer cycle. Implement H-R9-006 + H-R9-007 + M-R9-008 as one coherent package where practical:
 
-## R9-2G — exact-tree closure gate
+1. one reliable receive/demux owner state with outstanding logical confirmations, recovery settlement, one persistent malformed budget, and typed counters;
+2. one classification path for every successfully authenticated plaintext: exact Session DeliveryAck -> canonical Carrier ACK -> bounded invalid/unexpected;
+3. one final completion predicate (`outstanding.is_empty() && in_flight()==0`) under the existing absolute bound;
+4. final typed outcome counters only after completion/partial outcome;
+5. focused interleaved-malformed/Carrier-ACK regression;
+6. reversed logical-ACK built-binary/process regression;
+7. reliable+migration-back reservation process regression;
+8. exact pushed-tree local gate + provenance.
 
-After one coherent pushed source/test SHA closes H-R9-001 and M-R9-004, run on the exact pushed clean tree:
+No wire tag, new Session ledger, new Carrier delivery semantics, D019 choice, retention policy, capacity/security number, or release decision is required.
 
-```bash
-PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
-git diff --check
-```
+# Continuous queue after R9-2H closes
 
-Record exact pushed SHA, UTC start/end, OS/arch, rustc, exit codes, clean initial/final tree. Hosted CI remains separate cross-evidence. No decode fuzz is required unless external decoder/framing grammar changes.
-
-Reviewer then checks the actual diff and tests. Do not wait for reviewer cadence to start the downstream queue if the repair is green and no new BLOCKER/HIGH is discovered locally.
-
-# Pre-authorized continuous queue after R9-2 closes
-
-Preserve this queue; do not collapse it to one hourly ticket.
+Keep this entire queue available; do not shrink back to one hourly ticket.
 
 ## R9-3 — process Data-loss recovery
 
@@ -118,7 +103,7 @@ Using bounded test-only limits, prove initial/retransmit sends consult congestio
 
 ## R9-7 — truthful process observability/result contract
 
-Distinguish Data offered/admitted/wire-sent/suppressed; Carrier ACK emitted/wire-sent/suppressed/applied/rejected; Session DeliveryAck emitted/applied/duplicate/rejected; PTO due/fired; retransmit attempted/admitted/wire-sent/refused; resolved acked/lost/in-flight; Session first-delivery/duplicate/conflict/application bytes; cleanup/final outcome. Increment counters only after represented actions succeed.
+Distinguish Data offered/admitted/wire-sent/suppressed; Carrier ACK emitted/wire-sent/suppressed/applied/rejected; Session DeliveryAck emitted/applied/duplicate/rejected; PTO due/fired; retransmit attempted/admitted/wire-sent/refused; resolved acked/lost/in-flight; Session first-delivery/duplicate/conflict/application bytes; malformed-budget use; cleanup/final outcome. Increment counters only after represented actions succeed.
 
 ## R9-8 — actual authenticated warm TCP standby
 
@@ -138,7 +123,7 @@ Cover setup/application/PTO/settlement deadlines, controlled stop, failed standb
 
 ## R9-12 — coherent exact-tree gate + independent bounded review
 
-Independent review challenges Session-above-Carrier layering, authenticated packet identity/ACK, bounded plaintext ownership, deadline-driven PTO/pacing/cwnd, fresh health/hysteresis, real warm TCP readiness/promotion, uncertain Session replay/dedup, result truthfulness and cleanup/no-public-exposure. BLOCKER/HIGH -> smallest repair + regression + re-gate + continue; LOW/NOTE does not halt progression.
+Independent review challenges Session-above-Carrier layering, authenticated packet identity/ACK, bounded plaintext ownership, single receive-owner classification, deadline-driven PTO/pacing/cwnd, fresh health/hysteresis, real warm TCP readiness/promotion, uncertain Session replay/dedup, result truthfulness and cleanup/no-public-exposure. BLOCKER/HIGH -> smallest repair + regression + re-gate + continue; LOW/NOTE does not halt progression.
 
 # Q10/Q11/Q12 after R9
 
@@ -148,13 +133,13 @@ Independent review challenges Session-above-Carrier layering, authenticated pack
 
 # VPS opportunity
 
-**Not READY yet.** Current multi-record receive semantics are still order-sensitive and therefore not trustworthy enough for WAN promotion. This is an implementation dependency, not a permission blocker.
+**Not READY yet.** R9 receive ownership is improved but still split across two loops and the malformed budget is not operation-wide; required process regressions are incomplete. This is an implementation/evidence dependency, not a permission blocker.
 
-Once repaired R9-2..R9-12 and Q11 establish a new specific live question, standing authorization already covers the bounded self-owned TCP/UDP run. Do not ask again for ordinary WAN authorization.
+Once repaired R9-2H..R9-12 and Q11 establish a new specific live question, standing authorization already covers the bounded self-owned TCP/UDP run. Do not ask again for ordinary WAN authorization.
 
 # Non-blocking policy/authority gates
 
-Keep these separate from the mechanically determined R9 chain:
+Keep separate from the mechanically determined R9 chain:
 
 - `SessionRuntime.events` retention (`POLICY_BLOCKED_RESOURCE_BOUND`);
 - D019 source-retention/no-reset policy;
