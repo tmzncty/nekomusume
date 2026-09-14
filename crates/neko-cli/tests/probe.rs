@@ -2227,8 +2227,18 @@ fn reliable_udp_reversed_ack_order_confirms_in_order() {
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
     // Record-1 ACK is observed/buffered first while the watermark is still 0.
+    let buffered: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_delivery_ack_buffered\""))
+        .collect();
+    assert_eq!(buffered.len(), 1, "{client_log}");
     assert!(
-        client_log.contains("\"event\":\"r9_udp_delivery_ack_buffered\""),
+        buffered[0].contains("\"offset\":16") && buffered[0].contains("\"watermark\":0"),
+        "{client_log}"
+    );
+    // No covered-shortcut may substitute for the two real confirmations.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_delivery_ack_covered\""),
         "{client_log}"
     );
     // Both exact offsets appear as applied confirmations.
@@ -2262,9 +2272,12 @@ fn reliable_udp_reversed_ack_order_confirms_in_order() {
             && applied_events[1].contains("\"buffered\":true"),
         "{client_log}"
     );
-    // In-flight settles to zero through the same single-owner path.
+    // In-flight settles to zero through the terminal settlement event (not a
+    // broad substring — the settled marker itself carries the authoritative
+    // remaining_in_flight=0).
     assert!(
-        client_log.contains("\"remaining_in_flight\":0"),
+        client_log
+            .contains("\"event\":\"r9_udp_in_flight_settled\",\"seq\":0,\"remaining_in_flight\":0"),
         "{client_log}"
     );
 }
