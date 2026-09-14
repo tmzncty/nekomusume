@@ -2213,7 +2213,32 @@ fn failover_client(args: &[String]) {
                         )
                         .unwrap_or_else(|e| fail(&format!("r9 delivery_ack failed: {e:?}")));
                     logical_confirmations += 1;
-                    // Drain any buffered pending ACKs that are now in-order.
+                    // H-R9-012: emit the current ACK's validated diagnostic
+                    // IMMEDIATELY after its Session application — before any
+                    // buffered pending drain — so structured evidence order
+                    // matches the actual mutation order.
+                    if logical_confirmations == 1 {
+                        emit_diagnostic(
+                            args,
+                            "client",
+                            "udp_delivery_ack_validated",
+                            1,
+                            &format!(",\"ciphertext_bytes\":{bytes}"),
+                        );
+                    } else {
+                        emit_diagnostic(
+                            args,
+                            "client",
+                            "r9_udp_delivery_ack_validated",
+                            1,
+                            &format!(
+                                ",\"ciphertext_bytes\":{},\"offset\":{}",
+                                bytes, record.offset
+                            ),
+                        );
+                    }
+                    // Drain any buffered pending ACKs that are now in-order —
+                    // each emits its applied event in actual mutation order.
                     while let Some(pos) = pending_acks
                         .iter()
                         .position(|p| p.offset == delivery.confirmed_watermark(p.stream))
@@ -2236,6 +2261,7 @@ fn failover_client(args: &[String]) {
                             ),
                         );
                     }
+                    continue;
                 } else if record.offset > wm {
                     // Out-of-order ACK — buffer it; it cannot confirm an
                     // earlier unconfirmed range.
@@ -2263,26 +2289,6 @@ fn failover_client(args: &[String]) {
                         &format!(",\"offset\":{},\"watermark\":{}", record.offset, wm),
                     );
                     continue;
-                }
-                if logical_confirmations == 1 {
-                    emit_diagnostic(
-                        args,
-                        "client",
-                        "udp_delivery_ack_validated",
-                        1,
-                        &format!(",\"ciphertext_bytes\":{bytes}"),
-                    );
-                } else {
-                    emit_diagnostic(
-                        args,
-                        "client",
-                        "r9_udp_delivery_ack_validated",
-                        1,
-                        &format!(
-                            ",\"ciphertext_bytes\":{},\"offset\":{}",
-                            bytes, record.offset
-                        ),
-                    );
                 }
             }
             UdpAcknowledgement::Carrier { applied } => {
