@@ -1954,6 +1954,105 @@ fn reliable_udp_failover_settles_packet_acks_to_zero_in_flight() {
     );
 }
 #[test]
+fn reliable_udp_incomplete_settlement_fails_not_settled() {
+    // H-R9-010: a reliable-UDP run whose Carrier settlement ends with
+    // remaining in-flight must emit r9_udp_settlement_incomplete and fail —
+    // never emit r9_udp_in_flight_settled nor continue into health/failover.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-incomplete-server");
+    let cp = tmp("r9-incomplete-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    // Server authenticates and answers Session DeliveryAck but withholds every
+    // Carrier packet ACK — the client's reliable in-flight never drains.
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "8",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--suppress-r9-ack",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-incomplete-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "3",
+            "--reliable-udp",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-incomplete-cli",
+        ])
+        .output()
+        .unwrap();
+    let _ = server.child.kill();
+    let _ = server.child.wait();
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let client_err = String::from_utf8_lossy(&out.stderr);
+    // The operation must FAIL (nonzero) and emit the incomplete marker; it must
+    // NOT emit the successful settled marker.
+    assert!(
+        !out.status.success(),
+        "expected nonzero exit, stdout={client_log} stderr={client_err}"
+    );
+    assert!(
+        client_log.contains("r9_udp_settlement_incomplete")
+            || client_err.contains("settlement incomplete")
+            || client_log.contains("settlement_incomplete"),
+        "{client_log} {client_err}"
+    );
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_in_flight_settled\""),
+        "{client_log}"
+    );
+}
+#[test]
 fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");

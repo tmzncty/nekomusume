@@ -1437,7 +1437,14 @@ fn failover_server(args: &[String]) {
                             // the received packet number, before/separate from
                             // the Session DeliveryAck logical confirmation.
                             if reliable_udp {
-                                if let Some(ranges) = server_rt.poll_outgoing_ack(0) {
+                                // Fault seam for the incomplete-settlement
+                                // regression: --suppress-r9-ack withholds the
+                                // Carrier packet ACK (Session DeliveryAck still
+                                // sent) so the client cannot retire in-flight.
+                                let suppress_ack = args.iter().any(|a| a == "--suppress-r9-ack");
+                                if !suppress_ack
+                                    && let Some(ranges) = server_rt.poll_outgoing_ack(0)
+                                {
                                     let pack = neko_wire::encode(&neko_wire::Record {
                                         record_type: neko_wire::RecordType::Ack,
                                         flags: 0,
@@ -2240,8 +2247,9 @@ fn failover_client(args: &[String]) {
             ),
         );
         // H-R9-010: only emit the settled marker when in-flight is actually
-        // zero — a timeout/malformed-bound exit with remaining in-flight is a
-        // typed incomplete result, never a false settlement premise.
+        // zero. An incomplete settlement is a typed terminal negative — emit
+        // it and FAIL the operation so downstream health/failover never
+        // consumes a false settlement premise.
         if rt.in_flight() == 0 {
             emit_diagnostic(
                 args,
@@ -2258,6 +2266,7 @@ fn failover_client(args: &[String]) {
                 0,
                 &format!(",\"remaining_in_flight\":{}", rt.in_flight()),
             );
+            fail("r9 reliable-UDP settlement incomplete");
         }
     }
     let health_limits = HealthLimits {
