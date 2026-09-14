@@ -1,78 +1,78 @@
-# ChatGPT reviewer handoff — R9-2H ordering repair accepted; exact applied identity/evidence remains HIGH
+# ChatGPT reviewer handoff — `442f60c` is useful R9-2H progress; buffered applied identity remains HIGH
 
 ## Current repository truth
 
-- Latest developer source/test SHA reviewed: exact `bf80428e78e99c6fccc523d68b59b0b396b462a3` (`fix(cli): emit ACK validated in mutation order — no reversed evidence (H-R9-012)`).
-- Reviewer bounded recheck: `docs/reviews/r9-2h-diagnostic-order-recheck-bf80428-20260914.md` (reviewer commit `794fbf9`).
-- `bf80428` changes only `crates/neko-cli/src/main.rs`; it adds no built-binary process regression and no developer-local exact-tree provenance file.
-- GitHub-hosted checks on exact `bf80428`: `stable checks` success; `nightly decode fuzz smoke` success. Hosted checks are supplementary cross-evidence only, not developer-local provenance.
+- Latest developer source/test SHA reviewed: exact `442f60c8d1a3719b3b5b8c86e1f6e60017bb6ac0` (`fix(cli): offset-bearing ACK evidence + reversed-order process test (H-R9-013, M-R9-008 P1)`).
+- Reviewer bounded recheck: `docs/reviews/r9-2h-exact-applied-identity-recheck-442f60c-20260914.md` (reviewer commit `a26a3a7`).
+- Hosted checks on exact `442f60c`: `stable checks` success; `nightly decode fuzz smoke` success. Hosted checks are supplementary cross-evidence only, not developer-local exact-tree provenance.
 - Open PRs: none. No new WAN/VPS experiment occurred. `READY_LIVE: none` remains authoritative.
 - Governance remains unchanged: item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The coding agent is explicitly pre-authorized to finish R9-2H, persist final exact-tree local provenance, and then continue through R9-3..R9-12 and Q10/Q11/Q12 without waiting for reviewer cadence.
 
-## Accepted progress
+## Accepted progress at `442f60c`
 
-### H-R9-011 Session over-confirmation — ACCEPTED
+- H-R9-011 pending logical-ACK buffering remains the accepted state behavior: a later exact Session DeliveryAck cannot advance the cumulative Session watermark across an earlier unconfirmed range.
+- H-R9-012 mutation/evidence ordering remains repaired: an immediate Session mutation emits its applied event before buffered pending ACKs are drained.
+- The immediate/current successful Session DeliveryAck now emits `r9_udp_delivery_ack_validated` with explicit `stream + offset`; retaining the legacy first-confirmation event in parallel is acceptable.
+- A real built-binary `--reverse-ack-order` process regression now exists and exercises the actual failover server/client path.
+- Prior closures remain controlling: one operation-wide malformed counter; one absolute application deadline; Carrier packet ACK remains Carrier-local; incomplete Carrier settlement is terminal/nonzero and cannot feed downstream health/failover as success.
 
-The bounded `pending_acks` owner still prevents a later exact Session DeliveryAck from advancing the cumulative Session watermark across an earlier unconfirmed range. Only `record.offset == confirmed_watermark(stream)` may apply immediately; later exact ACKs wait pending and drain only when contiguous. No Session core, wire, crypto or capacity policy changed.
+# OPEN HIGH — H-R9-014 buffered applied ACK still lacks exact stream identity
 
-### H-R9-012 mutation/evidence order inversion — source repair ACCEPTED
+The R9-2H contract requires exact `stream + offset` attribution after **every** successful Session DeliveryAck mutation.
 
-At exact `bf80428`, an in-order current Session ACK now emits its validated diagnostic immediately after the successful `SessionRuntime::delivery_ack` mutation and **before** any buffered pending ACK is drained. Buffered ACK diagnostics are emitted only after each corresponding buffered Session mutation succeeds. The prior inverted diagnostic order is therefore repaired in source.
+The direct/current path now does this, but the pending-buffer drain still mutates Session state and emits:
 
-Keep the prior closures intact:
+```text
+r9_udp_delivery_ack_validated
+  ciphertext_bytes=0
+  offset=<...>
+  buffered=true
+```
 
-- incomplete Carrier settlement is terminal/nonzero and never falls through as success;
-- Carrier settlement uses the same absolute application deadline;
-- one operation-wide malformed counter spans logical confirmation and Carrier settlement;
-- Carrier packet ACK remains Carrier-local recovery feedback and cannot advance Session delivery.
+without `stream`.
 
-# OPEN HIGH — H-R9-013 exact first applied Session ACK is not attributable
+Therefore `442f60c` only partially closes H-R9-013. This is an evidence-integrity HIGH for R9-2H closure, not a new Session semantic defect.
 
-R9-2H-P1 requires **offset-bearing** process evidence proving exact offset 0 applies first and buffered exact offset 16 applies second.
+## Smallest H-R9-014 repair
 
-Current `bf80428` still emits the first successful logical confirmation as legacy `udp_delivery_ack_validated` with `ciphertext_bytes` only; it has no `stream` or `offset`. Only later reliable confirmations use `r9_udp_delivery_ack_validated` with an explicit offset. Thus the event order is truthful, but the first successful Session mutation cannot be exactly identified from the client event itself.
+Preserve the current pending-ACK state machine. After each buffered `SessionRuntime::delivery_ack` succeeds, emit the same exact applied identity as the immediate path: at minimum `stream`, `offset`, and `buffered=true`. Do not change Session/Carrier/ACK/wire/crypto architecture and do not add TTL/LRU/capacity policy.
 
-Do not close R9-2H by inferring offset 0 from the server seam or from test knowledge. That is weaker than the explicit P1 evidence contract.
-
-## Smallest H-R9-013 repair
-
-Do not change Session/Carrier/ACK/wire/crypto architecture and do not add TTL/LRU/capacity policy.
-
-In reliable mode, emit one explicit `r9_udp_delivery_ack_validated`-class event with exact `stream` + `offset` after **every** successful Session DeliveryAck mutation, including the first. If the legacy `udp_delivery_ack_validated` event is compatibility-sensitive, keep it as an additional compatibility event rather than removing/reinterpreting it. Buffered-drain applications should keep a typed `buffered=true` (or equivalent) attribution.
-
-Before transitioning from logical confirmation into Carrier settlement, explicitly verify that both `outstanding` and `pending_acks` are empty; otherwise fail typed. This is ownership truthfulness and introduces no new numeric policy.
+Before transitioning from logical confirmation to Carrier-only settlement, explicitly enforce `outstanding.is_empty() && pending_acks.is_empty()`; otherwise fail typed. This is ownership truthfulness and requires no new numeric policy.
 
 # R9-2H queue front — execute continuously
 
-## R9-2H-A — close H-R9-013 exact applied identity
+## R9-2H-A — close H-R9-014 exact buffered identity
 
-Make the minimal diagnostic/ownership adjustment above. Preserve H-R9-011 state behavior, H-R9-012 mutation order, the operation-wide malformed budget, the single absolute deadline, and terminal incomplete settlement.
+Add exact stream attribution to buffered applied events and the explicit pre-settlement logical-owner invariant. Preserve the accepted order/buffering behavior.
 
-## R9-2H-P1 — real built-binary reversed logical ACK regression
+## R9-2H-P1 — strengthen the real reversed-order process regression
 
-No developer test commit after the prior recheck adds the required real process regression; `bf80428` is source-only. Add a test using real `failover-server` / `failover-client` with the existing `--reverse-ack-order` seam. Assert from real client output:
+The `442f60c` process test is useful but still too permissive for closure. Strengthen it against the structured event class rather than generic substring presence.
 
-1. exact offset 16 ACK is observed first;
-2. offset 16 is buffered while Session watermark is 0;
-3. exact offset 0 applied/validated event is explicit and appears first among successful Session mutations;
-4. buffered exact offset 16 applied/validated event appears second;
-5. both exact confirmations occur once and logical `outstanding + pending` is empty before success;
-6. Carrier packet ACK remains Carrier-local;
-7. successful Recovery settlement reaches zero in-flight;
-8. no duplicate/conflict application delivery is fabricated.
+Require from the real client process:
 
-A test that checks only exit success, event presence, or inferred offset identity is invalid.
+1. successful client exit;
+2. exactly one `r9_udp_delivery_ack_buffered` for stream 1 / offset 16 while watermark is 0;
+3. exactly two `r9_udp_delivery_ack_validated` applied events;
+4. applied event 1 = stream 1 / offset 0 / non-buffered;
+5. applied event 2 = stream 1 / offset 16 / `buffered=true`;
+6. each exact applied identity occurs once;
+7. no `r9_udp_delivery_ack_covered` shortcut for those two records;
+8. logical `outstanding + pending` ownership is empty before Carrier-only settlement;
+9. final Recovery settlement reaches `remaining_in_flight=0`.
+
+Do not satisfy this with generic `contains("offset")`, event presence, or inference from the server seam.
 
 ## R9-2H-P2 — strengthen migration-back reserved-record ownership
 
-Keep `reliable_udp_migration_back_reserves_final_record`, but make it prove the exact reserved final record:
+Current `reliable_udp_migration_back_reserves_final_record` still proves only a narrow negative string boundary. Make it prove the exact reserved final logical record:
 
 - is not Recovery-tracked before post-promotion return authorization;
 - is not sent by the legacy pre-promotion `udp_uncertain_range_sent` owner;
 - is tracked/sent only by the explicit later post-promotion owner;
-- is identified by exact offset/record identity, not aggregate counts or one negative log string.
+- is identified by exact stream/offset/record identity, not aggregate counts.
 
 Do not add migration policy.
 
@@ -89,28 +89,28 @@ malformed #3
 
 Malformed #3 must hit the same existing `MAX_POST_HANDSHAKE_MALFORMED` ceiling. The valid Carrier ACK must not reset the operation-wide malformed count. Termination must be typed, finite and non-spinning. Add no numeric policy.
 
-## R9-2H-P4 — preserve incomplete settlement terminality
+## R9-2H-P4 — preserve incomplete-settlement terminality
 
 Keep `reliable_udp_incomplete_settlement_fails_not_settled` green and semantically unchanged: remaining in-flight != 0 is terminal/nonzero, emits incomplete, never emits settled, and never drives downstream health/failover from a false premise.
 
 ## R9-2H-GATE — final exact pushed-tree developer-local provenance
 
-After H-R9-013 and P1-P4 land on one reachable source/test SHA, run in a clean worktree and persist:
+After H-R9-014 and P1-P4 land on one reachable source/test SHA, run in a clean worktree and persist:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
 git diff --check
 ```
 
-Record exact pushed SHA, UTC start/end, Linux OS/arch, Rust stable version, both exit codes, and clean initial/final tree. If wire decoder/parser/crypto framing did not change, do not invent an additional fuzz obligation; hosted fuzz stays supplementary.
+Record exact pushed SHA, UTC start/end, Linux OS/arch, Rust stable version, both exit codes, and clean initial/final tree. No wire decoder/parser/crypto framing change => do not invent a fuzz obligation; hosted fuzz remains supplementary.
 
-R9-2H closes only when one reachable tree proves exact reversed logical confirmation, exact offset-bearing applied evidence, bounded pending ownership, one operation-wide malformed budget, one absolute operation deadline, logical + Carrier settlement before success, migration-back reserved ownership, incomplete-settlement terminality, and local exact-tree provenance.
+R9-2H closes only when one reachable tree proves exact reversed logical confirmation, exact stream+offset applied identity for direct and buffered mutations, bounded pending ownership, one operation-wide malformed budget, one absolute operation deadline, logical + Carrier settlement before success, migration-back reserved ownership, incomplete-settlement terminality, and local exact-tree provenance.
 
 **Then continue immediately to R9-3. Do not wait for reviewer cadence.**
 
 # Continuous queue after R9-2H
 
-Preserve this deep queue; do not collapse it into one micro-ticket.
+Preserve this queue; do not collapse it into a micro-ticket.
 
 ## R9-3 — process Data-loss recovery
 
@@ -126,11 +126,11 @@ Prove tampered Data creates no Carrier ACK obligation or Session receive; tamper
 
 ## R9-6 — pacing / cwnd / plaintext-owner atomicity
 
-With existing bounded test-only controls, prove initial and retransmit sends consult congestion admission; refusal consumes no Session byte space and commits no packet/plaintext/recovery owner; retransmit plaintext has one bounded owner; pacing deadlines are finite; teardown releases ownership.
+Prove initial and retransmit sends consult congestion admission; refusal consumes no Session byte space and commits no packet/plaintext/recovery owner; retransmit plaintext has one bounded owner; pacing deadlines are finite; teardown releases ownership.
 
 ## R9-7 — truthful process observability/result contract
 
-Keep these domains distinct and ordered by actual success: Data offered/admitted/wire-sent/suppressed; Carrier ACK emitted/wire-sent/suppressed/applied/rejected; Session DeliveryAck observed/buffered/applied/duplicate/rejected; PTO due/fired; retransmit attempted/admitted/wire-sent/refused; resolved acked/lost/in-flight; Session first-delivery/duplicate/conflict/application bytes; malformed-budget use, cleanup and final outcome. Counters/events increment only after the action they claim succeeds.
+Keep Data, Carrier ACK, Session DeliveryAck, PTO/retransmit, resolved recovery, Session delivery, malformed-budget, cleanup and final-outcome evidence domains distinct. Counters/events increment only after the action they claim succeeds.
 
 ## R9-8 — actual authenticated warm TCP standby
 
@@ -150,7 +150,7 @@ Cover setup/application/PTO/single-owner receive deadline, controlled stop, fail
 
 ## R9-12 — coherent exact-tree gate + independent bounded review
 
-Independently challenge Session-above-Carrier layering, exact Session ACK evidence, authenticated packet identity/Carrier ACK, bounded plaintext/pending-ACK ownership, single receive-owner classification + operation-wide malformed/deadline ownership, deadline-driven PTO/pacing/cwnd, fresh health/hysteresis, real warm TCP readiness/promotion, uncertain Session replay/dedup, result truthfulness and cleanup/no-public-exposure. BLOCKER/HIGH -> smallest repair + regression + re-gate + continue; LOW/NOTE does not halt progression.
+Independently challenge Session-above-Carrier layering, exact Session ACK evidence, authenticated packet identity/Carrier ACK, bounded plaintext/pending-ACK ownership, single receive-owner classification + operation-wide malformed/deadline ownership, PTO/pacing/cwnd, fresh health/hysteresis, real warm TCP readiness/promotion, uncertain Session replay/dedup, result truthfulness and cleanup/no-public-exposure. BLOCKER/HIGH -> smallest repair + regression + re-gate + continue; LOW/NOTE does not halt progression.
 
 ## Q10 — observability reconciliation
 
@@ -166,7 +166,7 @@ Only after Q11 creates a specific `READY_LIVE` question, execute exactly one min
 
 # VPS opportunity
 
-**Not READY — implementation/evidence dependency.** Current unlock chain: R9-2H -> R9-3..R9-12 -> Q10/Q11. Once Q11 truthfully creates a specific changed `READY_LIVE` row, standing authorization already covers the bounded self-owned TCP/UDP run; do not ask for generic WAN permission again.
+**Not READY — implementation/evidence dependency.** Current unlock chain: R9-2H -> R9-3..R9-12 -> Q10/Q11. Standing authorization already covers the eventual bounded self-owned TCP/UDP run once a specific `READY_LIVE` row exists; do not ask for generic WAN permission.
 
 # Non-blocking policy/authority gates
 
