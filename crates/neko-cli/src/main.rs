@@ -940,9 +940,12 @@ fn recv_udp_delivery_ack(
     // R9: optional reliable-UDP runtime. Authenticated canonical Carrier packet
     // ACKs are applied here and reported as a typed outcome.
     mut rt: Option<&mut neko_carrier::ReliableUdpRuntime>,
+    // H-R9-006: the malformed/ignored budget is owned by the whole reliable
+    // receive/settlement operation, not one helper invocation — caller keeps a
+    // persistent count across every demux return (Session ACK or Carrier ACK).
+    malformed: &mut usize,
 ) -> Result<UdpAcknowledgement, &'static str> {
     let mut buf = [0u8; 65536];
-    let mut malformed = 0usize;
     loop {
         let now = Instant::now();
         if now >= deadline {
@@ -980,8 +983,8 @@ fn recv_udp_delivery_ack(
                         // ACK: a typed, bounded negative, never a match and
                         // never an unbounded wait.
                         diagnostic("unexpected_logical_ack");
-                        malformed += 1;
-                        if malformed >= MAX_POST_HANDSHAKE_MALFORMED {
+                        *malformed += 1;
+                        if *malformed >= MAX_POST_HANDSHAKE_MALFORMED {
                             return Err("UDP delivery acknowledgement malformed bound exceeded");
                         }
                         continue;
@@ -1011,16 +1014,16 @@ fn recv_udp_delivery_ack(
                     // Domain 3 — any other authenticated plaintext consumes the
                     // finite malformed budget in reliable mode too, so a peer
                     // cannot make this owner spin unboundedly.
-                    malformed += 1;
+                    *malformed += 1;
                     diagnostic("malformed_or_unadmitted");
-                    if malformed >= MAX_POST_HANDSHAKE_MALFORMED {
+                    if *malformed >= MAX_POST_HANDSHAKE_MALFORMED {
                         return Err("UDP delivery acknowledgement malformed bound exceeded");
                     }
                 }
                 Err(_) => {
-                    malformed += 1;
+                    *malformed += 1;
                     diagnostic("malformed_or_unadmitted");
-                    if malformed >= MAX_POST_HANDSHAKE_MALFORMED {
+                    if *malformed >= MAX_POST_HANDSHAKE_MALFORMED {
                         return Err("UDP delivery acknowledgement malformed bound exceeded");
                     }
                 }
@@ -2130,6 +2133,8 @@ fn failover_client(args: &[String]) {
     let mut logical_confirmations = 0u64;
     let mut packet_ack_applied = 0u64;
     let mut packet_ack_rejected = 0u64;
+    // H-R9-006: persistent malformed budget across every demux return.
+    let mut malformed = 0usize;
     while !outstanding.is_empty() {
         let outcome = recv_udp_delivery_ack(
             &u,
@@ -2141,6 +2146,7 @@ fn failover_client(args: &[String]) {
             application_deadline,
             &mut admission_diagnostic,
             rt.as_mut(),
+            &mut malformed,
         )
         .unwrap_or_else(|e| fail(&format!("UDP delivery acknowledgement failed: {e:?}")));
         match outcome {
@@ -2187,51 +2193,52 @@ fn failover_client(args: &[String]) {
             }
         }
     }
-    emit_diagnostic(
-        args,
-        "client",
-        "r9_udp_packet_ack_outcomes",
-        0,
-        &format!(
-            ",\"applied\":{},\"rejected\":{}",
-            packet_ack_applied, packet_ack_rejected
-        ),
-    );
-
-    // R9 settlement: drain authenticated Carrier packet ACKs until the runtime
-    // reports zero in-flight, or the bounded application deadline passes.
+    // R9 settlement: drain Carrier packet ACKs through the SAME bounded
+    // receive/demux owner (H-R9-007) — no second untyped receive loop. The
+    // outstanding Session set is empty here, so every authenticated plaintext
+    // is classified as a Carrier ACK or consumes the persistent malformed
+    // budget; typed outcomes are counted.
     if let Some(rt) = rt.as_mut() {
         let settle_deadline = Instant::now() + Duration::from_secs(secs.min(10));
         while rt.in_flight() > 0 && Instant::now() < settle_deadline {
-            match recv_udp_until(&u, &mut buf, settle_deadline, &AtomicBool::new(false))
-                .unwrap_or(UdpWait::Deadline)
-            {
-                UdpWait::Datagram(n2, peer2) if peer2 == target => {
-                    // Only a canonical Carrier ACK record is applied here;
-                    // Session Data is not Carrier ACK feedback. A rejected
-                    // application is a typed, recorded negative.
-                    if let Ok(plain2) = us.open_unreliable(&buf[..n2])
-                        && let Ok(rec) = neko_wire::decode(&plain2)
-                        && rec.record_type == neko_wire::RecordType::Ack
-                        && let Ok(ack) = neko_wire::decode_ack(&rec.payload)
-                        && let Ok(ranges) = neko_reliable::AckRanges::from_ranges(
-                            32,
-                            &ack.ranges
-                                .iter()
-                                .map(|w| neko_reliable::AckRange {
-                                    start: w.start,
-                                    end: w.end,
-                                })
-                                .collect::<Vec<_>>(),
-                        )
-                        && rt.apply_ack(&ranges, 0, ack.ack_delay_us).is_err()
-                    {
+            match recv_udp_delivery_ack(
+                &u,
+                target,
+                &mut us,
+                &mut outstanding,
+                &negotiation_response,
+                &noise_response,
+                settle_deadline,
+                &mut admission_diagnostic,
+                Some(rt),
+                &mut malformed,
+            ) {
+                Ok(UdpAcknowledgement::Carrier { applied }) => {
+                    if applied {
+                        packet_ack_applied += 1;
+                    } else {
+                        packet_ack_rejected += 1;
                         emit_diagnostic(args, "client", "r9_udp_packet_ack_rejected", 0, "");
                     }
                 }
-                _ => break,
+                Ok(UdpAcknowledgement::Session { .. }) => {}
+                Err(_) => break, // timeout or bounded malformed bound hit
             }
         }
+        emit_diagnostic(
+            args,
+            "client",
+            "r9_udp_packet_ack_outcomes",
+            0,
+            &format!(
+                ",\"applied\":{},\"rejected\":{},\"remaining_in_flight\":{}",
+                packet_ack_applied,
+                packet_ack_rejected,
+                rt.in_flight()
+            ),
+        );
+        // H-R9-007: settlement completion is emitted AFTER the drain — the
+        // authoritative in-flight view is the runtime's, emitted post-settle.
         emit_diagnostic(
             args,
             "client",
@@ -2992,6 +2999,7 @@ fn failover_client(args: &[String]) {
         // R9-2E: the post-return path also goes through the single bounded demux
         // owner; only a real Session DeliveryAck for the post-return record is
         // accepted here, and its confirmation is applied exactly once.
+        let mut malformed = 0usize;
         let ack_len = match recv_udp_delivery_ack(
             &u,
             target,
@@ -3002,6 +3010,7 @@ fn failover_client(args: &[String]) {
             deadline,
             &mut |_| {},
             None,
+            &mut malformed,
         )
         .unwrap_or_else(|_| fail("post-return UDP DeliveryAck timeout"))
         {
