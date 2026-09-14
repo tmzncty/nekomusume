@@ -2242,6 +2242,26 @@ fn reliable_udp_reversed_ack_order_confirms_in_order() {
     let off16_app = client_log.rfind("\"buffered\":true").unwrap_or(usize::MAX);
     assert!(buf_pos < off0_pos, "{client_log}");
     assert!(off0_pos < off16_app, "{client_log}");
+    // H-R9-013/014: exactly two applied r9_udp_delivery_ack_validated events —
+    // stream 1 / offset 0 (non-buffered, applied first) and stream 1 /
+    // offset 16 buffered=true (applied second after the watermark advances).
+    let applied_events: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_delivery_ack_validated\""))
+        .collect();
+    assert_eq!(applied_events.len(), 2, "{client_log}");
+    assert!(
+        applied_events[0].contains("\"stream\":1")
+            && applied_events[0].contains("\"offset\":0")
+            && !applied_events[0].contains("\"buffered\":true"),
+        "{client_log}"
+    );
+    assert!(
+        applied_events[1].contains("\"stream\":1")
+            && applied_events[1].contains("\"offset\":16")
+            && applied_events[1].contains("\"buffered\":true"),
+        "{client_log}"
+    );
     // In-flight settles to zero through the same single-owner path.
     assert!(
         client_log.contains("\"remaining_in_flight\":0"),
