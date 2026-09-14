@@ -2259,8 +2259,8 @@ fn failover_client(args: &[String]) {
                             "r9_udp_delivery_ack_validated",
                             1,
                             &format!(
-                                ",\"ciphertext_bytes\":0,\"offset\":{},\"buffered\":true",
-                                rec.offset
+                                ",\"ciphertext_bytes\":0,\"stream\":{},\"offset\":{},\"buffered\":true",
+                                rec.stream.0, rec.offset
                             ),
                         );
                     }
@@ -2305,10 +2305,13 @@ fn failover_client(args: &[String]) {
         }
     }
     // R9 settlement: drain Carrier packet ACKs through the SAME bounded
-    // receive/demux owner (H-R9-007) — no second untyped receive loop. The
-    // outstanding Session set is empty here, so every authenticated plaintext
-    // is classified as a Carrier ACK or consumes the persistent malformed
-    // budget; typed outcomes are counted.
+    // receive/demux owner (H-R9-007) — no second untyped receive loop.
+    // Pre-settlement invariant (M-R9-008): every logical expectation must be
+    // retired before Carrier settlement is treated as complete — no pending
+    // logical evidence may remain.
+    if reliable_udp && !(outstanding.is_empty() && pending_acks.is_empty()) {
+        fail("r9 logical confirmation incomplete before settlement");
+    }
     if let Some(rt) = rt.as_mut() {
         // M-R9-009: settlement uses the SAME absolute application deadline —
         // no fresh time budget just because Session confirmations landed first.
