@@ -2218,6 +2218,7 @@ fn failover_client(args: &[String]) {
                     // buffered pending drain — so structured evidence order
                     // matches the actual mutation order.
                     if logical_confirmations == 1 {
+                        // Legacy event retained for compatibility.
                         emit_diagnostic(
                             args,
                             "client",
@@ -2225,18 +2226,20 @@ fn failover_client(args: &[String]) {
                             1,
                             &format!(",\"ciphertext_bytes\":{bytes}"),
                         );
-                    } else {
-                        emit_diagnostic(
-                            args,
-                            "client",
-                            "r9_udp_delivery_ack_validated",
-                            1,
-                            &format!(
-                                ",\"ciphertext_bytes\":{},\"offset\":{}",
-                                bytes, record.offset
-                            ),
-                        );
                     }
+                    // H-R9-013: EVERY reliable Session mutation — including the
+                    // first — emits an exact offset-bearing applied event so
+                    // process evidence proves which logical range confirmed.
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "r9_udp_delivery_ack_validated",
+                        1,
+                        &format!(
+                            ",\"ciphertext_bytes\":{},\"stream\":{},\"offset\":{}",
+                            bytes, record.stream.0, record.offset
+                        ),
+                    );
                     // Drain any buffered pending ACKs that are now in-order —
                     // each emits its applied event in actual mutation order.
                     while let Some(pos) = pending_acks

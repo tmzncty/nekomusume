@@ -2148,6 +2148,107 @@ fn reliable_udp_migration_back_reserves_final_record() {
     );
 }
 #[test]
+fn reliable_udp_reversed_ack_order_confirms_in_order() {
+    // M-R9-008 P1: with --reverse-ack-order the server emits record-1's Session
+    // DeliveryAck before record-0's. The client must buffer record-1, apply
+    // record-0 first on arrival, then drain buffered record-1 — evidence order
+    // must match mutation order (offset 0 applied before offset 16).
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-rev-server");
+    let cp = tmp("r9-rev-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--reverse-ack-order",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-rev-srv-01",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "8",
+            "--reliable-udp",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-rev-cli-01",
+        ])
+        .output()
+        .unwrap();
+    let (_st, _sl) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    // Record-1 ACK is observed/buffered first while the watermark is still 0.
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_delivery_ack_buffered\""),
+        "{client_log}"
+    );
+    // Both exact offsets appear as applied confirmations.
+    assert!(client_log.contains("\"offset\":0"), "{client_log}");
+    assert!(client_log.contains("\"offset\":16"), "{client_log}");
+    // Order: the buffered offset-16 event must appear before any offset-0
+    // application, and the offset-16 buffered application (buffered=true)
+    // appears only after offset-0 is applied.
+    let buf_pos = client_log.find("r9_udp_delivery_ack_buffered").unwrap_or(0);
+    let off0_pos = client_log.find("\"offset\":0").unwrap_or(usize::MAX);
+    let off16_app = client_log.rfind("\"buffered\":true").unwrap_or(usize::MAX);
+    assert!(buf_pos < off0_pos, "{client_log}");
+    assert!(off0_pos < off16_app, "{client_log}");
+    // In-flight settles to zero through the same single-owner path.
+    assert!(
+        client_log.contains("\"remaining_in_flight\":0"),
+        "{client_log}"
+    );
+}
+#[test]
 fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
