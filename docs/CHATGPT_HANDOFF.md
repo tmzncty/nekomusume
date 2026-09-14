@@ -1,16 +1,16 @@
-# ChatGPT reviewer handoff — `34ae142` closes H-R9-015 source shape; finish R9-2H evidence gate, then continue deep R9 queue
+# ChatGPT reviewer handoff — `3d7206a` advances P1 but leaves acceptance gaps; finish R9-2H evidence gate, then continue deep R9 queue
 
 ## Current repository truth
 
-- Latest developer source/test SHA reviewed: exact `34ae1426ec6af8dfed161f1fcc7ba3e9e7797236` (`fix(cli): post-return dual settlement + server packet-ACK ownership (H-R9-015)`).
-- Independent bounded recheck: `docs/reviews/r9-2h-post-return-dual-settlement-recheck-34ae142-20260915.md` (reviewer commit `fcc2ff7`).
-- Hosted GitHub checks on exact `34ae142`: `stable checks` success; `nightly decode fuzz smoke` success. Hosted checks are supplementary only; no developer-local clean exact-tree provenance for `34ae142` is accepted yet.
+- Latest developer source/test SHA reviewed: exact `3d7206a73bf0638b1bdc0cb39bb527ca57b037df` (`test(cli): strengthen reversed-ACK applied-identity assertions (M-R9-008 P1)`).
+- Independent bounded recheck: `docs/reviews/r9-2h-p1-evidence-recheck-3d7206a-20260915.md` (reviewer commit `df6e336`).
+- Hosted GitHub checks on exact `3d7206a`: `stable checks` success; `nightly decode fuzz smoke` success. Hosted checks are supplementary only; no developer-local clean exact-tree provenance for the final P1-P4 tree is accepted yet.
 - Open PRs: none. No new WAN/VPS experiment. `READY_LIVE: none` remains authoritative.
 - Governance unchanged: item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
-The coding agent is explicitly pre-authorized to finish R9-2H P1-P4 + exact-tree provenance, then continue through R9-3..R9-12 and Q10/Q11/Q12 without waiting for reviewer cadence. Reviewer cadence is not a work-ticket boundary.
+The coding agent is explicitly pre-authorized to finish the remaining P1 assertions, then P2-P4 + exact-tree provenance, and immediately continue through R9-3..R9-12 and Q10/Q11/Q12 without waiting for reviewer cadence. Reviewer cadence is not a work-ticket boundary.
 
-## Accepted progress through `34ae142`
+## Accepted implementation progress through `34ae142`
 
 Prior R9-2H closures remain accepted:
 
@@ -18,44 +18,36 @@ Prior R9-2H closures remain accepted:
 - H-R9-012/H-R9-013/H-R9-014: applied Session ACK evidence follows actual mutation order and carries exact `stream + offset`; buffered applied evidence carries `buffered=true`; logical `outstanding + pending_acks` must retire before Carrier-only settlement.
 - one operation-wide malformed counter; one absolute application deadline; Carrier packet ACK remains Carrier-local; incomplete Recovery settlement is terminal and cannot feed downstream health/failover as success.
 - `940b17f`: after successful migration-back the reserved final UDP record reuses the existing client `ReliableUdpRuntime`; `can_send` precedes ownership commit; `on_packet_sent` registers the exact secure-record sequence / bytes / stable `FrameId(record.offset)` / retained plaintext before socket send.
+- `34ae142`: server post-return Data creates a Carrier ACK obligation only after authenticated/opened/decoded/correct-Session/accepted Session receive; client post-return completion requires both exact Session confirmation and `ReliableUdpRuntime.in_flight()==0`; Session DeliveryAck and Carrier ACK remain separate evidence domains and either order is allowed.
 
-### H-R9-015A/B implementation — ACCEPT
-
-`34ae142` closes the remaining post-return source ownership gap without changing Session/Carrier/ACK architecture:
-
-- server post-return path creates a Carrier ACK obligation only after authenticated `open_unreliable`, exact `ProcessMessage::Data` decode, correct Session identity and successful `SessionRuntime::receive`;
-- the server uses the received SecureSession sequence as the same packet identity registered by the client and feeds it to the existing `server_rt.on_packet_received` owner;
-- Session DeliveryAck and canonical authenticated Carrier `RecordType::Ack` remain separate messages/evidence domains;
-- client post-return receive uses one absolute deadline and one malformed counter and succeeds only after both exact Session ownership is retired and `ReliableUdpRuntime.in_flight() == 0`;
-- valid Carrier ACK may arrive before or after the Session DeliveryAck; neither domain retires the other.
-
-The SecureSession framing already defines `sequence:u64be || Noise ciphertext`; `open` uses that sequence as the Noise transport nonce and validates AEAD + record context before replay state advances. Therefore `sealed[..8]` / received `record[..8]` names the same authenticated packet identity in this bounded path; no second packet-number scheme is introduced.
-
-No new BLOCKER/HIGH was found in this source scope. **Do not reopen H-R9-015 unless new process evidence contradicts it.**
+Do not reopen those source findings unless new process evidence contradicts them.
 
 # R9-2H evidence front — READY_LOCAL, execute continuously
 
-The implementation is ahead of its acceptance evidence. Finish the following coherent evidence slices on real built binaries; do not stop after any one test.
+The implementation is ahead of its acceptance evidence. Finish these coherent evidence slices on real built binaries; do not stop after any one test.
 
-## R9-2H-P1 — exact reversed-order built-process evidence
+## R9-2H-P1 — exact reversed-order built-process evidence — PARTIAL at `3d7206a`
 
-Strengthen `reliable_udp_reversed_ack_order_confirms_in_order` to parse exact structured events rather than broad substring/order matches. Require:
+`3d7206a` improves the test by requiring exactly two applied `r9_udp_delivery_ack_validated` lines and pinning the mutation order/identity as:
 
-1. successful client exit;
-2. exactly one `r9_udp_delivery_ack_buffered` with `stream=1`, `offset=16`, `watermark=0`;
-3. exactly two applied `r9_udp_delivery_ack_validated` events;
-4. direct applied = `stream=1`, `offset=0`, `buffered=false`;
-5. buffered applied = `stream=1`, `offset=16`, `buffered=true`;
-6. each exact identity occurs once;
-7. no `r9_udp_delivery_ack_covered` shortcut for these two records;
-8. logical outstanding/pending ownership is empty before Carrier settlement;
-9. final relevant Recovery settlement reaches `remaining_in_flight=0`.
+1. `stream=1, offset=0`, not `buffered=true`;
+2. `stream=1, offset=16, buffered=true`.
 
-Do not allow unrelated diagnostics containing `offset` to satisfy ordering assertions.
+This closes the earlier ambiguous applied-identity assertion, but P1 is **not yet complete**. Finish the same built-binary regression without changing protocol semantics:
+
+1. require successful client exit;
+2. require exactly one `r9_udp_delivery_ack_buffered` with `stream=1`, `offset=16`, `watermark=0`;
+3. keep exactly two applied `r9_udp_delivery_ack_validated` events with the identities above;
+4. require no `r9_udp_delivery_ack_covered` shortcut for either record;
+5. prove logical `outstanding + pending_acks` is empty before Carrier settlement begins, using the existing evidence boundary rather than a new framework;
+6. require the final relevant Recovery settlement event to carry `remaining_in_flight=0`, not merely any unrelated substring;
+7. keep the order proof tied to those exact structured event lines, not generic `offset` occurrences elsewhere in diagnostics.
+
+The new exact applied-event checks are accepted progress; do not remove them.
 
 ## R9-2H-P2 — exact reserved post-migration ownership + dual settlement
 
-Strengthen `reliable_udp_migration_back_reserves_final_record`. The current test originated as a negative reservation check: it permits nonzero client exit and only rejects one legacy `udp_uncertain_range_sent` shape for reserved offset 32. It does not yet prove the `940b17f`/`34ae142` source behavior.
+Strengthen `reliable_udp_migration_back_reserves_final_record`. The current test still permits nonzero client exit and only rejects one legacy `udp_uncertain_range_sent` shape for reserved offset 32, so it does not yet prove the accepted `940b17f`/`34ae142` source behavior.
 
 For exact reserved fixture record `stream=1, offset=32`, require successful built-binary completion and exact structured evidence that:
 
@@ -97,7 +89,7 @@ PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
 git diff --check
 ```
 
-Record exact pushed SHA, UTC start/end, Linux OS/arch, Rust stable version, both exit codes, and clean initial/final tree. No decoder/parser/crypto-framing change in `34ae142`; do not invent a new fuzz obligation. Hosted fuzz remains supplementary cross-evidence.
+Record exact pushed SHA, UTC start/end, Linux OS/arch, Rust stable version, both exit codes, and clean initial/final tree. No decoder/parser/crypto-framing change in `3d7206a`; do not invent a new fuzz obligation. Hosted fuzz remains supplementary cross-evidence.
 
 R9-2H closes only when one reachable tree proves exact reversed logical confirmation, direct+buffered Session applied identity, bounded pending ownership, one operation-wide malformed budget/deadline, pre/post-migration reliable ownership, independent Session + Carrier settlement, exact reserved ownership and incomplete-settlement terminality.
 
@@ -161,7 +153,7 @@ Only after Q11 creates a specific `READY_LIVE` question, execute exactly one min
 
 # VPS opportunity
 
-**Not READY — local implementation/evidence dependency.** Unlock chain: R9-2H P1/P2/P3/P4 + clean exact-tree provenance -> R9-3..R9-12 -> Q10/Q11. Standing authorization already covers the eventual bounded self-owned TCP/UDP run once a specific `READY_LIVE` row exists; do not ask for generic WAN permission.
+**Not READY — local evidence dependency.** Unlock chain: remaining P1 assertions + P2/P3/P4 + clean exact-tree provenance -> R9-3..R9-12 -> Q10/Q11. Standing authorization already covers the eventual bounded self-owned TCP/UDP run once a specific `READY_LIVE` row exists; do not ask for generic WAN permission.
 
 # Non-blocking policy/authority gates
 
