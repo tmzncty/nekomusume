@@ -2178,6 +2178,10 @@ fn failover_client(args: &[String]) {
     let mut packet_ack_rejected = 0u64;
     // H-R9-006: persistent malformed budget across every demux return.
     let mut malformed = 0usize;
+    // H-R9-011: pending logical-ACK buffer — a later record's exact ACK is
+    // buffered until the Session confirmed watermark reaches its offset, so it
+    // can never manufacture an earlier range's confirmation.
+    let mut pending_acks: Vec<OutboundRecord> = Vec::new();
     while !outstanding.is_empty() {
         let outcome = recv_udp_delivery_ack(
             &u,
@@ -2194,27 +2198,72 @@ fn failover_client(args: &[String]) {
         .unwrap_or_else(|e| fail(&format!("UDP delivery acknowledgement failed: {e:?}")));
         match outcome {
             UdpAcknowledgement::Session { record, bytes } => {
-                // M-R9-008 reversed order: a later record's ACK may arrive
-                // before an earlier one. SessionRuntime::delivery_ack is
-                // strictly in-order — a Protocol result means the range is
-                // not yet confirmable; re-queue the expectation and keep
-                // draining rather than panic or drop the logical ACK.
-                match delivery.delivery_ack(
-                    record.stream,
-                    record.offset,
-                    record.data.len(),
-                    count as u64 + 3,
-                ) {
-                    Ok(()) => {}
-                    Err(neko_session::RuntimeError::Protocol) => {
-                        // A later record's ACK already advanced the Session
-                        // confirmed watermark past this record — it is covered
-                        // and must not re-queue forever. Drop it as confirmed.
-                        continue;
+                // H-R9-011: only the exact pending ACK whose offset equals the
+                // Session confirmed watermark may advance delivery. A later
+                // record's ACK is buffered, never allowed to over-promote an
+                // earlier unconfirmed range via the cumulative watermark.
+                let wm = delivery.confirmed_watermark(record.stream);
+                if record.offset == wm {
+                    delivery
+                        .delivery_ack(
+                            record.stream,
+                            record.offset,
+                            record.data.len(),
+                            count as u64 + 3,
+                        )
+                        .unwrap_or_else(|e| fail(&format!("r9 delivery_ack failed: {e:?}")));
+                    logical_confirmations += 1;
+                    // Drain any buffered pending ACKs that are now in-order.
+                    while let Some(pos) = pending_acks
+                        .iter()
+                        .position(|p| p.offset == delivery.confirmed_watermark(p.stream))
+                    {
+                        let rec = pending_acks.remove(pos);
+                        delivery
+                            .delivery_ack(rec.stream, rec.offset, rec.data.len(), count as u64 + 3)
+                            .unwrap_or_else(|e| {
+                                fail(&format!("r9 pending delivery_ack failed: {e:?}"))
+                            });
+                        logical_confirmations += 1;
+                        emit_diagnostic(
+                            args,
+                            "client",
+                            "r9_udp_delivery_ack_validated",
+                            1,
+                            &format!(
+                                ",\"ciphertext_bytes\":0,\"offset\":{},\"buffered\":true",
+                                rec.offset
+                            ),
+                        );
                     }
-                    Err(e) => fail(&format!("r9 delivery_ack failed: {e:?}")),
+                } else if record.offset > wm {
+                    // Out-of-order ACK — buffer it; it cannot confirm an
+                    // earlier unconfirmed range.
+                    pending_acks.push(record);
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "r9_udp_delivery_ack_buffered",
+                        0,
+                        &format!(
+                            ",\"offset\":{},\"watermark\":{}",
+                            pending_acks.last().unwrap().offset,
+                            wm
+                        ),
+                    );
+                    continue;
+                } else {
+                    // offset < wm — duplicate/already-covered ACK; consume as
+                    // a typed negative, do not re-apply.
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "r9_udp_delivery_ack_covered",
+                        0,
+                        &format!(",\"offset\":{},\"watermark\":{}", record.offset, wm),
+                    );
+                    continue;
                 }
-                logical_confirmations += 1;
                 if logical_confirmations == 1 {
                     emit_diagnostic(
                         args,
