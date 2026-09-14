@@ -1161,6 +1161,9 @@ fn failover_server(args: &[String]) {
     // Session delivery/dedup stays in `runtime` (SessionRuntime) above Carrier.
     let mut server_rt = neko_carrier::ReliableUdpRuntime::new(1, 1200)
         .unwrap_or_else(|_| fail("server reliable udp runtime"));
+    // M-R9-008: buffered first-record Session DeliveryAck for the
+    // reversed-ack-order fault seam (released after a later record's ACK).
+    let mut pending_reversed_ack: Option<Vec<u8>> = None;
     runtime.open_stream(StreamId(1), 0).unwrap();
     emit_diagnostic(
         args,
@@ -1415,6 +1418,12 @@ fn failover_server(args: &[String]) {
                             .encode()
                             .unwrap();
                             let ack = ss.seal_unreliable(&logical).unwrap();
+                            // M-R9-008 reversed-order seam: with
+                            // --reverse-ack-order the server buffers the FIRST
+                            // logical record's Session DeliveryAck and only
+                            // releases it after answering the SECOND record —
+                            // record-1 confirmation arrives before record-0.
+                            let reverse_ack_order = args.iter().any(|a| a == "--reverse-ack-order");
                             if !delayed_noise_duplicate_sent
                                 && args
                                     .iter()
@@ -1463,7 +1472,20 @@ fn failover_server(args: &[String]) {
                                     }
                                 }
                             }
-                            if cease_udp_replies_after.is_none_or(|point| udp_replies < point) {
+                            if reverse_ack_order && offset == 0 {
+                                // Buffer the first record's ACK; emit it only
+                                // after a later record's ACK — reversed order.
+                                pending_reversed_ack = Some(ack.clone());
+                                emit_diagnostic(
+                                    args,
+                                    "server",
+                                    "udp_delivery_ack_deferred",
+                                    0,
+                                    ",\"offset\":0",
+                                );
+                            } else if cease_udp_replies_after
+                                .is_none_or(|point| udp_replies < point)
+                            {
                                 udp.send_to(&ack, peer).unwrap();
                                 udp_replies += 1;
                                 emit_diagnostic(
@@ -1473,6 +1495,20 @@ fn failover_server(args: &[String]) {
                                     offset as usize / bytes.max(1),
                                     &format!(",\"ciphertext_bytes\":{}", ack.len()),
                                 );
+                                // Now release the deferred first-record ACK —
+                                // record-1's confirmation arrives before
+                                // record-0's (reversed order).
+                                if let Some(deferred) = pending_reversed_ack.take() {
+                                    udp.send_to(&deferred, peer).unwrap();
+                                    udp_replies += 1;
+                                    emit_diagnostic(
+                                        args,
+                                        "server",
+                                        "udp_delivery_ack_sent",
+                                        0,
+                                        ",\"reversed\":true,\"offset\":0",
+                                    );
+                                }
                             } else {
                                 emit_diagnostic(
                                     args,
@@ -2158,16 +2194,26 @@ fn failover_client(args: &[String]) {
         .unwrap_or_else(|e| fail(&format!("UDP delivery acknowledgement failed: {e:?}")));
         match outcome {
             UdpAcknowledgement::Session { record, bytes } => {
-                // Exactly-once: apply the confirmation for the record that was
-                // actually acknowledged, whichever order it arrived in.
-                delivery
-                    .delivery_ack(
-                        record.stream,
-                        record.offset,
-                        record.data.len(),
-                        count as u64 + 3,
-                    )
-                    .unwrap();
+                // M-R9-008 reversed order: a later record's ACK may arrive
+                // before an earlier one. SessionRuntime::delivery_ack is
+                // strictly in-order — a Protocol result means the range is
+                // not yet confirmable; re-queue the expectation and keep
+                // draining rather than panic or drop the logical ACK.
+                match delivery.delivery_ack(
+                    record.stream,
+                    record.offset,
+                    record.data.len(),
+                    count as u64 + 3,
+                ) {
+                    Ok(()) => {}
+                    Err(neko_session::RuntimeError::Protocol) => {
+                        // A later record's ACK already advanced the Session
+                        // confirmed watermark past this record — it is covered
+                        // and must not re-queue forever. Drop it as confirmed.
+                        continue;
+                    }
+                    Err(e) => fail(&format!("r9 delivery_ack failed: {e:?}")),
+                }
                 logical_confirmations += 1;
                 if logical_confirmations == 1 {
                     emit_diagnostic(
