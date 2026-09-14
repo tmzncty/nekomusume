@@ -1,101 +1,123 @@
-# ChatGPT reviewer handoff — R9-2H partial repair landed red; R9-3 remains blocked
+# ChatGPT reviewer handoff — R9-2H tree green; completion/settlement contract still blocks R9-3
 
 ## Current repository truth
 
-- Latest developer source/test SHA reviewed: exact `1786f2f217b60923d97f8722ccdf48708c908750` (`fix(cli): R9-2 single-owner demux malformed budget + settlement`).
-- Reviewer finding report: `docs/reviews/r9-2h-review-1786f2f-20260914.md` (reviewer commit `d91691d`).
-- `1786f2f` changed only `crates/neko-cli/src/main.rs`; no process-test file or developer-local provenance was added.
-- GitHub-hosted `nightly decode fuzz smoke` on `1786f2f` is green, but hosted `stable checks` is **red**: `bash scripts/check.sh` fails compiling the `neko-cli` test target with four `E0061` callsite errors after the helper signature gained `malformed: &mut usize`.
-- No WAN/VPS run occurred. `READY_LIVE: none` remains authoritative.
+- Latest developer source/test SHA reviewed: exact `4c8906a717505485230a5ea31df768e005c546b9` (`fix(cli): persistent malformed budget across demux calls (H-R9-006)`).
+- Developer provenance descendant: `7330aed21d18bf9132d080c16fada37cd07b7b68` (`docs/provenance: 4c8906a R9-2H demux repair gate`).
+- Reviewer recheck: `docs/reviews/r9-2h-recheck-4c8906a-20260914.md` (reviewer commit `2a789fa`).
+- The previous compile BLOCKER from exact `1786f2f` is closed. `4c8906a` updates all four stale direct helper test callsites and restores a green exact source/test tree.
+- Developer-local exact-tree provenance for `4c8906a`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean initial/final tree, UTC start/end, Linux x86_64, rustc 1.98.0.
+- GitHub-hosted `stable checks` and `nightly decode fuzz smoke` on exact `4c8906a` are both green; they remain supplementary cross-evidence, not substitutes for developer-local provenance.
+- Open PRs: none. No WAN/VPS run occurred in this sequence. `READY_LIVE: none` remains authoritative.
 - Governance unchanged: item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
-R9-3 is **not READY**. The coding agent is pre-authorized to repair R9-2H immediately and must continue through the deep queue once the closure gate is genuinely green; do not wait for another reviewer cycle.
+R9-3 is **not READY yet**. The coding agent is pre-authorized to finish R9-2H immediately and, once the closure gate is genuinely satisfied, continue through R9-3..R9-12 and Q10/Q11/Q12 without waiting for another reviewer cycle.
 
-## Accepted partial progress in `1786f2f`
+## Accepted progress
 
-Two useful implementation directions landed:
+### Compile/full-gate blocker — CLOSED
 
-1. `recv_udp_delivery_ack` now takes caller-owned `&mut usize`, so a caller can preserve the malformed/ignored count across Session and Carrier demux returns.
-2. The old ad-hoc settlement decoder (`recv_udp_until` + independent `open_unreliable` + ACK parser) was removed. Carrier settlement now reuses the same authenticated classification helper and records applied/rejected ACK outcomes; final ACK counters moved after the drain attempt.
+`4c8906a` is the correct minimal repair for the four `E0061` stale test callsites created when `recv_udp_delivery_ack` gained the caller-owned `malformed: &mut usize` parameter. The source/test tree is green locally and in hosted checks.
 
-These are partial repairs for H-R9-006/H-R9-007, not closure.
+### H-R9-006 malformed-budget plumbing — ACCEPTED AS PARTIAL CLOSURE
+
+The production reliable receive path creates one `malformed` counter before logical confirmation and passes the same counter through later Carrier-ACK drain calls. A successful/rejected Carrier ACK return therefore does not reset the invalid authenticated-plaintext budget.
+
+This plumbing is correct but the overall operation is still split into two caller loops, so R9-2H remains open on the completion/deadline contract below.
 
 # Queue front — execute continuously now
 
-## BLOCKER R9-2H-GATE-002 — restore a green exact source/test tree
-
-Hosted `stable checks` on exact `1786f2f` reports four stale direct test callsites of `recv_udp_delivery_ack` (hosted compiler lines 4962, 5009, 5059, 5121): the new tenth `&mut usize` argument is missing.
-
-Repair every callsite coherently; do not patch only enough to compile one test. Focused CLI tests must compile/run before the full gate.
-
-After the final source/test repair is pushed, run and persist developer-local exact-tree provenance for:
-
-- focused `neko-cli` tests relevant to the receive/demux owner;
-- `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`;
-- `git diff --check`;
-- initial/final clean tree;
-- exact pushed SHA, UTC start/end, OS/arch, Rust stable version, exit codes.
-
-Hosted checks remain cross-evidence only.
-
 ## HIGH H-R9-010 — incomplete Carrier settlement still masquerades as settled
 
-Current source still performs:
+Current `failover_client` still performs:
 
-1. a `while !outstanding.is_empty()` logical-confirmation phase;
-2. then a separate caller settlement phase while `rt.in_flight() > 0`.
+1. a logical-confirmation phase while `!outstanding.is_empty()` using `application_deadline`;
+2. then a Carrier settlement phase while `rt.in_flight() > 0`.
 
-In the settlement phase, any classifier timeout / malformed-budget exhaustion / receive error reaches `Err(_) => break`. Execution then emits both `r9_udp_packet_ack_outcomes` and **`r9_udp_in_flight_settled` regardless of whether `rt.in_flight()` is still nonzero**, then continues into health/failover logic.
+In the settlement phase, `recv_udp_delivery_ack` timeout / receive error / malformed-bound exhaustion reaches `Err(_) => break`. The caller then still emits:
+
+- `r9_udp_packet_ack_outcomes` with `remaining_in_flight`; and
+- **`r9_udp_in_flight_settled` even when `rt.in_flight()` is nonzero**;
+
+then continues into health/failover logic.
 
 Required invariant:
 
-- successful completion exists only when logical outstanding is empty **and** authoritative recovery `in_flight()==0`;
-- a timeout/error/malformed-bound before both are true is an explicit bounded partial/failure result;
-- never emit a successful-looking `r9_udp_in_flight_settled` marker with remaining in-flight state;
-- incomplete settlement must stop/fail this operation before downstream R9 behavior consumes a false settlement premise.
+```text
+reliable_receive_complete := outstanding.is_empty() && rt.in_flight() == 0
+```
 
-Minimal acceptable implementation shape: one stateful receive-operation result/owner that retains outstanding logical keys, persistent malformed count, Carrier applied/rejected counts and logical confirmation count, and returns a typed complete/partial/error result.
+Before that predicate is true, timeout/error/malformed exhaustion is an explicit bounded incomplete/error result. It must not emit `r9_udp_in_flight_settled`, and downstream R9 health/failover logic must not consume a successful-settlement premise.
 
-## MEDIUM M-R9-009 — use one absolute receive-operation deadline
+### Preferred minimal implementation shape
 
-`1786f2f` still creates a fresh `settle_deadline = Instant::now() + secs.min(10)` after the original `application_deadline` logical phase.
+Do not add a second decoder, new wire type, or new policy value. Collapse caller ownership into one bounded reliable receive-operation helper/state object that owns for the entire operation:
 
-Do not extend the receive operation after logical confirmation. Establish one absolute deadline once before the owner begins and use it until both logical outstanding and recovery in-flight are complete or the operation explicitly fails partial.
+- outstanding logical records;
+- one absolute application/receive deadline;
+- the persistent malformed counter;
+- logical confirmation count;
+- Carrier ACK applied/rejected counters;
+- the one authoritative `ReliableUdpRuntime`.
 
-## MEDIUM M-R9-008 — add the required built-binary/process closure regressions
+Its completion loop is conceptually:
 
-The `1786f2f` diff changed only `src/main.rs`; required process-path closure evidence is still absent.
+```text
+while !outstanding.is_empty() || rt.in_flight() != 0:
+    classify one authenticated plaintext exactly once
+    Session DeliveryAck -> apply SessionRuntime::delivery_ack for exact matched range
+    Carrier ACK -> apply Recovery feedback only
+    bounded negative -> consume the same malformed budget
+```
 
-Before R9-2H closes, add all three through the real built `failover` command path:
+Any error before the predicate becomes false returns typed incomplete/error and terminates this R9 operation. Only the complete return path may emit `r9_udp_in_flight_settled`.
 
-1. **Reversed logical ACK order:** test-only server seam accepts two reliable-owned logical records and emits Session DeliveryAck for record 1 before record 0. Require both exact logical ranges to confirm exactly once, Carrier ACKs to remain Carrier-local, recovery to settle and no conflict.
-2. **Reliable + migration-back reservation:** reserved final logical record is neither reliable-tracked nor legacy wire-sent before post-promotion return authorization; only its later explicit owner may send it.
-3. **Persistent malformed budget across Carrier feedback:** authenticated malformed #1 -> malformed #2 -> canonical Carrier ACK -> malformed #3 must hit the same operation-wide `MAX_POST_HANDSHAKE_MALFORMED` ceiling. Applied or rejected Carrier ACK and Session DeliveryAck must not reset that counter.
+## MEDIUM M-R9-009 — one absolute receive-operation deadline
 
-Focused helper/unit tests may supplement these but do not replace them.
+Current source still creates a new:
 
-## R9-2H closure gate
+```text
+settle_deadline = Instant::now() + Duration::from_secs(secs.min(10))
+```
 
-R9-2H closes only when all of the following are simultaneously true on a reachable pushed source/test SHA:
+after logical confirmation has already consumed time from `application_deadline`.
 
-- test target compiles and focused regressions pass;
-- one persistent malformed budget spans the full reliable receive/settlement operation;
-- every authenticated plaintext is classified exactly once as Session DeliveryAck / Carrier packet ACK / bounded negative;
-- completion requires `outstanding.is_empty() && in_flight()==0`;
-- partial/timeout/malformed/error cannot be labeled settled or silently continued;
-- one absolute application/receive deadline is used, without a fresh post-confirmation extension;
-- the three built-binary discriminating regressions pass;
-- clean developer-local exact-tree gate + provenance exists.
+Remove the fresh post-confirmation extension. Establish one absolute deadline before the reliable receive owner starts and use it until complete or explicit failure. Carrier settlement does not receive a new time budget merely because Session confirmations happened first.
 
-If the coding agent can finish these in one coherent repair, it should immediately continue into R9-3 without waiting for reviewer cadence.
+## MEDIUM M-R9-008 — required built-binary/process closure regressions
+
+`4c8906a` changes only four in-module helper-test callsites. Before R9-2H closes, add all three through the real built `failover` command path:
+
+1. **Reversed logical ACK order** — two reliable-owned logical records; test-only server emits Session DeliveryAck for record 1 before record 0. Require both exact logical ranges to confirm once, Carrier ACKs to remain Carrier-local, Recovery to settle to zero, no conflict.
+2. **Reliable + migration-back reservation** — reserved final logical record is neither Recovery-tracked nor legacy wire-sent before post-promotion return authorization; only its explicit later owner sends it.
+3. **Persistent malformed budget across Carrier feedback** — authenticated malformed #1 -> malformed #2 -> canonical Carrier ACK -> malformed #3 reaches the same operation-wide `MAX_POST_HANDSHAKE_MALFORMED` ceiling. Applied/rejected Carrier ACK or Session DeliveryAck does not reset it.
+
+Focused helper/unit tests may supplement these but do not replace built-binary process evidence.
+
+## R9-2H exact closure gate
+
+R9-2H closes only on a reachable pushed source/test SHA where all are simultaneously true:
+
+- focused regressions compile/pass;
+- full `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` passes;
+- `git diff --check` passes and initial/final tree is clean;
+- developer-local provenance records exact pushed SHA, UTC times, OS/arch, Rust stable and exit codes;
+- one persistent malformed budget spans the whole reliable receive/settlement operation;
+- every authenticated plaintext is classified once as Session DeliveryAck / Carrier packet ACK / bounded negative;
+- success requires `outstanding.is_empty() && in_flight()==0`;
+- incomplete settlement cannot emit `r9_udp_in_flight_settled` or continue as success;
+- one absolute receive-operation deadline is used;
+- all three built-binary discriminating regressions pass.
+
+If this closes in one coherent repair, immediately continue to R9-3 without waiting for reviewer cadence.
 
 # Continuous queue after R9-2H closes
 
-Preserve this queue; do not collapse it back to one micro-ticket.
+Preserve the deep queue. Do not collapse it to one micro-ticket after each commit.
 
 ## R9-3 — process Data-loss recovery
 
-Add bounded deterministic post-admission suppression of one/periodic reliable-owned Data packet. Prove congestion admission precedes suppression; PTO fires only after deadline; retransmission uses a fresh authenticated packet number/nonce with stable Session/frame identity; exactly-once Session delivery; Carrier ACK and Session DeliveryAck settle independently; final recovery drains to zero or yields explicit bounded partial/failure.
+Add bounded deterministic post-admission suppression of one/periodic reliable-owned Data packet. Prove congestion admission precedes suppression; PTO fires only after deadline; retransmission uses a fresh authenticated packet number/nonce with stable Session/frame identity; exactly-once Session delivery; Carrier ACK and Session DeliveryAck settle independently; final Recovery drains to zero or yields explicit bounded incomplete/error.
 
 ## R9-4 — ACK-loss + reorder/delayed-original
 
@@ -141,11 +163,11 @@ Independent challenge of Session-above-Carrier layering, authenticated packet id
 
 # VPS opportunity
 
-**Not READY yet.** Current blockers are local R9-2H correctness/test/evidence ownership, not WAN authorization. Once R9-2H..R9-12 and Q11 establish a specific new live question, standing authorization already covers the bounded self-owned TCP/UDP run.
+**Not READY yet — implementation/evidence-instrumentation dependency.** The rented-VPS priority explicitly prefers local work that directly unlocks a truthful VPS run, which is exactly this R9 chain. Once R9-2H..R9-12 and Q11 establish a specific changed live question, standing authorization already covers one bounded self-owned TCP/UDP run; do not ask again for generic WAN permission.
 
 # Non-blocking policy/authority gates
 
-Keep separate from this mechanically determined R9 chain:
+Keep separate from the mechanically determined R9 chain:
 
 - `SessionRuntime.events` retention (`POLICY_BLOCKED_RESOURCE_BOUND`);
 - D019 source-retention/no-reset policy;
