@@ -3055,52 +3055,62 @@ fn failover_client(args: &[String]) {
             ),
         );
         let mut recovery_buf = [0u8; READINESS_FRAME_MAX];
-        u.send_to(&ciphertext, target).unwrap();
-        u.set_read_timeout(Some(Duration::from_secs(secs.min(3))))
+        // P2: retry the recovery challenge across the bounded deadline — the
+        // server may still be inside its bounded TCP readiness loop when the
+        // first datagram arrives, so resend until the recovery owner responds.
+        let recovery_deadline = Instant::now() + Duration::from_secs(secs.min(3));
+        u.set_read_timeout(Some(Duration::from_millis(500)))
             .unwrap();
-        let udp_recovery_sample = match u.recv_from(&mut recovery_buf) {
-            Ok((n, source)) if source == target => {
-                let plain = us
-                    .open_unreliable(&recovery_buf[..n])
-                    .unwrap_or_else(|_| fail("UDP recovery response authentication failed"));
-                if !matches!(
-                    ProcessMessage::decode(&plain),
-                    Ok(ProcessMessage::ReadinessResponse {
-                        session: SessionId(7001),
-                        target_path: 1,
-                        path_generation: 1,
-                        delivery_epoch: 1,
-                        challenge_id: 1,
-                        admitted: true
-                    })
-                ) {
-                    fail("UDP recovery response tuple mismatch")
+        let mut attempts = 0u8;
+        let udp_recovery_sample = loop {
+            u.send_to(&ciphertext, target).unwrap();
+            attempts += 1;
+            match u.recv_from(&mut recovery_buf) {
+                Ok((n, source)) if source == target => {
+                    let plain = us
+                        .open_unreliable(&recovery_buf[..n])
+                        .unwrap_or_else(|_| fail("UDP recovery response authentication failed"));
+                    if !matches!(
+                        ProcessMessage::decode(&plain),
+                        Ok(ProcessMessage::ReadinessResponse {
+                            session: SessionId(7001),
+                            target_path: 1,
+                            path_generation: 1,
+                            delivery_epoch: 1,
+                            challenge_id: 1,
+                            admitted: true
+                        })
+                    ) {
+                        fail("UDP recovery response tuple mismatch")
+                    }
+                    break HealthSample {
+                        rtt_us: challenge_sent.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                        loss_per_mille: 0,
+                        pto: 0,
+                    };
                 }
-                HealthSample {
-                    rtt_us: challenge_sent.elapsed().as_micros().min(u64::MAX as u128) as u64,
-                    loss_per_mille: 0,
-                    pto: 0,
+                Ok(_) => {
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "udp_recovery_failed",
+                        1,
+                        ",\"active\":\"tcp\",\"reason\":\"wrong_peer\"",
+                    );
+                    fail("UDP recovery response from wrong peer")
                 }
-            }
-            Ok(_) => {
-                emit_diagnostic(
-                    args,
-                    "client",
-                    "udp_recovery_failed",
-                    1,
-                    ",\"active\":\"tcp\",\"reason\":\"wrong_peer\"",
-                );
-                fail("UDP recovery response from wrong peer")
-            }
-            Err(_) => {
-                emit_diagnostic(
-                    args,
-                    "client",
-                    "udp_recovery_failed",
-                    1,
-                    ",\"active\":\"tcp\",\"reason\":\"timeout\"",
-                );
-                fail("UDP recovery validation timeout")
+                Err(_) => {
+                    if Instant::now() >= recovery_deadline || attempts >= 6 {
+                        emit_diagnostic(
+                            args,
+                            "client",
+                            "udp_recovery_failed",
+                            1,
+                            ",\"active\":\"tcp\",\"reason\":\"timeout\"",
+                        );
+                        fail("UDP recovery validation timeout")
+                    }
+                }
             }
         };
         manager.observe(PathId(1), udp_recovery_sample).unwrap();
