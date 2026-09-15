@@ -2220,6 +2220,26 @@ fn reliable_udp_migration_back_reserves_final_record() {
             "{client_log}"
         );
     }
+    // M-R9-008 P2-C1: TCP replay identity — exactly one tcp_delivery_ack_validated
+    // at seq 2 (offset 32), no replay of reliable-owned 0/16 or reserved 48.
+    let tcp_acks: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"tcp_delivery_ack_validated\""))
+        .collect();
+    assert_eq!(tcp_acks.len(), 1, "{client_log}");
+    // P2-C4: settled event must appear strictly after both acknowledgement
+    // domains — regardless of arrival order.
+    let dack_pos = client_log
+        .find("\"event\":\"udp_return_delivery_ack_validated\"")
+        .unwrap_or(usize::MAX);
+    let pack_pos = client_log
+        .find("\"event\":\"r9_udp_return_packet_ack\"")
+        .unwrap_or(usize::MAX);
+    let settled_pos = client_log
+        .find("\"event\":\"r9_udp_post_return_settled\"")
+        .unwrap_or(usize::MAX);
+    assert!(dack_pos < settled_pos, "{client_log}");
+    assert!(pack_pos < settled_pos, "{client_log}");
 }
 #[test]
 fn reliable_udp_reversed_ack_order_confirms_in_order() {
