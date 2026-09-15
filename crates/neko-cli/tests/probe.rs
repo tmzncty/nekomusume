@@ -2146,14 +2146,24 @@ fn reliable_udp_migration_back_reserves_final_record() {
         !client_log.contains("\"event\":\"udp_uncertain_range_sent\",\"seq\":3,\"ciphertext_bytes\":96,\"stream\":1,\"offset\":48"),
         "{client_log}"
     );
-    // M-R9-008 P2 (evidence): when post-return runs, the reserved record is
-    // reliable-owned — r9_udp_post_return_sent carries offset 48, a Session
-    // DeliveryAck and a Carrier packet ACK both arrive, and recovery settles
-    // to zero. The migration-back fixture is known to stall at UDP recovery
-    // in this environment; assert the full evidence only if the post-return
-    // path actually executed, otherwise the negative reservation invariant
-    // above still holds.
-    if client_log.contains("\"event\":\"r9_udp_post_return_sent\"") {
+    // M-R9-008 P2 (positive evidence): the post-return path MUST execute —
+    // the reserved record is reliable-owned, sent via r9_udp_post_return_sent,
+    // confirmed by Session DeliveryAck AND Carrier packet ACK, settling
+    // recovery in_flight to zero. This is no longer conditional.
+    {
+        assert!(out.status.success(), "stdout={client_log}");
+        assert!(
+            client_log.contains("\"event\":\"udp_recovery_validated\""),
+            "{client_log}"
+        );
+        assert!(
+            client_log.contains("\"event\":\"udp_migrated_back\""),
+            "{client_log}"
+        );
+        assert!(
+            client_log.contains("\"event\":\"r9_udp_post_return_sent\",\"seq\":0,\"offset\":48"),
+            "{client_log}"
+        );
         assert!(
             client_log.contains("\"event\":\"r9_udp_post_return_sent\",\"seq\":0,\"offset\":48"),
             "{client_log}"
