@@ -2139,12 +2139,31 @@ fn reliable_udp_migration_back_reserves_final_record() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(server_status.success(), "stdout={server_log}");
+    // Server-side causal chain for the post-return ownership transition:
+    // recovery owner started -> recovery validated -> Session DeliveryAck sent
+    // -> Carrier packet ACK sent for the post-return record.
+    assert!(
+        server_log.contains("udp_recovery_owner_started"),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"udp_recovery_validated\""),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"udp_return_delivery_ack_sent\""),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"udp_return_packet_ack_sent\""),
+        "{server_log}"
+    );
     // The reserved final record must NOT appear on the legacy uncertain
     // direct-send path in reliable mode (it is reliable-owned, not uncertain).
     // udp_uncertain_range_sent may still appear for the non-reserved middle
     // record; assert only that no uncertain send carries the reserved offset.
-    // With 3 records of 16 bytes: offsets are 0, 16, 32, 48; reserved is index 2
-    // (offset 48). Reliable records are 0 and 16.
+    // With 4 records of 16 bytes: offsets are 0, 16, 32, 48; reserved is index 3
+    // (offset 48). Reliable records are 0 and 16; uncertain TCP replay is 32.
     assert!(
         !client_log.contains("\"event\":\"udp_uncertain_range_sent\",\"seq\":3,\"ciphertext_bytes\":96,\"stream\":1,\"offset\":48"),
         "{client_log}"
