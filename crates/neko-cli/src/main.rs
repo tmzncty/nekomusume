@@ -1697,7 +1697,20 @@ fn failover_server(args: &[String]) {
                 println!(
                     "carrier_event name=tcp_resource_admitted session=7001 target_path=2 generation=1 delivery_epoch=1 final_challenge=3 source=runtime_limits"
                 );
-                let tcp_records = count.saturating_sub(if recovery_enabled { 2 } else { 1 });
+                // H-R9-016: derive the expected TCP replay count from the same
+                // ownership partition the client uses — reliable-UDP-owned
+                // records (records[0..2] under --reliable-udp) plus the
+                // reserved final record under recovery/migration-back are NOT
+                // replayed over TCP. This reconciles the server's expected
+                // TCP Data count with the client's actual send count.
+                let reliable_udp = args.iter().any(|a| a == "--reliable-udp");
+                let uncertain_start = if reliable_udp { 2 } else { 1 };
+                let uncertain_end = if recovery_enabled {
+                    count.saturating_sub(1)
+                } else {
+                    count
+                };
+                let tcp_records = uncertain_end.saturating_sub(uncertain_start);
                 for _ in 0..tcp_records {
                     bound_stream_to_deadline(&stream, experiment_deadline, None)
                         .unwrap_or_else(|_| fail("TCP data deadline elapsed"));
