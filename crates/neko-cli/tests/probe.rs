@@ -2226,6 +2226,13 @@ fn reliable_udp_reversed_ack_order_confirms_in_order() {
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
+    // P1 acceptance: the client process itself completes successfully on the
+    // reversed-order reliable path.
+    assert!(
+        out.status.success(),
+        "stdout={client_log} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     // Record-1 ACK is observed/buffered first while the watermark is still 0.
     let buffered: Vec<&str> = client_log
         .lines()
@@ -2244,14 +2251,18 @@ fn reliable_udp_reversed_ack_order_confirms_in_order() {
     // Both exact offsets appear as applied confirmations.
     assert!(client_log.contains("\"offset\":0"), "{client_log}");
     assert!(client_log.contains("\"offset\":16"), "{client_log}");
-    // Order: the buffered offset-16 event must appear before any offset-0
-    // application, and the offset-16 buffered application (buffered=true)
-    // appears only after offset-0 is applied.
-    let buf_pos = client_log.find("r9_udp_delivery_ack_buffered").unwrap_or(0);
-    let off0_pos = client_log.find("\"offset\":0").unwrap_or(usize::MAX);
-    let off16_app = client_log.rfind("\"buffered\":true").unwrap_or(usize::MAX);
-    assert!(buf_pos < off0_pos, "{client_log}");
-    assert!(off0_pos < off16_app, "{client_log}");
+    // Order proof uses the exact structured event lines already collected:
+    // the buffered-observation line appears before the first applied event,
+    // and the buffered applied event (buffered=true) appears last.
+    let buf_pos = client_log
+        .find("\"event\":\"r9_udp_delivery_ack_buffered\"")
+        .unwrap_or(0);
+    let app0_pos = client_log
+        .find("\"event\":\"r9_udp_delivery_ack_validated\"")
+        .unwrap_or(usize::MAX);
+    let app16_pos = client_log.rfind("\"buffered\":true").unwrap_or(usize::MAX);
+    assert!(buf_pos < app0_pos, "{client_log}");
+    assert!(app0_pos < app16_pos, "{client_log}");
     // H-R9-013/014: exactly two applied r9_udp_delivery_ack_validated events —
     // stream 1 / offset 0 (non-buffered, applied first) and stream 1 /
     // offset 16 buffered=true (applied second after the watermark advances).
