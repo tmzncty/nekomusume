@@ -2916,7 +2916,12 @@ fn failover_client(args: &[String]) {
     let resend_records = if automatic_health_failover {
         failover.tcp_resend().unwrap().len()
     } else {
-        count.saturating_sub(1)
+        // H-R9-017: controlled fallback must use the same ownership partition
+        // as the server — reliable-UDP-owned records and the reserved final
+        // record are NOT replayed over TCP. Replaying an already reliable-
+        // owned/confirmed offset manufactures a BrokenPipe and an ownership
+        // contradiction.
+        uncertain_end.saturating_sub(uncertain_start)
     };
     let tcp_records = resend_records;
     let mut first_resumed_data_at = None;
