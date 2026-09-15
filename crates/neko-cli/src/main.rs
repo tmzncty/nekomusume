@@ -2928,16 +2928,18 @@ fn failover_client(args: &[String]) {
     let mut first_resumed_ack_at = None;
     let mut replayed_records = 0usize;
     let mut tcp_active_sample = None;
-    let uncertain_records = if recovery_enabled {
-        records.len().saturating_sub(2)
-    } else {
-        records.len().saturating_sub(1)
-    };
+    // H-R9-020: uncertain record count is the ownership-partition width —
+    // uncertain_end - uncertain_start — not records.len()-2. Under
+    // --reliable-udp + migration-back the uncertain set is exactly one record.
+    let uncertain_records = uncertain_end.saturating_sub(uncertain_start);
     let post_return_record = if recovery_enabled {
         records.last().cloned()
     } else {
         None
     };
+    // H-R9-020: track whether the post-return reliable record actually ran so
+    // the final accounting counts it once (Option is consumed by unwrap below).
+    let mut post_return_ran = false;
     // H-R9-019: TCP replay identity follows the same ownership partition — the
     // replayed records start at `uncertain_start`, not positionally at index 1.
     // Under --reliable-udp the uncertain set begins after the reliable-owned
@@ -3262,6 +3264,7 @@ fn failover_client(args: &[String]) {
             count,
             &format!(",\"ciphertext_bytes\":{}", ack_len),
         );
+        post_return_ran = true;
         // M-R9-008 P2: dedicated post-return terminal evidence — emitted only
         // after both the exact Session DeliveryAck and the Carrier packet ACK
         // have drained the post-return recovery ownership to zero. Only emit
@@ -3289,14 +3292,17 @@ fn failover_client(args: &[String]) {
         count,
         &format!(
             ",\"udp_confirmed_records\":{},\"udp_confirmed_bytes\":{},\"uncertain_records\":{},\"uncertain_bytes\":{},\"replayed_records\":{},\"replayed_bytes\":{},\"confirmed_records\":{},\"confirmed_bytes\":{},\"duplicate_records\":0,\"duplicate_bytes\":0,\"lost_records\":0,\"lost_bytes\":0,\"conflicting_records\":0,\"conflicting_bytes\":0",
-            usize::from(recovery_enabled) + 1,
-            (usize::from(recovery_enabled) + 1) * bytes,
+            // H-R9-020: UDP-confirmed = reliable-owned partition start
+            // (records[0..uncertain_start]); a completed post-return record is
+            // separately tracked, not double-counted here.
+            uncertain_start,
+            uncertain_start * bytes,
             uncertain_records,
             uncertain_records * bytes,
             replayed_records,
             replayed_records * bytes,
-            usize::from(recovery_enabled) + 1 + replayed_records,
-            (usize::from(recovery_enabled) + 1 + replayed_records) * bytes
+            uncertain_start + replayed_records + usize::from(post_return_ran),
+            (uncertain_start + replayed_records + usize::from(post_return_ran)) * bytes
         ),
     );
     println!(

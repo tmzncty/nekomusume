@@ -2174,6 +2174,15 @@ fn reliable_udp_migration_back_reserves_final_record() {
         .unwrap_or(usize::MAX);
     assert!(cli_chal < cli_val, "{client_log}");
     assert!(cli_val < cli_mig, "{client_log}");
+    // H-R9-020: final failover accounting must reflect the true ownership
+    // partition — 2 UDP-confirmed (reliable 0,16), 1 uncertain TCP replay
+    // (offset 32), 1 post-return reliable (offset 48), 4 confirmed total.
+    assert!(
+        client_log.contains(
+            "\"udp_confirmed_records\":2,\"udp_confirmed_bytes\":32,\"uncertain_records\":1,\"uncertain_bytes\":16,\"replayed_records\":1,\"replayed_bytes\":16,\"confirmed_records\":4,\"confirmed_bytes\":64"
+        ),
+        "{client_log}"
+    );
     // The reserved final record must NOT appear on the legacy uncertain
     // direct-send path in reliable mode (it is reliable-owned, not uncertain).
     // udp_uncertain_range_sent may still appear for the non-reserved middle
