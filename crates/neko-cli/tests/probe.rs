@@ -2142,22 +2142,38 @@ fn reliable_udp_migration_back_reserves_final_record() {
     // Server-side causal chain for the post-return ownership transition:
     // recovery owner started -> recovery validated -> Session DeliveryAck sent
     // -> Carrier packet ACK sent for the post-return record.
-    assert!(
-        server_log.contains("udp_recovery_owner_started"),
-        "{server_log}"
-    );
-    assert!(
-        server_log.contains("\"event\":\"udp_recovery_validated\""),
-        "{server_log}"
-    );
-    assert!(
-        server_log.contains("\"event\":\"udp_return_delivery_ack_sent\""),
-        "{server_log}"
-    );
-    assert!(
-        server_log.contains("\"event\":\"udp_return_packet_ack_sent\""),
-        "{server_log}"
-    );
+    // M-R9-009/010: server causal milestones in strict observed order —
+    // recovery owner starts, the challenge is validated, then Session
+    // DeliveryAck is sent, then the Carrier packet ACK for the post-return
+    // record is emitted.
+    let owner_pos = server_log
+        .find("udp_recovery_owner_started")
+        .unwrap_or(usize::MAX);
+    let srv_val_pos = server_log
+        .find("\"event\":\"udp_recovery_validated\"")
+        .unwrap_or(usize::MAX);
+    let srv_dack_pos = server_log
+        .find("\"event\":\"udp_return_delivery_ack_sent\"")
+        .unwrap_or(usize::MAX);
+    let srv_pack_pos = server_log
+        .find("\"event\":\"udp_return_packet_ack_sent\"")
+        .unwrap_or(usize::MAX);
+    assert!(owner_pos < srv_val_pos, "{server_log}");
+    assert!(srv_val_pos < srv_dack_pos, "{server_log}");
+    assert!(srv_dack_pos < srv_pack_pos, "{server_log}");
+    // Client recovery order: challenge sent before validated, validated before
+    // migration-back.
+    let cli_chal = client_log
+        .find("\"event\":\"udp_recovery_challenge_sent\"")
+        .unwrap_or(usize::MAX);
+    let cli_val = client_log
+        .find("\"event\":\"udp_recovery_validated\"")
+        .unwrap_or(usize::MAX);
+    let cli_mig = client_log
+        .find("\"event\":\"udp_migrated_back\"")
+        .unwrap_or(usize::MAX);
+    assert!(cli_chal < cli_val, "{client_log}");
+    assert!(cli_val < cli_mig, "{client_log}");
     // The reserved final record must NOT appear on the legacy uncertain
     // direct-send path in reliable mode (it is reliable-owned, not uncertain).
     // udp_uncertain_range_sent may still appear for the non-reserved middle
