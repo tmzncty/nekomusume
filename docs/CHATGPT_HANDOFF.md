@@ -1,81 +1,144 @@
-# ChatGPT reviewer handoff — exact P2 order accepted; identity/cardinality closure still READY_LOCAL
+# ChatGPT reviewer handoff — R9 final accounting HIGH at exact `ff295a7`; P2 exact evidence still READY_LOCAL
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `1aa95abddfc23d64d377fa65172ef8cf740ff987` (`test(cli): P2 exact causal-order evidence for server + client recovery chain (M-R9-009, M-R9-010)`).
-- Reviewer checkpoint: `docs/reviews/reviewer-r9-p2-order-1aa95ab-20260916.md`.
-- `1aa95ab` is **test-only** (`crates/neko-cli/tests/probe.rs`); no runtime source changed.
-- GitHub-hosted `stable checks` SUCCESS and `nightly decode fuzz smoke` SUCCESS for exact `1aa95ab`. Hosted CI is cross-evidence only; final R9-2 developer-local clean exact-tree provenance is still absent.
+- Latest developer-owned source/test commit reviewed: exact `ff295a711bf526b1691625fc37f79aaf6ec83841` (`test(cli): P2 exact cardinality — TCP replay offset 32 + settled after both ACKs (M-R9-008 C1-C4)`).
+- Reviewer checkpoint: [`docs/reviews/reviewer-r9-p2-accounting-ff295a7-20260916.md`](reviews/reviewer-r9-p2-accounting-ff295a7-20260916.md).
+- `ff295a7` is **test-only** (`crates/neko-cli/tests/probe.rs`); no runtime source changed in that commit.
+- GitHub-hosted `stable checks` SUCCESS and `nightly decode fuzz smoke` SUCCESS for exact `ff295a7`. Hosted CI is cross-evidence only; final R9-2 developer-local clean exact-tree provenance is still absent.
 - Open PRs: none at this review.
 - No new WAN/VPS experiment.
 - `READY_LIVE: none`; item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The external coding agent must synchronize to current `main` and continue every dependency-ready slice below without waiting for reviewer cadence. Reviewer cadence is not a work-ticket length.
 
-## Accepted progress — preserve it
+# STOP FRONT — H-R9-020 final failover accounting contradiction
 
-### H-R9-019 exact controlled TCP replay identity — CLOSED
+**Severity: HIGH for correctness/evidence truth.** This is mechanically repairable under current semantics and requires no maintainer policy decision.
+
+The current R9 reliable-UDP + migration-back runtime already computes the authoritative pre-TCP ownership partition:
+
+```text
+uncertain_end = records.len() - 1          // recovery_enabled: final record reserved
+uncertain_start = 2                        // reliable UDP owns records 0 and 1
+uncertain_count = uncertain_end - uncertain_start
+```
+
+For the positive count=4 / 16-byte P2 fixture the actual ownership is:
+
+```text
+offset 0   reliable UDP confirmed
+offset 16  reliable UDP confirmed
+offset 32  uncertain -> TCP replay -> confirmed
+offset 48  reserved -> migration-back -> reliable UDP -> dual-domain confirmed
+```
+
+Therefore the truthful completed result is:
+
+```text
+udp_confirmed_records = 2
+udp_confirmed_bytes   = 32
+uncertain_records     = 1
+uncertain_bytes       = 16
+replayed_records      = 1
+replayed_bytes        = 16
+confirmed_records     = 4
+confirmed_bytes       = 64
+duplicate/lost/conflicting = 0 in this fixture
+```
+
+But current `failover_accounting` recomputes `uncertain_records = records.len() - 2` and final confirmed totals as only initial reliable records + TCP replay. The successful P2 therefore reports two uncertain records / 32 uncertain bytes and only three confirmed records / 48 confirmed bytes, even though offset 48 was already post-return confirmed and Recovery settled.
+
+## Required smallest repair
+
+Do not redesign Session/Carrier/ACK/wire semantics and do not invent policy values.
+
+1. Reuse the already-authoritative `uncertain_count` for `uncertain_records` and `uncertain_bytes`.
+2. Track post-return confirmation only after the existing dual-domain terminal condition actually succeeds (`post_outstanding` empty and Recovery `in_flight()==0`).
+3. Compute final confirmed totals from actual completed ownership transitions, including the post-return record only after that terminal condition.
+4. Tighten the existing count=4 built-binary P2 fixture to require the exact accounting values above.
+5. Preserve existing settled-after-both-ACK-domain and `remaining_in_flight=0` evidence.
+
+Smallest repair -> focused regression -> commit/push -> continue immediately.
+
+# Accepted progress — preserve it
+
+## H-R9-019 exact controlled TCP replay identity — CLOSED
 
 Controlled fallback selects the exact ownership partition beginning at `uncertain_start`; do not reintroduce positional `skip(1)` replay selection.
 
-### M-R9-008 dedicated post-return terminal settlement — ACCEPT_WITH_BOUNDARIES
+## M-R9-008 dedicated post-return terminal settlement — ACCEPT_WITH_BOUNDARIES
 
-`r9_udp_post_return_settled` remains the terminal post-return success event and must only be emitted after logical confirmation and Carrier Recovery settlement, with authoritative `remaining_in_flight=0`.
+`r9_udp_post_return_settled` is the terminal post-return success event and must only be emitted after logical confirmation and Carrier Recovery settlement, with authoritative `remaining_in_flight=0`.
 
-### M-R9-009/010 causal-order assertions — ACCEPT_PARTIAL
+## M-R9-009/010 causal order — ACCEPT_PARTIAL
 
-Exact `1aa95ab` improves the positive count=4 built-binary fixture by proving observed order for:
+The positive count=4 built-binary fixture proves:
 
 - client: `udp_recovery_challenge_sent < udp_recovery_validated < udp_migrated_back`;
 - server: `udp_recovery_owner_started < udp_recovery_validated < udp_return_delivery_ack_sent < udp_return_packet_ack_sent`.
 
-Do not revert these order checks. They do **not** yet close exact P2 identity/cardinality below.
+Preserve these checks.
 
-### Previously highlighted candidates A/B — CLOSED on current HEAD
+## Exact `ff295a7` additions — ACCEPT_PARTIAL
+
+Preserve:
+
+- exactly one client `tcp_delivery_ack_validated` event in the positive P2 fixture;
+- `r9_udp_post_return_settled` observed strictly after both the Session DeliveryAck diagnostic and Carrier packet-ACK diagnostic.
+
+These additions are useful but do **not** yet satisfy all C1-C4 identity/cardinality requirements below.
+
+## Previously highlighted candidates A/B — CLOSED on current HEAD
 
 - `Recovery::on_ack` rejects a largest ACK above `largest_sent` before RTT/loss/PTO mutation.
 - `neko-observe::record_datagrams` keeps `queue_dropped` as a subset of generic `dropped` and preserves mixed terminal vs queue-full reasons.
 
 Do not reopen without a new reproducer.
 
-# READY_LOCAL front — finish exact P2 in the existing count=4 fixture
+# READY_LOCAL after H-R9-020 — finish exact P2 in the existing count=4 fixture
 
-Do not create a parallel P2 scenario. Do not change protocol/Session/Carrier/ACK architecture. Tighten `reliable_udp_migration_back_reserves_final_record` until one built-binary run proves the complete ownership chain.
+Do not create a parallel P2 scenario. Do not change protocol/Session/Carrier/ACK architecture. Tighten `reliable_udp_migration_back_reserves_final_record` in place.
 
 ## P2-C1 — exact TCP replay identity/count
 
-Require exactly one client `tcp_delivery_ack_validated` and exactly one server `tcp_delivery_ack_sent` for `seq=2` (stream 1 / offset 32 in this fixed fixture). Reject replay evidence for `seq=0`, `seq=1`, and reserved `seq=3`.
+Current `ff295a7` counts one client `tcp_delivery_ack_validated` but does not prove its exact identity.
 
-Use the existing `seq` diagnostics; add stream/offset fields only if exact identity cannot otherwise be shown. Do not create a new replay protocol or second ownership table.
+Require:
+
+- exactly one client `tcp_delivery_ack_validated` with `seq=2` (stream 1 / offset 32);
+- exactly one server `tcp_delivery_ack_sent` for `seq=2`;
+- no TCP replay/ACK evidence for reliable-owned seq 0/1 or reserved seq 3.
+
+Use existing seq diagnostics. Add stream/offset fields only if exact identity cannot otherwise be shown.
 
 ## P2-C2 — exact client migration -> post-return send
 
-Preserve the new challenge/validation/migration order and additionally require:
+Require strict order:
 
 ```text
 udp_recovery_challenge_sent
   < udp_recovery_validated
   < udp_migrated_back
-  < r9_udp_post_return_sent(seq=0, offset=48)
+  < r9_udp_post_return_sent(offset=48)
 ```
 
-`r9_udp_post_return_sent` must occur exactly once for offset 48. The reserved record must still never appear as legacy `udp_uncertain_range_sent` offset 48.
+Require exactly one post-return send for offset 48. The reserved record must never appear as legacy `udp_uncertain_range_sent` offset 48.
 
 ## P2-C3 — exact server post-return identity/cardinality
 
-Preserve the new server event order and require:
+Require exactly once each:
 
-1. exactly one `udp_recovery_owner_started`;
-2. exactly one `udp_recovery_validated`;
-3. exactly one `udp_return_delivery_ack_sent` with `seq=3` (reserved offset 48);
-4. exactly one `udp_return_packet_ack_sent` for the same bounded post-return owner;
-5. strict order `owner_started < validated < delivery_ack_sent < packet_ack_sent`.
+1. `udp_recovery_owner_started`;
+2. `udp_recovery_validated`;
+3. `udp_return_delivery_ack_sent` with `seq=3` / reserved offset 48;
+4. `udp_return_packet_ack_sent` for the same bounded post-return owner.
 
-The Session-ACK diagnostic already derives `seq` from `post_offset / bytes`; assert it. For the Carrier ACK, use uniqueness + same-branch strict order first; add only the smallest contextual field if required for a mechanically unambiguous association.
+Preserve strict order `owner_started < validated < delivery_ack_sent < packet_ack_sent`.
 
 ## P2-C4 — exact client logical + Carrier settlement
 
-Current `udp_return_delivery_ack_validated` carries no explicit stream/offset. Add only the smallest diagnostic fields needed to prove that the logical confirmation is stream 1 / offset 48; do not change Session semantics.
+Runtime diagnostic `udp_return_delivery_ack_validated` currently has no stream/offset identity; its generic diagnostic seq is not a mechanically sufficient logical-range proof. Add only the smallest fields required to prove stream 1 / offset 48; do not change Session semantics.
 
 Then require exactly once each:
 
@@ -83,11 +146,11 @@ Then require exactly once each:
 - `r9_udp_return_packet_ack` with `applied=true`;
 - `r9_udp_post_return_settled` for stream 1 / offset 48 / `remaining_in_flight=0`.
 
-The settled event must occur strictly after **both** acknowledgement-domain events, regardless of which ACK arrived first. No success/settled event may precede completion of both domains.
-
-Once P2-C1..C4 are green, positive P2 causal evidence is closed. Continue immediately.
+`r9_udp_post_return_settled` must be after **both** acknowledgement-domain events, regardless of arrival order. No success event may precede both-domain completion.
 
 # R9-2 continuation — execute without waiting
+
+After H-R9-020 and exact P2 C1-C4, continue all dependency-ready slices below immediately.
 
 ## R9-2I-E — post-return acknowledgement-order seam
 
@@ -100,9 +163,11 @@ Use one bounded test-only ordering seam. Both runs must reach the same exact `r9
 
 ## R9-2I-A — automatic-health replay exact-identity regression
 
-The automatic-health path historically reduced exact `FailoverController::tcp_resend()` ownership to cardinality and reconstructed a contiguous replay slice. Add a focused regression comparing actual replay `(DataId, payload)` identities against exact controller ownership.
+Current automatic-health path still obtains exact `FailoverController::tcp_resend()` ownership, reduces it to `.len()`, then reconstructs a contiguous replay slice from the local record list. Challenge this explicitly.
 
-- If current contiguous partitioning is exactly equivalent, retain the regression as bounded no-finding evidence.
+Add a focused regression comparing the actual replay `(DataId, payload)` identities against the exact controller-owned resend set.
+
+- If current contiguous partitioning is exactly equivalent for all admitted shapes under current semantics, retain the regression as bounded no-finding evidence.
 - If a mismatch is reproduced, consume exact controller ownership rather than cardinality.
 
 Do not redesign failover architecture.
@@ -128,7 +193,7 @@ Suppress one acknowledgement domain at a time for the post-migration reserved ow
 
 ## R9-2 closure gate
 
-After exact P2 + both ACK arrival orders + automatic exact-identity regression + P3/P4 all exist on one reachable source/test SHA, persist developer-local clean exact-tree provenance:
+After H-R9-020 + exact P2 + both ACK arrival orders + automatic exact-identity regression + P3/P4 all exist on one reachable source/test SHA, persist developer-local clean exact-tree provenance:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
@@ -163,12 +228,12 @@ The new cross-process R9 integration surface is not covered by those historical 
 
 # VPS opportunity
 
-**Not READY — implementation/evidence + independent-review dependency.** Rental-window priority is acknowledged, but the current candidate does not yet provide a truthful new WAN question.
+**Not READY — correctness/evidence + independent-review dependency.** Rental-window priority is acknowledged, but a machine-readable accounting contradiction exists on the exact candidate path and P2/R9-2 evidence is not yet closed. Do not run a known-invalid candidate merely to consume rental time.
 
 Unlock sequence:
 
 ```text
-complete R9-2 -> R9-3..R9-12 -> Q10/Q11 -> specific READY_LIVE row -> Q12
+H-R9-020 -> complete R9-2 -> R9-3..R9-12 -> Q10/Q11 -> specific READY_LIVE row -> Q12
 ```
 
 If Q11 creates a changed-hypothesis `READY_LIVE` question, standing authorization already covers the bounded self-owned TCP/UDP VPS run. Permission is not the blocker.
