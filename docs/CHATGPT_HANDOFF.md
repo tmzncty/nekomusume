@@ -1,10 +1,11 @@
-# ChatGPT reviewer handoff — P2 both-process success accepted; exact causal evidence still open
+# ChatGPT reviewer handoff — P2 milestone presence accepted; exact causal identity/order still open
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `348997060579336ba846125ee0f9aadaa8accd97` (`test(cli): P2 both-process success + server milestones + settled-on-runtime (M-R9-008)`).
-- Reviewer checkpoint: `docs/reviews/reviewer-r9-p2-both-process-3489970-20260915.md`.
-- GitHub-hosted Rust CI for exact `3489970`: `stable checks` SUCCESS (`bash scripts/check.sh`) and `nightly decode fuzz smoke` SUCCESS. Hosted CI is cross-evidence only; the required final R9-2 developer-local clean exact-tree provenance is still absent.
+- Latest developer-owned source/test commit reviewed: exact `2d3809ef385c003692aa25b634cc5885535b4b91` (`test(cli): P2 server causal milestones + corrected fixture comment (M-R9-008)`).
+- Reviewer checkpoint: `docs/reviews/reviewer-r9-p2-causal-2d3809e-20260916.md`.
+- `2d3809e` is test-only (`crates/neko-cli/tests/probe.rs`, +21/-2); no runtime source changed.
+- GitHub-hosted `stable checks` SUCCESS and `nightly decode fuzz smoke` SUCCESS for exact `2d3809e`. Hosted CI is cross-evidence only; final R9-2 developer-local clean exact-tree provenance is still absent.
 - Open PRs: none at this review.
 - No new WAN/VPS experiment.
 - `READY_LIVE: none`; item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
@@ -17,13 +18,22 @@ The external coding agent must synchronize to current `main` and continue every 
 
 Controlled fallback replays from the ownership partition beginning at `uncertain_start`; do not reintroduce positional `skip(1)` replay selection.
 
-### M-R9-008 dedicated post-return settlement evidence — ACCEPT_WITH_BOUNDARIES
+### M-R9-008 dedicated post-return terminal settlement — ACCEPT_WITH_BOUNDARIES
 
-`r9_udp_post_return_settled` remains after the bounded post-return owner has retired the exact logical expectation and drained `ReliableUdpRuntime::in_flight()` to zero. Exact `3489970` additionally emits this reliable-settlement event only when a recovery owner exists; owner absence can no longer masquerade as `remaining_in_flight=0`.
+`r9_udp_post_return_settled` is emitted only when a recovery owner exists and only after the bounded post-return receive owner has retired the logical expectation and drained `ReliableUdpRuntime::in_flight()` to zero. The positive P2 fixture requires both client and server success. Preserve these properties.
 
-### Positive P2 both-process completion — ACCEPT
+### Positive P2 server milestone presence — ACCEPT_PARTIAL
 
-The existing count=4 migration-back fixture now requires both client and server process success. Do not restore the earlier permissive client-nonzero/server-status-discard behavior.
+Exact `2d3809e` now checks that the server log contains:
+
+- `udp_recovery_owner_started`;
+- `udp_recovery_validated`;
+- `udp_return_delivery_ack_sent`;
+- `udp_return_packet_ack_sent`.
+
+It also corrects the fixture comment to the actual count=4 ownership layout: offsets 0/16 reliable UDP, offset 32 TCP uncertain replay, offset 48 reserved post-return reliable UDP.
+
+This is useful progress, but presence-only assertions do **not** yet satisfy the exact causal/identity contract below.
 
 ### Previously highlighted candidates A/B — CLOSED on current HEAD
 
@@ -32,26 +42,56 @@ The existing count=4 migration-back fixture now requires both client and server 
 
 Do not reopen these without a new reproducer.
 
-# READY_LOCAL front — finish exact P2 causal evidence in the existing fixture
+# READY_LOCAL front — finish exact P2 causal/ownership evidence in the existing fixture
 
-The exact `3489970` commit message says the P2 test asserts the server-side milestone chain, but repository truth does not: the current test obtains `server_log` and requires `server_status.success()`, then performs only client-log milestone assertions. Do not treat the commit-message sentence as executable evidence.
+Do **not** create a parallel P2 scenario and do not modify protocol/Session/Carrier/ACK architecture. Tighten `reliable_udp_migration_back_reserves_final_record` until the same count=4 built-binary run proves the ownership chain rather than only event-name presence.
 
-Tighten `reliable_udp_migration_back_reserves_final_record`; do not create a parallel scenario. In the same count=4 bounded run require:
+## P2-C1 — exact TCP replay identity/count
 
-1. client success and server success (already present);
-2. exactly one TCP application replay for stream 1 / offset 32; no replay of offsets 0, 16 or reserved 48;
-3. client `udp_recovery_challenge_sent` before client `udp_recovery_validated` and `udp_migrated_back`;
-4. server `udp_recovery_owner_started` before server `udp_recovery_validated`;
-5. the server post-return acknowledgement branch is reached only after successful authenticated `SessionRuntime::receive` for stream 1 / offset 48;
-6. server `udp_return_delivery_ack_sent` for offset 48 before `udp_return_packet_ack_sent` for the post-return Carrier owner;
-7. exactly one client `r9_udp_post_return_sent` for stream 1 / offset 48;
-8. exact client Session confirmation for offset 48;
-9. client `r9_udp_return_packet_ack` with `applied=true`;
-10. client `r9_udp_post_return_settled` for stream 1 / offset 48 / `remaining_in_flight=0`.
+Require exactly one TCP application replay for the uncertain record at stream 1 / offset 32 (`seq=2` in the fixed 16-byte fixture), and no replay confirmation for offsets 0, 16 or reserved 48.
 
-Use exact event-line fields and order. Existing TCP replay diagnostics expose positional `seq`; if that is not sufficient to prove logical ownership, add only the smallest `stream`/`offset` fields to the existing `tcp_delivery_ack_validated` / `tcp_delivery_ack_sent` events and assert exact counts/identity. Do the same for existing post-return events only where needed. The server ACK-sent source branch is already gated by successful `SessionRuntime::receive`, so do not invent a redundant second data-accepted channel unless exact existing fields cannot make the branch unambiguous.
+Use the existing diagnostics first:
 
-Correct the stale P2 comment saying "With 3 records" while the fixture uses count=4.
+- client `tcp_delivery_ack_validated`;
+- server `tcp_delivery_ack_sent`.
+
+Require one matching event on each side for `seq=2` and reject any extra replay event for `seq=0`, `seq=1` or `seq=3`. If positional `seq` cannot unambiguously prove logical identity, add only the smallest `stream`/`offset` diagnostic fields. Do not create a new replay protocol or second ownership table.
+
+## P2-C2 — client recovery order
+
+Collect exact event lines and prove strict order:
+
+```text
+udp_recovery_challenge_sent
+    < udp_recovery_validated
+    < udp_migrated_back
+    < r9_udp_post_return_sent(offset=48)
+```
+
+`r9_udp_post_return_sent` must occur exactly once for the reserved record. Existing substring presence is insufficient.
+
+## P2-C3 — server post-return causal order
+
+The current server source is consistent with the intended path: authenticated post-return Data must pass `SessionRuntime::receive`, then the server sends Session DeliveryAck, then sends the Carrier packet ACK. Pin that boundary in the built-binary fixture:
+
+1. exactly one `udp_recovery_owner_started`;
+2. exactly one `udp_recovery_validated`;
+3. exactly one `udp_return_delivery_ack_sent` for the reserved record (`seq=3` for offset 48 in this fixed fixture);
+4. exactly one `udp_return_packet_ack_sent` for the same bounded post-return owner;
+5. strict order `owner_started < validated < delivery_ack_sent < packet_ack_sent`.
+
+Use existing event ordering/uniqueness to bind the packet ACK to the same branch. Add only the smallest contextual field if the current packet-ACK line cannot make that association mechanically testable. Do not invent a redundant `data_accepted` protocol/event layer unless genuinely necessary.
+
+## P2-C4 — exact client logical + Carrier settlement
+
+Preserve the existing useful checks and make identity/cardinality exact:
+
+- exactly one client Session confirmation for stream 1 / offset 48; `udp_return_delivery_ack_validated` currently lacks an explicit identity assertion, so connect it to the exact record with existing ordering/fields or add the smallest `stream`/`offset` diagnostic fields;
+- exactly one `r9_udp_return_packet_ack` with `applied=true`;
+- exactly one `r9_udp_post_return_settled` for stream 1 / offset 48 / `remaining_in_flight=0`;
+- no settled/success event before both domains are complete.
+
+Once P2-C1..C4 are green, treat positive P2 causal evidence as closed and continue immediately.
 
 # R9-2 continuation — execute without waiting
 
@@ -69,7 +109,7 @@ Use one bounded test-only ordering seam. Both runs must reach the same `r9_udp_p
 The automatic-health branch still reduces exact `FailoverController::tcp_resend()` ownership to `.len()` and reconstructs a contiguous replay slice. Add a focused regression comparing actual replay `(DataId, payload)` identities against the exact controller ownership.
 
 - If current contiguous partitioning is exactly equivalent, retain the regression as bounded no-finding evidence.
-- If a mismatch is produced, consume exact ownership rather than cardinality.
+- If a mismatch is produced, consume exact controller ownership rather than cardinality.
 
 Do not redesign failover architecture.
 
@@ -101,7 +141,7 @@ PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
 git diff --check
 ```
 
-Record exact pushed SHA, UTC start/end, Linux OS/arch, Rust stable version, command exit codes and clean initial/final tree. Run the pinned decoder fuzz commands only if decoder/parser/crypto framing changed. Hosted CI remains additional cross-evidence.
+Record exact pushed SHA, UTC start/end, Linux OS/arch, Rust stable version, command exit codes and clean initial/final tree. Run pinned decoder fuzz commands only if decoder/parser/crypto framing changed. Hosted CI remains additional cross-evidence.
 
 Then continue immediately without waiting for reviewer cadence.
 
