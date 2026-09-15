@@ -3264,19 +3264,23 @@ fn failover_client(args: &[String]) {
         );
         // M-R9-008 P2: dedicated post-return terminal evidence — emitted only
         // after both the exact Session DeliveryAck and the Carrier packet ACK
-        // have drained the post-return recovery ownership to zero.
-        emit_diagnostic(
-            args,
-            "client",
-            "r9_udp_post_return_settled",
-            0,
-            &format!(
-                ",\"stream\":{},\"offset\":{},\"remaining_in_flight\":{}",
-                post_record.stream.0,
-                post_record.offset,
-                rt.as_ref().map_or(0, |r| r.in_flight())
-            ),
-        );
+        // have drained the post-return recovery ownership to zero. Only emit
+        // the reliable-settlement event when a recovery owner actually exists —
+        // map_or(0) would falsely imply settlement with no runtime present.
+        if let Some(r) = rt.as_ref() {
+            emit_diagnostic(
+                args,
+                "client",
+                "r9_udp_post_return_settled",
+                0,
+                &format!(
+                    ",\"stream\":{},\"offset\":{},\"remaining_in_flight\":{}",
+                    post_record.stream.0,
+                    post_record.offset,
+                    r.in_flight()
+                ),
+            );
+        }
     }
     emit_diagnostic(
         args,

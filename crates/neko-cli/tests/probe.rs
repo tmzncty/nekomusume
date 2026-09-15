@@ -2128,14 +2128,17 @@ fn reliable_udp_migration_back_reserves_final_record() {
         ])
         .output()
         .unwrap();
-    let (_server_status, _server_log) = finish_server(server);
+    let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
-    // migration-back triggers controlled UDP cessation -> warm TCP; a nonzero
-    // client exit after that fault injection is acceptable. The invariant that
-    // matters is the reserved-record ownership assertion below.
-    let _ = out.status;
+    // Both processes must succeed for the positive P2 evidence chain.
+    assert!(
+        out.status.success(),
+        "stdout={client_log} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(server_status.success(), "stdout={server_log}");
     // The reserved final record must NOT appear on the legacy uncertain
     // direct-send path in reliable mode (it is reliable-owned, not uncertain).
     // udp_uncertain_range_sent may still appear for the non-reserved middle
