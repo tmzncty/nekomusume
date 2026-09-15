@@ -2080,7 +2080,7 @@ fn reliable_udp_migration_back_reserves_final_record() {
             "--client-key",
             &ck,
             "--count",
-            "3",
+            "4",
             "--bytes",
             "16",
             "--duration",
@@ -2114,7 +2114,7 @@ fn reliable_udp_migration_back_reserves_final_record() {
             "--identity",
             cp.to_str().unwrap(),
             "--count",
-            "3",
+            "4",
             "--bytes",
             "16",
             "--duration",
@@ -2140,14 +2140,14 @@ fn reliable_udp_migration_back_reserves_final_record() {
     // direct-send path in reliable mode (it is reliable-owned, not uncertain).
     // udp_uncertain_range_sent may still appear for the non-reserved middle
     // record; assert only that no uncertain send carries the reserved offset.
-    // With 3 records of 16 bytes: offsets are 0, 16, 32; reserved is index 2
-    // (offset 32). Reliable records are 0 and 16.
+    // With 3 records of 16 bytes: offsets are 0, 16, 32, 48; reserved is index 2
+    // (offset 48). Reliable records are 0 and 16.
     assert!(
-        !client_log.contains("\"event\":\"udp_uncertain_range_sent\",\"seq\":2,\"ciphertext_bytes\":96,\"stream\":1,\"offset\":32"),
+        !client_log.contains("\"event\":\"udp_uncertain_range_sent\",\"seq\":3,\"ciphertext_bytes\":96,\"stream\":1,\"offset\":48"),
         "{client_log}"
     );
     // M-R9-008 P2 (evidence): when post-return runs, the reserved record is
-    // reliable-owned — r9_udp_post_return_sent carries offset 32, a Session
+    // reliable-owned — r9_udp_post_return_sent carries offset 48, a Session
     // DeliveryAck and a Carrier packet ACK both arrive, and recovery settles
     // to zero. The migration-back fixture is known to stall at UDP recovery
     // in this environment; assert the full evidence only if the post-return
@@ -2155,7 +2155,7 @@ fn reliable_udp_migration_back_reserves_final_record() {
     // above still holds.
     if client_log.contains("\"event\":\"r9_udp_post_return_sent\"") {
         assert!(
-            client_log.contains("\"event\":\"r9_udp_post_return_sent\",\"seq\":0,\"offset\":32"),
+            client_log.contains("\"event\":\"r9_udp_post_return_sent\",\"seq\":0,\"offset\":48"),
             "{client_log}"
         );
         assert!(

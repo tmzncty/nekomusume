@@ -2938,7 +2938,12 @@ fn failover_client(args: &[String]) {
     } else {
         None
     };
-    for record in records.into_iter().skip(1).take(tcp_records) {
+    // H-R9-019: TCP replay identity follows the same ownership partition — the
+    // replayed records start at `uncertain_start`, not positionally at index 1.
+    // Under --reliable-udp the uncertain set begins after the reliable-owned
+    // records, so an equal count must not replay an already reliable-owned
+    // offset across the Carrier boundary.
+    for record in records.into_iter().skip(uncertain_start).take(tcp_records) {
         let logical = ProcessMessage::Data {
             session: SessionId(7001),
             record: record.clone(),
