@@ -1,22 +1,22 @@
-# ChatGPT reviewer handoff — P2 implementation stagnation breaker; preserve full R9 queue
+# ChatGPT reviewer handoff — R9 P2 fixture-cardinality blocker; preserve full R9 queue
 
 ## Current truth
 
-- Default branch HEAD at this refresh: exact `f3f777c448a1529b653f4c0b5b31f375c1a681fa` (`docs(handoff): accept H-R9-017 and advance positive R9-2H evidence`).
+- Default branch before this refresh reached exact `412b0d2cc280534f29942294c3e295151d47610f` (`docs(review): identify deterministic P2 count=3 reachability blocker`).
 - Latest developer/source-test commit remains exact `422c16b106b5568cb87f81419b45941508c2d4a4` (`fix(cli): controlled-fallback TCP replay uses ownership partition (H-R9-017)`). No developer source/test commit has landed after it.
-- Hosted checks are green on both developer exact `422c16b` and current docs-only HEAD: `stable checks` SUCCESS and `nightly decode fuzz smoke` SUCCESS. Hosted checks remain cross-evidence only.
+- The prior docs-only exact `b8d256b4d541bc887ef16a9081c4e3941463c074` has hosted `stable checks` SUCCESS and `nightly decode fuzz smoke` SUCCESS. Hosted checks remain cross-evidence only.
 - Open PRs: none. No new WAN/VPS experiment. `READY_LIVE: none`.
 - Item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 ## Implementation-stagnation classification
 
-P2 is dependency-ready, current exact-head CI is green, no external permission/environment blocker applies, and the queue behind it is deep. One reviewer cadence has passed without a new developer source/test commit. Per `AGENTS.md` this is implementation stagnation, not a reason to wait.
+P2 remains dependency-ready and local/hosted tree health is not the blocker. The current P2 process fixture itself had a deterministic cardinality contradiction, identified below. This is a concrete local repair/evidence task, not a reason to wait for another reviewer cadence.
 
-The handoff is therefore sharpened below to a concrete test/evidence ownership contract. The coding agent should implement/test/push continuously; do not wait for another reviewer pass.
+The coding agent should repair/test/push continuously, then proceed through P3/P4 and the preserved R9 queue without waiting.
 
 ## H-R9-017 — CLOSED; preserve
 
-The controlled/non-automatic client replay count now uses the same committed ownership partition as the server:
+The controlled/non-automatic client replay count uses the same committed ownership partition as the server:
 
 ```text
 uncertain_start = reliable_udp ? 2 : 1
@@ -24,88 +24,128 @@ uncertain_end   = recovery_enabled ? count - 1 : count
 controlled_tcp_replay = saturating_sub(uncertain_end, uncertain_start)
 ```
 
-Automatic-health mode still uses the actual tracked uncertain set from `failover.tcp_resend()` and is unchanged.
+Automatic-health mode still uses the actual tracked uncertain set from `failover.tcp_resend()` and is unchanged. Do not revert this partition and do not reintroduce guessed retries/sleeps/deadlines.
 
-For `count=3`, controlled replay remains `2 / 1 / 1 / 0` for `(reliable,recovery) = (F,F)/(F,T)/(T,F)/(T,T)`. Do not revert this partition and do not reintroduce guessed retries/sleeps/deadlines.
+## H-R9-018 — HIGH / READY_LOCAL: current P2 `count=3` fixture cannot reach migration-back
 
-## Accepted R9-2H facts — preserve unless contradicted
+The current `reliable_udp_migration_back_reserves_final_record` uses:
 
-- Out-of-order Session DeliveryAck buffering cannot cumulatively confirm earlier unconfirmed bytes; exact applied evidence is stream/offset-bearing and ordered by actual Session mutation.
-- One operation-wide malformed budget and one absolute application deadline; Carrier ACK remains Carrier-local; incomplete Recovery settlement is terminal.
-- Post-migration reserved Data is reliable-UDP owned; server acknowledgement obligations arise only after accepted authenticated Session Data; client success requires exact Session confirmation plus Recovery `in_flight()==0`.
-- P1 is accepted: reversed logical ACK order buffers offset 16, applies offset 0, drains offset 16, and Carrier settlement reaches zero on a successful built-binary path.
-- H-R9-015 source shape is accepted: the reserved final record is Recovery-owned after migration-back, and server/client retain separate Session-ACK and Carrier-ACK obligations.
+```text
+count = 3
+reliable_udp = true
+recovery_enabled = true
+```
 
-# READY_LOCAL front — P2 first, then P3/P4
+Under the accepted ownership partition:
 
-## P2-A — first action: make the existing process test non-vacuous before speculative runtime changes
+```text
+uncertain_start = 2
+uncertain_end   = count - 1 = 2
+tcp_records    = 0
+```
 
-The current source already contains the full nominal causal path:
+`tcp_active_sample` is initialized to `None` and is populated only inside the authenticated TCP application replay loop after a valid TCP DeliveryAck. The migration-back branch then requires:
 
-- client emits `udp_recovery_challenge_sent`;
-- server enters `udp_recovery_owner_started`, accepts the authenticated readiness request, emits `udp_recovery_validated`, and waits for exactly one bounded post-return application datagram;
-- client validates recovery, passes the manager hold gate, applies migration-back, registers the reserved offset-32 Data in `ReliableUdpRuntime`, sends it, and waits for both Session DeliveryAck and Carrier ACK;
-- server records the accepted post-return packet in `server_rt`, then emits separate Session DeliveryAck and canonical Carrier packet ACK.
+```text
+let tcp_active_sample = tcp_active_sample
+    .unwrap_or_else(|| fail("missing authenticated TCP application RTT sample"));
+```
 
-The remaining acceptance gap is presently in the process test/evidence, not a proven missing runtime transition. Therefore **do not change runtime semantics first**.
+before sending the UDP recovery challenge.
+
+Therefore the existing `count=3` fixture is deterministically incapable of reaching `udp_recovery_challenge_sent`, regardless of whether the UDP recovery runtime itself is correct. This is an acceptance-fixture reachability defect, not evidence that retry/sleep/runtime semantics are missing.
+
+Independent note: `docs/reviews/independent-r9-p2-fixture-cardinality-b8d256b-20260915.md`.
+
+# READY_LOCAL front — close P2 with a satisfiable ownership shape
+
+## P2-A — first action: make the migration-back fixture `count=4`
+
+Do **not** change runtime semantics first. Change only the dedicated positive P2 process fixture from `count=3` to `count=4`, then update exact expected offsets.
+
+With `bytes=16`, the accepted ownership partition becomes:
+
+```text
+records[0] offset 0   -> reliable UDP owned
+records[1] offset 16  -> reliable UDP owned
+records[2] offset 32  -> one genuine uncertain range replayed over TCP
+records[3] offset 48  -> reserved for post-migration return to reliable UDP
+
+uncertain_start = 2
+uncertain_end   = 3
+controlled_tcp_replay = 1
+```
+
+That single authenticated TCP replay supplies the already-existing `tcp_active_sample` without inventing a new health evidence source.
+
+Update the P2 negative ownership assertion accordingly:
+
+- reserved offset is now `48`, not `32`;
+- offset `48` must never appear on pre-promotion `udp_uncertain_range_sent`;
+- offset `48` must never be replayed over TCP;
+- offset `32` is expected to be the one genuine TCP replay in this fixture.
+
+Run the focused P2 test on this current runtime shape before any speculative runtime repair. If it is red, retain full client/server output and classify the first missing structured milestone.
+
+## P2-B — make positive evidence non-vacuous
 
 In `reliable_udp_migration_back_reserves_final_record`:
 
 1. retain `server_status` and `server_log` instead of discarding them;
-2. require both client and server exit success — remove the current comment/behavior that treats a nonzero client exit as acceptable;
-3. delete the conditional `if client_log.contains("r9_udp_post_return_sent")` acceptance block; P2 must fail if the post-return path is not reached;
-4. require the causal milestone chain, using exact structured lines where possible:
+2. require both client and server exit success;
+3. remove the conditional `if client_log.contains("r9_udp_post_return_sent")` acceptance block — P2 must fail if post-return is not reached;
+4. require the exact causal milestone chain:
    - client `udp_recovery_challenge_sent`;
    - server `udp_recovery_owner_started`;
    - server `udp_recovery_validated`;
    - client `udp_recovery_validated`;
    - client `udp_migrated_back` / `migrated_back_to_udp`;
-   - exactly one client `r9_udp_post_return_sent` carrying offset `32`;
+   - exactly one client `r9_udp_post_return_sent` carrying offset `48`;
    - server accepted post-return Session Data before either acknowledgement-domain send;
-   - server Session DeliveryAck sent for offset `32`;
+   - server Session DeliveryAck sent for offset `48`;
    - server Carrier packet ACK sent;
-   - client exact Session confirmation for offset `32`;
+   - client exact Session confirmation for offset `48`;
    - client Carrier ACK `applied=true`;
    - client post-return Recovery settlement zero;
-5. preserve the negative ownership assertion: offset `32` must never appear on `udp_uncertain_range_sent` and must never be replayed over TCP.
+5. preserve the negative ownership assertion for reserved offset `48`.
 
-Run this focused test against the **current source shape first**. If it is green, commit the strengthened positive evidence without inventing a runtime fix. If it is red, retain the full client/server logs and classify the first missing milestone; repair only that exact transition.
+Use exact structured event parsing/assertions where available; do not satisfy this with broad repository-wide substring matches.
 
-## P2-B — add an unambiguous post-return terminal evidence point
+## P2-C — add an unambiguous post-return terminal evidence point
 
-The current post-return loop exits only when `post_outstanding.is_empty()` and `rt.in_flight()==0`, but the existing P2 assertion for a broad `remaining_in_flight=0` can accidentally match the earlier pre-failover R9 settlement.
+The post-return loop exits only when `post_outstanding.is_empty()` and `rt.in_flight()==0`, but broad `remaining_in_flight=0` can match earlier settlement.
 
-After the post-return dual-settlement loop succeeds, emit one dedicated structured event, for example:
+After successful post-return dual settlement, emit one dedicated diagnostic event, e.g.:
 
 ```text
 r9_udp_post_return_settled
   stream=1
-  offset=32
+  offset=48
   logical_outstanding=0
   remaining_in_flight=0
 ```
 
-This event is diagnostic/evidence only; it must not alter Session, Carrier, ACK, timeout, congestion, or migration semantics. P2 must require this exact terminal event rather than a repository-wide substring match.
+This is evidence-only; it must not change Session, Carrier, ACK, timeout, congestion or migration semantics. P2 must require this exact event.
 
-## P2-C — deterministic acknowledgement-domain order seam
+## P2-D — deterministic acknowledgement-domain order seam
 
-Current server source emits the post-return Session DeliveryAck before the Carrier packet ACK. P2 requires both arrival orders without timing luck.
+Current server source sends post-return Session DeliveryAck before Carrier packet ACK. P2 must cover both arrival orders without timing luck.
 
-Add one **test-only ordering flag** on the failover server, e.g. `--test-post-return-carrier-ack-first`:
+Add one test-only server flag, e.g. `--test-post-return-carrier-ack-first`:
 
-- default path: Session DeliveryAck first, Carrier packet ACK second;
-- test flag: Carrier packet ACK first, Session DeliveryAck second;
-- both datagrams may be created/sent only **after** authenticated post-return `SessionRuntime::receive` accepts offset 32;
-- do not use sleeps, retry loops, fresh deadlines, or duplicated ACK logic to create the order;
-- the client must succeed in both orders with the same exact terminal `r9_udp_post_return_settled` evidence.
+- default: Session DeliveryAck first, Carrier packet ACK second;
+- flagged: Carrier packet ACK first, Session DeliveryAck second;
+- both datagrams may be constructed/sent only **after** authenticated post-return `SessionRuntime::receive` accepts the reserved offset 48;
+- do not use sleeps, retry loops, fresh deadlines or duplicated ACK logic to create the order;
+- client must succeed in both orders with the same exact terminal `r9_udp_post_return_settled` evidence.
 
-The smallest acceptable implementation is to construct both already-existing acknowledgement datagrams after accepted Session receive and swap only their send order under the test flag.
+The smallest acceptable implementation is to create the two already-existing acknowledgement datagrams after accepted Session receive and swap only send order under the test flag.
 
-## P2-D — if the strengthened current-shape test is red
+## P2-E — if `count=4` is still red
 
-Do not revive the reverted recovery-challenge retry/sleep experiment. Use the first missing structured milestone to localize the failure:
+Do not revive the reverted recovery-challenge retry/sleep experiment. Use the first missing structured milestone:
 
-- no server `udp_recovery_owner_started` -> TCP resume/replay ownership boundary is still wrong;
+- no server `udp_recovery_owner_started` -> TCP replay/resume completion boundary is wrong;
 - owner started but no server `udp_recovery_validated` -> challenge receive/auth/tuple path is wrong;
 - server validated but client no `udp_recovery_validated` -> response emission/receive path is wrong;
 - client validated but no migration promotion -> manager hold/generation state is wrong;
@@ -114,7 +154,7 @@ Do not revive the reverted recovery-challenge retry/sleep experiment. Use the fi
 - server accepted but one ACK domain absent -> server acknowledgement ownership is wrong;
 - both ACKs sent but client cannot settle -> bounded demux/Recovery settlement is wrong.
 
-Make the smallest semantics-preserving repair for the first missing milestone, add the corresponding regression, push, then immediately continue P2.
+Repair only the first missing transition, add its regression, push, then continue P2 immediately.
 
 ## P3 — persistent malformed budget across Carrier feedback
 
@@ -148,7 +188,7 @@ PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
 git diff --check
 ```
 
-Record exact pushed SHA, UTC start/end, Linux OS/arch, Rust stable version, exit codes and clean initial/final tree. Do not use hosted CI as a substitute. Only run the pinned decoder fuzz flow if the resulting source changes decoder/parser/crypto framing; do not mechanically fuzz unchanged framing for every process-test edit.
+Record exact pushed SHA, UTC start/end, Linux OS/arch, Rust stable version, exit codes and clean initial/final tree. Do not use hosted CI as a substitute. Only run pinned decoder fuzz if the resulting source actually changes decoder/parser/crypto framing.
 
 Then continue immediately without waiting for reviewer cadence.
 
@@ -170,11 +210,11 @@ Then continue immediately without waiting for reviewer cadence.
 
 # Core-surface review inventory reminder
 
-The earlier repository-wide item-4 sweep already independently challenged the existing `neko-reliable`, CarrierState/CarrierManager, scheduler/flow accounting, adapters, SessionRuntime, observability, package/reproducibility, dependency/build, CLI portability/output, boundedness/validators, wire/parser and candidate PLPMTUD/FEC/disabled-gate surfaces. The **new R9 cross-process reliable-UDP integration surface is not covered by those older no-finding notes** and must receive its own bounded independent review at R9-12. Do not mistake the old inventory for coverage of new integration code.
+The earlier repository-wide item-4 sweep independently challenged the pre-R9 `neko-reliable`, CarrierState/CarrierManager, scheduler/flow accounting, adapters, SessionRuntime, observability, package/reproducibility, dependency/build, CLI portability/output, boundedness/validators, wire/parser and candidate PLPMTUD/FEC/disabled-gate surfaces. The **new R9 cross-process reliable-UDP integration surface is not covered by those older no-finding notes** and must receive its own bounded independent review at R9-12.
 
 # VPS opportunity
 
-**Not READY — implementation dependency / independent-review dependency.** Unlock: positive P2 -> P3/P4 -> clean exact-tree provenance -> R9-3..R9-12 -> Q10/Q11. Once Q11 creates a specific changed-hypothesis `READY_LIVE` row, standing authorization already covers the bounded self-owned TCP/UDP VPS run; lack of permission is not the blocker.
+**Not READY — implementation dependency / independent-review dependency.** Unlock: positive P2 -> P3/P4 -> clean exact-tree provenance -> R9-3..R9-12 -> Q10/Q11. Once Q11 creates a specific changed-hypothesis `READY_LIVE` row, standing authorization already covers the bounded self-owned TCP/UDP VPS run; permission is not the blocker.
 
 # Separate non-blocking policy gates
 
