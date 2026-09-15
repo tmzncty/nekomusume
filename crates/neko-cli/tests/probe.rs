@@ -2165,10 +2165,6 @@ fn reliable_udp_migration_back_reserves_final_record() {
             "{client_log}"
         );
         assert!(
-            client_log.contains("\"event\":\"r9_udp_post_return_sent\",\"seq\":0,\"offset\":48"),
-            "{client_log}"
-        );
-        assert!(
             client_log.contains("\"event\":\"udp_return_delivery_ack_validated\""),
             "{client_log}"
         );
@@ -2177,8 +2173,12 @@ fn reliable_udp_migration_back_reserves_final_record() {
                 .contains("\"event\":\"r9_udp_return_packet_ack\",\"seq\":0,\"applied\":true"),
             "{client_log}"
         );
+        // Dedicated post-return terminal evidence: exact stream/offset and
+        // authoritative post-return remaining_in_flight=0.
         assert!(
-            client_log.contains("\"remaining_in_flight\":0"),
+            client_log.contains(
+                "\"event\":\"r9_udp_post_return_settled\",\"seq\":0,\"stream\":1,\"offset\":48,\"remaining_in_flight\":0"
+            ),
             "{client_log}"
         );
     }
