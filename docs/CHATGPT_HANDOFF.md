@@ -1,10 +1,10 @@
-# ChatGPT reviewer handoff — exact `91f481b` adds H-R9-026 tests, but both new seams miss the intended Recovery branches
+# ChatGPT reviewer handoff — exact `bbb3e7f` reaches the intended ACK branches; H-R9-028 keeps acceptance open on discriminating process proof
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `91f481bb1d2030fd5badf13f2ced901c8b043b41` (`test(cli): H-R9-026 regressions — stale ACK accepted-empty, future ACK typed-rejected`).
-- Independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-027-91f481b-20260916.md`](reviews/reviewer-r9-h-r9-027-91f481b-20260916.md), latest reviewer docs anchor `7d1bb9488183e83ec344159ddd1359c2ea8dcf0c`.
-- Hosted Rust cross-evidence on exact `91f481b`: GitHub Actions run `35098140841` completed SUCCESS. `stable checks` ran `bash scripts/check.sh`; `nightly decode fuzz smoke` ran the pinned `cargo fuzz build decode` and `cargo fuzz run decode -- -max_total_time=30 -max_len=8192`; both succeeded. Hosted CI is additional evidence only, not developer-local exact-tree provenance.
+- Latest developer-owned source/test commit reviewed: exact `bbb3e7f5310dea6a2342a2eda212cbc34326fd89` (`fix(cli): stale/future ACK seams hit real Recovery branches (H-R9-027)`).
+- Independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-028-bbb3e7f-20260916.md`](reviews/reviewer-r9-h-r9-028-bbb3e7f-20260916.md), reviewer docs anchor `972d37a41b06a1b215c38253bad1486d839ab2e8`.
+- Hosted Rust cross-evidence on exact `bbb3e7f`: GitHub Actions run `35104209670` completed SUCCESS. `stable checks` ran `bash scripts/check.sh`; `nightly decode fuzz smoke` ran the pinned `cargo fuzz build decode` and `cargo fuzz run decode -- -max_total_time=30 -max_len=8192`; both succeeded. Hosted CI is additional evidence only, not developer-local exact-tree provenance.
 - Open PRs at review time: none.
 - Final developer-local clean exact-tree provenance for R9-2 is still absent.
 - `READY_LIVE: none`; release item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
@@ -20,54 +20,53 @@ H-R9-026's source-level result collapse is repaired at exact `d133dbb` + `a27e79
 - accepted-empty is not mislabeled as either transition or rejection;
 - post-return success remains identity-bound to actual `acked_packets`, and terminal success still requires exact Session confirmation plus Recovery zero.
 
-The new exact `91f481b` tests are useful scaffolding, but they do **not** close the acceptance gate.
+Exact `bbb3e7f` also closes the **source-shape** part of H-R9-027:
 
-# READY_LOCAL 1 — H-R9-027 HIGH: repair both false-positive H-R9-026 regression seams
+- `--send-stale-ack` re-seals the same canonical ACK plaintext with a fresh authenticated envelope, so crypto replay protection no longer prevents the duplicate semantics from reaching Recovery;
+- `--send-future-ack` uses a non-empty range whose maximum is `u64::MAX - 1`, so the input reaches the existing future/never-sent guard instead of failing first on empty `AckRanges`;
+- the existing engine guard still rejects `largest > largest_sent` before RTT/loss/PTO mutation, and earlier engine/authenticated-path regressions remain valid.
 
-This is an acceptance/evidence repair. Do **not** redesign ACK framing, Session semantics, Carrier architecture, crypto/wire architecture, deadlines, malformed budgets, capacity policy, or the primary receive owner.
+Do not revert those repairs. Acceptance remains open only because the process tests still do not prove the intended outcome classes were actually observed with exact cardinality and terminal success.
 
-## A. Accepted-empty stale/duplicate: fresh envelope required
+# READY_LOCAL 1 — H-R9-028 HIGH: make stale/future ACK regressions one-shot and discriminating
 
-Exact `91f481b` currently sends the same `sealed_ack` ciphertext twice. That is not a stale Carrier ACK at the Recovery layer: `SecureSession::open_unreliable` authenticates and then applies its replay window, so the second copy with the same authenticated sequence is rejected as crypto replay before plaintext can reach Carrier ACK classification.
+This is a bounded acceptance/evidence repair. Do **not** redesign ACK framing, Session semantics, Carrier architecture, crypto/wire architecture, deadlines, malformed budgets, capacity policy, or the primary receive owner.
 
-Repair the test seam so it sends the same **canonical ACK plaintext semantics under a fresh authenticated envelope/sequence**:
+## A. Accepted-empty stale/duplicate must be positively observed
 
-1. produce one legitimate canonical Carrier ACK and send it so it can retire real packet ownership;
-2. seal the same ACK plaintext again with `SecureSession::seal_unreliable`, obtaining a new authenticated sequence/nonce, and send that second record through the same socket/owner;
-3. make the seam deterministic/one-shot where needed so exact cardinality is assertable;
-4. require that the second canonical ACK passes crypto and reaches the existing primary Carrier ACK owner after the real retirement;
-5. require zero extra positive Carrier retirement, zero rejection, zero Session logical-confirmation/watermark mutation from that duplicate, and unchanged final Recovery/Session accounting relative to the first real retirement;
-6. require the actual process result/settlement contract, not merely absence of one string.
+Exact `bbb3e7f` now creates a valid fresh-envelope semantic duplicate, but the server evaluates `--send-stale-ack` inside every reliable packet-ACK emission and currently sends the injected re-sealed ACK before the ordinary `sealed_ack`. The inherited process test only proves:
 
-A test-scoped `accepted_empty` classification diagnostic/counter is allowed if it is explicitly diagnostic and never represented as delivery or packet-transition evidence. Prefer lower-level state assertions for internal fields that are already directly testable.
+- no `r9_udp_packet_ack_rejected` substring; and
+- eventual `r9_udp_in_flight_settled(...remaining_in_flight=0)`.
 
-## B. Future/never-sent: nonempty future range required
+Those assertions can still pass if no injected duplicate is actually consumed as `UdpAcknowledgement::Carrier { applied:false, rejected:false, acked_packets:[] }`.
 
-Exact `91f481b` currently sends:
+Smallest repair:
 
-```text
-largest_observed = u64::MAX
-ranges = []
-```
+1. add explicit one-shot injection ownership (`stale_ack_injected` or equivalent) outside the per-record ACK emission loop;
+2. arrange one normal canonical ACK retirement first, then exactly one fresh-envelope copy of the same ACK semantics while the bounded receive/settlement operation is still active;
+3. make accepted-empty directly observable only as a diagnostic classification, e.g. `r9_udp_packet_ack_accepted_empty`, emitted only for `!applied && !rejected && acked_packets.is_empty()`; this diagnostic must not increment delivery, applied, rejected, health or failover evidence;
+4. require client and server success;
+5. require exactly one accepted-empty diagnostic, zero packet-ACK rejection, no extra positive Carrier retirement from the duplicate, unchanged Session logical-confirmation cardinality, and terminal Recovery zero.
 
-The authenticated owner converts only `ack.ranges` into `neko_reliable::AckRanges`. `Recovery::on_ack` first executes `ack.largest().ok_or(InvalidRange)`, so an empty range is rejected before the `largest > largest_sent` guard. The current process test therefore proves generic empty-range rejection, not candidate A.
+Do not add a second receive owner or a second ACK architecture.
 
-Repair the seam with a canonical **nonempty** future range, e.g.:
+## B. Future/never-sent rejection must be exactly one and recovery must still settle
 
-```text
-largest_observed = u64::MAX
-ranges = [u64::MAX ..= u64::MAX]
-```
+Exact `bbb3e7f` reaches the intended future guard, but `--send-future-ack` is likewise evaluated on every reliable packet-ACK emission. The inherited process test only asks for at least one `r9_udp_packet_ack_rejected` substring, so repeated injections or later broken settlement could still pass.
 
-or another packet number deterministically proven greater than the sender's `largest_sent`. The range maximum passed into Recovery must itself be future/never-sent.
+Smallest repair:
 
-Make this injection one-shot so the process test can require exactly one typed rejection. Require zero false positive transition from it and prove subsequent legitimate ACKs still settle real packets.
+1. make the future injection one-shot (`future_ack_injected` or equivalent);
+2. require exactly one typed rejection from the injected future ACK;
+3. require zero positive packet retirement attributable to the future ACK;
+4. require subsequent legitimate Carrier ACK progress and final Recovery zero;
+5. require client and server success and unchanged Session logical completion;
+6. reuse/strengthen the existing engine-level atomic future-ACK regression rather than inventing a new checker framework. Snapshot additional directly exposed `ReliableUdpRuntime`/Reno/PTO state only where useful; do not invent policy values.
 
-Add/reuse a focused deterministic `Recovery` / `ReliableUdpRuntime` test that snapshots the existing observable state and proves the future rejection is atomic: in-flight/sent ownership, RTT estimator, PTO count, loss/retransmit result, Reno bytes/cwnd where exposed, and caller-visible Session logical state remain unchanged. Do not require all ACK numbers to remain present in the sent map; only the never-sent/future atomic-rejection invariant matters.
+Run focused deterministic tests and then the normal exact-tree local gate for the final pushed source/test SHA. The intended repair does not change decoder/framing semantics, so pinned decode fuzz is not required solely because of this slice; hosted fuzz remains separate cross-evidence when CI runs it.
 
-Audit current `UdpAcknowledgement::Carrier` consumers only for re-collapse; do not invent a second owner.
-
-**R9-3 remains blocked until A and B exercise the intended branches and pass focused deterministic tests.**
+**R9-3 remains blocked until A and B prove the intended accepted-empty and future-rejected classifications rather than merely making the process run green.**
 
 # READY_LOCAL 2 — finish positive P2 C1-C4 exact closure
 
@@ -179,7 +178,8 @@ Run the clean exact-tree local gate for the complete cross-process reliable-UDP/
 
 # Accepted earlier closures that must not regress
 
-- H-R9-026 **source** outcome-class repair: exact `d133dbb` + exact `a27e79a`; acceptance remains open under H-R9-027 because exact `91f481b` misses both intended semantic branches.
+- H-R9-027 **source shape**: exact `bbb3e7f` provides a fresh authenticated envelope for semantic duplicate ACKs and a non-empty future range; acceptance remains open only under H-R9-028's discriminating-process-proof requirements.
+- H-R9-026 **source outcome-class repair**: exact `d133dbb` + exact `a27e79a`.
 - H-R9-025 narrow positive-transition repair: post-return current-packet success is identity-bound to actual `acked_packets`.
 - H-R9-024 cross-process client-send/server-ACK packet-number binding.
 - H-R9-023 exact P3 malformed terminal oracle.
@@ -187,7 +187,7 @@ Run the clean exact-tree local gate for the complete cross-process reliable-UDP/
 - H-R9-021 malformed -> malformed -> Carrier ACK -> malformed source order.
 - H-R9-020 count=4 final accounting: `2 reliable UDP + 1 uncertain TCP + 1 post-return reliable = 4`.
 - Reversed initial Session ACK process fixture: later ACK buffered while watermark 0, then offset 0 -> 16 actual application order, no covered shortcut, terminal Recovery zero.
-- Candidate A future/never-sent guard remains present in exact-current `Recovery::on_ack` before mutation; exact `91f481b` simply fails to reach it.
+- Candidate A future/never-sent guard remains present in exact-current `Recovery::on_ack` before mutation; exact `bbb3e7f` now reaches it at the process seam, while H-R9-028 requires exact acceptance evidence.
 - Candidate B mixed queue/generic drop observability repair remains accepted absent contradictory current reproducer.
 
 # Item-4 / core-surface inventory
