@@ -2804,7 +2804,14 @@ fn reliable_udp_stale_ack_is_accepted_empty_not_rejected() {
     assert!(srv_status.success(), "{server_log}");
     // Exactly one accepted-empty classification for the one-shot injected
     // duplicate, zero rejection on the initial reliable path.
+    // Exactly one accepted-empty classification proves the injected duplicate
+    // reached the shared Carrier owner as a non-event — absent injection would
+    // produce zero. The two real sends still produce applied events.
     let empty: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_packet_ack_accepted_empty\""))
+        .collect();
+    let applied: Vec<&str> = client_log
         .lines()
         .filter(|l| l.contains("\"event\":\"r9_udp_packet_ack_applied\""))
         .collect();
@@ -2812,6 +2819,8 @@ fn reliable_udp_stale_ack_is_accepted_empty_not_rejected() {
         .lines()
         .filter(|l| l.contains("\"event\":\"r9_udp_packet_ack_rejected\""))
         .collect();
+    assert_eq!(empty.len(), 1, "{client_log}");
+    assert_eq!(applied.len(), 2, "{client_log}");
     // The duplicate is consumed silently by the shared demux owner — no
     // applied, no rejected, no extra event beyond the two real sends.
     assert_eq!(
@@ -2819,8 +2828,6 @@ fn reliable_udp_stale_ack_is_accepted_empty_not_rejected() {
         0,
         "expected zero r9_udp_packet_ack_rejected: {client_log}"
     );
-    // Two reliable records (0,16) each produce exactly one applied Carrier ACK.
-    assert_eq!(empty.len(), 2, "{client_log}");
     // Exactly two reliable-path Session confirmations (records 0,1) — the
     // uncertain TCP replays confirm through tcp_delivery_ack_validated instead.
     // The injected duplicate must not add or remove a logical confirmation.

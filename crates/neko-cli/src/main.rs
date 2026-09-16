@@ -2549,9 +2549,12 @@ fn failover_client(args: &[String]) {
                 } else if rejected {
                     packet_ack_rejected += 1;
                     emit_diagnostic(args, "client", "r9_udp_packet_ack_rejected", 0, "");
+                } else {
+                    // H-R9-033: classification-only evidence — accepted-empty
+                    // stale/duplicate is neither a packet transition nor a
+                    // rejection; it increments no state and emits no counter.
+                    emit_diagnostic(args, "client", "r9_udp_packet_ack_accepted_empty", 0, "");
                 }
-                // H-R9-026: accepted-empty stale/duplicate is a typed
-                // non-event — not applied, not rejected.
             }
         }
     }
