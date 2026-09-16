@@ -2886,11 +2886,10 @@ fn reliable_udp_future_ack_is_typed_rejected() {
     );
 }
 #[test]
-#[ignore = "post-return stale/future ACK datagram is crypto-rejected at the client open_unreliable boundary — deterministic envelope sequencing under --send-stale-ack does not reach the accepted-empty Recovery branch; needs a session-state-synchronized seam"]
-fn reliable_udp_post_return_stale_ack_is_accepted_empty_ignored() {
-    // H-R9-029: after migration-back the post-return receive owner classifies
-    // a duplicate canonical Carrier ACK (fresh envelope) as accepted-empty —
-    // not a rejection, not a positive retirement.
+fn reliable_udp_post_return_stale_ack_is_accepted_empty() {
+    // H-R9-029/H-R9-030: after migration-back the post-return receive owner
+    // classifies a re-sealed duplicate of the canonical current Carrier ACK
+    // as accepted-empty — not a rejection, not a positive retirement.
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("r9-pstale-server");
@@ -2984,10 +2983,9 @@ fn reliable_udp_post_return_stale_ack_is_accepted_empty_ignored() {
     );
 }
 #[test]
-#[ignore = "post-return future ACK datagram is crypto-rejected before the Recovery never-sent guard — needs a session-state-synchronized seam"]
-fn reliable_udp_post_return_future_ack_is_rejected_ignored() {
-    // H-R9-029: a post-return canonical ACK with largest > largest_sent is a
-    // typed rejection — no false current-packet retirement.
+fn reliable_udp_post_return_future_ack_is_rejected() {
+    // H-R9-029/H-R9-030: a post-return canonical ACK with largest >
+    // largest_sent is a typed rejection — no false current-packet retirement.
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("r9-pfut-server");

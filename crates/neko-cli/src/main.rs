@@ -1971,26 +1971,41 @@ fn failover_server(args: &[String]) {
                                         |_| fail("r9 post-return on_packet_received"),
                                     );
                                 }
-                                // H-R9-029 post-return seams: inject a stale
-                                // (accepted-empty) or future (never-sent)
-                                // Carrier ACK BEFORE the Session/Carrier ACKs
-                                // so the client's dual-settlement owner sees it
-                                // while still waiting for both domains.
-                                if reliable_udp {
-                                    if args.iter().any(|a| a == "--send-stale-ack")
-                                        && let Some(ranges) = server_rt.poll_outgoing_ack(0)
-                                    {
-                                        let pack = neko_wire::encode(&neko_wire::Record {
-                                            record_type: neko_wire::RecordType::Ack,
-                                            flags: 0,
-                                            payload: neko_wire::encode_ack(&ranges).unwrap(),
+                                // H-R9-030 post-return seams: the pending ACK
+                                // obligation created by on_packet_received is
+                                // consumptive — poll it exactly once here and
+                                // retain the canonical plaintext. The stale
+                                // seam re-seals that retained plaintext (true
+                                // semantic duplicate); the future seam sends a
+                                // canonical never-sent ACK before the real one.
+                                // Under a seam the deterministic order is
+                                // future -> real -> duplicate -> DeliveryAck;
+                                // without a seam the ordinary P2 order
+                                // (DeliveryAck first, then Carrier ACK) is
+                                // unchanged.
+                                let seam_stale = args.iter().any(|a| a == "--send-stale-ack");
+                                let seam_future = args.iter().any(|a| a == "--send-future-ack");
+                                let seam_active = seam_stale || seam_future;
+                                let post_ack_pack = if reliable_udp {
+                                    server_rt
+                                        .poll_outgoing_ack(0)
+                                        .map(|ranges| {
+                                            neko_wire::encode(&neko_wire::Record {
+                                                record_type: neko_wire::RecordType::Ack,
+                                                flags: 0,
+                                                payload: neko_wire::encode_ack(&ranges)
+                                                    .unwrap(),
+                                            })
+                                            .unwrap()
                                         })
-                                        .unwrap();
-                                        if let Ok(resealed) = udp_session.seal_unreliable(&pack) {
-                                            let _ = udp.send_to(&resealed, post_source);
-                                        }
-                                    }
-                                    if args.iter().any(|a| a == "--send-future-ack") {
+                                } else {
+                                    None
+                                };
+                                if reliable_udp && seam_active {
+                                    // Future/never-sent injection arrives while
+                                    // the client receive owner is still active,
+                                    // before the legitimate current ACK.
+                                    if seam_future {
                                         let future = neko_wire::encode(&neko_wire::Record {
                                             record_type: neko_wire::RecordType::Ack,
                                             flags: 0,
@@ -2011,6 +2026,28 @@ fn failover_server(args: &[String]) {
                                             let _ = udp.send_to(&sealed_f, post_source);
                                         }
                                     }
+                                    // Legitimate current Carrier ACK first.
+                                    if let Some(pack) = &post_ack_pack {
+                                        if let Ok(sealed_pack) = udp_session.seal_unreliable(pack) {
+                                            let _ = udp.send_to(&sealed_pack, post_source);
+                                            emit_diagnostic(
+                                                args,
+                                                "server",
+                                                "udp_return_packet_ack_sent",
+                                                0,
+                                                &format!(",\"packet_number\":{}", post_pn),
+                                            );
+                                        }
+                                        // Stale case: re-seal the SAME retained
+                                        // ACK plaintext under a second fresh
+                                        // envelope — a true semantic duplicate
+                                        // that must classify accepted-empty.
+                                        if seam_stale
+                                            && let Ok(resealed) = udp_session.seal_unreliable(pack)
+                                        {
+                                            let _ = udp.send_to(&resealed, post_source);
+                                        }
+                                    }
                                 }
                                 // P4 fault seam: --suppress-r9-dack withholds the post-return Session
                                 // DeliveryAck; the Carrier packet ACK is still sent.
@@ -2029,55 +2066,20 @@ fn failover_server(args: &[String]) {
                                         ),
                                     );
                                 }
-                                if reliable_udp && let Some(ranges) = server_rt.poll_outgoing_ack(0)
-                                {
-                                    let pack = neko_wire::encode(&neko_wire::Record {
-                                        record_type: neko_wire::RecordType::Ack,
-                                        flags: 0,
-                                        payload: neko_wire::encode_ack(&ranges).unwrap(),
-                                    })
-                                    .unwrap();
-                                    if let Ok(sealed_pack) = udp_session.seal_unreliable(&pack) {
-                                        let _ = udp.send_to(&sealed_pack, post_source);
-                                        emit_diagnostic(
-                                            args,
-                                            "server",
-                                            "udp_return_packet_ack_sent",
-                                            0,
-                                            &format!(",\"packet_number\":{}", post_pn),
-                                        );
-                                        // H-R9-029 post-return seams: after the
-                                        // real Carrier ACK retires post_pn, a
-                                        // re-sealed duplicate is accepted-empty
-                                        // (stale); a future/never-sent ACK is
-                                        // typed-rejected.
-                                        if args.iter().any(|a| a == "--send-stale-ack")
-                                            && let Ok(resealed) = udp_session.seal_unreliable(&pack)
-                                        {
-                                            let _ = udp.send_to(&resealed, post_source);
-                                        }
-                                        if args.iter().any(|a| a == "--send-future-ack") {
-                                            let future = neko_wire::encode(&neko_wire::Record {
-                                                record_type: neko_wire::RecordType::Ack,
-                                                flags: 0,
-                                                payload: neko_wire::encode_ack(
-                                                    &neko_wire::AckPayload {
-                                                        largest_observed: u64::MAX - 1,
-                                                        ranges: vec![neko_wire::AckRangeWire {
-                                                            start: u64::MAX - 1,
-                                                            end: u64::MAX - 1,
-                                                        }],
-                                                        ack_delay_us: 0,
-                                                    },
-                                                )
-                                                .unwrap_or_default(),
-                                            })
-                                            .unwrap();
-                                            if let Ok(sealed_f) =
-                                                udp_session.seal_unreliable(&future)
-                                            {
-                                                let _ = udp.send_to(&sealed_f, post_source);
-                                            }
+                                // Ordinary path (no seam): emit the Carrier
+                                // packet ACK after the Session DeliveryAck,
+                                // preserving the pre-H-R9-030 P2 ordering.
+                                if reliable_udp && !seam_active {
+                                    if let Some(pack) = &post_ack_pack {
+                                        if let Ok(sealed_pack) = udp_session.seal_unreliable(pack) {
+                                            let _ = udp.send_to(&sealed_pack, post_source);
+                                            emit_diagnostic(
+                                                args,
+                                                "server",
+                                                "udp_return_packet_ack_sent",
+                                                0,
+                                                &format!(",\"packet_number\":{}", post_pn),
+                                            );
                                         }
                                     }
                                 }
