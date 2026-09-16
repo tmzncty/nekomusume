@@ -1,11 +1,12 @@
-# ChatGPT reviewer handoff — R9-2 blocked on applied Carrier-ACK evidence at `966eb49`
+# ChatGPT reviewer handoff — R9-2 blocked on exact P3 terminal oracle at `779efab`
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `966eb49775296a46d59e6326404ea012b29eea7b` (`fix(cli): P3 malformed->CarrierACK->malformed ordering + typed bound evidence (H-R9-021)`).
-- Reviewer checkpoint: [`docs/reviews/reviewer-r9-p3-applied-evidence-966eb49-20260916.md`](reviews/reviewer-r9-p3-applied-evidence-966eb49-20260916.md).
-- Exact `966eb49` repairs the **server source ordering** for P3, but the built-binary regression still does not prove the interleaved Carrier ACK was successfully applied before malformed #3. H-R9-022 below is therefore the current STOP front.
-- Hosted Rust CI on exact `966eb49`: `stable checks` SUCCESS (`bash scripts/check.sh`) and `nightly decode fuzz smoke` SUCCESS. Hosted CI is cross-evidence only.
+- Latest developer-owned source/test commit reviewed: exact `779efab949f2b383599a0c6b33781ab5615e830a` (`fix(cli): applied Carrier-ACK evidence between malformed #2/#3 (H-R9-022)`).
+- Reviewer checkpoint: [`docs/reviews/reviewer-r9-p3-oracle-779efab-20260916.md`](reviews/reviewer-r9-p3-oracle-779efab-20260916.md).
+- H-R9-022 is **closed narrowly**: the existing reliable receive owner now emits `r9_udp_packet_ack_applied` when the interleaved Carrier ACK is actually applied, carrying the live operation-wide malformed counter; the P3 test observes `malformed=2`.
+- New STOP front is H-R9-023 below: the P3 built-binary acceptance oracle is still broad enough to false-pass on the wrong terminal path or downstream continuation.
+- Hosted Rust CI on exact `779efab`: `stable checks` SUCCESS (`bash scripts/check.sh`) and `nightly decode fuzz smoke` SUCCESS. Hosted CI is cross-evidence only.
 - Open PRs: none.
 - No new WAN/VPS experiment in this sequence.
 - Final developer-local clean exact-tree provenance for R9-2 is still absent.
@@ -13,139 +14,111 @@
 
 The external coding agent must synchronize to current `main` and continue every dependency-ready slice below without waiting for reviewer cadence. Reviewer cadence is a check frequency, not a work-ticket length.
 
-# STOP FRONT — H-R9-022 P3 does not prove the interleaved Carrier ACK was applied
+# STOP FRONT — H-R9-023 exact P3 terminal/oracle closure
 
 **Severity: HIGH for R9-2 evidence correctness.** Mechanically repairable under current semantics; no maintainer policy or architecture decision required.
 
-The server-side `--malformed-budget-test` seam now sends in the intended source order:
+Preserve the accepted source ordering and applied-event seam:
 
 ```text
-malformed #1 -> malformed #2 -> canonical Carrier packet ACK -> Session DeliveryAck -> malformed #3
+malformed #1 -> malformed #2 -> Carrier packet ACK(applied=true, malformed=2)
+             -> Session DeliveryAck -> malformed #3 -> terminal malformed bound
 ```
 
-Preserve that implementation. The remaining defect is the **acceptance evidence**.
+Current P3 still has four oracle gaps:
 
-Current client receive ownership returns `UdpAcknowledgement::Carrier { applied }`, but the outer loop only increments counters. The applied counter is emitted later in `r9_udp_packet_ack_outcomes`, after logical settlement. P3 deliberately dies on malformed #3 before that later output, so the current test would still pass if the interleaved Carrier ACK were rejected (`applied=false`) or otherwise failed to create valid Carrier feedback, as long as malformed #3 still hits a terminal error.
-
-The current test also still accepts the broad terminal condition:
-
-```text
-client_err contains "malformed" OR "bound"
-```
-
-and it does not mechanically forbid downstream health/failover continuation beyond the two settled markers.
+1. `r9_udp_packet_ack_applied` is checked with broad `contains`; require exactly one selected applied event with `malformed=2`.
+2. The test does not forbid `r9_udp_packet_ack_rejected`; require none for this fixture.
+3. The terminal assertion remains `contains("malformed") || contains("bound")`; pin the existing exact terminal error `UDP delivery acknowledgement malformed bound exceeded` and require nonzero exit unconditionally.
+4. It forbids the two settled markers but not downstream health/failover/migration continuation. After the malformed bound, require no health sample/degraded/failed transition, no TCP promotion, no migration-back, and no final success marker from this path.
 
 ## Required smallest repair
 
-Do not change `MAX_POST_HANDSHAKE_MALFORMED`; do not redesign Session/Carrier/ACK/wire semantics; do not create a second receive owner.
+Do not change `MAX_POST_HANDSHAKE_MALFORMED`; do not change Session/Carrier/ACK/crypto/wire semantics; do not add a second receive owner or a fresh deadline.
 
-1. Keep exact `966eb49` server send ordering unchanged.
-2. At the existing outer reliable receive-owner point that handles `UdpAcknowledgement::Carrier { applied }`, emit the smallest diagnostic needed to prove the P3 event was actually applied. For this fixture the evidence must identify:
-   - `applied=true`;
-   - persistent operation-wide malformed count already exactly `2` at the Carrier-ACK handling point.
-3. Tighten the built-binary P3 regression to require exactly one such applied event with `malformed_seen=2` (or equivalent exact fields), followed by the existing malformed-budget terminal error from malformed #3.
-4. Require client nonzero exit unconditionally and pin the specific existing error `UDP delivery acknowledgement malformed bound exceeded` (or its exact stable terminal marker). Remove the generic `malformed || bound` disjunction.
-5. Require no selected Carrier-ACK rejection for this interleaved event.
-6. Require no `r9_udp_in_flight_settled`, no `r9_udp_post_return_settled`, and no downstream health/failover/migration continuation after the malformed bound terminates the operation.
-7. Focused built-binary regression -> commit/push -> continue immediately. No decoder/framing fuzz is required solely for this diagnostic/test repair.
+Tighten the existing built-binary P3 test only. Use structured-event line collection/cardinality rather than broad substring presence where possible. Focused test -> commit/push -> continue immediately to the next READY_LOCAL slice. No decoder/framing fuzz is required solely for assertion changes.
 
 # Accepted progress — preserve it
 
-## H-R9-021 source-order repair — ACCEPTED_WITH_REMAINING_EVIDENCE_GATE
+- **H-R9-022 applied Carrier-ACK evidence:** closed narrowly at `779efab`.
+- **H-R9-021 source ordering:** accepted; keep the test-only defer ordering from `966eb49`.
+- **H-R9-020 final accounting:** closed; the count=4 ownership partition remains `2 UDP reliable-confirmed / 1 TCP uncertain replay / 1 post-return reliable / 4 total`.
+- **Reversed Session-ACK order:** current built-binary test proves one buffered offset-16 ACK, exact applied offsets 0 then 16, no covered shortcut, and terminal `remaining_in_flight=0`.
+- Earlier candidate A (`Recovery::on_ack` future/never-sent rejection) and candidate B (`record_datagrams` mixed drop reasons) remain closed absent a contradictory reproducer.
 
-Under the test seam the already-canonical Carrier ACK is deferred until after malformed #1/#2; ordinary non-test ordering remains unchanged. Session DeliveryAck remains a separate evidence domain. Do not revert this shape while closing H-R9-022.
+# READY_LOCAL after H-R9-023 — finish R9-2 without inventing parallel fixtures
 
-## H-R9-020 final accounting — CLOSED
+## 1. Exact P2 C1 — TCP replay identity/cardinality
 
-Current runtime derives `uncertain_records` from `uncertain_end - uncertain_start` and counts the reserved post-return reliable record only after the dual-domain post-return loop completes. The count=4 positive P2 fixture pins:
-
-```text
-udp_confirmed_records = 2
-udp_confirmed_bytes   = 32
-uncertain_records     = 1
-uncertain_bytes       = 16
-replayed_records      = 1
-replayed_bytes        = 16
-confirmed_records     = 4
-confirmed_bytes       = 64
-```
-
-Do not reopen absent a contradictory reproducer.
-
-## P4 acknowledgement-domain suppression — ACCEPT_WITH_BOUNDARIES
-
-Preserve both seams:
-
-- `--suppress-r9-ack`: Session DeliveryAck may arrive while Carrier packet ACK is withheld; in-flight must not be reported settled.
-- `--suppress-r9-dack`: post-return Carrier packet ACK may arrive while Session DeliveryAck is withheld; client must terminate nonzero and must not emit post-return success.
-
-Before R9-2 closure, tighten both tests so comments become mechanical assertions: no `r9_udp_in_flight_settled`, no `r9_udp_post_return_settled`, and no downstream health/failover continuation from incomplete settlement.
-
-## Earlier candidates A/B — CLOSED on current tree
-
-- `Recovery::on_ack` rejects `largest > largest_sent` before RTT/loss/PTO mutation.
-- `neko-observe::record_datagrams` preserves mixed generic vs queue-full drop reasons and keeps `queue_dropped` a subset of `dropped`.
-
-Do not reopen without a new reproducer.
-
-# READY_LOCAL after H-R9-022 — exact P2 closure in the existing count=4 fixture
-
-Do not create a parallel P2 scenario.
-
-## P2-C1 — exact TCP replay identity/cardinality
-
-Require:
+Use the existing count=4 migration-back fixture. Require mechanically:
 
 - exactly one client TCP replay/DeliveryAck for `seq=2`, stream 1, offset 32;
-- exactly one corresponding server TCP DeliveryAck for `seq=2` / offset 32;
-- no TCP replay/ACK evidence for reliable-owned offsets 0/16 or reserved offset 48.
+- exactly one corresponding server TCP DeliveryAck for the same logical range;
+- no TCP replay/ACK evidence for offsets 0/16 (already reliable-UDP-owned) or 48 (reserved post-return reliable).
 
-Use existing diagnostics; add only minimal stream/offset fields when exact identity is otherwise impossible.
+The current test counts one client TCP ACK but does not yet pin all exact identities/cardinalities.
 
-## P2-C2 — migration -> exact post-return reliable send
+## 2. Exact P2 C2 — migration strictly precedes the one post-return send
 
-Require strict order:
+Require strict client order and one-only cardinality:
 
 ```text
 udp_recovery_challenge_sent
   < udp_recovery_validated
   < udp_migrated_back
-  < r9_udp_post_return_sent(offset=48)
+  < r9_udp_post_return_sent(stream=1, offset=48)
 ```
 
-Require exactly one post-return send at offset 48. Reserved offset 48 must never appear in any legacy uncertain/replay path.
+Offset 48 must never appear on a legacy uncertain/TCP replay path.
 
-## P2-C3 — exact server post-return identity/cardinality
+## 3. Exact P2 C3 — server post-return identity/cardinality
 
-Require exactly once each, in strict order:
+Require exactly once each, with exact logical identity where applicable:
 
 ```text
 udp_recovery_owner_started
   < udp_recovery_validated
-  < udp_return_delivery_ack_sent(seq=3 / offset=48)
+  < udp_return_delivery_ack_sent(seq=3 / stream=1 / offset=48)
   < udp_return_packet_ack_sent(same bounded owner)
 ```
 
-Do not accept first-occurrence-only checks without cardinality/identity.
+Current test proves order but not full identity/cardinality.
 
-## P2-C4 — exact client dual-domain settlement
+## 4. Exact P2 C4 — client dual-domain settlement
 
 Require exactly once each:
 
 - Session DeliveryAck validation for stream 1 / offset 48;
-- Carrier packet ACK `applied=true` for the post-return owner;
+- Carrier packet ACK `applied=true` for the post-return reliable owner;
 - `r9_udp_post_return_settled` for stream 1 / offset 48 / `remaining_in_flight=0`.
 
-The settled event must occur after **both** acknowledgement-domain events regardless of arrival order.
+Settled must occur after both ACK-domain events regardless of arrival order.
 
-# R9-2 remaining closure slices — continue without waiting
+## 5. Post-return ACK arrival-order seam
 
-1. **H-R9-022 repair + discriminating P3 regression** described above.
-2. **Exact P2 C1-C4** in the existing count=4 fixture.
-3. **Post-return ACK arrival-order seam:** one bounded receive owner must succeed for Session-ACK -> Carrier-ACK and Carrier-ACK -> Session-ACK; same terminal event; no fresh per-order deadline or second receive owner.
-4. **Automatic-health replay exact-identity regression:** compare actual replay `(DataId, payload)` identities against the exact `FailoverController::tcp_resend()` set. If current contiguous reconstruction differs, consume exact controller ownership instead of cardinality.
-5. **P4 tighten:** both missing-Carrier-ACK and missing-Session-ACK cases explicitly forbid every success/health/failover continuation marker.
-6. **R9-2 exact-tree provenance:** on the final pushed source/test SHA run in a clean safe checkout/worktree:
+One bounded receive owner, one absolute operation deadline, one malformed budget. Exercise both:
+
+- Session DeliveryAck -> Carrier packet ACK;
+- Carrier packet ACK -> Session DeliveryAck.
+
+Both must end in the same exact settled state; do not create a second receive owner or fresh per-order deadline.
+
+## 6. Automatic-health replay exact identity
+
+Challenge the automatic-health path against the actual `FailoverController::tcp_resend()` `(DataId, payload)` ownership set. Do not reduce exact controller ownership to a count and reconstruct positionally. Identity/payload mismatch must fail closed.
+
+## 7. P4 acknowledgement-domain suppression tightening
+
+Preserve both existing seams:
+
+- missing Carrier packet ACK while Session DeliveryAck arrives;
+- missing Session DeliveryAck while Carrier packet ACK arrives.
+
+For each: require nonzero typed terminal failure; require no `r9_udp_in_flight_settled`, no `r9_udp_post_return_settled`, and no downstream health/failover/migration continuation. Replace broad terminal disjunctions with the existing exact terminal marker/error where stable.
+
+## 8. R9-2 final developer-local exact-tree provenance
+
+On the final pushed source/test SHA, in a clean safe checkout/worktree, run:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
@@ -154,34 +127,32 @@ git diff --check
 
 Record exact pushed SHA, UTC start/end, Linux OS/arch, Rust stable version, exit codes, clean initial/final tree. Run pinned decode fuzz only if decoder/parser/crypto framing changed. Hosted CI remains additional cross-evidence.
 
-After these six slices, continue immediately into R9-3. Do not wait for reviewer cadence.
+After this, continue immediately into R9-3. Do not wait for reviewer cadence.
 
-# Continuous dependency-ordered queue — preserve depth
+# Continuous dependency-ordered queue after R9-2
 
-7. **R9-3 Data-loss recovery:** suppress one reliable-owned Data only after admission; cwnd admission precedes suppression; PTO after deadline; retransmit under fresh packet number/nonce with stable Session/frame identity; exactly-once logical delivery; independent Session/Carrier ACK domains; final Recovery zero or typed bounded failure.
-8. **R9-4 ACK-loss + delayed original/reorder:** suppress Carrier ACK, retransmit, release delayed original; one logical delivery; Session dedup; fresh packet numbers/nonces; truthful loss/PTO; settled recovery.
-9. **R9-5 tamper/future-ACK/malformed negatives:** tamper mutates neither Recovery nor Session; future/never-sent ACK rejection remains atomic; stale/duplicate feedback fabricates no evidence; malformed input finite/panic-free.
-10. **R9-6 pacing/cwnd/plaintext ownership:** every send/retransmit consults congestion admission; refusal commits no logical/recovery ownership; one bounded retransmit plaintext owner; teardown releases state.
-11. **R9-7 process/result truth:** Data, packet ACK, Session ACK, PTO/retransmit, Recovery, Session delivery, malformed budget and terminal result stay distinct; emit only after the claimed transition.
-12. **R9-8 authenticated warm TCP standby:** negotiation + Noise trust/authz + resume/readiness + resource admission; zero application Data before promotion.
-13. **R9-9 resolved UDP health -> hysteresis -> real TCP promotion:** resolved packet outcomes drive health; recoverable loss stays UDP; PTO-only samples cannot erase later loss; only ready TCP promotes.
-14. **R9-10 uncertain Session replay UDP -> TCP + cleanup matrix:** replay only genuine uncertain Session ranges over promoted TCP; draining UDP receives no new Data; exact-once Session dedup; no TCP packet ACK; include timeout/shutdown/cleanup negative matrix.
-15. **R9-11/R9-12 independent closure:** coherent exact-tree gate, then dedicated independent bounded review of the entire new cross-process reliable-UDP integration surface. Any BLOCKER/HIGH returns to smallest repair + regression + re-gate; then Q10 observability reconciliation, Q11 factual release/status reconciliation, and only a specific Q11-created `READY_LIVE` row may unlock one changed-hypothesis self-owned VPS Q12 run.
+9. **R9-3 Data-loss recovery:** suppress one reliable-owned Data only after admission; cwnd admission precedes suppression; PTO after deadline; retransmit under fresh packet number/nonce with stable Session/frame identity; exactly-once logical delivery; independent Session/Carrier ACK domains; final Recovery zero or typed bounded failure.
+10. **R9-4 ACK-loss + delayed original/reorder:** suppress Carrier ACK, retransmit, release delayed original; one logical delivery; Session dedup; fresh packet numbers/nonces; truthful loss/PTO; settled recovery.
+11. **R9-5/R9-6 adversarial correctness + ownership:** tamper/future-ACK/stale feedback are atomic; malformed input finite/panic-free; every send/retransmit consults congestion admission; refusal commits no logical/recovery ownership; exactly one bounded retransmit-plaintext owner; teardown releases state.
+12. **R9-7 process/result truth:** Data, Carrier packet ACK, Session ACK, PTO/retransmit, Recovery, Session delivery, malformed budget and terminal result remain distinct and are emitted only after the claimed transition.
+13. **R9-8/R9-9 warm TCP + health promotion:** authenticated/resume-bound warm standby carries no application Data before promotion; resolved UDP outcomes feed health/hysteresis; recoverable loss remains UDP; PTO-only samples cannot erase later loss; only ready TCP promotes.
+14. **R9-10 uncertain Session replay + cleanup:** replay only genuine uncertain Session ranges over promoted TCP; draining UDP receives no new Data; exact-once Session dedup; no TCP packet ACK; cover timeout/shutdown/cleanup negatives.
+15. **R9-11/R9-12 + Q10/Q11/Q12:** coherent exact-tree gate, then a dedicated independent bounded review of the whole new cross-process reliable-UDP integration surface. Any BLOCKER/HIGH returns to smallest repair + regression + re-gate. Then reconcile observability/status/release packet factually. Only a specific Q11-created `READY_LIVE` row may unlock one bounded changed-hypothesis self-owned VPS run under standing authorization.
 
-# Core-surface / item-4 boundary
+# Item-4 / core-surface boundary
 
-The pre-R9 item-4 sweep already challenged the earlier reliable engine, CarrierState/Manager, scheduler/flow accounting, adapters, SessionRuntime, observability, package/reproducibility, dependency/build, CLI portability/output, algorithmic boundedness/validators, wire/parser and candidate enhancement gates.
+The pre-R9 deep item-4 sweep already challenged the earlier reliable engine, CarrierState/Manager, scheduler/flow accounting, adapters, SessionRuntime, observability, package/reproducibility, dependency/build, CLI portability/output, boundedness/validators and wire/parser surfaces.
 
-The new **cross-process R9 integration surface** is not covered by those historical notes. Its dedicated independent bounded review remains required before item-4 support can be reconciled. Item 4 therefore remains incomplete even if the local R9 tests become green.
+The new **cross-process R9 integration surface** is materially new and still requires its own dedicated independent bounded challenge before item-4 support can be reconciled. Do not mark item 4 complete merely because R9 tests turn green.
 
 # VPS opportunity
 
-**Not READY — current blocker is local correctness/evidence + independent review, not permission.** Standing VPS authorization remains valid. Rental-window priority is acknowledged, but do not run a candidate whose P3 acceptance evidence still cannot prove the interleaved Carrier ACK applied successfully and whose R9 integration has not yet received the dedicated bounded review.
+**Not READY.** Standing authorization remains valid, and the rental window is still valuable, but a known-invalid local acceptance oracle must not be promoted to WAN evidence. Current blocker class: local correctness/evidence plus later independent review.
 
 Unlock sequence:
 
 ```text
-H-R9-022
+H-R9-023
   -> exact P2 + ACK-order + auto replay identity + P4
   -> clean R9-2 provenance
   -> R9-3..R9-12
@@ -190,8 +161,13 @@ H-R9-022
   -> one bounded changed-hypothesis self-owned VPS run
 ```
 
-# Separate non-blocking policy/authority gates
+# Separate non-blocking policy / authority gates
 
-`SessionRuntime.events` retention; D019 source retention/no-reset; RSEC-001 adversarial-load/capacity suitability; signing/key custody/SBOM/publication trust; previous frozen-release interoperability; final RC/freeze/release/production authority.
+- `SessionRuntime.events` retention policy;
+- D019 source-retention/no-reset policy;
+- RSEC-001 adversarial-load/capacity suitability conditions;
+- signing/key custody/SBOM/publication trust;
+- previous frozen-release interoperability;
+- final RC/freeze/release/production authority.
 
-Do not invent policy values while working R9, and do not let these independent gates starve dependency-ready R9 implementation/review work.
+Do not invent policy values while working R9, and do not let these independent gates starve dependency-ready local implementation/review work.
