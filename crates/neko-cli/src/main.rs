@@ -1971,6 +1971,47 @@ fn failover_server(args: &[String]) {
                                         |_| fail("r9 post-return on_packet_received"),
                                     );
                                 }
+                                // H-R9-029 post-return seams: inject a stale
+                                // (accepted-empty) or future (never-sent)
+                                // Carrier ACK BEFORE the Session/Carrier ACKs
+                                // so the client's dual-settlement owner sees it
+                                // while still waiting for both domains.
+                                if reliable_udp {
+                                    if args.iter().any(|a| a == "--send-stale-ack")
+                                        && let Some(ranges) = server_rt.poll_outgoing_ack(0)
+                                    {
+                                        let pack = neko_wire::encode(&neko_wire::Record {
+                                            record_type: neko_wire::RecordType::Ack,
+                                            flags: 0,
+                                            payload: neko_wire::encode_ack(&ranges).unwrap(),
+                                        })
+                                        .unwrap();
+                                        if let Ok(resealed) = udp_session.seal_unreliable(&pack) {
+                                            let _ = udp.send_to(&resealed, post_source);
+                                        }
+                                    }
+                                    if args.iter().any(|a| a == "--send-future-ack") {
+                                        let future = neko_wire::encode(&neko_wire::Record {
+                                            record_type: neko_wire::RecordType::Ack,
+                                            flags: 0,
+                                            payload: neko_wire::encode_ack(
+                                                &neko_wire::AckPayload {
+                                                    largest_observed: u64::MAX - 1,
+                                                    ranges: vec![neko_wire::AckRangeWire {
+                                                        start: u64::MAX - 1,
+                                                        end: u64::MAX - 1,
+                                                    }],
+                                                    ack_delay_us: 0,
+                                                },
+                                            )
+                                            .unwrap_or_default(),
+                                        })
+                                        .unwrap();
+                                        if let Ok(sealed_f) = udp_session.seal_unreliable(&future) {
+                                            let _ = udp.send_to(&sealed_f, post_source);
+                                        }
+                                    }
+                                }
                                 // P4 fault seam: --suppress-r9-dack withholds the post-return Session
                                 // DeliveryAck; the Carrier packet ACK is still sent.
                                 let suppress_dack = args.iter().any(|a| a == "--suppress-r9-dack");
@@ -2005,6 +2046,39 @@ fn failover_server(args: &[String]) {
                                             0,
                                             &format!(",\"packet_number\":{}", post_pn),
                                         );
+                                        // H-R9-029 post-return seams: after the
+                                        // real Carrier ACK retires post_pn, a
+                                        // re-sealed duplicate is accepted-empty
+                                        // (stale); a future/never-sent ACK is
+                                        // typed-rejected.
+                                        if args.iter().any(|a| a == "--send-stale-ack")
+                                            && let Ok(resealed) = udp_session.seal_unreliable(&pack)
+                                        {
+                                            let _ = udp.send_to(&resealed, post_source);
+                                        }
+                                        if args.iter().any(|a| a == "--send-future-ack") {
+                                            let future = neko_wire::encode(&neko_wire::Record {
+                                                record_type: neko_wire::RecordType::Ack,
+                                                flags: 0,
+                                                payload: neko_wire::encode_ack(
+                                                    &neko_wire::AckPayload {
+                                                        largest_observed: u64::MAX - 1,
+                                                        ranges: vec![neko_wire::AckRangeWire {
+                                                            start: u64::MAX - 1,
+                                                            end: u64::MAX - 1,
+                                                        }],
+                                                        ack_delay_us: 0,
+                                                    },
+                                                )
+                                                .unwrap_or_default(),
+                                            })
+                                            .unwrap();
+                                            if let Ok(sealed_f) =
+                                                udp_session.seal_unreliable(&future)
+                                            {
+                                                let _ = udp.send_to(&sealed_f, post_source);
+                                            }
+                                        }
                                     }
                                 }
                                 if let Some(delivered) = runtime.pop_receive(5).unwrap() {

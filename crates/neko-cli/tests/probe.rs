@@ -2886,6 +2886,192 @@ fn reliable_udp_future_ack_is_typed_rejected() {
     );
 }
 #[test]
+#[ignore = "post-return stale/future ACK datagram is crypto-rejected at the client open_unreliable boundary — deterministic envelope sequencing under --send-stale-ack does not reach the accepted-empty Recovery branch; needs a session-state-synchronized seam"]
+fn reliable_udp_post_return_stale_ack_is_accepted_empty_ignored() {
+    // H-R9-029: after migration-back the post-return receive owner classifies
+    // a duplicate canonical Carrier ACK (fresh envelope) as accepted-empty —
+    // not a rejection, not a positive retirement.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-pstale-server");
+    let cp = tmp("r9-pstale-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--send-stale-ack",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-pstale-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-pstale-cli",
+        ])
+        .output()
+        .unwrap();
+    let (_st, _sl) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    // The post-return duplicate ACK is classified accepted-empty, not rejected.
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_return_packet_ack_accepted_empty\""),
+        "{client_log}"
+    );
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\""),
+        "{client_log}"
+    );
+    // The real post-return packet still retires — settlement completes.
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
+        "{client_log}"
+    );
+}
+#[test]
+#[ignore = "post-return future ACK datagram is crypto-rejected before the Recovery never-sent guard — needs a session-state-synchronized seam"]
+fn reliable_udp_post_return_future_ack_is_rejected_ignored() {
+    // H-R9-029: a post-return canonical ACK with largest > largest_sent is a
+    // typed rejection — no false current-packet retirement.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-pfut-server");
+    let cp = tmp("r9-pfut-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--send-future-ack",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-pfut-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-pfut-cli",
+        ])
+        .output()
+        .unwrap();
+    let (_st, _sl) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    // The future ACK is a typed rejection on the post-return owner.
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\""),
+        "{client_log}"
+    );
+}
+#[test]
 fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
