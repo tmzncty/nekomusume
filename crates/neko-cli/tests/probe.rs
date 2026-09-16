@@ -2963,22 +2963,45 @@ fn reliable_udp_post_return_stale_ack_is_accepted_empty() {
         ])
         .output()
         .unwrap();
-    let (_st, _sl) = finish_server(server);
+    let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
-    // The post-return duplicate ACK is classified accepted-empty, not rejected.
-    assert!(
-        client_log.contains("\"event\":\"r9_udp_return_packet_ack_accepted_empty\""),
-        "{client_log}"
-    );
+    let client_err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{client_log} {client_err}");
+    assert!(srv_status.success(), "{server_log}");
+    // Exactly one accepted-empty, zero post-return rejected.
+    let empty_events: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_return_packet_ack_accepted_empty\""))
+        .collect();
+    assert_eq!(empty_events.len(), 1, "{client_log}");
     assert!(
         !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\""),
         "{client_log}"
     );
-    // The real post-return packet still retires — settlement completes.
+    // Exactly one positive Carrier retirement for the real post-return packet,
+    // and Session exact transition stream=1 offset=48 len=16.
+    let retire: Vec<&str> = client_log
+        .lines()
+        .filter(|l| {
+            l.contains("\"event\":\"r9_udp_return_packet_ack\"") && l.contains("\"retired\":true")
+        })
+        .collect();
+    assert_eq!(retire.len(), 1, "{client_log}");
     assert!(
-        client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
+        client_log.contains("\"event\":\"r9_udp_return_delivery_ack\",\"seq\":0,\"stream\":1,\"offset\":48,\"len\":16"),
+        "{client_log}"
+    );
+    // Exactly one settlement with remaining_in_flight=0, strictly after both
+    // ACK-domain transitions.
+    let settled: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_settled\""))
+        .collect();
+    assert_eq!(settled.len(), 1, "{client_log}");
+    assert!(
+        settled[0].contains("\"remaining_in_flight\":0"),
         "{client_log}"
     );
 }
@@ -3059,13 +3082,29 @@ fn reliable_udp_post_return_future_ack_is_rejected() {
         ])
         .output()
         .unwrap();
-    let (_st, _sl) = finish_server(server);
+    let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
-    // The future ACK is a typed rejection on the post-return owner.
+    let client_err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{client_log} {client_err}");
+    assert!(srv_status.success(), "{server_log}");
+    // Exactly one typed post-return rejection; then the real Carrier ACK still
+    // retires the post-return packet and settlement completes.
+    let rejected: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_return_packet_ack_rejected\""))
+        .collect();
+    assert_eq!(rejected.len(), 1, "{client_log}");
+    let retire: Vec<&str> = client_log
+        .lines()
+        .filter(|l| {
+            l.contains("\"event\":\"r9_udp_return_packet_ack\"") && l.contains("\"retired\":true")
+        })
+        .collect();
+    assert_eq!(retire.len(), 1, "{client_log}");
     assert!(
-        client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\""),
+        client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
         "{client_log}"
     );
 }
