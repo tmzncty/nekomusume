@@ -2958,6 +2958,137 @@ fn reliable_udp_future_ack_is_typed_rejected() {
     );
 }
 #[test]
+fn reliable_udp_stale_ack_settlement_phase_is_accepted_empty() {
+    // H-R9-034: --send-stale-ack-late injects the semantic duplicate after the
+    // last reliable record's Session ACK, so the client's settlement
+    // continuation (not the initial loop) consumes and classifies it.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-stlate-server");
+    let cp = tmp("r9-stlate-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--send-stale-ack-late",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-stlate-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--reliable-udp",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-stlate-cli",
+        ])
+        .output()
+        .unwrap();
+    let (srv_status, server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let client_err = String::from_utf8_lossy(&out.stderr);
+    // H-R9-034: both processes must succeed.
+    assert!(out.status.success(), "{client_log} {client_err}");
+    assert!(srv_status.success(), "{server_log}");
+    // Exactly one accepted-empty classification — the duplicate must reach the
+    // settlement continuation, not the initial loop.
+    let empty: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_packet_ack_accepted_empty\""))
+        .collect();
+    assert_eq!(empty.len(), 1, "{client_log}");
+    // Two real applied Carrier ACKs (records 0 and 1).
+    let applied: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_packet_ack_applied\""))
+        .collect();
+    assert_eq!(applied.len(), 2, "{client_log}");
+    // Zero typed rejection.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_packet_ack_rejected\""),
+        "{client_log}"
+    );
+    // Exactly two reliable-path Session confirmations (records 0,1).
+    let dack: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_delivery_ack_validated\""))
+        .collect();
+    assert_eq!(dack.len(), 2, "{client_log}");
+    assert!(dack[0].contains("\"offset\":0"), "{client_log}");
+    assert!(dack[1].contains("\"offset\":16"), "{client_log}");
+    // The accepted-empty event must appear AFTER both Session confirmations —
+    // proving it was consumed by the settlement continuation, not the initial
+    // loop.
+    let empty_pos = client_log
+        .find("\"event\":\"r9_udp_packet_ack_accepted_empty\"")
+        .unwrap_or(usize::MAX);
+    let dack0_pos = client_log
+        .find("\"event\":\"r9_udp_delivery_ack_validated\"")
+        .unwrap_or(usize::MAX);
+    let dack1_pos = client_log
+        .rfind("\"event\":\"r9_udp_delivery_ack_validated\"")
+        .unwrap_or(usize::MAX);
+    assert!(
+        dack0_pos < empty_pos && dack1_pos < empty_pos,
+        "accepted-empty must appear after both Session confirmations: {client_log}"
+    );
+    // Final Recovery zero via the settlement marker.
+    assert!(
+        client_log
+            .contains("\"event\":\"r9_udp_in_flight_settled\",\"seq\":0,\"remaining_in_flight\":0"),
+        "{client_log}"
+    );
+}
+#[test]
 fn reliable_udp_post_return_stale_ack_is_accepted_empty() {
     // H-R9-029/H-R9-030: after migration-back the post-return receive owner
     // classifies a re-sealed duplicate of the canonical current Carrier ACK

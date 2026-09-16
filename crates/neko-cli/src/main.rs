@@ -1191,6 +1191,12 @@ fn failover_server(args: &[String]) {
     // each fires exactly once per bounded operation, not once per packet ACK.
     let mut stale_ack_sent = false;
     let mut future_ack_sent = false;
+    // H-R9-034: one-shot guard for the settlement-phase stale seam — the
+    // duplicate is sent after the last reliable record's Session ACK so the
+    // client's settlement continuation (not the initial loop) consumes it.
+    // Retains the last reliable record's canonical ACK plaintext for re-seal.
+    let mut stale_ack_late_sent = false;
+    let mut stale_late_pack: Option<Vec<u8>> = None;
     runtime.open_stream(StreamId(1), 0).unwrap();
     emit_diagnostic(
         args,
@@ -1496,6 +1502,16 @@ fn failover_server(args: &[String]) {
                                         // FRESH authenticated envelope so
                                         // crypto accepts it and Recovery sees
                                         // a stale/duplicate (accepted-empty).
+                                        // H-R9-034: retain the FIRST reliable
+                                        // record's canonical ACK plaintext so
+                                        // the settlement-phase seam can re-seal
+                                        // it as a stale duplicate after the
+                                        // last reliable record's Session ACK.
+                                        if args.iter().any(|a| a == "--send-stale-ack-late")
+                                            && offset == 0
+                                        {
+                                            stale_late_pack = Some(pack.clone());
+                                        }
                                         // H-R9-028: one-shot only — exactly one
                                         // fresh-envelope duplicate per operation.
                                         if !stale_ack_sent
@@ -1598,6 +1614,21 @@ fn failover_server(args: &[String]) {
                                     offset as usize / bytes.max(1),
                                     &format!(",\"ciphertext_bytes\":{}", ack.len()),
                                 );
+                                // H-R9-034: --send-stale-ack-late re-seals the
+                                // retained record-0 canonical ACK plaintext under
+                                // a fresh envelope only after the LAST reliable
+                                // record's Session ACK (offset == bytes), so the
+                                // duplicate reaches the client's settlement
+                                // continuation (not the initial loop).
+                                if !stale_ack_late_sent
+                                    && offset == bytes.max(1) as u64
+                                    && let Some(pack) = stale_late_pack.take()
+                                {
+                                    if let Ok(resealed) = ss.seal_unreliable(&pack) {
+                                        let _ = udp.send_to(&resealed, peer);
+                                        stale_ack_late_sent = true;
+                                    }
+                                }
                                 // Now release the deferred first-record ACK —
                                 // record-1's confirmation arrives before
                                 // record-0's (reversed order).
@@ -2570,7 +2601,13 @@ fn failover_client(args: &[String]) {
         // M-R9-009: settlement uses the SAME absolute application deadline —
         // no fresh time budget just because Session confirmations landed first.
         let settle_deadline = application_deadline;
-        while rt.in_flight() > 0 && Instant::now() < settle_deadline {
+        // H-R9-034: after in_flight reaches zero, perform one final bounded
+        // drain so a late-arriving stale/duplicate is still classified
+        // accepted-empty rather than silently dropped by process truth.
+        // Only for the non-migration-back initial path — post-return has its
+        // own receive owner and must not have its ACKs consumed here.
+        let mut drained_after_zero = migration_back;
+        while (rt.in_flight() > 0 || !drained_after_zero) && Instant::now() < settle_deadline {
             match recv_udp_delivery_ack(
                 &u,
                 target,
@@ -2600,6 +2637,9 @@ fn failover_client(args: &[String]) {
                 }
                 Ok(UdpAcknowledgement::Session { .. }) => {}
                 Err(_) => break, // timeout or bounded malformed bound hit
+            }
+            if rt.in_flight() == 0 {
+                drained_after_zero = true;
             }
         }
         emit_diagnostic(
