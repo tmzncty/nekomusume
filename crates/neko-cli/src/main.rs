@@ -920,7 +920,10 @@ enum UdpAcknowledgement {
     },
     /// A canonical Carrier packet ACK was classified; `applied` is the typed
     /// `apply_ack` outcome. A rejection never mutated recovery.
-    Carrier { applied: bool },
+    Carrier {
+        applied: bool,
+        acked_packets: Vec<u64>,
+    },
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1006,10 +1009,22 @@ fn recv_udp_delivery_ack(
                                 .collect::<Vec<_>>(),
                         )
                     {
-                        let applied = rt
+                        // H-R9-025: an OK result only means the canonical ACK
+                        // was accepted — a stale/duplicate ACK may retire
+                        // nothing. Surface the actual acked_packets so the
+                        // caller can prove a real packet transition occurred.
+                        let outcome = rt
                             .as_deref_mut()
-                            .is_some_and(|r| r.apply_ack(&ranges, 0, ack.ack_delay_us).is_ok());
-                        return Ok(UdpAcknowledgement::Carrier { applied });
+                            .map(|r| r.apply_ack(&ranges, 0, ack.ack_delay_us).ok());
+                        let acked_packets = outcome
+                            .flatten()
+                            .map(|o| o.acked_packets)
+                            .unwrap_or_default();
+                        let applied = !acked_packets.is_empty();
+                        return Ok(UdpAcknowledgement::Carrier {
+                            applied,
+                            acked_packets,
+                        });
                     }
                     // Domain 3 — any other authenticated plaintext consumes the
                     // finite malformed budget in reliable mode too, so a peer
@@ -2388,7 +2403,10 @@ fn failover_client(args: &[String]) {
                     continue;
                 }
             }
-            UdpAcknowledgement::Carrier { applied } => {
+            UdpAcknowledgement::Carrier {
+                applied,
+                acked_packets,
+            } => {
                 if applied {
                     packet_ack_applied += 1;
                     // H-R9-022: prove a valid Carrier ACK was actually applied
@@ -2405,6 +2423,7 @@ fn failover_client(args: &[String]) {
                     packet_ack_rejected += 1;
                     emit_diagnostic(args, "client", "r9_udp_packet_ack_rejected", 0, "");
                 }
+                let _ = acked_packets;
             }
         }
     }
@@ -2433,7 +2452,7 @@ fn failover_client(args: &[String]) {
                 Some(rt),
                 &mut malformed,
             ) {
-                Ok(UdpAcknowledgement::Carrier { applied }) => {
+                Ok(UdpAcknowledgement::Carrier { applied, .. }) => {
                     if applied {
                         packet_ack_applied += 1;
                     } else {
@@ -3326,15 +3345,25 @@ fn failover_client(args: &[String]) {
                         ),
                     );
                 }
-                Ok(UdpAcknowledgement::Carrier { applied }) => {
+                Ok(UdpAcknowledgement::Carrier {
+                    applied,
+                    acked_packets,
+                }) => {
+                    // H-R9-025: only claim the post-return packet applied when
+                    // the actual recovery outcome retired that exact packet —
+                    // a stale/duplicate ACK must not produce a false
+                    // applied=true for the current packet.
+                    let retired = acked_packets.contains(&post_pn_client);
                     emit_diagnostic(
                         args,
                         "client",
                         "r9_udp_return_packet_ack",
                         0,
                         &format!(
-                            ",\"applied\":{},\"packet_number\":{}",
-                            applied, post_pn_client
+                            ",\"applied\":{},\"packet_number\":{},\"retired\":{}",
+                            applied && retired,
+                            post_pn_client,
+                            retired
                         ),
                     );
                 }
