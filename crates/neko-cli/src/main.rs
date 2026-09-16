@@ -2385,6 +2385,16 @@ fn failover_client(args: &[String]) {
             UdpAcknowledgement::Carrier { applied } => {
                 if applied {
                     packet_ack_applied += 1;
+                    // H-R9-022: prove a valid Carrier ACK was actually applied
+                    // while the operation-wide malformed counter is at its
+                    // current level — the P3 discriminator.
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "r9_udp_packet_ack_applied",
+                        0,
+                        &format!(",\"malformed\":{malformed}"),
+                    );
                 } else {
                     packet_ack_rejected += 1;
                     emit_diagnostic(args, "client", "r9_udp_packet_ack_rejected", 0, "");

@@ -2478,6 +2478,13 @@ fn reliable_udp_malformed_budget_persists_across_carrier_ack() {
     // The malformed budget must terminate the operation — the third malformed
     // hits the bound and the process reports a typed failure rather than
     // spinning or succeeding.
+    // H-R9-022: prove a valid Carrier ACK was applied while the malformed
+    // counter was already at 2 (between malformed #2 and #3). The client
+    // emits r9_udp_packet_ack_applied with the live malformed count.
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_packet_ack_applied\",\"seq\":0,\"malformed\":2"),
+        "{client_log}"
+    );
     // The operation must terminate typed on the malformed bound — not a
     // generic malformed diagnostic, not success.
     assert!(
