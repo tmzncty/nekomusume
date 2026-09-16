@@ -1,11 +1,14 @@
-# ChatGPT reviewer handoff — P2 C3/C4 advanced at `c2d4d1a`; Carrier-ACK identity remains HIGH
+# ChatGPT reviewer handoff — `4b07c60` partially repairs H-R9-024; cross-process Carrier identity remains HIGH
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `c2d4d1a507f69bbc768abe38d179518099131508` (`test(cli): P2 C3/C4 exact post-return dual-ACK identity + one-only cardinality (M-R9-008)`).
-- Independent reviewer checkpoint: [`docs/reviews/reviewer-r9-p2-c2d4d1a-20260916.md`](reviews/reviewer-r9-p2-c2d4d1a-20260916.md).
-- `c2d4d1a` is evidence-oriented CLI diagnostic/process-test work. It does **not** change Session/Carrier/ACK/crypto/wire architecture.
-- Hosted Rust cross-evidence on exact `c2d4d1a`: GitHub Actions run `35056977108` completed SUCCESS; `stable checks` ran `bash scripts/check.sh`, and `nightly decode fuzz smoke` also succeeded. This is hosted evidence, not final developer-local exact-tree provenance.
+- Latest developer-owned source/test commit reviewed: exact `4b07c60c3ba35fa792f658527854316e13c73886` (`fix(cli): Carrier packet-ACK carries packet_number, not logical offset (H-R9-024)`).
+- Independent reviewer checkpoint: [`docs/reviews/reviewer-r9-p2-4b07c60-20260916.md`](reviews/reviewer-r9-p2-4b07c60-20260916.md), committed at reviewer docs anchor `0b23ebcd9126dc872f6a5e96ce5151b330e9d992`.
+- New developer source/test sequence reviewed since the earlier P3 checkpoint:
+  - `ae0bea87c45b8197cae6e4e6aa8268e171f54389` — P2 C1/C2 process-test tightening;
+  - `c2d4d1a507f69bbc768abe38d179518099131508` — P2 C3/C4 dual-ACK diagnostic/test tightening;
+  - `4b07c60c3ba35fa792f658527854316e13c73886` — server-side Carrier packet-number diagnostic repair.
+- Hosted Rust cross-evidence on exact `4b07c60`: GitHub Actions run `35061342726` completed SUCCESS; `stable checks` ran `bash scripts/check.sh`, and `nightly decode fuzz smoke` also succeeded. This is hosted evidence, not final developer-local exact-tree provenance.
 - Open PRs: none.
 - Final developer-local clean exact-tree provenance for R9-2 is still absent.
 - No new WAN/VPS experiment in this sequence.
@@ -15,11 +18,11 @@ The external coding agent must synchronize to current `main` and continue every 
 
 # Accepted progress — preserve it
 
-- **H-R9-023 P3 terminal oracle:** closed narrowly at `2bddf1d`.
-- **P2 C1 progress at `ae0bea8`:** one-only client/server TCP DeliveryAck evidence exists; client binds stream 1 / offset 32; server binds offset 32; client negative evidence excludes offsets 0/16/48.
-- **P2 C2 progress at `ae0bea8`:** exactly one post-return send at offset 48 is required and `udp_migrated_back < r9_udp_post_return_sent` is proven; earlier challenge/validation/migration ordering remains green.
+- **H-R9-023 P3 exact terminal oracle:** closed narrowly at `2bddf1d`.
+- **P2 C1/C2 progress at `ae0bea8`:** the count=4 fixture now requires positive client/server success, exactly one client/server TCP DeliveryAck line, client stream 1 / offset 32, server offset 32, no TCP ACK evidence for offsets 0/16/48, exactly one post-return send at offset 48, and `udp_migrated_back < r9_udp_post_return_sent`.
 - **P2 C3/C4 progress at `c2d4d1a`:** server Session DeliveryAck and packet-ACK events are one-only; client actual Session-ACK application event is one-only at stream 1 / offset 48; client packet ACK is one-only with `applied=true`; terminal settlement still requires stream 1 / offset 48 / Recovery zero.
-- **Automatic-health TCP replay ownership challenge:** bounded no-finding at `ae0bea8` under current contiguous immutable uncertain-set semantics. Re-open only if future code permits sparse/partially-retired uncertainty, different payload ownership, or multi-stream identity where offset alone is insufficient.
+- **Partial H-R9-024 repair at `4b07c60`:** server `udp_return_packet_ack_sent` now emits the actual `post_pn` passed to `server_rt.on_packet_received`, rather than misusing Session offset as Carrier identity. Server `udp_return_delivery_ack_sent` also now carries `len`.
+- **Automatic-health TCP replay ownership challenge:** bounded no-finding under current contiguous immutable uncertain-set semantics. Re-open only if future code permits sparse/partially-retired uncertainty, different payload ownership, or multi-stream identity where offset alone is insufficient.
 - **H-R9-022 applied Carrier-ACK evidence:** closed narrowly at `779efab`.
 - **H-R9-021 source ordering:** preserve the test-only defer ordering from `966eb49`.
 - **H-R9-020 final accounting:** closed; count=4 remains `2 reliable UDP + 1 uncertain TCP replay + 1 post-return reliable = 4`.
@@ -27,56 +30,63 @@ The external coding agent must synchronize to current `main` and continue every 
 - **Post-return reliable ownership:** current source admits the reserved final record through `ReliableUdpRuntime`, waits for independent Session DeliveryAck and Carrier packet ACK, and requires post-return Recovery settlement before success.
 - Earlier candidate A (`Recovery::on_ack` future/never-sent rejection) and candidate B (`record_datagrams` mixed drop reasons) remain closed absent a contradictory reproducer.
 
-# HIGH — H-R9-024 Carrier packet ACK is mis-bound to Session identity
+# HIGH — H-R9-024 remains open after `4b07c60`
 
 ## Evidence-domain invariant
 
-Session DeliveryAck and Carrier packet ACK are separate evidence domains. A Carrier packet-ACK proof must identify the Recovery packet / ACK range it owns, not borrow the logical Session stream/offset as if that were the packet sequence space.
+Session DeliveryAck and Carrier packet ACK are separate evidence domains. The positive P2 fixture must mechanically bind the client Recovery packet registered at `on_packet_sent` to the server Carrier packet ACK emitted for that same packet. Logical Session offset is correlation metadata only; it is not the Carrier packet sequence space.
 
-## Exact current source truth
+## Exact current source/test truth
 
-The server already derives the actual post-return packet number `pn` from the received authenticated datagram and calls:
+The client already derives the actual post-return Recovery packet number immediately before ownership registration:
 
 ```text
-server_rt.on_packet_received(pn, true)
+let pn = u64::from_be_bytes(sealed[..8].try_into().unwrap());
+rt.on_packet_sent(pn, ...)
 ```
 
-before `poll_outgoing_ack(0)` emits the packet ACK.
+but `r9_udp_post_return_sent` still emits only logical `offset` and does **not** expose `packet_number=pn`.
 
-But `c2d4d1a` annotates `udp_return_packet_ack_sent` only with the logical Data `stream` / `offset`, and the current C3 test accepts `offset=48` as packet-ACK identity. That proves only that the diagnostic was emitted while processing logical offset 48; it does **not** mechanically prove that the outgoing ACK ranges acknowledge the same post-return Recovery packet registered by the client.
+The server now correctly emits:
 
-This is a release/evidence-integrity HIGH, not a newly demonstrated transport-runtime defect.
+```text
+udp_return_packet_ack_sent(packet_number=post_pn)
+```
+
+using the same `post_pn` passed to `server_rt.on_packet_received(post_pn, true)`.
+
+However, the current C3 test only asserts that the server packet-ACK line contains some `packet_number` field. It cannot compare that value with the client-owned Recovery packet because the client diagnostic still does not publish it.
+
+Therefore `4b07c60` is a useful partial repair, but H-R9-024 is **not closed**. A wrong server packet number could still satisfy the current oracle.
 
 ## Smallest repair contract
 
-Do not change ACK framing, Session semantics, receive ownership, or policy values.
+Do not change ACK framing, Session semantics, receive ownership, wire format, crypto, or policy values.
 
-1. Preserve the actual post-return `pn` already available at `server_rt.on_packet_received` and emit it as secret-free `packet_number` on `udp_return_packet_ack_sent`.
-2. Add the same `packet_number` to client `r9_udp_post_return_sent` at the existing `on_packet_sent` point so the process fixture can bind sender Recovery ownership to server packet-ACK emission.
-3. Logical `stream` / `offset` may remain as correlation metadata, but the Carrier-domain assertion must use the packet number / real Carrier owner. Do not treat logical offset as packet-ACK identity.
-4. Keep Session DeliveryAck evidence separate.
-
-Close H-R9-024 before claiming C3/C4 exact closure.
+1. At the existing client `pn` derivation / `on_packet_sent` point, add secret-free `packet_number=pn` to the one `r9_udp_post_return_sent` diagnostic. Keep stream/offset correlation metadata if useful.
+2. In the existing count=4 P2 fixture, require exactly one client `r9_udp_post_return_sent` and exactly one server `udp_return_packet_ack_sent`, extract their `packet_number` values, and require exact equality.
+3. Do not use logical `offset=48` as the Carrier-domain oracle. Keep Session DeliveryAck assertions independent.
+4. Close H-R9-024 only when this cross-process equality is mechanically proven.
 
 # READY_LOCAL — finish R9-2 continuously
 
-## 1. H-R9-024 exact Carrier packet identity
+## 1. H-R9-024 exact cross-process Carrier packet identity
 
-Repair the diagnostic/test binding above. No new wire or runtime owner.
+Implement the repair above. This is the queue head and blocks R9-3 expansion.
 
 ## 2. Finish P2 C1 TCP replay identity/cardinality
 
-Use the existing count=4 fixture. Require exactly once:
+Use the existing count=4 fixture. Require exactly once on **both** client and server:
 
-- client TCP DeliveryAck: `seq=2`, stream 1, offset 32;
-- server TCP DeliveryAck: `seq=2`, stream 1, offset 32;
-- no TCP replay/ACK evidence for offsets 0/16 (reliable-UDP-owned) or 48 (reserved post-return reliable).
+- `seq=2`;
+- stream 1;
+- offset 32.
 
-Current test still does not mechanically assert all selected `seq`/stream fields.
+Keep explicit negative evidence for offsets 0/16/48. The current fixture has useful one-only and offset checks but does not yet mechanically assert the full requested seq/stream identity on both sides.
 
 ## 3. Finish P2 C2 migration -> post-return ownership chain
 
-Require one-only selected milestones and strict order:
+Require selected milestones to be one-only and in strict order:
 
 ```text
 udp_recovery_challenge_sent
@@ -99,23 +109,23 @@ udp_recovery_owner_started
 ```
 
 - Session DeliveryAck: `seq=3`, stream 1, offset 48, len 16.
-- Carrier packet ACK: bind to the actual post-return `packet_number`/owner from H-R9-024; do not use logical offset as the Carrier identity.
-- Cross-process bind the server packet number to client `r9_udp_post_return_sent`.
+- Carrier packet ACK: exact `packet_number` equal to the client `r9_udp_post_return_sent` Recovery owner from H-R9-024.
+- Keep Session identity and Carrier identity as separate assertions.
 
-Current `c2d4d1a` Session-ACK test still omits `seq=3`/stream/len exactness and packet-ACK packet identity.
+The current test still checks only `offset=48` on the Session DeliveryAck line and only packet-number field presence on the Carrier line.
 
 ## 5. Finish exact P2 C4 client dual-domain settlement
 
-The useful actual Session-confirmation event is now `r9_udp_return_delivery_ack`; keep it one-only and add/assert stream 1 / offset 48 / len 16.
+The authoritative Session-confirmation transition is `r9_udp_return_delivery_ack`, not the later post-loop `udp_return_delivery_ack_validated` summary.
 
 Require:
 
-- exactly one actual Session DeliveryAck application;
+- exactly one actual Session DeliveryAck application at stream 1 / offset 48 / len 16;
 - exactly one `r9_udp_return_packet_ack` with `applied=true` and no rejected/false shortcut;
 - exactly one `r9_udp_post_return_settled` for stream 1 / offset 48 / `remaining_in_flight=0`;
 - settlement strictly after both **actual** ACK-domain events.
 
-Do not use only the later `udp_return_delivery_ack_validated` post-loop summary as the Session-domain ordering point; that event is emitted after the dual-settlement loop has already completed.
+Add `len=16` to the actual client Session-ACK diagnostic if necessary; do not use a post-loop summary as the mutation-order oracle.
 
 ## 6. Post-return ACK arrival-order challenge
 
@@ -173,7 +183,8 @@ The materially new **cross-process R9 integration surface** still requires its o
 Unlock sequence:
 
 ```text
-exact P2 C1-C4
+H-R9-024 cross-process packet identity
+  -> exact P2 C1-C4
   -> ACK-order + P4
   -> clean R9-2 provenance
   -> R9-3..R9-12
