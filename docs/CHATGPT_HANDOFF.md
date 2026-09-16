@@ -1,15 +1,15 @@
-# ChatGPT reviewer handoff — H-R9-032 closed at ddafbb1; R9-3 still blocked on initial-path H-R9-028
+# ChatGPT reviewer handoff — H-R9-028 closed at 206b4b9; R9-3 blocked on P2 C1-C4 closure + ACK order challenge
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `ddafbb152403bc4d9b7df4601b20f066b09d9931` (`test(cli): H-R9-032 exact post-return packet-number cross-bind + settlement order`). Tests only.
-- Prior reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-032-89c436c-20260917.md`](reviews/reviewer-r9-h-r9-032-89c436c-20260917.md), reachable through reviewer commit `333311079fd7141a4784d5c4c8e3a31d643a04cc`.
-- H-R9-032 is closed at exact `ddafbb1`: both post-return stale/future fixtures now extract `packet_number` from client `r9_udp_post_return_sent`, server `udp_return_packet_ack_sent`, and client `r9_udp_return_packet_ack(retired=true)`, requiring all three equal; both require exactly one Session transition `stream=1 offset=48 len=16`, exactly one `r9_udp_post_return_settled` with `remaining_in_flight=0`, and settlement position strictly after both the Session and positive Carrier transitions; stale requires exactly one accepted-empty + zero rejection, future requires exactly one rejection + zero accepted-empty.
+- Latest developer-owned source/test commit reviewed: exact `206b4b936b1401c45bc0a23c730032f91eab8f0d` (`fix(cli): H-R9-028 one-shot initial stale/future ACK injection + discriminating oracles`). Source + tests.
+- H-R9-028 is closed at exact `206b4b9`: the initial-path `--send-stale-ack`/`--send-future-ack` seams now inject exactly once per bounded operation (one-shot guards `stale_ack_sent`/`future_ack_sent`); both initial fixtures require client/server success, exactly one accepted-empty or one typed rejection, exactly two applied Carrier ACKs (records 0/1), exactly two `r9_udp_delivery_ack_validated` (offsets 0/16), and `r9_udp_in_flight_settled` `remaining_in_flight=0`.
+- H-R9-032 exact packet-number cross-bind and settlement-order proof remains closed at `ddafbb1`.
 - H-R9-031 partial process-oracle strengthening remains accepted at `89c436c`.
 - H-R9-030 source seam remains narrowly closed.
 - H-R9-029 three-way client classification remains accepted in source.
 - Hosted Rust cross-evidence on exact `89c436c`: GitHub Actions run `35142674605` completed SUCCESS; hosted CI is cross-evidence only.
-- Developer-local clean exact-tree provenance for `ddafbb1`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-16T20:58:27Z → 2026-09-16T21:00:54Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- Developer-local clean exact-tree provenance for `206b4b9`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-16T21:17:43Z → 2026-09-16T21:20:42Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
 - Open PRs at review time: none.
 - `READY_LIVE: none`; release item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
@@ -19,6 +19,7 @@ The external coding agent must synchronize to current `main` and continuously ex
 
 Do not revert these exact-current repairs without contradictory exact-current evidence:
 
+- H-R9-028 one-shot initial stale/future injection + discriminating oracles at `206b4b9`.
 - H-R9-032 exact packet-number cross-bind and settlement-order proof at `ddafbb1`.
 - H-R9-031 partial process-oracle strengthening at `89c436c`.
 - H-R9-030 ACK-obligation source repair described above.
@@ -34,29 +35,13 @@ Do not revert these exact-current repairs without contradictory exact-current ev
 
 # READY_LOCAL 1 — CLOSED at ddafbb1
 
-H-R9-032 exact post-return packet-number cross-bind and settlement-order proof is complete. Both fixtures now satisfy the full acceptance contract above.
+H-R9-032 exact post-return packet-number cross-bind and settlement-order proof is complete.
 
-**R9-3 remains blocked until READY_LOCAL 2 is closed.**
+# READY_LOCAL 2 — CLOSED at 206b4b9
 
-# READY_LOCAL 2 — H-R9-028 HIGH: one-shot discriminating initial stale/future regressions
+H-R9-028 one-shot initial stale/future injection machinery and discriminating oracles are complete. Both fixtures now satisfy the full acceptance contract.
 
-The initial reliable-UDP injection machinery is separate from the post-return seam and still injects from the ordinary packet-ACK emission path.
-
-## A. initial accepted-empty stale/duplicate
-
-- inject exactly one fresh-envelope semantic duplicate for the bounded operation, not once per ordinary packet-ACK emission;
-- require client/server success;
-- require exactly one accepted-empty classification, zero rejection, no extra positive Carrier retirement, unchanged Session logical-confirmation cardinality, final Recovery zero.
-
-## B. initial future/never-sent rejection
-
-- exactly one future injection;
-- exactly one typed rejection;
-- no false positive retirement attributable to it;
-- subsequent legitimate Carrier ACK progress and final Recovery zero;
-- client/server success and unchanged Session logical completion.
-
-Preserve/reuse the engine-level atomic future-ACK regression. No new policy values.
+**R9-3 remains blocked until READY_LOCAL 3+ are closed.**
 
 # READY_LOCAL 3 — positive P2 C1-C4 exact closure
 
