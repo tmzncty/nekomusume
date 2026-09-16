@@ -1,19 +1,17 @@
-# ChatGPT reviewer handoff — H-R9-033 reopens initial stale accepted-empty proof at 206b4b9
+# ChatGPT reviewer handoff — H-R9-033 closed at 7a7c48c; R9-3 blocked on P2 C1-C4 closure + ACK order challenge
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `206b4b936b1401c45bc0a23c730032f91eab8f0d` (`fix(cli): H-R9-028 one-shot initial stale/future ACK injection + discriminating oracles`). Source + tests.
-- Later developer handoff-only commit `f63d3ff2563f0461803be8531abdc674dc631a28` incorrectly closed H-R9-028; it changes documentation only and does not change the source/test facts below.
-- Independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-033-206b4b9-20260917.md`](reviews/reviewer-r9-h-r9-033-206b4b9-20260917.md), reachable through reviewer commit `94766762f061efd45334950c8d2b1c3c35c97777`.
-- **H-R9-033 HIGH / evidence correctness:** exact `206b4b9` makes the initial stale/future injection seams one-shot, but the stale process test still cannot prove that one semantic duplicate reached the shared Carrier ACK owner and classified accepted-empty. The initial owner intentionally consumes `applied=false && rejected=false` as a typed non-event and emits no accepted-empty diagnostic/counter; the final aggregate reports only applied/rejected/in-flight. The stale test misleadingly names the positive `r9_udp_packet_ack_applied` lines `empty` and asserts the ordinary success shape (two positive retirements, zero rejection, two Session confirmations, Recovery zero). If the stale injection is absent or never reaches the owner, those assertions can still pass unchanged. H-R9-028 acceptance is therefore reopened under H-R9-033.
-- The future/never-sent half of exact `206b4b9` is materially stronger: it uses a one-shot nonempty future range and requires exactly one typed rejection, so absent/failing injection would not satisfy that oracle. Preserve it while repairing stale proof.
+- Latest developer-owned source/test commit reviewed: exact `7a7c48c54aba2126c7e8daaf8ea4d5696992e978` (`test(cli): accepted-empty Carrier ACK emits r9_udp_packet_ack_accepted_empty (H-R9-033)`). Source + tests.
+- Prior reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-033-206b4b9-20260917.md`](reviews/reviewer-r9-h-r9-033-206b4b9-20260917.md), reachable through reviewer commit `94766762f061efd45334950c8d2b1c3c35c97777`.
+- H-R9-033 is closed at exact `7a7c48c`: the initial shared Carrier owner now emits `r9_udp_packet_ack_accepted_empty` for the existing `applied=false && rejected=false` outcome (classification-only, no Recovery/Session state change); `reliable_udp_stale_ack_is_accepted_empty_not_rejected` requires exactly one accepted-empty classification, exactly two real applied Carrier ACKs, zero typed rejection, exactly two Session confirmations (offsets 0/16), both processes success, and final Recovery zero via `r9_udp_in_flight_settled remaining_in_flight=0`.
+- H-R9-028 one-shot initial injection + discriminating oracles remains closed at `206b4b9`.
 - H-R9-032 exact post-return packet-number cross-bind and settlement-order proof remains closed at `ddafbb1`.
 - H-R9-031 partial process-oracle strengthening remains accepted at `89c436c`.
 - H-R9-030 source seam remains narrowly closed.
 - H-R9-029 post-return three-way classification remains accepted.
-- H-R9-026 current shared-owner source classification remains accepted: applied, accepted-empty and typed rejection are distinct; H-R9-033 is an observability/oracle gap, not a reopened runtime state-machine defect.
-- Hosted Rust cross-evidence on exact `206b4b9`: GitHub Actions run `35151540630` completed SUCCESS; `stable checks` ran `bash scripts/check.sh`, and `nightly decode fuzz smoke` completed the pinned decode fuzz build/run. Hosted CI is cross-evidence only.
-- Persisted developer-local provenance recorded by the later reachable handoff commit for exact `206b4b9`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-16T21:17:43Z → 2026-09-16T21:20:42Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). Reviewer did not rerun this local gate.
+- H-R9-026 source classification keeps real retirement, accepted-empty and typed Recovery rejection distinct.
+- Developer-local clean exact-tree provenance for `7a7c48c`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-16T21:50:43Z → 2026-09-16T21:53:34Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
 - Open PRs at review time: none.
 - `READY_LIVE: none`; release item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
