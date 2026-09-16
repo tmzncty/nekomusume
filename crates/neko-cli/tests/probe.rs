@@ -2478,31 +2478,46 @@ fn reliable_udp_malformed_budget_persists_across_carrier_ack() {
     // The malformed budget must terminate the operation — the third malformed
     // hits the bound and the process reports a typed failure rather than
     // spinning or succeeding.
-    // H-R9-022: prove a valid Carrier ACK was applied while the malformed
-    // counter was already at 2 (between malformed #2 and #3). The client
-    // emits r9_udp_packet_ack_applied with the live malformed count.
+    // H-R9-022/023: exactly one applied Carrier ACK while the malformed
+    // counter was already at 2 (between malformed #2 and #3), and no rejected
+    // packet-ACK event for this fixture.
+    let applied_events: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_packet_ack_applied\""))
+        .collect();
+    assert_eq!(applied_events.len(), 1, "{client_log}");
     assert!(
-        client_log.contains("\"event\":\"r9_udp_packet_ack_applied\",\"seq\":0,\"malformed\":2"),
+        applied_events[0].contains("\"malformed\":2"),
         "{client_log}"
     );
-    // The operation must terminate typed on the malformed bound — not a
-    // generic malformed diagnostic, not success.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_packet_ack_rejected\""),
+        "{client_log}"
+    );
+    // The operation must terminate typed on the exact malformed bound —
+    // unconditional nonzero exit and the existing terminal error text.
     assert!(
         !out.status.success(),
         "expected nonzero exit, stdout={client_log} stderr={client_err}"
     );
     assert!(
-        client_err.contains("malformed") || client_err.contains("bound"),
+        client_err.contains("UDP delivery acknowledgement malformed bound exceeded"),
         "{client_err}"
     );
-    // No successful settlement markers may appear after the bound terminates
-    // the operation.
+    // No successful settlement markers and no downstream health/failover
+    // continuation after the malformed bound terminates the operation.
     assert!(
         !client_log.contains("\"event\":\"r9_udp_in_flight_settled\""),
         "{client_log}"
     );
     assert!(
         !client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
+        "{client_log}"
+    );
+    assert!(
+        !client_log.contains("\"event\":\"udp_health_event\"")
+            && !client_log.contains("tcp_warm")
+            && !client_log.contains("udp_migrated_back"),
         "{client_log}"
     );
 }
