@@ -2320,10 +2320,11 @@ fn reliable_udp_migration_back_reserves_final_record() {
             "{client_log}"
         );
     }
-    // P2-C4: settled event must appear strictly after both acknowledgement
-    // domains — regardless of arrival order.
+    // P2-C4: settled event must appear strictly after both actual ACK-domain
+    // transitions — the mutation event r9_udp_return_delivery_ack and the
+    // Carrier event r9_udp_return_packet_ack — not the post-loop summary.
     let dack_pos = client_log
-        .find("\"event\":\"udp_return_delivery_ack_validated\"")
+        .find("\"event\":\"r9_udp_return_delivery_ack\"")
         .unwrap_or(usize::MAX);
     let pack_pos = client_log
         .find("\"event\":\"r9_udp_return_packet_ack\"")

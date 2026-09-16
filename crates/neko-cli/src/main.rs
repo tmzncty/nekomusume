@@ -3246,11 +3246,13 @@ fn failover_client(args: &[String]) {
         // H-R9-015: under --reliable-udp the post-return Data is reliable-owned
         // — congestion admission + on_packet_sent + socket send, and its ACK
         // drain reuses the same bounded demux owner (not a None rt).
+        let mut post_pn_client: u64 = 0;
         if let Some(rt) = rt.as_mut() {
             if !rt.can_send(sealed.len() as u64) {
                 fail("r9 post-return cwnd refused send");
             }
             let pn = u64::from_be_bytes(sealed[..8].try_into().unwrap());
+            post_pn_client = pn;
             rt.on_packet_sent(
                 pn,
                 0,
@@ -3317,8 +3319,10 @@ fn failover_client(args: &[String]) {
                         "r9_udp_return_delivery_ack",
                         0,
                         &format!(
-                            ",\"stream\":{},\"offset\":{}",
-                            record.stream.0, record.offset
+                            ",\"stream\":{},\"offset\":{},\"len\":{}",
+                            record.stream.0,
+                            record.offset,
+                            record.data.len()
                         ),
                     );
                 }
@@ -3328,7 +3332,10 @@ fn failover_client(args: &[String]) {
                         "client",
                         "r9_udp_return_packet_ack",
                         0,
-                        &format!(",\"applied\":{applied}"),
+                        &format!(
+                            ",\"applied\":{},\"packet_number\":{}",
+                            applied, post_pn_client
+                        ),
                     );
                 }
                 Err(_) => fail("post-return UDP acknowledgement failed"),
