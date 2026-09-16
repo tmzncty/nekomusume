@@ -1,11 +1,12 @@
-# ChatGPT reviewer handoff — H-R9-030 blocks ignored post-return stale/future proof
+# ChatGPT reviewer handoff — H-R9-031 blocks R9-3 on non-discriminating post-return ACK proof
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `866707f066bfc6fe6801489f3f44ab9f24457ab3` (`test(cli): post-return stale/future seams marked ignore — crypto envelope sequencing (H-R9-029)`).
-- New independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-030-866707f-20260917.md`](reviews/reviewer-r9-h-r9-030-866707f-20260917.md).
-- Prior H-R9-029/H-R9-028 checkpoints remain applicable for accepted source semantics and the initial one-shot work.
-- Hosted Rust cross-evidence on exact `866707f`: GitHub Actions run `35131096545` completed SUCCESS; both `stable checks` (`bash scripts/check.sh`) and `nightly decode fuzz smoke` succeeded. Hosted CI is cross-evidence only, not developer-local exact-tree provenance.
+- Latest developer-owned source/test commit reviewed: exact `7d63e41f077ad451082a46c0c7572409a6cd204f` (`style(cli): cargo fmt post-return ACK seam`), following implementation/test commit `1abe30c52b73de6107cad027a396d94cca642415`.
+- New independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-031-7d63e41-20260917.md`](reviews/reviewer-r9-h-r9-031-7d63e41-20260917.md).
+- H-R9-030 source seam is narrowly closed at exact `7d63e41`: post-return receiver ACK obligation is polled once, canonical ACK plaintext retained, stale mode sends real ACK then one re-sealed semantic duplicate, future mode injects never-sent ACK before the real ACK, and ordinary no-seam P2 ordering remains unchanged.
+- H-R9-029 three-way client classification remains accepted in source: real retirement, accepted-empty stale/duplicate, and typed rejection are distinct.
+- Hosted Rust cross-evidence on exact `7d63e41`: GitHub Actions run `35139025227` completed SUCCESS; both `stable checks` (`bash scripts/check.sh`) and `nightly decode fuzz smoke` succeeded. Hosted CI is cross-evidence only, not developer-local exact-tree provenance.
 - Open PRs at review time: none.
 - Final developer-local clean exact-tree provenance for the complete R9-2 source/test tree is still absent.
 - `READY_LIVE: none`; release item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
@@ -16,45 +17,39 @@ The external coding agent must synchronize to current `main` and continuously ex
 
 Do not revert these exact-current repairs without contradictory exact-current evidence:
 
-- H-R9-029 client source shape remains accepted: post-return Carrier feedback preserves three classes. Positive current-packet evidence requires actual `acked_packets` containing exact `post_pn_client`; typed Recovery rejection has its own event; accepted non-retiring stale/duplicate feedback has a separate accepted-empty event. The completion gate remains actual Session outstanding state plus Recovery `in_flight()==0`.
-- H-R9-027 stale semantic ACKs may be re-sealed under fresh authenticated envelopes; future ACKs use a non-empty range whose largest exceeds bounded `largest_sent`, so intended Recovery guards are representable.
-- H-R9-026 shared-owner + primary/settlement classification keeps real retirement, accepted-empty stale/duplicate, and typed Recovery rejection distinct.
-- H-R9-025 post-return current-packet success remains identity-bound to actual `acked_packets` containing the exact post-return packet number.
-- H-R9-024 cross-process client-send/server-ACK packet-number binding.
-- H-R9-023 exact P3 malformed terminal oracle; H-R9-022 applied Carrier ACK position evidence; H-R9-021 malformed -> malformed -> Carrier ACK -> malformed source order.
-- H-R9-020 count=4 final accounting: `2 reliable UDP + 1 uncertain TCP + 1 post-return reliable = 4`.
+- H-R9-030 ACK-obligation source repair described above.
+- H-R9-029 post-return Carrier feedback preserves three classes and only real `acked_packets` containing exact `post_pn_client` may produce positive retirement.
+- H-R9-027 stale semantic ACKs may be re-sealed under fresh authenticated envelopes; future ACKs use a non-empty range whose largest exceeds bounded `largest_sent`.
+- H-R9-026 shared-owner/settlement classification keeps real retirement, accepted-empty, and typed Recovery rejection distinct.
+- H-R9-025 exact current-packet retirement identity; H-R9-024 cross-process client-send/server-ACK packet-number binding.
+- H-R9-023 exact P3 malformed terminal oracle; H-R9-022 applied Carrier ACK position evidence; H-R9-021 malformed -> malformed -> Carrier ACK -> malformed order.
+- H-R9-020 count=4 accounting: `2 reliable UDP + 1 uncertain TCP + 1 post-return reliable = 4`.
 - reversed initial Session ACK handling buffers later ACKs until the Session watermark reaches them; no cumulative over-promotion.
 - candidate A engine guard: future/never-sent largest is rejected before RTT/loss/PTO mutation.
 - candidate B mixed queue/generic-drop observability repair remains accepted absent contradictory exact-current evidence.
 
-# READY_LOCAL 1 — H-R9-030 HIGH: repair post-return ACK obligation seam and close H-R9-029 with unignored process proof
+# READY_LOCAL 1 — H-R9-031 HIGH: make post-return stale/future process proof acceptance-grade
 
-Exact `866707f` does **not** close H-R9-029. Its two new post-return stale/future tests are `#[ignore]`, and the stale server seam is semantically wrong before any crypto diagnosis.
+Exact `7d63e41` unignored both post-return tests and hosted CI executes them, but the current oracles are still vacuous enough to pass after partial process failure.
 
-`PacketAckTracker::take_ack` / `ReliableUdpRuntime::poll_outgoing_ack` is consumptive: one ack-eliciting packet creates one pending ACK obligation; the first poll consumes it; a second poll yields no ACK until new eligible evidence arrives. Exact-current post-return `--send-stale-ack` calls `server_rt.poll_outgoing_ack(0)` immediately after `on_packet_received(post_pn, true)`, sends that ACK, and later the normal Carrier-ACK block polls again. Therefore the so-called stale injection consumes and sends the **current legitimate ACK** first. The later normal ACK block has no obligation left, and its nested duplicate-after-real-ACK code is unreachable on this path.
+Current stale fixture only checks: accepted-empty string exists, rejected string absent, settled string exists. Current future fixture only checks: rejected string exists. Both ignore client exit status; both ignore server status/log returned by `finish_server`; neither enforces exact cardinality, cross-bound packet identity, exact Session ACK identity, final Recovery zero, or exactly-one settlement.
 
-Do not add a second owner, new timeout, malformed budget, protocol field, capacity value or architecture. Minimal deterministic repair:
+Smallest repair: tests/assertions only unless stronger proof exposes a concrete runtime contradiction.
 
-1. after authenticated post-return Data has called `server_rt.on_packet_received(post_pn, true)`, call `poll_outgoing_ack(0)` **exactly once** and retain the canonical current ACK plaintext;
-2. stale case: send the legitimate current Carrier ACK under a fresh envelope, then re-seal the same retained ACK plaintext under a second fresh envelope and send exactly one semantic duplicate while Session confirmation is still withheld; then send the exact Session DeliveryAck;
-3. a suitable deterministic order is `current Carrier ACK -> re-sealed duplicate -> exact Session DeliveryAck` so the client remains in its same dual-domain receive loop after Recovery retires `post_pn` and must classify the duplicate as accepted-empty;
-4. future case: inject exactly one authenticated canonical future/never-sent ACK while the same receive owner is active, then deliver the legitimate current Carrier ACK and exact Session DeliveryAck;
-5. leave ordinary non-test P2 ordering/behavior untouched.
+1. require client success and server success in both fixtures, with stdout/stderr on failure;
+2. count exact diagnostic events rather than `contains`-only checks;
+3. stale: exactly one `r9_udp_return_packet_ack_accepted_empty`, zero post-return rejection, exactly one true current-packet retirement, exact Session transition `stream=1 offset=48 len=16`, exactly one settlement with `remaining_in_flight=0`;
+4. future: exactly one typed post-return rejection, no false retirement from the injected future ACK, then exactly one true current-packet retirement, exact Session transition, exactly one settlement with Recovery zero;
+5. cross-bind client `r9_udp_post_return_sent(... packet_number=<pn>)`, server `udp_return_packet_ack_sent(packet_number=<pn>)`, and client positive retirement to the same `<pn>`;
+6. settlement must be strictly after both true ACK-domain transitions; injected feedback must not manufacture Session delivery or bypass the dual-domain gate.
 
-Then **unignore** both dedicated post-return process tests and make them discriminating:
+No new protocol owner, timeout, malformed budget, policy value or architecture. No decoder/parser/framing semantic change is implied; do not mechanically fuzz only for assertion strengthening.
 
-- client and server both succeed;
-- stale: exactly one `r9_udp_return_packet_ack_accepted_empty`, zero post-return rejection, exactly one true current-packet retirement cross-bound to the exact client/server packet number, exact Session confirmation `stream=1 offset=48 len=16`, final Recovery zero, exactly one settled event;
-- future: exactly one typed post-return rejection, no false current-packet retirement attributable to the injected future ACK, then exactly one true current-packet retirement, exact Session confirmation, final Recovery zero, exactly one settled event;
-- neither injected feedback may manufacture Session delivery or bypass the dual-domain completion gate.
+**R9-3 remains blocked until READY_LOCAL 1 and READY_LOCAL 2 are closed.**
 
-The developer commit message states that the new fresh-envelope post-return datagrams were crypto-rejected. Repository crypto semantics do not by themselves justify treating newly sealed sequential envelopes as inherently unrecoverable evidence: `SecureSession::open` authenticates/context-checks before applying a bounded replay window that accepts valid unseen sequence numbers within its window. If the focused fixture still observes crypto rejection after the ACK-obligation seam is repaired, preserve that exact process evidence and diagnose the actual sequencing/context owner; do not keep the acceptance test ignored and do not redesign crypto without a concrete contradiction.
+# READY_LOCAL 2 — H-R9-028 HIGH: one-shot discriminating initial stale/future regressions
 
-**R9-3 remains blocked until READY_LOCAL 1 and READY_LOCAL 2 are both closed.**
-
-# READY_LOCAL 2 — H-R9-028 HIGH: one-shot and discriminating initial stale/future regressions
-
-The initial reliable-UDP injection machinery still has a separate one-shot/cardinality issue. Keep this work after READY_LOCAL 1 rather than conflating the two paths.
+The initial reliable-UDP injection machinery is separate from the post-return seam and still injects from the ordinary packet-ACK emission path.
 
 ## A. initial accepted-empty stale/duplicate
 
@@ -72,13 +67,11 @@ The initial reliable-UDP injection machinery still has a separate one-shot/cardi
 
 Preserve/reuse the engine-level atomic future-ACK regression. No new policy values.
 
-No decoder/parser/crypto framing semantic change was introduced by exact `866707f`; do not mechanically run fuzz solely for these test seams. Focused deterministic tests are required; final local gate remains READY_LOCAL 7.
-
 # READY_LOCAL 3 — positive P2 C1-C4 exact closure
 
 Keep the existing count=4 fixture and strengthen only missing identity/cardinality/order proof.
 
-- **C1 TCP replay identity:** exactly once client and server `stream=1`, `offset=32` (`seq=2` where emitted); explicitly reject replay evidence for offsets 0, 16, 48.
+- **C1 TCP replay identity:** exactly once client and server `stream=1 offset=32` (`seq=2` where emitted); explicitly reject replay evidence for offsets 0, 16, 48.
 - **C2 migration ownership chain:** exactly once and strict order `udp_recovery_challenge_sent < udp_recovery_validated < udp_migrated_back < r9_udp_post_return_sent(stream=1,offset=48,packet_number=<pn>)`; offset 48 absent from uncertain/pre-promotion/TCP replay ownership.
 - **C3 server dual-domain:** exactly one Session DeliveryAck `stream=1 offset=48 len=16` plus exactly one Carrier ACK for the exact client-owned post-return packet number; do not merge domains.
 - **C4 client actual transitions:** exactly one Session transition `stream=1 offset=48 len=16`; exactly one positive Carrier retirement for the cross-bound packet number; zero false/rejected shortcut; exactly one `r9_udp_post_return_settled ... remaining_in_flight=0`; settlement strictly after both actual transitions.
