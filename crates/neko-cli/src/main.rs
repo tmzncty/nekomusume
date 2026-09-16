@@ -1486,23 +1486,32 @@ fn failover_server(args: &[String]) {
                                     })
                                     .unwrap();
                                     if let Ok(sealed_ack) = ss.seal_unreliable(&pack) {
-                                        // H-R9-026 regression seams:
-                                        // --send-stale-ack re-sends the same
-                                        // canonical ACK (accepted-empty);
-                                        // --send-future-ack sends an ACK
-                                        // whose largest > largest_sent
-                                        // (rejected).
+                                        // H-R9-026/027 regression seams.
+                                        // --send-stale-ack re-seals the same
+                                        // canonical ACK plaintext under a
+                                        // FRESH authenticated envelope so
+                                        // crypto accepts it and Recovery sees
+                                        // a stale/duplicate (accepted-empty).
                                         if args.iter().any(|a| a == "--send-stale-ack") {
-                                            let _ = udp.send_to(&sealed_ack, peer);
+                                            if let Ok(resealed) = ss.seal_unreliable(&pack) {
+                                                let _ = udp.send_to(&resealed, peer);
+                                            }
                                         }
+                                        // --send-future-ack sends a canonical
+                                        // ACK whose largest_observed exceeds
+                                        // the client's largest_sent — Recovery
+                                        // rejects it before any mutation.
                                         if args.iter().any(|a| a == "--send-future-ack") {
                                             let future = neko_wire::encode(&neko_wire::Record {
                                                 record_type: neko_wire::RecordType::Ack,
                                                 flags: 0,
                                                 payload: neko_wire::encode_ack(
                                                     &neko_wire::AckPayload {
-                                                        largest_observed: u64::MAX,
-                                                        ranges: vec![],
+                                                        largest_observed: u64::MAX - 1,
+                                                        ranges: vec![neko_wire::AckRangeWire {
+                                                            start: u64::MAX - 1,
+                                                            end: u64::MAX - 1,
+                                                        }],
                                                         ack_delay_us: 0,
                                                     },
                                                 )
