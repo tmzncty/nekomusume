@@ -2488,6 +2488,109 @@ fn reliable_udp_malformed_budget_persists_across_carrier_ack() {
     );
 }
 #[test]
+fn reliable_udp_post_return_incomplete_is_terminal() {
+    // M-R9-008 P4: under --reliable-udp + --migration-back + --suppress-r9-dack
+    // the post-return Session DeliveryAck never arrives — logical ownership
+    // stays outstanding even though the Carrier packet ACK lands. The client
+    // must terminate typed/nonzero, never emit r9_udp_post_return_settled or
+    // r9_udp_in_flight_settled, and must not continue health/failover.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-p4-server");
+    let cp = tmp("r9-p4-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--migration-back",
+            "--suppress-r9-dack",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-p4-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-p4-cli",
+        ])
+        .output()
+        .unwrap();
+    let (_st, _sl) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let client_err = String::from_utf8_lossy(&out.stderr);
+    // The post-return logical confirmation is suppressed — the client must
+    // fail typed, never emit a successful post-return/settled marker, and
+    // never continue as if settlement completed.
+    assert!(
+        !out.status.success(),
+        "expected nonzero exit, stdout={client_log} stderr={client_err}"
+    );
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
+        "{client_log}"
+    );
+    assert!(
+        client_err.contains("post-return")
+            || client_err.contains("acknowledgement")
+            || client_log.contains("settlement_incomplete")
+            || client_err.contains("settlement"),
+        "{client_log} {client_err}"
+    );
+}
+#[test]
 fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");

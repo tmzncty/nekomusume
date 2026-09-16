@@ -1885,15 +1885,22 @@ fn failover_server(args: &[String]) {
                                         fail("r9 post-return on_packet_received")
                                     });
                                 }
-                                let sealed_ack = udp_session.seal_unreliable(&ack).unwrap();
-                                udp.send_to(&sealed_ack, post_source).unwrap();
-                                emit_diagnostic(
-                                    args,
-                                    "server",
-                                    "udp_return_delivery_ack_sent",
-                                    post_offset as usize / bytes.max(1),
-                                    "",
-                                );
+                                // P4 fault seam: --suppress-r9-dack withholds
+                                // the post-return Session DeliveryAck so the
+                                // client's logical confirmation stays
+                                // outstanding (Carrier packet ACK still sent).
+                                let suppress_dack = args.iter().any(|a| a == "--suppress-r9-dack");
+                                if !suppress_dack {
+                                    let sealed_ack = udp_session.seal_unreliable(&ack).unwrap();
+                                    udp.send_to(&sealed_ack, post_source).unwrap();
+                                    emit_diagnostic(
+                                        args,
+                                        "server",
+                                        "udp_return_delivery_ack_sent",
+                                        post_offset as usize / bytes.max(1),
+                                        "",
+                                    );
+                                }
                                 if reliable_udp && let Some(ranges) = server_rt.poll_outgoing_ack(0)
                                 {
                                     let pack = neko_wire::encode(&neko_wire::Record {
