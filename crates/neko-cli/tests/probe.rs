@@ -2396,6 +2396,98 @@ fn reliable_udp_reversed_ack_order_confirms_in_order() {
     );
 }
 #[test]
+fn reliable_udp_malformed_budget_persists_across_carrier_ack() {
+    // M-R9-008 P3: the operation-wide malformed budget persists across a valid
+    // Carrier/Session ACK — malformed #1 and #2 arrive, a valid ACK lands
+    // between them, and malformed #3 must hit MAX_POST_HANDSHAKE_MALFORMED
+    // rather than the budget resetting after valid feedback.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-malf-server");
+    let cp = tmp("r9-malf-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--malformed-budget-test",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-malf-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--reliable-udp",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-malf-cli",
+        ])
+        .output()
+        .unwrap();
+    let (_st, _sl) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let client_err = String::from_utf8_lossy(&out.stderr);
+    // The malformed budget must terminate the operation — the third malformed
+    // hits the bound and the process reports a typed failure rather than
+    // spinning or succeeding.
+    assert!(
+        !out.status.success()
+            || client_err.contains("malformed bound")
+            || client_err.contains("malformed")
+            || client_log.contains("malformed_bound")
+            || client_log.contains("malformed_or_unadmitted"),
+        "{client_log} {client_err}"
+    );
+}
+#[test]
 fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");

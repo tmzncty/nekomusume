@@ -1486,6 +1486,15 @@ fn failover_server(args: &[String]) {
                             } else if cease_udp_replies_after
                                 .is_none_or(|point| udp_replies < point)
                             {
+                                // M-R9-008 P3: interleave malformed datagrams
+                                // around the valid Carrier/Session ACKs so the
+                                // client's operation-wide malformed budget is
+                                // exercised across valid Carrier feedback.
+                                if args.iter().any(|a| a == "--malformed-budget-test") {
+                                    // two malformed before the ACK, one after.
+                                    udp.send_to(b"malformed", peer).unwrap();
+                                    udp.send_to(b"malformed", peer).unwrap();
+                                }
                                 udp.send_to(&ack, peer).unwrap();
                                 udp_replies += 1;
                                 emit_diagnostic(
@@ -1508,6 +1517,9 @@ fn failover_server(args: &[String]) {
                                         0,
                                         ",\"reversed\":true,\"offset\":0",
                                     );
+                                }
+                                if args.iter().any(|a| a == "--malformed-budget-test") {
+                                    udp.send_to(b"malformed", peer).unwrap();
                                 }
                             } else {
                                 emit_diagnostic(
