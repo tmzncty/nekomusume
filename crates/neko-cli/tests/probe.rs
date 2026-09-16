@@ -2478,13 +2478,25 @@ fn reliable_udp_malformed_budget_persists_across_carrier_ack() {
     // The malformed budget must terminate the operation — the third malformed
     // hits the bound and the process reports a typed failure rather than
     // spinning or succeeding.
+    // The operation must terminate typed on the malformed bound — not a
+    // generic malformed diagnostic, not success.
     assert!(
-        !out.status.success()
-            || client_err.contains("malformed bound")
-            || client_err.contains("malformed")
-            || client_log.contains("malformed_bound")
-            || client_log.contains("malformed_or_unadmitted"),
-        "{client_log} {client_err}"
+        !out.status.success(),
+        "expected nonzero exit, stdout={client_log} stderr={client_err}"
+    );
+    assert!(
+        client_err.contains("malformed") || client_err.contains("bound"),
+        "{client_err}"
+    );
+    // No successful settlement markers may appear after the bound terminates
+    // the operation.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_in_flight_settled\""),
+        "{client_log}"
+    );
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
+        "{client_log}"
     );
 }
 #[test]

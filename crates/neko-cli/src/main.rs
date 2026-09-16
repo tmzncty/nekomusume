@@ -1164,6 +1164,8 @@ fn failover_server(args: &[String]) {
     // M-R9-008: buffered first-record Session DeliveryAck for the
     // reversed-ack-order fault seam (released after a later record's ACK).
     let mut pending_reversed_ack: Option<Vec<u8>> = None;
+    // P3: deferred Carrier packet ACK for --malformed-budget-test ordering.
+    let mut pending_p3_carrier_ack: Option<Vec<u8>> = None;
     runtime.open_stream(StreamId(1), 0).unwrap();
     emit_diagnostic(
         args,
@@ -1445,6 +1447,8 @@ fn failover_server(args: &[String]) {
                             // R9 packet ACK: authenticated Carrier feedback for
                             // the received packet number, before/separate from
                             // the Session DeliveryAck logical confirmation.
+                            let malformed_budget_test =
+                                args.iter().any(|a| a == "--malformed-budget-test");
                             if reliable_udp {
                                 // Fault seam for the incomplete-settlement
                                 // regression: --suppress-r9-ack withholds the
@@ -1461,14 +1465,23 @@ fn failover_server(args: &[String]) {
                                     })
                                     .unwrap();
                                     if let Ok(sealed_ack) = ss.seal_unreliable(&pack) {
-                                        let _ = udp.send_to(&sealed_ack, peer);
-                                        emit_diagnostic(
-                                            args,
-                                            "server",
-                                            "udp_packet_ack_sent",
-                                            0,
-                                            "",
-                                        );
+                                        if malformed_budget_test {
+                                            // P3 seam: defer the Carrier ACK
+                                            // until after malformed #1/#2 so
+                                            // observed order is malformed,
+                                            // malformed, Carrier ACK,
+                                            // malformed.
+                                            pending_p3_carrier_ack = Some(sealed_ack);
+                                        } else {
+                                            let _ = udp.send_to(&sealed_ack, peer);
+                                            emit_diagnostic(
+                                                args,
+                                                "server",
+                                                "udp_packet_ack_sent",
+                                                0,
+                                                "",
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -1486,14 +1499,25 @@ fn failover_server(args: &[String]) {
                             } else if cease_udp_replies_after
                                 .is_none_or(|point| udp_replies < point)
                             {
-                                // M-R9-008 P3: interleave malformed datagrams
-                                // around the valid Carrier/Session ACKs so the
-                                // client's operation-wide malformed budget is
-                                // exercised across valid Carrier feedback.
-                                if args.iter().any(|a| a == "--malformed-budget-test") {
-                                    // two malformed before the ACK, one after.
+                                // M-R9-008 P3: malformed #1 -> malformed #2 ->
+                                // Carrier packet ACK -> malformed #3. The
+                                // Carrier ACK was deferred above; emit it here
+                                // between the malformed pairs so the client's
+                                // operation-wide budget must persist across
+                                // valid Carrier feedback.
+                                if malformed_budget_test {
                                     udp.send_to(b"malformed", peer).unwrap();
                                     udp.send_to(b"malformed", peer).unwrap();
+                                    if let Some(pack) = pending_p3_carrier_ack.take() {
+                                        let _ = udp.send_to(&pack, peer);
+                                        emit_diagnostic(
+                                            args,
+                                            "server",
+                                            "udp_packet_ack_sent",
+                                            0,
+                                            "",
+                                        );
+                                    }
                                 }
                                 udp.send_to(&ack, peer).unwrap();
                                 udp_replies += 1;
@@ -1518,7 +1542,7 @@ fn failover_server(args: &[String]) {
                                         ",\"reversed\":true,\"offset\":0",
                                     );
                                 }
-                                if args.iter().any(|a| a == "--malformed-budget-test") {
+                                if malformed_budget_test {
                                     udp.send_to(b"malformed", peer).unwrap();
                                 }
                             } else {
