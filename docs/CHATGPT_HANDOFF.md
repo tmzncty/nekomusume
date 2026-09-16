@@ -1,78 +1,72 @@
-# ChatGPT reviewer handoff — exact `d174eb6` partially repairs H-R9-025; H-R9-026 blocks R9-3
+# ChatGPT reviewer handoff — exact `d133dbb` partially repairs H-R9-026; primary receive path still blocks R9-3
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `d174eb620eeb92df9e6181c555595591448017e5` (`fix(cli): r9_udp_return_packet_ack only claims applied on real packet retire (H-R9-025)`).
-- Independent reviewer checkpoint: [`docs/reviews/reviewer-r9-p2-d174eb6-20260916.md`](reviews/reviewer-r9-p2-d174eb6-20260916.md), committed at reviewer docs anchor `e01e931222b977fa0ccb486b223f2e629c8d02da`.
-- Hosted Rust cross-evidence on exact `d174eb6`: GitHub Actions run `35081304355` completed SUCCESS. `stable checks` ran `bash scripts/check.sh`; `nightly decode fuzz smoke` ran the pinned decoder fuzz build/run; both succeeded. Hosted CI is additional evidence only, not developer-local exact-tree provenance.
+- Latest developer-owned source/test commit reviewed: exact `d133dbb311fe61288cb8cf0881747fba0e48877c` (`fix(cli): Carrier ACK outcome class — accepted-empty vs rejected distinct (H-R9-026)`).
+- Independent reviewer checkpoint: [`docs/reviews/reviewer-r9-p2-d133dbb-20260916.md`](reviews/reviewer-r9-p2-d133dbb-20260916.md), committed at reviewer docs anchor `857f6cd2e6212e12c5e523b64c0cefd4af5d011e`.
+- Hosted Rust cross-evidence on exact `d133dbb`: GitHub Actions run `35087016773` completed SUCCESS. `stable checks` ran `bash scripts/check.sh`; `nightly decode fuzz smoke` ran the pinned decoder fuzz build/run; both succeeded. Hosted CI is additional evidence only, not developer-local exact-tree provenance.
 - Open PRs: none.
 - Final developer-local clean exact-tree provenance for R9-2 is still absent.
 - `READY_LIVE: none`; release item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> next slice. Reviewer cadence is only a check frequency and is never a reason to idle.
 
-## Accepted progress at `d174eb6`
+## Accepted progress at `d133dbb`
 
-Retain the useful H-R9-025 repair:
+Retain the useful part of the H-R9-026 repair:
 
-- the shared reliable-UDP ACK classifier now surfaces `acked_packets` from an accepted `RecoveryAckOutcome`;
-- the post-return caller derives `retired = acked_packets.contains(&post_pn_client)`;
-- `r9_udp_return_packet_ack` no longer claims `applied=true` for the current post-return packet merely because a canonical ACK was syntactically accepted.
+- `recv_udp_delivery_ack` no longer erases `PathRecoveryError` with `Result::ok()`;
+- `UdpAcknowledgement::Carrier` now carries actual `acked_packets` plus an explicit `rejected` bit;
+- accepted stale/duplicate feedback can therefore be represented as `applied=false, rejected=false`;
+- future/never-sent feedback can be represented as `applied=false, rejected=true`;
+- the settlement-drain caller already uses this distinction correctly and does not count accepted-empty feedback as rejection.
 
-This closes the narrow false-positive transition that motivated H-R9-025, but does **not** yet close the owner semantics or acceptance evidence because the repair erases the difference between accepted-empty and rejected feedback, and no focused regression was added.
+This does **not** close H-R9-026 because another live caller still collapses the new classes, and exact `d133dbb` added no focused regression.
 
-# HIGH H-R9-026 — accepted-empty and rejected Carrier ACKs are still collapsed
+# HIGH H-R9-026 remains open — primary logical-confirmation receive loop still mislabels accepted-empty as rejected
 
-Current exact `d174eb6` code in `recv_udp_delivery_ack` does:
+Current exact `d133dbb` code in the earlier logical-confirmation receive loop still does:
 
 ```text
-let outcome = rt
-    .as_deref_mut()
-    .map(|r| r.apply_ack(&ranges, 0, ack.ack_delay_us).ok());
-let acked_packets = outcome
-    .flatten()
-    .map(|o| o.acked_packets)
-    .unwrap_or_default();
-let applied = !acked_packets.is_empty();
-return Ok(UdpAcknowledgement::Carrier { applied, acked_packets });
+UdpAcknowledgement::Carrier { applied, .. } => {
+    if applied {
+        packet_ack_applied += 1;
+        emit r9_udp_packet_ack_applied
+    } else {
+        packet_ack_rejected += 1;
+        emit r9_udp_packet_ack_rejected
+    }
+}
 ```
 
-`Result::ok()` discards `PathRecoveryError`, so two different current semantics become indistinguishable:
+A canonical stale/duplicate ACK accepted by recovery with `acked_packets=[]` now reaches this branch as `applied=false, rejected=false`, but the caller ignores `rejected` and still emits/increments rejection. Therefore accepted-empty and rejected feedback remain observably collapsed on the primary receive path while Session confirmations are outstanding.
 
-1. a valid stale/duplicate canonical ACK accepted by recovery with an empty resolved outcome;
-2. a future/never-sent canonical ACK rejected atomically by recovery (`largest > largest_sent`).
-
-Both become `Carrier { applied:false, acked_packets:[] }`.
-
-That ambiguity already leaks into existing callers which map `applied == false` to a `packet_ack_rejected` event/counter. A valid accepted-empty duplicate can therefore be mislabeled as rejected, while a genuinely rejected future ACK is no longer exposed as a typed recovery rejection at this owner. The post-return success gate remains safe because `in_flight()` does not reach zero on an empty/rejected outcome, but process/result truth and the later R9-5 adversarial-feedback lane require exact separation of these outcome classes.
+`Recovery::on_ack` still atomically rejects `largest > largest_sent` before RTT/loss/PTO mutation, so a future/never-sent ACK is a real rejection and must continue to be represented separately. No core ACK architecture change is needed.
 
 R9-3 remains blocked.
 
-## READY_LOCAL 1 — close H-R9-026 with the smallest owner repair
+## READY_LOCAL 1 — finish H-R9-026 with the smallest caller repair
 
-Do not change ACK framing, Session semantics, Carrier architecture, crypto/wire architecture, or any policy value.
+Do not change ACK framing, Session semantics, Carrier architecture, crypto/wire architecture, deadlines, malformed budgets, or any policy value.
 
-1. Preserve the `Result<RecoveryAckOutcome, PathRecoveryError>` distinction through the existing authenticated receive owner; do not call `.ok()` and erase errors.
-2. Expose three explicit semantic classes using the smallest local type shape:
-   - Session DeliveryAck;
-   - Carrier ACK accepted, carrying the actual `acked_packets` (possibly empty);
-   - typed Carrier recovery rejection/error.
-3. A positive packet-transition event may be emitted only from actual `acked_packets` identity.
-4. Accepted-empty stale/duplicate ACKs must not increment or emit a rejection counter/event. Future/never-sent ACKs must be typed rejected and must not be represented as accepted-empty.
-5. Preserve the single receive owner, existing absolute deadline, and operation-wide malformed budget. Do not add a second loop, retry policy, TTL/LRU/history/capacity value, or new security number.
+1. In the primary logical-confirmation Carrier branch, preserve `{ applied, rejected, .. }` just as the settlement drain already does.
+2. `applied == true`: keep the existing positive packet-transition counter/event.
+3. `applied == false && rejected == true`: keep the rejection counter/event.
+4. `applied == false && rejected == false`: accepted-empty stale/duplicate; consume as a typed non-event. It must not increment positive or rejection counters and must not emit either event.
+5. Audit the remaining `UdpAcknowledgement::Carrier` consumers for accidental re-collapse only; do not create a second receive owner or redesign the result type.
 
 ### Required deterministic regressions
 
-Use the current authenticated ACK seam; do not create a second protocol owner.
+Use the existing authenticated ACK receive/demux seam while logical Session confirmation is still outstanding.
 
-- **Accepted-empty duplicate/stale:** a canonical duplicate/stale ACK is accepted with an empty recovery outcome, produces no positive current-packet transition, is not mislabeled rejected, and does not mutate Session state or any recovery state beyond current committed duplicate semantics.
-- **Rejected future/never-sent:** a canonical ACK whose largest packet exceeds `largest_sent` is surfaced as typed rejected; it produces no positive transition and leaves RTT/PTO/loss/cwnd/packet/Session state unchanged.
+- **Accepted-empty duplicate/stale:** first cause a legitimate Carrier ACK retirement, then feed the duplicate/stale canonical ACK through the primary owner. Require no new positive transition, no rejection event/counter, and no Session/logical mutation from the duplicate itself.
+- **Rejected future/never-sent:** feed a canonical ACK with largest packet number greater than `largest_sent` through the same primary owner. Require exactly one typed rejection, zero positive transition, and unchanged RTT/PTO/loss/cwnd/packet/Session state.
 
-The exact `d174eb6` commit changed only `main.rs`; it added no focused regression, so this slice is not optional.
+Exact `d133dbb` changed only `crates/neko-cli/src/main.rs`; no focused regression was added, so this slice is mandatory.
 
 ## READY_LOCAL 2 — finish positive P2 C1-C4 exact closure
 
-Use the existing count=4 fixture and require exact cardinality/identity/order, not event presence.
+Use the existing count=4 fixture and preserve already-landed strong assertions; add only missing exact cardinality/identity/order proof.
 
 ### C1 — TCP replay identity
 
@@ -102,15 +96,13 @@ Do not merge the two evidence domains.
 
 ### C4 — client actual transitions
 
-After H-R9-026 repair require:
+After H-R9-026 closure require:
 
 - exactly one actual `r9_udp_return_delivery_ack` at `stream=1`, `offset=48`, `len=16`;
 - exactly one positive actual Carrier retirement for the exact cross-bound post-return packet number;
 - zero false/rejected shortcut;
 - exactly one `r9_udp_post_return_settled` at `stream=1`, `offset=48`, `remaining_in_flight=0`;
 - terminal settlement strictly after both actual transitions.
-
-The current process test still needs the `len=16` assertion and exact client-applied Carrier packet-number binding; do not treat the source-only `d174eb6` fix as evidence closure.
 
 ## READY_LOCAL 3 — post-return ACK arrival-order challenge
 
@@ -164,7 +156,7 @@ Suppress one Carrier ACK, force legitimate retransmission, then release the dela
 
 ## 9. R9-5 adversarial feedback
 
-Future/never-sent/stale/duplicate/tampered feedback must be atomic and fail closed. Re-check candidate A against exact-current code. Rejected feedback cannot mutate RTT/PTO/loss/cwnd/Session state; accepted-empty feedback cannot be mislabeled as a packet transition **or as a rejection**.
+Future/never-sent/stale/duplicate/tampered feedback must be atomic and fail closed. Re-check candidate A against exact-current code. Rejected feedback cannot mutate RTT/PTO/loss/cwnd/Session state; accepted-empty feedback cannot be mislabeled as a packet transition **or as a rejection**. Exercise every current `UdpAcknowledgement::Carrier` caller, including post-return diagnostics, so process/result truth does not re-collapse typed owner outcomes.
 
 ## 10. R9-6 ownership/resource boundedness
 
@@ -192,7 +184,7 @@ Run the clean exact-tree local gate for the complete cross-process reliable-UDP/
 
 # Accepted earlier closures that must not regress
 
-- H-R9-025 narrow positive-transition repair at exact `d174eb6`: post-return current-packet success is now identity-bound to actual `acked_packets`; H-R9-026 separately remains open for accepted-empty vs rejected classification.
+- H-R9-025 narrow positive-transition repair at exact `d174eb6`: post-return current-packet success is identity-bound to actual `acked_packets`.
 - H-R9-024 cross-process client-send/server-ACK packet-number binding: exact `0d5d90c`.
 - H-R9-023 exact P3 malformed terminal oracle: `2bddf1d`.
 - H-R9-022 applied Carrier ACK position evidence: `779efab`.
