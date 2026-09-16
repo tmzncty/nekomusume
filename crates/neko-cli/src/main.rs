@@ -1927,7 +1927,10 @@ fn failover_server(args: &[String]) {
                                         "server",
                                         "udp_return_delivery_ack_sent",
                                         post_offset as usize / bytes.max(1),
-                                        "",
+                                        &format!(
+                                            ",\"stream\":{},\"offset\":{}",
+                                            post_stream.0, post_offset
+                                        ),
                                     );
                                 }
                                 if reliable_udp && let Some(ranges) = server_rt.poll_outgoing_ack(0)
@@ -1945,7 +1948,10 @@ fn failover_server(args: &[String]) {
                                             "server",
                                             "udp_return_packet_ack_sent",
                                             0,
-                                            "",
+                                            &format!(
+                                                ",\"stream\":{},\"offset\":{}",
+                                                post_stream.0, post_offset
+                                            ),
                                         );
                                     }
                                 }
@@ -3307,6 +3313,16 @@ fn failover_client(args: &[String]) {
                         )
                         .unwrap();
                     ack_len = bytes;
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "r9_udp_return_delivery_ack",
+                        0,
+                        &format!(
+                            ",\"stream\":{},\"offset\":{}",
+                            record.stream.0, record.offset
+                        ),
+                    );
                 }
                 Ok(UdpAcknowledgement::Carrier { applied }) => {
                     emit_diagnostic(

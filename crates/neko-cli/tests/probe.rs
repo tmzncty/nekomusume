@@ -2161,6 +2161,20 @@ fn reliable_udp_migration_back_reserves_final_record() {
     assert!(owner_pos < srv_val_pos, "{server_log}");
     assert!(srv_val_pos < srv_dack_pos, "{server_log}");
     assert!(srv_dack_pos < srv_pack_pos, "{server_log}");
+    // C3: server post-return events are exactly one each and bound to the
+    // offset-48 reserved record (seq=3 = 48/16).
+    let srv_dack: Vec<&str> = server_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"udp_return_delivery_ack_sent\""))
+        .collect();
+    assert_eq!(srv_dack.len(), 1, "{server_log}");
+    assert!(srv_dack[0].contains("\"offset\":48"), "{server_log}");
+    let srv_pack: Vec<&str> = server_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_sent\""))
+        .collect();
+    assert_eq!(srv_pack.len(), 1, "{server_log}");
+    assert!(srv_pack[0].contains("\"offset\":48"), "{server_log}");
     // Client recovery order: challenge sent before validated, validated before
     // migration-back.
     let cli_chal = client_log
@@ -2225,15 +2239,23 @@ fn reliable_udp_migration_back_reserves_final_record() {
             client_log.contains("\"event\":\"r9_udp_post_return_sent\",\"seq\":0,\"offset\":48"),
             "{client_log}"
         );
+        // C4: exactly one Session DeliveryAck AND exactly one Carrier packet
+        // ACK, each bound to stream 1 / offset 48 — the dual-domain proof.
+        let dack_lines: Vec<&str> = client_log
+            .lines()
+            .filter(|l| l.contains("\"event\":\"r9_udp_return_delivery_ack\""))
+            .collect();
+        assert_eq!(dack_lines.len(), 1, "{client_log}");
         assert!(
-            client_log.contains("\"event\":\"udp_return_delivery_ack_validated\""),
+            dack_lines[0].contains("\"stream\":1") && dack_lines[0].contains("\"offset\":48"),
             "{client_log}"
         );
-        assert!(
-            client_log
-                .contains("\"event\":\"r9_udp_return_packet_ack\",\"seq\":0,\"applied\":true"),
-            "{client_log}"
-        );
+        let pack_lines: Vec<&str> = client_log
+            .lines()
+            .filter(|l| l.contains("\"event\":\"r9_udp_return_packet_ack\""))
+            .collect();
+        assert_eq!(pack_lines.len(), 1, "{client_log}");
+        assert!(pack_lines[0].contains("\"applied\":true"), "{client_log}");
         // Dedicated post-return terminal evidence: exact stream/offset and
         // authoritative post-return remaining_in_flight=0.
         assert!(
