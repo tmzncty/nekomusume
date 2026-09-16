@@ -2794,17 +2794,44 @@ fn reliable_udp_stale_ack_is_accepted_empty_not_rejected() {
         ])
         .output()
         .unwrap();
-    let (_st, _sl) = finish_server(server);
+    let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
-    // The duplicate ACK is accepted-empty — no rejection event/counter and no
-    // spurious positive transition beyond the real sends.
-    assert!(
-        !client_log.contains("\"event\":\"r9_udp_packet_ack_rejected\""),
-        "{client_log}"
+    let client_err = String::from_utf8_lossy(&out.stderr);
+    // H-R9-028: both processes must succeed.
+    assert!(out.status.success(), "{client_log} {client_err}");
+    assert!(srv_status.success(), "{server_log}");
+    // Exactly one accepted-empty classification for the one-shot injected
+    // duplicate, zero rejection on the initial reliable path.
+    let empty: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_packet_ack_applied\""))
+        .collect();
+    let rejected: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_packet_ack_rejected\""))
+        .collect();
+    // The duplicate is consumed silently by the shared demux owner — no
+    // applied, no rejected, no extra event beyond the two real sends.
+    assert_eq!(
+        rejected.len(),
+        0,
+        "expected zero r9_udp_packet_ack_rejected: {client_log}"
     );
-    // Recovery still settles the real packets — in_flight reaches zero.
+    // Two reliable records (0,16) each produce exactly one applied Carrier ACK.
+    assert_eq!(empty.len(), 2, "{client_log}");
+    // Exactly two reliable-path Session confirmations (records 0,1) — the
+    // uncertain TCP replays confirm through tcp_delivery_ack_validated instead.
+    // The injected duplicate must not add or remove a logical confirmation.
+    let dack: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_delivery_ack_validated\""))
+        .collect();
+    assert_eq!(dack.len(), 2, "{client_log}");
+    assert!(dack[0].contains("\"offset\":0"), "{client_log}");
+    assert!(dack[1].contains("\"offset\":16"), "{client_log}");
+    // Final Recovery zero via the settlement marker.
     assert!(
         client_log
             .contains("\"event\":\"r9_udp_in_flight_settled\",\"seq\":0,\"remaining_in_flight\":0"),
@@ -2885,14 +2912,41 @@ fn reliable_udp_future_ack_is_typed_rejected() {
         ])
         .output()
         .unwrap();
-    let (_st, _sl) = finish_server(server);
+    let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
-    // The future ACK is a typed rejection — at least one r9_udp_packet_ack_rejected
-    // is emitted, and no false positive packet transition claims a future retire.
+    let client_err = String::from_utf8_lossy(&out.stderr);
+    // H-R9-028: both processes must succeed.
+    assert!(out.status.success(), "{client_log} {client_err}");
+    assert!(srv_status.success(), "{server_log}");
+    // Exactly one typed rejection for the one-shot injected future ACK; zero
+    // accepted-empty mis-classification on the initial reliable path.
+    let rejected: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_packet_ack_rejected\""))
+        .collect();
+    assert_eq!(rejected.len(), 1, "{client_log}");
+    // The injected future ACK must not manufacture a positive retirement.
+    // Exactly two real applied Carrier ACKs (records 0 and 1) still land.
+    let applied: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_packet_ack_applied\""))
+        .collect();
+    assert_eq!(applied.len(), 2, "{client_log}");
+    // Unchanged Session logical completion: exactly two reliable-path
+    // confirmations (records 0,1); uncertain replays confirm via TCP.
+    let dack: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_delivery_ack_validated\""))
+        .collect();
+    assert_eq!(dack.len(), 2, "{client_log}");
+    assert!(dack[0].contains("\"offset\":0"), "{client_log}");
+    assert!(dack[1].contains("\"offset\":16"), "{client_log}");
+    // Final Recovery zero via the settlement marker.
     assert!(
-        client_log.contains("\"event\":\"r9_udp_packet_ack_rejected\""),
+        client_log
+            .contains("\"event\":\"r9_udp_in_flight_settled\",\"seq\":0,\"remaining_in_flight\":0"),
         "{client_log}"
     );
 }

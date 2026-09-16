@@ -1187,6 +1187,10 @@ fn failover_server(args: &[String]) {
     let mut pending_reversed_ack: Option<Vec<u8>> = None;
     // P3: deferred Carrier packet ACK for --malformed-budget-test ordering.
     let mut pending_p3_carrier_ack: Option<Vec<u8>> = None;
+    // H-R9-028: one-shot guards for the initial stale/future injection seams —
+    // each fires exactly once per bounded operation, not once per packet ACK.
+    let mut stale_ack_sent = false;
+    let mut future_ack_sent = false;
     runtime.open_stream(StreamId(1), 0).unwrap();
     emit_diagnostic(
         args,
@@ -1492,16 +1496,24 @@ fn failover_server(args: &[String]) {
                                         // FRESH authenticated envelope so
                                         // crypto accepts it and Recovery sees
                                         // a stale/duplicate (accepted-empty).
-                                        if args.iter().any(|a| a == "--send-stale-ack") {
+                                        // H-R9-028: one-shot only — exactly one
+                                        // fresh-envelope duplicate per operation.
+                                        if !stale_ack_sent
+                                            && args.iter().any(|a| a == "--send-stale-ack")
+                                        {
                                             if let Ok(resealed) = ss.seal_unreliable(&pack) {
                                                 let _ = udp.send_to(&resealed, peer);
+                                                stale_ack_sent = true;
                                             }
                                         }
                                         // --send-future-ack sends a canonical
                                         // ACK whose largest_observed exceeds
                                         // the client's largest_sent — Recovery
                                         // rejects it before any mutation.
-                                        if args.iter().any(|a| a == "--send-future-ack") {
+                                        // H-R9-028: one-shot only.
+                                        if !future_ack_sent
+                                            && args.iter().any(|a| a == "--send-future-ack")
+                                        {
                                             let future = neko_wire::encode(&neko_wire::Record {
                                                 record_type: neko_wire::RecordType::Ack,
                                                 flags: 0,
@@ -1520,6 +1532,7 @@ fn failover_server(args: &[String]) {
                                             .unwrap();
                                             if let Ok(sealed_f) = ss.seal_unreliable(&future) {
                                                 let _ = udp.send_to(&sealed_f, peer);
+                                                future_ack_sent = true;
                                             }
                                         }
                                         if malformed_budget_test {
