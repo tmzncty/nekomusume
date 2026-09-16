@@ -192,6 +192,17 @@ fn signal_term(child: &Child) {
         .unwrap();
     assert!(status.success());
 }
+
+// H-R9-032: extract the numeric `packet_number` field from a diagnostic line.
+// Reuses the same split/trim/parse pattern as the positive P2 fixture rather
+// than inventing a new runtime diagnostic or protocol field.
+fn packet_number(line: &str) -> Option<u64> {
+    line.split("\"packet_number\":").nth(1).and_then(|v| {
+        v.trim_end_matches(|c: char| !c.is_ascii_digit())
+            .parse::<u64>()
+            .ok()
+    })
+}
 #[test]
 fn rejects_unbounded_arguments() {
     let out = Command::new(env!("CARGO_BIN_EXE_neko-cli"))
@@ -2980,8 +2991,20 @@ fn reliable_udp_post_return_stale_ack_is_accepted_empty() {
         !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\""),
         "{client_log}"
     );
-    // Exactly one positive Carrier retirement for the real post-return packet,
-    // and Session exact transition stream=1 offset=48 len=16.
+    // H-R9-032: cross-process packet-number binding — client send, server ACK
+    // send, and client positive retirement must all reference the same pn.
+    let client_sent: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_sent\""))
+        .collect();
+    assert_eq!(client_sent.len(), 1, "{client_log}");
+    let client_pn = packet_number(client_sent[0]).expect("client packet_number");
+    let server_pack: Vec<&str> = server_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_sent\""))
+        .collect();
+    assert_eq!(server_pack.len(), 1, "{server_log}");
+    let server_pn = packet_number(server_pack[0]).expect("server packet_number");
     let retire: Vec<&str> = client_log
         .lines()
         .filter(|l| {
@@ -2989,12 +3012,29 @@ fn reliable_udp_post_return_stale_ack_is_accepted_empty() {
         })
         .collect();
     assert_eq!(retire.len(), 1, "{client_log}");
+    let retire_pn = packet_number(retire[0]).expect("retire packet_number");
+    assert_eq!(
+        client_pn, server_pn,
+        "client-send vs server-ack pn mismatch"
+    );
+    assert_eq!(
+        client_pn, retire_pn,
+        "client-send vs client-retire pn mismatch"
+    );
+    // Exactly one Session transition stream=1 offset=48 len=16.
+    let dack: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_return_delivery_ack\""))
+        .collect();
+    assert_eq!(dack.len(), 1, "{client_log}");
     assert!(
-        client_log.contains("\"event\":\"r9_udp_return_delivery_ack\",\"seq\":0,\"stream\":1,\"offset\":48,\"len\":16"),
+        dack[0].contains("\"stream\":1")
+            && dack[0].contains("\"offset\":48")
+            && dack[0].contains("\"len\":16"),
         "{client_log}"
     );
     // Exactly one settlement with remaining_in_flight=0, strictly after both
-    // ACK-domain transitions.
+    // ACK-domain transitions (compare line positions, not just existence).
     let settled: Vec<&str> = client_log
         .lines()
         .filter(|l| l.contains("\"event\":\"r9_udp_post_return_settled\""))
@@ -3004,6 +3044,17 @@ fn reliable_udp_post_return_stale_ack_is_accepted_empty() {
         settled[0].contains("\"remaining_in_flight\":0"),
         "{client_log}"
     );
+    let dack_pos = client_log
+        .find("\"event\":\"r9_udp_return_delivery_ack\"")
+        .unwrap_or(usize::MAX);
+    let pack_pos = client_log
+        .find("\"event\":\"r9_udp_return_packet_ack\",\"seq\":0,\"applied\":true")
+        .unwrap_or(usize::MAX);
+    let settled_pos = client_log
+        .find("\"event\":\"r9_udp_post_return_settled\"")
+        .unwrap_or(usize::MAX);
+    assert!(dack_pos < settled_pos, "{client_log}");
+    assert!(pack_pos < settled_pos, "{client_log}");
 }
 #[test]
 fn reliable_udp_post_return_future_ack_is_rejected() {
@@ -3096,6 +3147,26 @@ fn reliable_udp_post_return_future_ack_is_rejected() {
         .filter(|l| l.contains("\"event\":\"r9_udp_return_packet_ack_rejected\""))
         .collect();
     assert_eq!(rejected.len(), 1, "{client_log}");
+    // The injected future ACK must not produce a positive retirement, and no
+    // accepted-empty classification may appear for it.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_return_packet_ack_accepted_empty\""),
+        "{client_log}"
+    );
+    // H-R9-032: cross-process packet-number binding — client send, server ACK
+    // send, and client positive retirement must all reference the same pn.
+    let client_sent: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_sent\""))
+        .collect();
+    assert_eq!(client_sent.len(), 1, "{client_log}");
+    let client_pn = packet_number(client_sent[0]).expect("client packet_number");
+    let server_pack: Vec<&str> = server_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_sent\""))
+        .collect();
+    assert_eq!(server_pack.len(), 1, "{server_log}");
+    let server_pn = packet_number(server_pack[0]).expect("server packet_number");
     let retire: Vec<&str> = client_log
         .lines()
         .filter(|l| {
@@ -3103,10 +3174,49 @@ fn reliable_udp_post_return_future_ack_is_rejected() {
         })
         .collect();
     assert_eq!(retire.len(), 1, "{client_log}");
+    let retire_pn = packet_number(retire[0]).expect("retire packet_number");
+    assert_eq!(
+        client_pn, server_pn,
+        "client-send vs server-ack pn mismatch"
+    );
+    assert_eq!(
+        client_pn, retire_pn,
+        "client-send vs client-retire pn mismatch"
+    );
+    // Exactly one Session transition stream=1 offset=48 len=16.
+    let dack: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_return_delivery_ack\""))
+        .collect();
+    assert_eq!(dack.len(), 1, "{client_log}");
     assert!(
-        client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
+        dack[0].contains("\"stream\":1")
+            && dack[0].contains("\"offset\":48")
+            && dack[0].contains("\"len\":16"),
         "{client_log}"
     );
+    // Exactly one settlement with remaining_in_flight=0, strictly after both
+    // ACK-domain transitions (compare line positions, not just existence).
+    let settled: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_settled\""))
+        .collect();
+    assert_eq!(settled.len(), 1, "{client_log}");
+    assert!(
+        settled[0].contains("\"remaining_in_flight\":0"),
+        "{client_log}"
+    );
+    let dack_pos = client_log
+        .find("\"event\":\"r9_udp_return_delivery_ack\"")
+        .unwrap_or(usize::MAX);
+    let pack_pos = client_log
+        .find("\"event\":\"r9_udp_return_packet_ack\",\"seq\":0,\"applied\":true")
+        .unwrap_or(usize::MAX);
+    let settled_pos = client_log
+        .find("\"event\":\"r9_udp_post_return_settled\"")
+        .unwrap_or(usize::MAX);
+    assert!(dack_pos < settled_pos, "{client_log}");
+    assert!(pack_pos < settled_pos, "{client_log}");
 }
 #[test]
 fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
