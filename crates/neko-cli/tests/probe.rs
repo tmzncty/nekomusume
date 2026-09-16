@@ -2207,6 +2207,20 @@ fn reliable_udp_migration_back_reserves_final_record() {
             client_log.contains("\"event\":\"udp_migrated_back\""),
             "{client_log}"
         );
+        // C2: exact cardinality — exactly one post-return send at offset 48,
+        // and migrated_back strictly before it.
+        let post_sends: Vec<&str> = client_log
+            .lines()
+            .filter(|l| l.contains("\"event\":\"r9_udp_post_return_sent\""))
+            .collect();
+        assert_eq!(post_sends.len(), 1, "{client_log}");
+        let mig_pos = client_log
+            .find("\"event\":\"udp_migrated_back\"")
+            .unwrap_or(usize::MAX);
+        let send_pos = client_log
+            .find("\"event\":\"r9_udp_post_return_sent\"")
+            .unwrap_or(usize::MAX);
+        assert!(mig_pos < send_pos, "{client_log}");
         assert!(
             client_log.contains("\"event\":\"r9_udp_post_return_sent\",\"seq\":0,\"offset\":48"),
             "{client_log}"
@@ -2230,12 +2244,33 @@ fn reliable_udp_migration_back_reserves_final_record() {
         );
     }
     // M-R9-008 P2-C1: TCP replay identity — exactly one tcp_delivery_ack_validated
-    // at seq 2 (offset 32), no replay of reliable-owned 0/16 or reserved 48.
+    // at seq 2 (offset 32), stream 1; no replay of reliable-owned 0/16 or
+    // reserved 48. Server must also emit exactly one tcp_delivery_ack_sent
+    // for seq 2 / offset 32.
     let tcp_acks: Vec<&str> = client_log
         .lines()
         .filter(|l| l.contains("\"event\":\"tcp_delivery_ack_validated\""))
         .collect();
     assert_eq!(tcp_acks.len(), 1, "{client_log}");
+    assert!(
+        tcp_acks[0].contains("\"stream\":1") && tcp_acks[0].contains("\"offset\":32"),
+        "{client_log}"
+    );
+    let srv_tcp_acks: Vec<&str> = server_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"tcp_delivery_ack_sent\""))
+        .collect();
+    assert_eq!(srv_tcp_acks.len(), 1, "{server_log}");
+    assert!(srv_tcp_acks[0].contains("\"offset\":32"), "{server_log}");
+    // No replay evidence for reliable-owned 0/16 or reserved 48 on TCP.
+    for off in ["\"offset\":0", "\"offset\":16", "\"offset\":48"] {
+        assert!(
+            !client_log
+                .lines()
+                .any(|l| l.contains("tcp_delivery_ack") && l.contains(off)),
+            "{client_log}"
+        );
+    }
     // P2-C4: settled event must appear strictly after both acknowledgement
     // domains — regardless of arrival order.
     let dack_pos = client_log

@@ -1791,7 +1791,12 @@ fn failover_server(args: &[String]) {
                                 "server",
                                 "tcp_delivery_ack_sent",
                                 offset as usize / bytes.max(1),
-                                &format!(",\"ciphertext_bytes\":{}", encrypted.len()),
+                                &format!(
+                                    ",\"ciphertext_bytes\":{},\"stream\":{},\"offset\":{}",
+                                    encrypted.len(),
+                                    stream_id.0,
+                                    offset
+                                ),
                             );
                             if let Some(delivered) = runtime.pop_receive(3).unwrap() {
                                 app.extend_from_slice(&delivered.data);
@@ -3044,7 +3049,12 @@ fn failover_client(args: &[String]) {
             "client",
             "tcp_delivery_ack_validated",
             record.offset as usize / bytes.max(1),
-            &format!(",\"ciphertext_bytes\":{}", ack.len()),
+            &format!(
+                ",\"ciphertext_bytes\":{},\"stream\":{},\"offset\":{}",
+                ack.len(),
+                record.stream.0,
+                record.offset
+            ),
         );
     }
     if automatic_health_failover
