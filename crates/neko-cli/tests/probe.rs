@@ -2174,7 +2174,8 @@ fn reliable_udp_migration_back_reserves_final_record() {
         .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_sent\""))
         .collect();
     assert_eq!(srv_pack.len(), 1, "{server_log}");
-    assert!(srv_pack[0].contains("\"offset\":48"), "{server_log}");
+    // Carrier-domain identity is the packet number, not the logical offset.
+    assert!(srv_pack[0].contains("\"packet_number\":"), "{server_log}");
     // Client recovery order: challenge sent before validated, validated before
     // migration-back.
     let cli_chal = client_log

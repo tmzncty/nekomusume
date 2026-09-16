@@ -1902,22 +1902,20 @@ fn failover_server(args: &[String]) {
                                 }
                                 .encode()
                                 .unwrap();
-                                // H-R9-015: the post-return Data packet is also
-                                // Carrier-ACK owned — record receipt on the
-                                // server recovery owner and emit the canonical
-                                // packet ACK alongside the Session DeliveryAck.
+                                // H-R9-015: post-return Data is Carrier-ACK owned — record receipt on the
+                                // server recovery owner and emit the canonical packet ACK alongside the
+                                // Session DeliveryAck.
+                                let mut post_pn: u64 = 0;
                                 if reliable_udp {
-                                    let pn = u64::from_be_bytes(
+                                    post_pn = u64::from_be_bytes(
                                         recovery_buf[..8].try_into().unwrap_or([0; 8]),
                                     );
-                                    server_rt.on_packet_received(pn, true).unwrap_or_else(|_| {
-                                        fail("r9 post-return on_packet_received")
-                                    });
+                                    server_rt.on_packet_received(post_pn, true).unwrap_or_else(
+                                        |_| fail("r9 post-return on_packet_received"),
+                                    );
                                 }
-                                // P4 fault seam: --suppress-r9-dack withholds
-                                // the post-return Session DeliveryAck so the
-                                // client's logical confirmation stays
-                                // outstanding (Carrier packet ACK still sent).
+                                // P4 fault seam: --suppress-r9-dack withholds the post-return Session
+                                // DeliveryAck; the Carrier packet ACK is still sent.
                                 let suppress_dack = args.iter().any(|a| a == "--suppress-r9-dack");
                                 if !suppress_dack {
                                     let sealed_ack = udp_session.seal_unreliable(&ack).unwrap();
@@ -1928,8 +1926,8 @@ fn failover_server(args: &[String]) {
                                         "udp_return_delivery_ack_sent",
                                         post_offset as usize / bytes.max(1),
                                         &format!(
-                                            ",\"stream\":{},\"offset\":{}",
-                                            post_stream.0, post_offset
+                                            ",\"stream\":{},\"offset\":{},\"len\":{}",
+                                            post_stream.0, post_offset, post_len
                                         ),
                                     );
                                 }
@@ -1948,10 +1946,7 @@ fn failover_server(args: &[String]) {
                                             "server",
                                             "udp_return_packet_ack_sent",
                                             0,
-                                            &format!(
-                                                ",\"stream\":{},\"offset\":{}",
-                                                post_stream.0, post_offset
-                                            ),
+                                            &format!(",\"packet_number\":{}", post_pn),
                                         );
                                     }
                                 }
