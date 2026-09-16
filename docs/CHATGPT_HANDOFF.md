@@ -1,16 +1,17 @@
-# ChatGPT reviewer handoff — H-R9-034 HIGH open at 7a7c48c; R9-3 remains blocked
+# ChatGPT reviewer handoff — H-R9-034 closed at b801b65; R9-3 blocked on P2 C1-C4 + ACK order + P4
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `7a7c48c54aba2126c7e8daaf8ea4d5696992e978` (`test(cli): accepted-empty Carrier ACK emits r9_udp_packet_ack_accepted_empty (H-R9-033)`).
-- Latest independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-034-7a7c48c-20260917.md`](reviews/reviewer-r9-h-r9-034-7a7c48c-20260917.md), introduced by reviewer commit `32775cffce78623e42221e9461f2ee08c75b9b51`.
-- H-R9-033's *initial receive-loop* proof is accepted: exact `7a7c48c` emits classification-only `r9_udp_packet_ack_accepted_empty`, and the current stale fixture requires one accepted-empty, two real applied Carrier ACKs, zero typed rejection, exact initial Session confirmations, process success and final Recovery zero.
-- **H-R9-034 is open (HIGH evidence correctness):** the same R9 operation's later Carrier settlement continuation still silently consumes `applied=false && rejected=false` accepted-empty outcomes instead of emitting the classification-only event. Therefore accepted-empty process truth depends on which continuation of the same bounded owner consumes the datagram. Runtime state mutation is not newly implicated; the defect is evidence/oracle consistency.
-- H-R9-028 one-shot initial injection remains accepted; H-R9-032 post-return packet cross-bind/order proof remains accepted; H-R9-031/H-R9-030/H-R9-029/H-R9-026 source semantics remain accepted absent contradictory exact-current evidence.
+- Latest developer-owned source/test commit reviewed: exact `b801b65cee8bfef196b6142ee6f5a9bfa876691a` (`fix(cli): H-R9-034 settlement-phase accepted-empty classification + late stale seam`). Source + tests.
+- Prior reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-034-7a7c48c-20260917.md`](reviews/reviewer-r9-h-r9-034-7a7c48c-20260917.md), reachable through reviewer commit `32775cffce78623e42221e9461f2ee08c75b9b51`.
+- H-R9-034 is closed at exact `b801b65`: the settlement continuation now emits `r9_udp_packet_ack_accepted_empty` for `applied=false && rejected=false` (same classification-only evidence as the initial loop); after `in_flight` reaches zero on the non-migration-back initial path, one final bounded drain captures a late-arriving stale/duplicate. The new `--send-stale-ack-late` seam retains record-0's canonical ACK plaintext and re-seals it under a fresh envelope only after the last reliable record's Session ACK. `reliable_udp_stale_ack_settlement_phase_is_accepted_empty` proves exactly one settlement-phase accepted-empty after both Session confirmations, two real applied Carrier ACKs, zero typed rejection, both processes success, and final Recovery zero.
+- H-R9-033 initial-loop accepted-empty classification remains closed at `7a7c48c`.
+- H-R9-028 one-shot initial injection remains closed at `206b4b9`.
+- H-R9-032 post-return packet cross-bind/order proof remains closed at `ddafbb1`.
+- H-R9-031/H-R9-030/H-R9-029/H-R9-026 source semantics remain accepted absent contradictory exact-current evidence.
 - Candidate A is rechecked closed in exact-current `Recovery::on_ack`: future/never-sent `largest > largest_sent` rejects before RTT/loss/PTO mutation.
 - Candidate B is rechecked closed in exact-current `record_datagrams`: only the queue-dropped subset is `queue_full`; remaining generic drops are `terminal`.
-- Developer-reported/local persisted provenance for exact `7a7c48c`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-16T21:50:43Z → 2026-09-16T21:53:34Z, Linux x86_64, rustc 1.98.0. This is developer-local evidence, not reviewer execution.
-- GitHub-hosted Rust CI for exact `7a7c48c` completed successfully (run `35154412804`); hosted CI remains cross-evidence only.
+- Developer-local clean exact-tree provenance for `b801b65`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-16T23:12:11Z → 2026-09-16T23:15:35Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
 - Open PRs at review time: none.
 - `READY_LIVE: none`; release item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
