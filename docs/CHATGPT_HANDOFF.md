@@ -1,12 +1,13 @@
-# ChatGPT reviewer handoff — H-R9-031 blocks R9-3 on non-discriminating post-return ACK proof
+# ChatGPT reviewer handoff — H-R9-032 keeps R9-3 blocked on exact post-return packet binding/order proof
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `7d63e41f077ad451082a46c0c7572409a6cd204f` (`style(cli): cargo fmt post-return ACK seam`), following implementation/test commit `1abe30c52b73de6107cad027a396d94cca642415`.
-- New independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-031-7d63e41-20260917.md`](reviews/reviewer-r9-h-r9-031-7d63e41-20260917.md).
-- H-R9-030 source seam is narrowly closed at exact `7d63e41`: post-return receiver ACK obligation is polled once, canonical ACK plaintext retained, stale mode sends real ACK then one re-sealed semantic duplicate, future mode injects never-sent ACK before the real ACK, and ordinary no-seam P2 ordering remains unchanged.
-- H-R9-029 three-way client classification remains accepted in source: real retirement, accepted-empty stale/duplicate, and typed rejection are distinct.
-- Hosted Rust cross-evidence on exact `7d63e41`: GitHub Actions run `35139025227` completed SUCCESS; both `stable checks` (`bash scripts/check.sh`) and `nightly decode fuzz smoke` succeeded. Hosted CI is cross-evidence only, not developer-local exact-tree provenance.
+- Latest developer-owned source/test commit reviewed: exact `89c436ce6d18912579d67f81de71845110b28236` (`test(cli): H-R9-031 exact post-return oracles — client/server success + cardinality + packet bind`). This commit changes tests only.
+- New independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-032-89c436c-20260917.md`](reviews/reviewer-r9-h-r9-032-89c436c-20260917.md), reachable through reviewer commit `333311079fd7141a4784d5c4c8e3a31d643a04cc`.
+- H-R9-031 is partially closed at exact `89c436c`: both post-return fixtures now require client/server success; stale requires exactly one accepted-empty, zero rejection, exactly one true positive Carrier retirement, exact Session `stream=1 offset=48 len=16`, and exactly one settlement carrying `remaining_in_flight=0`; future requires exactly one typed rejection and exactly one positive retirement.
+- H-R9-030 source seam remains narrowly closed: post-return ACK obligation is polled once, canonical ACK plaintext retained, stale mode sends real ACK then one re-sealed semantic duplicate, future mode injects never-sent ACK before the real ACK, and ordinary no-seam P2 ordering remains unchanged.
+- H-R9-029 three-way client classification remains accepted in source: real retirement, accepted-empty stale/duplicate, and typed rejection are distinct; only actual `acked_packets` containing exact `post_pn_client` may produce positive retirement.
+- Hosted Rust cross-evidence on exact `89c436c`: GitHub Actions run `35142674605` completed SUCCESS; both `stable checks` (`bash scripts/check.sh`) and `nightly decode fuzz smoke` succeeded. Hosted CI is cross-evidence only, not developer-local exact-tree provenance.
 - Open PRs at review time: none.
 - Final developer-local clean exact-tree provenance for the complete R9-2 source/test tree is still absent.
 - `READY_LIVE: none`; release item 3 incomplete; item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
@@ -17,31 +18,38 @@ The external coding agent must synchronize to current `main` and continuously ex
 
 Do not revert these exact-current repairs without contradictory exact-current evidence:
 
+- H-R9-031 partial process-oracle strengthening listed above.
 - H-R9-030 ACK-obligation source repair described above.
 - H-R9-029 post-return Carrier feedback preserves three classes and only real `acked_packets` containing exact `post_pn_client` may produce positive retirement.
 - H-R9-027 stale semantic ACKs may be re-sealed under fresh authenticated envelopes; future ACKs use a non-empty range whose largest exceeds bounded `largest_sent`.
 - H-R9-026 shared-owner/settlement classification keeps real retirement, accepted-empty, and typed Recovery rejection distinct.
-- H-R9-025 exact current-packet retirement identity; H-R9-024 cross-process client-send/server-ACK packet-number binding.
+- H-R9-025 exact current-packet retirement identity; H-R9-024 positive-P2 cross-process client-send/server-ACK packet-number binding.
 - H-R9-023 exact P3 malformed terminal oracle; H-R9-022 applied Carrier ACK position evidence; H-R9-021 malformed -> malformed -> Carrier ACK -> malformed order.
 - H-R9-020 count=4 accounting: `2 reliable UDP + 1 uncertain TCP + 1 post-return reliable = 4`.
 - reversed initial Session ACK handling buffers later ACKs until the Session watermark reaches them; no cumulative over-promotion.
 - candidate A engine guard: future/never-sent largest is rejected before RTT/loss/PTO mutation.
 - candidate B mixed queue/generic-drop observability repair remains accepted absent contradictory exact-current evidence.
 
-# READY_LOCAL 1 — H-R9-031 HIGH: make post-return stale/future process proof acceptance-grade
+# READY_LOCAL 1 — H-R9-032 HIGH: finish exact post-return stale/future packet binding and ordering proof
 
-Exact `7d63e41` unignored both post-return tests and hosted CI executes them, but the current oracles are still vacuous enough to pass after partial process failure.
-
-Current stale fixture only checks: accepted-empty string exists, rejected string absent, settled string exists. Current future fixture only checks: rejected string exists. Both ignore client exit status; both ignore server status/log returned by `finish_server`; neither enforces exact cardinality, cross-bound packet identity, exact Session ACK identity, final Recovery zero, or exactly-one settlement.
+Exact `89c436c` strengthened process success/cardinality, but it did **not** implement the packet-number cross-bind claimed by its commit title and does not prove actual event ordering.
 
 Smallest repair: tests/assertions only unless stronger proof exposes a concrete runtime contradiction.
 
-1. require client success and server success in both fixtures, with stdout/stderr on failure;
-2. count exact diagnostic events rather than `contains`-only checks;
-3. stale: exactly one `r9_udp_return_packet_ack_accepted_empty`, zero post-return rejection, exactly one true current-packet retirement, exact Session transition `stream=1 offset=48 len=16`, exactly one settlement with `remaining_in_flight=0`;
-4. future: exactly one typed post-return rejection, no false retirement from the injected future ACK, then exactly one true current-packet retirement, exact Session transition, exactly one settlement with Recovery zero;
-5. cross-bind client `r9_udp_post_return_sent(... packet_number=<pn>)`, server `udp_return_packet_ack_sent(packet_number=<pn>)`, and client positive retirement to the same `<pn>`;
-6. settlement must be strictly after both true ACK-domain transitions; injected feedback must not manufacture Session delivery or bypass the dual-domain gate.
+For both post-return stale and future fixtures:
+
+1. collect exactly one client `r9_udp_post_return_sent` and extract `packet_number`;
+2. collect exactly one server `udp_return_packet_ack_sent` and extract `packet_number`;
+3. collect exactly one positive client `r9_udp_return_packet_ack` with `retired=true` and extract `packet_number`;
+4. require all three packet numbers to be equal; reuse the existing positive P2 parsing/binding pattern rather than inventing a new runtime diagnostic;
+5. require exactly one Session transition `r9_udp_return_delivery_ack` with `stream=1 offset=48 len=16`;
+6. require exactly one `r9_udp_post_return_settled` with `remaining_in_flight=0`;
+7. compare actual client log positions and require settlement strictly after both the exact Session transition and the true positive Carrier retirement.
+
+Classification-specific closure:
+
+- **stale:** exactly one `r9_udp_return_packet_ack_accepted_empty`, zero post-return rejection;
+- **future:** exactly one `r9_udp_return_packet_ack_rejected`, zero accepted-empty; the injected future feedback must not manufacture the positive retirement.
 
 No new protocol owner, timeout, malformed budget, policy value or architecture. No decoder/parser/framing semantic change is implied; do not mechanically fuzz only for assertion strengthening.
 
