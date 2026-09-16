@@ -2285,7 +2285,9 @@ fn reliable_udp_migration_back_reserves_final_record() {
             .collect();
         assert_eq!(dack_lines.len(), 1, "{client_log}");
         assert!(
-            dack_lines[0].contains("\"stream\":1") && dack_lines[0].contains("\"offset\":48"),
+            dack_lines[0].contains("\"stream\":1")
+                && dack_lines[0].contains("\"offset\":48")
+                && dack_lines[0].contains("\"len\":16"),
             "{client_log}"
         );
         let pack_lines: Vec<&str> = client_log
@@ -2293,7 +2295,18 @@ fn reliable_udp_migration_back_reserves_final_record() {
             .filter(|l| l.contains("\"event\":\"r9_udp_return_packet_ack\""))
             .collect();
         assert_eq!(pack_lines.len(), 1, "{client_log}");
-        assert!(pack_lines[0].contains("\"applied\":true"), "{client_log}");
+        assert!(
+            pack_lines[0].contains("\"applied\":true")
+                && pack_lines[0].contains("\"retired\":true"),
+            "{client_log}"
+        );
+        // C4 negatives: no rejected and no accepted-empty on the ordinary
+        // positive post-return path.
+        assert!(
+            !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\"")
+                && !client_log.contains("\"event\":\"r9_udp_return_packet_ack_accepted_empty\""),
+            "{client_log}"
+        );
         // Dedicated post-return terminal evidence: exact stream/offset and
         // authoritative post-return remaining_in_flight=0.
         assert!(
