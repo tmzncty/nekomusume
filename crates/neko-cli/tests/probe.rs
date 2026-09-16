@@ -2174,8 +2174,32 @@ fn reliable_udp_migration_back_reserves_final_record() {
         .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_sent\""))
         .collect();
     assert_eq!(srv_pack.len(), 1, "{server_log}");
-    // Carrier-domain identity is the packet number, not the logical offset.
-    assert!(srv_pack[0].contains("\"packet_number\":"), "{server_log}");
+    // Carrier-domain identity is the packet number — bind the server's
+    // packet_number to the client's Recovery packet_number exactly.
+    let client_pn = client_log
+        .lines()
+        .find(|l| l.contains("\"event\":\"r9_udp_post_return_sent\""))
+        .and_then(|l| {
+            l.split("\"packet_number\":").nth(1).and_then(|v| {
+                v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                    .parse::<u64>()
+                    .ok()
+            })
+        })
+        .unwrap_or(u64::MAX);
+    let server_pn = srv_pack[0]
+        .split("\"packet_number\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    assert_eq!(
+        client_pn, server_pn,
+        "pn mismatch {client_log} {server_log}"
+    );
     // Client recovery order: challenge sent before validated, validated before
     // migration-back.
     let cli_chal = client_log
@@ -2237,7 +2261,9 @@ fn reliable_udp_migration_back_reserves_final_record() {
             .unwrap_or(usize::MAX);
         assert!(mig_pos < send_pos, "{client_log}");
         assert!(
-            client_log.contains("\"event\":\"r9_udp_post_return_sent\",\"seq\":0,\"offset\":48"),
+            client_log.contains(
+                "\"event\":\"r9_udp_post_return_sent\",\"seq\":0,\"stream\":1,\"offset\":48"
+            ),
             "{client_log}"
         );
         // C4: exactly one Session DeliveryAck AND exactly one Carrier packet

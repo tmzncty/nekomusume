@@ -3264,7 +3264,10 @@ fn failover_client(args: &[String]) {
                 "client",
                 "r9_udp_post_return_sent",
                 0,
-                &format!(",\"offset\":{}", post_record.offset),
+                &format!(
+                    ",\"stream\":{},\"offset\":{},\"packet_number\":{}",
+                    post_record.stream.0, post_record.offset, pn
+                ),
             );
         }
         u.send_to(&sealed, target).unwrap();
