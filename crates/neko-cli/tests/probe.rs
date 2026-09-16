@@ -2710,6 +2710,182 @@ fn reliable_udp_post_return_incomplete_is_terminal() {
     );
 }
 #[test]
+fn reliable_udp_stale_ack_is_accepted_empty_not_rejected() {
+    // H-R9-026: a duplicate/stale canonical Carrier ACK is accepted by
+    // Recovery with an empty outcome — it must not be counted or emitted as
+    // a rejection, and must not produce a positive packet transition.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-stale-server");
+    let cp = tmp("r9-stale-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--send-stale-ack",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-stale-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--reliable-udp",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-stale-cli",
+        ])
+        .output()
+        .unwrap();
+    let (_st, _sl) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    // The duplicate ACK is accepted-empty — no rejection event/counter and no
+    // spurious positive transition beyond the real sends.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_packet_ack_rejected\""),
+        "{client_log}"
+    );
+    // Recovery still settles the real packets — in_flight reaches zero.
+    assert!(
+        client_log
+            .contains("\"event\":\"r9_udp_in_flight_settled\",\"seq\":0,\"remaining_in_flight\":0"),
+        "{client_log}"
+    );
+}
+#[test]
+fn reliable_udp_future_ack_is_typed_rejected() {
+    // H-R9-026: a canonical ACK whose largest exceeds largest_sent is a typed
+    // rejection — it must emit r9_udp_packet_ack_rejected and must not mutate
+    // recovery state or produce a positive transition.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-fut-server");
+    let cp = tmp("r9-fut-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--send-future-ack",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-fut-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--reliable-udp",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-fut-cli",
+        ])
+        .output()
+        .unwrap();
+    let (_st, _sl) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    // The future ACK is a typed rejection — at least one r9_udp_packet_ack_rejected
+    // is emitted, and no false positive packet transition claims a future retire.
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_packet_ack_rejected\""),
+        "{client_log}"
+    );
+}
+#[test]
 fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");

@@ -1486,6 +1486,33 @@ fn failover_server(args: &[String]) {
                                     })
                                     .unwrap();
                                     if let Ok(sealed_ack) = ss.seal_unreliable(&pack) {
+                                        // H-R9-026 regression seams:
+                                        // --send-stale-ack re-sends the same
+                                        // canonical ACK (accepted-empty);
+                                        // --send-future-ack sends an ACK
+                                        // whose largest > largest_sent
+                                        // (rejected).
+                                        if args.iter().any(|a| a == "--send-stale-ack") {
+                                            let _ = udp.send_to(&sealed_ack, peer);
+                                        }
+                                        if args.iter().any(|a| a == "--send-future-ack") {
+                                            let future = neko_wire::encode(&neko_wire::Record {
+                                                record_type: neko_wire::RecordType::Ack,
+                                                flags: 0,
+                                                payload: neko_wire::encode_ack(
+                                                    &neko_wire::AckPayload {
+                                                        largest_observed: u64::MAX,
+                                                        ranges: vec![],
+                                                        ack_delay_us: 0,
+                                                    },
+                                                )
+                                                .unwrap_or_default(),
+                                            })
+                                            .unwrap();
+                                            if let Ok(sealed_f) = ss.seal_unreliable(&future) {
+                                                let _ = udp.send_to(&sealed_f, peer);
+                                            }
+                                        }
                                         if malformed_budget_test {
                                             // P3 seam: defer the Carrier ACK
                                             // until after malformed #1/#2 so
