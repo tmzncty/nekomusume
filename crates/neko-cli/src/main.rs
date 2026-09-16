@@ -1987,17 +1987,14 @@ fn failover_server(args: &[String]) {
                                 let seam_future = args.iter().any(|a| a == "--send-future-ack");
                                 let seam_active = seam_stale || seam_future;
                                 let post_ack_pack = if reliable_udp {
-                                    server_rt
-                                        .poll_outgoing_ack(0)
-                                        .map(|ranges| {
-                                            neko_wire::encode(&neko_wire::Record {
-                                                record_type: neko_wire::RecordType::Ack,
-                                                flags: 0,
-                                                payload: neko_wire::encode_ack(&ranges)
-                                                    .unwrap(),
-                                            })
-                                            .unwrap()
+                                    server_rt.poll_outgoing_ack(0).map(|ranges| {
+                                        neko_wire::encode(&neko_wire::Record {
+                                            record_type: neko_wire::RecordType::Ack,
+                                            flags: 0,
+                                            payload: neko_wire::encode_ack(&ranges).unwrap(),
                                         })
+                                        .unwrap()
+                                    })
                                 } else {
                                     None
                                 };
