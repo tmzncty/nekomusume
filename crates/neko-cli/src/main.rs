@@ -2409,7 +2409,9 @@ fn failover_client(args: &[String]) {
                     continue;
                 }
             }
-            UdpAcknowledgement::Carrier { applied, .. } => {
+            UdpAcknowledgement::Carrier {
+                applied, rejected, ..
+            } => {
                 if applied {
                     packet_ack_applied += 1;
                     // H-R9-022: prove a valid Carrier ACK was actually applied
@@ -2422,10 +2424,12 @@ fn failover_client(args: &[String]) {
                         0,
                         &format!(",\"malformed\":{malformed}"),
                     );
-                } else {
+                } else if rejected {
                     packet_ack_rejected += 1;
                     emit_diagnostic(args, "client", "r9_udp_packet_ack_rejected", 0, "");
                 }
+                // H-R9-026: accepted-empty stale/duplicate is a typed
+                // non-event — not applied, not rejected.
             }
         }
     }
