@@ -2591,9 +2591,12 @@ fn failover_client(args: &[String]) {
                     } else if rejected {
                         packet_ack_rejected += 1;
                         emit_diagnostic(args, "client", "r9_udp_packet_ack_rejected", 0, "");
+                    } else {
+                        // H-R9-034: settlement continuation must also classify
+                        // accepted-empty — the same typed non-event evidence as
+                        // the initial loop, so a late duplicate is observable.
+                        emit_diagnostic(args, "client", "r9_udp_packet_ack_accepted_empty", 0, "");
                     }
-                    // accepted-empty (stale/duplicate) is neither applied nor
-                    // rejected — consume it as a typed non-event.
                 }
                 Ok(UdpAcknowledgement::Session { .. }) => {}
                 Err(_) => break, // timeout or bounded malformed bound hit
