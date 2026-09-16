@@ -921,8 +921,13 @@ enum UdpAcknowledgement {
     /// A canonical Carrier packet ACK was classified; `applied` is the typed
     /// `apply_ack` outcome. A rejection never mutated recovery.
     Carrier {
+        /// `true` iff the ACK retired at least one packet — not merely
+        /// accepted-empty (stale/duplicate) or rejected.
         applied: bool,
+        /// Packets actually retired by this ACK (empty for stale/duplicate).
         acked_packets: Vec<u64>,
+        /// `true` iff apply_ack returned Err (e.g. future/never-sent ACK).
+        rejected: bool,
     },
 }
 
@@ -1015,15 +1020,16 @@ fn recv_udp_delivery_ack(
                         // caller can prove a real packet transition occurred.
                         let outcome = rt
                             .as_deref_mut()
-                            .map(|r| r.apply_ack(&ranges, 0, ack.ack_delay_us).ok());
-                        let acked_packets = outcome
-                            .flatten()
-                            .map(|o| o.acked_packets)
-                            .unwrap_or_default();
-                        let applied = !acked_packets.is_empty();
+                            .map(|r| r.apply_ack(&ranges, 0, ack.ack_delay_us));
+                        let (applied, acked_packets, rejected) = match outcome {
+                            Some(Ok(o)) => (!o.acked_packets.is_empty(), o.acked_packets, false),
+                            Some(Err(_)) => (false, Vec::new(), true),
+                            None => (false, Vec::new(), false),
+                        };
                         return Ok(UdpAcknowledgement::Carrier {
                             applied,
                             acked_packets,
+                            rejected,
                         });
                     }
                     // Domain 3 — any other authenticated plaintext consumes the
@@ -2403,10 +2409,7 @@ fn failover_client(args: &[String]) {
                     continue;
                 }
             }
-            UdpAcknowledgement::Carrier {
-                applied,
-                acked_packets,
-            } => {
+            UdpAcknowledgement::Carrier { applied, .. } => {
                 if applied {
                     packet_ack_applied += 1;
                     // H-R9-022: prove a valid Carrier ACK was actually applied
@@ -2423,7 +2426,6 @@ fn failover_client(args: &[String]) {
                     packet_ack_rejected += 1;
                     emit_diagnostic(args, "client", "r9_udp_packet_ack_rejected", 0, "");
                 }
-                let _ = acked_packets;
             }
         }
     }
@@ -2452,13 +2454,17 @@ fn failover_client(args: &[String]) {
                 Some(rt),
                 &mut malformed,
             ) {
-                Ok(UdpAcknowledgement::Carrier { applied, .. }) => {
+                Ok(UdpAcknowledgement::Carrier {
+                    applied, rejected, ..
+                }) => {
                     if applied {
                         packet_ack_applied += 1;
-                    } else {
+                    } else if rejected {
                         packet_ack_rejected += 1;
                         emit_diagnostic(args, "client", "r9_udp_packet_ack_rejected", 0, "");
                     }
+                    // accepted-empty (stale/duplicate) is neither applied nor
+                    // rejected — consume it as a typed non-event.
                 }
                 Ok(UdpAcknowledgement::Session { .. }) => {}
                 Err(_) => break, // timeout or bounded malformed bound hit
@@ -3348,6 +3354,7 @@ fn failover_client(args: &[String]) {
                 Ok(UdpAcknowledgement::Carrier {
                     applied,
                     acked_packets,
+                    ..
                 }) => {
                     // H-R9-025: only claim the post-return packet applied when
                     // the actual recovery outcome retired that exact packet —
