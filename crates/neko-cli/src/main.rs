@@ -3394,25 +3394,39 @@ fn failover_client(args: &[String]) {
                 Ok(UdpAcknowledgement::Carrier {
                     applied,
                     acked_packets,
-                    ..
+                    rejected,
                 }) => {
-                    // H-R9-025: only claim the post-return packet applied when
-                    // the actual recovery outcome retired that exact packet —
-                    // a stale/duplicate ACK must not produce a false
-                    // applied=true for the current packet.
+                    // H-R9-025/026/029: three distinct Carrier outcome classes.
+                    // Only claim the post-return packet applied when the actual
+                    // recovery outcome retired that exact packet number.
                     let retired = acked_packets.contains(&post_pn_client);
-                    emit_diagnostic(
-                        args,
-                        "client",
-                        "r9_udp_return_packet_ack",
-                        0,
-                        &format!(
-                            ",\"applied\":{},\"packet_number\":{},\"retired\":{}",
-                            applied && retired,
-                            post_pn_client,
-                            retired
-                        ),
-                    );
+                    if applied && retired {
+                        emit_diagnostic(
+                            args,
+                            "client",
+                            "r9_udp_return_packet_ack",
+                            0,
+                            &format!(
+                                ",\"applied\":true,\"packet_number\":{},\"retired\":true",
+                                post_pn_client
+                            ),
+                        );
+                    } else if rejected {
+                        // Typed rejection (e.g. future/never-sent) — never
+                        // claims the current packet was ACKed, never mutates
+                        // recovery state.
+                        emit_diagnostic(args, "client", "r9_udp_return_packet_ack_rejected", 0, "");
+                    } else {
+                        // Accepted-empty stale/duplicate — classification-only
+                        // diagnostic; no applied/rejected/state change.
+                        emit_diagnostic(
+                            args,
+                            "client",
+                            "r9_udp_return_packet_ack_accepted_empty",
+                            0,
+                            "",
+                        );
+                    }
                 }
                 Err(_) => fail("post-return UDP acknowledgement failed"),
             }
