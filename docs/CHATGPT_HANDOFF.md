@@ -1,19 +1,17 @@
-# ChatGPT reviewer handoff — H-R9-047 positive sibling ACK projection HIGH; R9-3 blocked
+# ChatGPT reviewer handoff — H-R9-047 closed at d2478ad; R9-3 blocked on H-R9-041/042 negatives
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `d4f1ea378740b96398a140b98f568ab9a8982b03` (`test(cli): H-R9-046 post-retirement retransmit oracle — zero retransmit after lifecycle-resolving ACK`).
-- Current independent reviewer anchor: exact `f27dec22d55edb32dacdc7aac8b54f15aebd2bbd`, [`docs/reviews/reviewer-r9-3-positive-sibling-ack-classification-d4f1ea3-20260918.md`](reviews/reviewer-r9-3-positive-sibling-ack-classification-d4f1ea3-20260918.md).
-- **H-R9-047 is open HIGH (process/evidence truth, auto-resolvable under current semantics):** post-return Carrier classification currently uses mutable latest `post_pn_client` as the predicate for positive retirement. Under legal repeated PTO, if an authenticated ACK positively retires an older sibling retransmission after a newer sibling became `post_pn_client`, `recv_udp_delivery_ack` truthfully returns `applied=true` plus non-empty `acked_packets`, but the projection can emit `r9_udp_return_packet_ack_accepted_empty`. Positive Recovery mutation must never be labeled accepted-empty.
-- H-R9-047 is a CLI outcome-projection defect, not a newly established Recovery/Session state-machine defect. `Recovery::on_ack` already returns authoritative retired packet identities in `acked_packets`.
-- `d4f1ea3` still closes H-R9-046: every observed `r9_udp_retransmit_sent` is strictly before the emitted lifecycle-resolving positive Carrier retirement. Do not revert this oracle; after H-R9-047 repair, re-run it against truthful positive-event projection.
-- `0766dd8` remains accepted for repeated-PTO packet identity: every retransmit PN is fresh/non-sentinel/pairwise-distinct and carries stable `frame=48`; every **emitted** positive Carrier retirement is value-bound to a real client retransmit and a matching server `udp_return_packet_ack_sent`. H-R9-047 now challenges whether all actual positive Recovery retirements are emitted as positive evidence.
-- `68e364a` remains accepted for the ordering shape: the single `remaining_in_flight=0` settlement is after the exact Session confirmation and the value-identified emitted positive Carrier retirement. Re-evaluate the process-truth premise after H-R9-047 closes.
+- Latest developer-owned source/test commit: exact `d2478ada80bd553210aaab631c7392fcdfc2355c` (`fix(cli): H-R9-047 positive sibling ACK not misclassified accepted-empty`).
+- `d2478ad` closes H-R9-047: `retired` now means Recovery actually retired a packet copy (`acked_packets` non-empty), not merely the latest `post_pn_client`. A positive ACK for an older retransmit sibling is emitted as a real `r9_udp_return_packet_ack` with the actually-retired packet number, not projected as accepted-empty.
+- `d4f1ea3` remains accepted for post-retirement retransmit: every observed `r9_udp_retransmit_sent` is strictly before the emitted lifecycle-resolving positive Carrier retirement.
+- `0766dd8` remains accepted for repeated-PTO packet identity: every retransmit PN is fresh/non-sentinel/pairwise-distinct and carries stable `frame=48`; every positive Carrier retirement is value-bound to a real client retransmit and a matching server `udp_return_packet_ack_sent`.
+- `68e364a` remains accepted for the ordering shape: the single `remaining_in_flight=0` settlement is after the exact Session confirmation and the value-identified emitted positive Carrier retirement.
 - `9a113f2` remains the H-R9-040 lifecycle-pruning repair plus the H-R9-041 exact encoded-wire retransmit-admission implementation repair. `c1a22e5` added the server Carrier-ACK packet-number diagnostic used by R9-3 three-way evidence.
 - H-R9-043 remains accepted: bounded repeated PTO before the first actual lifecycle-resolving positive Carrier retirement is legal while sibling packet copies remain outstanding; Session DeliveryAck is a separate evidence domain and must not suppress Carrier recovery.
-- Still open before R9-3 completion after H-R9-047: H-R9-041 discriminating exact-wire refusal regression and H-R9-042 deterministic just-before-PTO-deadline negative.
-- Developer-local clean exact-tree provenance for exact `d4f1ea3`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T22:49:16Z → 2026-09-17T22:53:29Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
-- GitHub-hosted Rust CI for exact `d4f1ea3`, run `35283642218`, completed successfully: `stable checks` / `bash scripts/check.sh` success and `nightly decode fuzz smoke` success. Hosted CI is cross-evidence only and does not repair H-R9-047.
+- Still open before R9-3 completion: H-R9-041 discriminating exact-wire refusal regression and H-R9-042 deterministic just-before-PTO-deadline negative.
+- Developer-local clean exact-tree provenance for exact `d2478ad`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T23:49:37Z → 2026-09-17T23:53:55Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- GitHub-hosted Rust CI for exact `d4f1ea3`, run `35283642218`, completed successfully. Hosted CI is cross-evidence only and does not replace developer-local provenance.
 - Open PRs at review time: none.
 - Candidate A (future/never-sent ACK atomic rejection) remains closed. Candidate B (mixed generic/queue datagram-drop observability) remains closed.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
@@ -36,17 +34,9 @@ Do not revert these repairs without contradictory repository evidence:
 - H-R9-034 settlement-continuation accepted-empty classification at `b801b65`; H-R9-033 initial-loop accepted-empty classification at `7a7c48c`; H-R9-032 packet bind/settlement proof at `ddafbb1`.
 - Session DeliveryAck and Carrier packet ACK remain separate evidence domains. Accepted-empty is classification-only and must not describe a positive Recovery retirement.
 
-# READY_LOCAL 1 — H-R9-047 positive sibling Carrier-ACK projection
+# READY_LOCAL 1 — CLOSED at d2478ad
 
-Repair the exact-current post-return `UdpAcknowledgement::Carrier` projection without changing Recovery/Session/wire/crypto architecture:
-
-- `rejected=true` -> typed rejection diagnostic;
-- otherwise, `applied=true` -> positive Carrier retirement evidence using the actual packet identity/identities in `acked_packets`; do not use mutable latest `post_pn_client` to decide whether Recovery applied the ACK;
-- only `applied=false && rejected=false` may emit accepted-empty.
-
-A minimal per-retired-packet `r9_udp_return_packet_ack` projection is acceptable if one ACK range retires multiple packet identities. Add a discriminating deterministic process regression: create at least two overlapping retransmission packet identities for the same stable frame, make the newer one current/latest, then deliver an authenticated ACK that retires only the older sibling. Require positive evidence naming the actual older PN, not accepted-empty/rejected; Session confirmation remains exactly once; after the first positive ACK for the frame no later retransmit is emitted; a genuinely stale/duplicate later sibling ACK may still classify accepted-empty without creating a second Session transition. A helper/unit regression may supplement but not replace the process oracle.
-
-No fuzz run is required solely for this classification/test repair unless decoder/parser/crypto framing changes.
+H-R9-047 positive sibling ACK projection is repaired at `d2478ad`: `retired` means Recovery actually retired a packet copy (`acked_packets` non-empty), not merely the latest `post_pn_client`. A positive ACK for an older retransmit sibling is emitted as a real `r9_udp_return_packet_ack` with the actually-retired packet number, not projected as accepted-empty.
 
 # READY_LOCAL 2 — H-R9-041 exact-wire refusal regression
 
