@@ -3624,30 +3624,33 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
             .unwrap_or(u64::MAX);
         assert!(f >= d, "{client_log}");
     }
-    // PTO retransmitted with fresh packet numbers, stable frame identity.
+    // H-R9-045: parse EVERY retransmit — each packet number must be fresh
+    // relative to the original, pairwise distinct across siblings, and carry
+    // the same stable frame/logical identity (frame=48).
     let re_ev: Vec<&str> = client_log
         .lines()
         .filter(|l| l.contains("\"event\":\"r9_udp_retransmit_sent\""))
         .collect();
     assert!(!re_ev.is_empty(), "{client_log}");
-    // Take the leading digits of the packet_number field — trailing fields
-    // like original_packet_number must not contaminate the parse. The LAST
-    // retransmit is the packet whose ACK settles the lifecycle.
-    let re_pn = re_ev[re_ev.len() - 1]
-        .split("\"packet_number\":")
-        .nth(1)
-        .and_then(|v| {
-            v.trim_start()
-                .chars()
-                .take_while(|c| c.is_ascii_digit())
-                .collect::<String>()
-                .parse::<u64>()
-                .ok()
-        })
-        .unwrap_or(u64::MAX);
-    assert_ne!(orig_pn, re_pn, "{client_log}");
-    // Retransmission carries the same stable frame/logical identity.
-    assert!(re_ev[0].contains("\"frame\":48"), "{client_log}");
+    let mut re_pns = std::collections::BTreeSet::new();
+    for e in &re_ev {
+        let pn = e
+            .split("\"packet_number\":")
+            .nth(1)
+            .and_then(|v| {
+                v.trim_start()
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .parse::<u64>()
+                    .ok()
+            })
+            .unwrap_or(u64::MAX);
+        assert_ne!(pn, u64::MAX, "{client_log}");
+        assert_ne!(pn, orig_pn, "{client_log}");
+        assert!(re_pns.insert(pn), "duplicate retransmit pn {client_log}");
+        assert!(e.contains("\"frame\":48"), "{client_log}");
+    }
     // Exactly one Session transition for the post-return range.
     let dack_ev: Vec<&str> = client_log
         .lines()
@@ -3661,7 +3664,7 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
         "{client_log}"
     );
     // Positive Carrier retirement(s) for retransmitted packet(s) — at least
-    // one; the final one retires the last retransmit packet identity.
+    // one; every retire event retires a real retransmit packet identity.
     let pack_ev: Vec<&str> = client_log
         .lines()
         .filter(|l| l.contains("\"event\":\"r9_udp_return_packet_ack\""))
@@ -3673,34 +3676,56 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
             .all(|l| l.contains("\"applied\":true") && l.contains("\"retired\":true")),
         "{client_log}"
     );
-    // Three-way bind: the last retransmitted packet is the one retired.
-    let retire_pn = pack_ev[pack_ev.len() - 1]
-        .split("\"packet_number\":")
-        .nth(1)
-        .and_then(|v| {
-            v.trim_end_matches(|c: char| !c.is_ascii_digit())
-                .parse::<u64>()
-                .ok()
+    // Bind by VALUE, not by position: the packet that receives positive
+    // Carrier retirement must be a real client retransmit, and the server
+    // must have sent a Carrier ACK for that same packet number.
+    let retire_pns: Vec<u64> = pack_ev
+        .iter()
+        .map(|l| {
+            l.split("\"packet_number\":")
+                .nth(1)
+                .and_then(|v| {
+                    v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                        .parse::<u64>()
+                        .ok()
+                })
+                .unwrap_or(u64::MAX)
         })
-        .unwrap_or(u64::MAX);
-    assert_eq!(re_pn, retire_pn, "{client_log}");
-    // H-R9-042: server Carrier ACK identity is also bound to the same
-    // retransmitted packet number — three-way cross-process bind.
+        .collect();
+    for rp in &retire_pns {
+        assert!(
+            re_pns.contains(rp),
+            "retired pn {rp} not a client retransmit {client_log}"
+        );
+    }
+    // H-R9-042: server Carrier ACK packet numbers bound to the same
+    // retransmitted identities — every retired packet has a matching server ACK.
     let srv_ack_ev: Vec<&str> = server_log
         .lines()
         .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_sent\""))
         .collect();
     assert!(!srv_ack_ev.is_empty(), "{server_log}");
-    let srv_ack_pn = srv_ack_ev[srv_ack_ev.len() - 1]
-        .split("\"packet_number\":")
-        .nth(1)
-        .and_then(|v| {
-            v.trim_end_matches(|c: char| !c.is_ascii_digit())
-                .parse::<u64>()
-                .ok()
+    let srv_ack_pns: Vec<u64> = srv_ack_ev
+        .iter()
+        .map(|l| {
+            l.split("\"packet_number\":")
+                .nth(1)
+                .and_then(|v| {
+                    v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                        .parse::<u64>()
+                        .ok()
+                })
+                .unwrap_or(u64::MAX)
         })
-        .unwrap_or(u64::MAX);
-    assert_eq!(re_pn, srv_ack_pn, "{client_log} {server_log}");
+        .collect();
+    // Every positively-retired client retransmit has a matching server Carrier
+    // ACK for that exact packet number — bind by value, not by log position.
+    for rp in &retire_pns {
+        assert!(
+            srv_ack_pns.contains(rp),
+            "retired pn {rp} has no server Carrier ACK {server_log}"
+        );
+    }
     // H-R9-044: typed rejection stays zero, but a sibling/late Carrier ACK
     // may legitimately classify accepted-empty under repeated PTO — it is a
     // classification-only outcome that must not create a second Session
