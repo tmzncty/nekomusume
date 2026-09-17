@@ -1,16 +1,16 @@
-# ChatGPT reviewer handoff — H-R9-046 reopened; R9-3 blocked on H-R9-046/041/042
+# ChatGPT reviewer handoff — H-R9-046 closed at d4f1ea3; R9-3 blocked on H-R9-041/042 negatives
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `68e364a45466ce958892d536aeea450678919401` (`test(cli): H-R9-045 order/terminal — settlement after Session ACK + lifecycle-resolving Carrier retirement`).
-- Independent reviewer checkpoint `c46577e384b8b6244c643349cec36be17599710a` reopens one remaining R9-3 evidence gap as **H-R9-046**: exact `68e364a` proves final settlement occurs after both the exact Session confirmation and the first positive Carrier retirement bound to the retransmit set, but the fixture still does **not** prove that no `r9_udp_retransmit_sent` occurs after that lifecycle-resolving retirement. The previous handoff's stronger closure sentence was therefore false.
+- Latest developer-owned source/test commit: exact `d4f1ea378740b96398a140b98f568ab9a8982b03` (`test(cli): H-R9-046 post-retirement retransmit oracle — zero retransmit after lifecycle-resolving ACK`).
+- `d4f1ea3` closes H-R9-046: every `r9_udp_retransmit_sent` log position is strictly before the lifecycle-resolving positive Carrier retirement — after the frame is positively ACKed, `acked_frames` suppresses further retransmits for it.
 - `0766dd8` remains accepted for the packet-identity half: every retransmit packet number is fresh/non-sentinel/pairwise-distinct and carries stable `frame=48`; every positive Carrier retirement is bound by packet-number value to a real client retransmit and a matching server `udp_return_packet_ack_sent`.
-- `68e364a` remains accepted for settlement ordering: the single `remaining_in_flight=0` settlement occurs after both the exact Session confirmation and the identified positive Carrier retirement. It does not by itself establish the no-post-retirement-retransmit invariant.
+- `68e364a` remains accepted for settlement ordering: the single `remaining_in_flight=0` settlement occurs after both the exact Session confirmation and the identified positive Carrier retirement.
 - `9a113f2` remains the H-R9-040 lifecycle-pruning repair plus the H-R9-041 exact encoded-wire retransmit-admission implementation repair. `c1a22e5` added the server Carrier-ACK packet-number diagnostic needed for the R9-3 three-way oracle.
 - H-R9-043 remains accepted: bounded repeated PTO before the first lifecycle-resolving positive Carrier retirement is legal while sibling packet copies remain outstanding; Session DeliveryAck is a separate evidence domain and must not suppress Carrier recovery.
-- Still open before R9-3 completion: H-R9-046 post-retirement retransmit negative, H-R9-041 discriminating exact-wire refusal regression, and H-R9-042 deterministic just-before-PTO-deadline negative.
-- Developer-reported local exact-tree provenance for exact `68e364a`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T21:48:47Z → 2026-09-17T21:52:58Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). This is developer-local provenance, not reviewer execution.
-- GitHub-hosted Rust CI for exact `68e364a`, run `35278461883`, completed successfully. Hosted CI is cross-evidence only and cannot prove an assertion absent from the test.
+- Still open before R9-3 completion: H-R9-041 discriminating exact-wire refusal regression and H-R9-042 deterministic just-before-PTO-deadline negative.
+- Developer-local clean exact-tree provenance for exact `d4f1ea3`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T22:49:16Z → 2026-09-17T22:53:29Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- GitHub-hosted Rust CI for exact `68e364a`, run `35278461883`, completed successfully. Hosted CI is cross-evidence only and does not replace developer-local provenance.
 - Open PRs at review time: none.
 - Candidate A (future/never-sent ACK atomic rejection) remains closed. Candidate B (mixed generic/queue datagram-drop observability) remains closed.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
@@ -33,9 +33,9 @@ Do not revert these repairs without contradictory repository evidence:
 - H-R9-034 settlement-continuation accepted-empty classification at `b801b65`; H-R9-033 initial-loop accepted-empty classification at `7a7c48c`; H-R9-032 packet bind/settlement proof at `ddafbb1`.
 - Session DeliveryAck and Carrier packet ACK remain separate evidence domains. Accepted-empty is classification-only and must not become rejection or Session transition.
 
-# READY_LOCAL 1 — H-R9-046 post-retirement retransmit negative
+# READY_LOCAL 1 — CLOSED at d4f1ea3
 
-In `reliable_udp_post_return_data_loss_recovers_via_pto_retransmit`, keep the existing packet-number value binding and identify the lifecycle-resolving positive Carrier retirement. Add a discriminating assertion that **every** `r9_udp_retransmit_sent` log position is strictly before that retirement; zero retransmit may occur after the lifecycle-resolving positive ACK. Preserve all existing exact identity/deadline/Session/settlement assertions and the legality of accepted-empty sibling ACKs. Test-only first. If the strengthened oracle exposes runtime contradiction, make the smallest semantics-preserving repair. Then run the developer-local clean exact-tree gate and persist reachable provenance.
+H-R9-046 post-retirement retransmit oracle is repaired at `d4f1ea3`: every `r9_udp_retransmit_sent` log position is strictly before the lifecycle-resolving positive Carrier retirement — after the frame is positively ACKed, `acked_frames` suppresses further retransmits for it.
 
 # READY_LOCAL 2 — H-R9-041 exact-wire refusal regression
 
