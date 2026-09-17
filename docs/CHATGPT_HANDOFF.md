@@ -1,13 +1,13 @@
-# ChatGPT reviewer handoff — H-R9-036 reopens reverse ACK-order exact oracle
+# ChatGPT reviewer handoff — H-R9-036 closed at 855c679; R9-3 blocked on dual P4 + provenance
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `424583dd32fc4bbe3bd69d616ceb40de1a6b45a6` (`fix(cli): remove duplicate post-return Carrier ACK on ordinary path (READY_LOCAL 2)`), building on `83d10b06279132d79e72240b02bf7b5f7a181d93`.
-- Latest independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-036-reverse-order-oracle-424583d-20260917.md`](reviews/reviewer-r9-h-r9-036-reverse-order-oracle-424583d-20260917.md), reachable through reviewer commit `3c7a4d78a7e1130c3c0acb4efca0b4940e773f67`.
-- **H-R9-036 is OPEN (HIGH, evidence/oracle correctness).** The reverse-order runtime seam remains plausible and the known duplicate ordinary-path Carrier ACK was repaired by `424583d`, but the dedicated regression currently proves only process success, first-observed Carrier-before-Session order, one settlement marker after those first observations, and zero rejected/accepted-empty classifications. It does **not** prove the handoff's stronger claims of exactly-one positive Carrier retirement, exactly-one exact Session transition, or three-way post-return packet-number equality.
+- Latest developer-owned source/test commit reviewed: exact `855c679a4085fded7382d081299ad1f6b3d915e9` (`test(cli): H-R9-036 reverse-order exact oracle — three-way packet bind + cardinality + Session exact`), building on `424583d` + `83d10b0`.
+- Prior independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-036-reverse-order-oracle-424583d-20260917.md`](reviews/reviewer-r9-h-r9-036-reverse-order-oracle-424583d-20260917.md), reachable through reviewer commit `3c7a4d78a7e1130c3c0acb4efca0b4940e773f67`.
+- H-R9-036 is closed at exact `855c679`: the reverse-order regression now proves exactly one positive Carrier retirement with `applied=true`/`retired=true`, exactly one Session transition with `stream=1 offset=48 len=16`, three-way packet-number equality (client send == server ACK == client retire), zero rejected/accepted-empty, exactly one settled-zero, Carrier-before-Session order, and settlement after both transitions.
 - P2 C1-C4 remain closed; H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier repairs remain closed. Candidate A and B remain closed.
-- Developer-local clean exact-tree provenance for exact `424583d` remains historical evidence for that tree: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-17T01:59:34Z → 2026-09-17T02:03:04Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). It does not close H-R9-036's missing oracle assertions.
-- GitHub-hosted exact-`424583d` checks are separately green (`stable checks`, `nightly decode fuzz smoke`, Actions run `35172632662`); hosted evidence is cross-evidence only.
+- Developer-local clean exact-tree provenance for `855c679`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T02:51:26Z → 2026-09-17T02:55:15Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- Open PRs at review time: none.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> next slice. Reviewer cadence is only a check frequency and is never a work-ticket length or reason to idle.
