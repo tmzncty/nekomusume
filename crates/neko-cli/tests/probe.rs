@@ -3239,26 +3239,65 @@ fn reliable_udp_post_return_carrier_ack_withheld_fails() {
         ])
         .output()
         .unwrap();
-    let (_srv_status, server_log) = finish_server(server);
+    let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
-    // Session ACK arrived and was applied; Carrier ACK was withheld.
+    let client_err = String::from_utf8_lossy(&out.stderr);
+    assert!(srv_status.success(), "{server_log}");
+    // Exactly one positive client Session transition stream=1 offset=48 len=16.
+    let dack_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_return_delivery_ack\""))
+        .collect();
+    assert_eq!(dack_ev.len(), 1, "{client_log}");
     assert!(
-        client_log.contains("\"event\":\"r9_udp_return_delivery_ack\""),
+        dack_ev[0].contains("\"stream\":1")
+            && dack_ev[0].contains("\"offset\":48")
+            && dack_ev[0].contains("\"len\":16"),
+        "{client_log}"
+    );
+    // Zero positive Carrier transition for the post-return packet.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_return_packet_ack\""),
+        "{client_log}"
+    );
+    // Residual evidence: Session complete, Recovery still nonzero.
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_post_return_residual\""),
+        "{client_log}"
+    );
+    let residual: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_residual\""))
+        .collect();
+    assert_eq!(residual.len(), 1, "{client_log}");
+    assert!(
+        residual[0].contains("\"session_outstanding\":0"),
+        "{client_log}"
+    );
+    assert!(
+        !residual[0].contains("\"remaining_in_flight\":0"),
         "{client_log}"
     );
     // Client exits nonzero on the bounded post-return deadline — no settled
     // premise, no Carrier transition.
-    assert!(!out.status.success(), "{client_log}");
+    assert!(!out.status.success(), "{client_log} {client_err}");
     assert!(
         !client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
         "{client_log}"
     );
     // Server proved the post-return owner was reached and sent the Session
-    // ACK but no Carrier packet ACK.
+    // ACK but no Carrier packet ACK. Exact cardinality + identity binding.
+    let srv_dack: Vec<&str> = server_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"udp_return_delivery_ack_sent\""))
+        .collect();
+    assert_eq!(srv_dack.len(), 1, "{server_log}");
     assert!(
-        server_log.contains("\"event\":\"udp_return_delivery_ack_sent\""),
+        srv_dack[0].contains("\"stream\":1")
+            && srv_dack[0].contains("\"offset\":48")
+            && srv_dack[0].contains("\"len\":16"),
         "{server_log}"
     );
     assert!(
@@ -3349,12 +3388,75 @@ fn reliable_udp_post_return_session_ack_withheld_fails() {
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
     // Carrier packet ACK arrived and retired the packet; Session ACK withheld.
+    // Exactly one positive Carrier retirement; zero Session transition.
+    let pack_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_return_packet_ack\""))
+        .collect();
+    assert_eq!(pack_ev.len(), 1, "{client_log}");
     assert!(
-        client_log.contains("\"event\":\"r9_udp_return_packet_ack\""),
+        pack_ev[0].contains("\"applied\":true") && pack_ev[0].contains("\"retired\":true"),
         "{client_log}"
     );
     assert!(
         !client_log.contains("\"event\":\"r9_udp_return_delivery_ack\""),
+        "{client_log}"
+    );
+    // Residual: Recovery settled but Session still outstanding.
+    let residual: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_residual\""))
+        .collect();
+    assert_eq!(residual.len(), 1, "{client_log}");
+    assert!(
+        residual[0].contains("\"remaining_in_flight\":0")
+            && residual[0].contains("\"session_outstanding\":1"),
+        "{client_log}"
+    );
+    // Three-way packet bind: client send == server ACK == client retire.
+    let send_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_sent\""))
+        .collect();
+    assert_eq!(send_ev.len(), 1, "{client_log}");
+    let client_pn = send_ev[0]
+        .split("\"packet_number\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    let srv_pack_ev: Vec<&str> = server_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_sent\""))
+        .collect();
+    assert_eq!(srv_pack_ev.len(), 1, "{server_log}");
+    let server_pn = srv_pack_ev[0]
+        .split("\"packet_number\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    let retire_pn = pack_ev[0]
+        .split("\"packet_number\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    assert_eq!(client_pn, server_pn, "{client_log} {server_log}");
+    assert_eq!(client_pn, retire_pn, "{client_log}");
+    // Zero rejected/accepted-empty on this ordinary positive path.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\"")
+            && !client_log.contains("\"event\":\"r9_udp_return_packet_ack_accepted_empty\""),
         "{client_log}"
     );
     // Typed nonzero exit on the bounded deadline — no settled premise, no

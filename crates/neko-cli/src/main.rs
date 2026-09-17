@@ -3497,6 +3497,20 @@ fn failover_client(args: &[String]) {
                 break;
             }
             if Instant::now() >= deadline {
+                // H-R9-038: classification-only residual-domain evidence —
+                // which of the two domains is still outstanding when the
+                // bounded post-return settlement fails. Mutates nothing.
+                emit_diagnostic(
+                    args,
+                    "client",
+                    "r9_udp_post_return_residual",
+                    0,
+                    &format!(
+                        ",\"session_outstanding\":{},\"remaining_in_flight\":{}",
+                        post_outstanding.len(),
+                        rt.as_ref().map(|r| r.in_flight()).unwrap_or(0)
+                    ),
+                );
                 fail("post-return reliable-UDP dual settlement timeout");
             }
             match recv_udp_delivery_ack(
@@ -3571,7 +3585,23 @@ fn failover_client(args: &[String]) {
                         );
                     }
                 }
-                Err(_) => fail("post-return UDP acknowledgement failed"),
+                Err(_) => {
+                    // H-R9-038: classification-only residual-domain evidence
+                    // before the bounded post-return failure — which domain is
+                    // still outstanding. Mutates nothing.
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "r9_udp_post_return_residual",
+                        0,
+                        &format!(
+                            ",\"session_outstanding\":{},\"remaining_in_flight\":{}",
+                            post_outstanding.len(),
+                            rt.as_ref().map(|r| r.in_flight()).unwrap_or(0)
+                        ),
+                    );
+                    fail("post-return UDP acknowledgement failed")
+                }
             }
         }
         emit_diagnostic(
