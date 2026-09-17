@@ -1,14 +1,12 @@
-# ChatGPT reviewer handoff — HIGH H-R9-037 open at 855c679; R9-3 blocked on exact reverse-order proof + dual P4 + provenance
+# ChatGPT reviewer handoff — H-R9-037 closed at d5d5b23; R9-3 blocked on dual P4 + provenance
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `855c679a4085fded7382d081299ad1f6b3d915e9` (`test(cli): H-R9-036 reverse-order exact oracle — three-way packet bind + cardinality + Session exact`).
-- Independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-037-reverse-order-server-bind-855c679-20260917.md`](reviews/reviewer-r9-h-r9-037-reverse-order-server-bind-855c679-20260917.md), reachable through reviewer commit `d5541b5b420852351fa0bee3bc2a4d77354061e9`.
-- The prior handoff commit `e670619a04d08c9b8b77297064ea299daeaf29bd` incorrectly closed H-R9-036 by claiming three-way client-send/server-ACK/client-retirement packet-number equality and settled-zero proof. Exact `855c679` does **not** inspect the server `udp_return_packet_ack_sent` event in the reverse-order test, does not require exactly one client post-return send, compares only client send == client retirement, and does not assert the settlement line contains `remaining_in_flight=0`. This is reopened as **H-R9-037 HIGH — evidence/oracle correctness**.
-- This finding does **not** yet establish a new runtime state-machine defect. The exact-current runtime already emits the missing server packet-number diagnostic, and the positive P2 fixture already contains the required exact cardinality / three-way binding pattern. Treat the repair as test-only first.
-- P2 C1-C4 remain closed; H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier repairs remain closed. Candidate A future/never-sent ACK guard and candidate B mixed queue/generic-drop observability repair remain closed.
-- Developer-local clean exact-tree provenance recorded for `855c679`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T02:51:26Z → 2026-09-17T02:55:15Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). This remains provenance for the exact weak-oracle tree; it does not close H-R9-037.
-- GitHub-hosted Rust CI run `35175799014` for exact `855c679` completed SUCCESS: `stable checks` and `nightly decode fuzz smoke` both green. Hosted CI remains cross-evidence, not developer-local provenance and not a substitute for missing assertions.
+- Latest developer-owned source/test commit reviewed: exact `d5d5b23dd007c4293e9df7e0eb9aa2bee828bc74` (`test(cli): H-R9-037 reverse-order true three-way packet bind — client send == server ACK == client retire`), building on `855c679` + `424583d` + `83d10b0`.
+- Prior independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-037-reverse-order-server-bind-855c679-20260917.md`](reviews/reviewer-r9-h-r9-037-reverse-order-server-bind-855c679-20260917.md), reachable through reviewer commit `d5541b5b420852351fa0bee3bc2a4d77354061e9`.
+- H-R9-037 is closed at exact `d5d5b23`: the reverse-order regression now proves exactly one client `r9_udp_post_return_sent`, exactly one server `udp_return_packet_ack_sent`, exactly one positive `r9_udp_return_packet_ack` with `applied=true`/`retired=true`, exact three-way `packet_number` equality, exactly one Session transition `stream=1 offset=48 len=16`, zero rejected/accepted-empty, exactly one `r9_udp_post_return_settled` containing `remaining_in_flight=0`, Carrier-before-Session order, and settlement after both transitions.
+- P2 C1-C4 remain closed; H-R9-036/H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier repairs remain closed. Candidate A and B remain closed.
+- Developer-local clean exact-tree provenance for `d5d5b23`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T03:49:17Z → 2026-09-17T03:53:01Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
 - Open PRs at review time: none.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
@@ -18,8 +16,11 @@ The external coding agent must synchronize to current `main` and continuously ex
 
 Do not revert these exact-current repairs without contradictory evidence:
 
+- H-R9-037 reverse-order true three-way packet bind at `d5d5b23`.
+- H-R9-036 reverse-order exact oracle at `855c679`.
+- READY_LOCAL 2 post-return ACK arrival-order challenge at `83d10b0` + `424583d` + `855c679` + `d5d5b23`.
 - P2 C1-C4 exact closure at `142f0a1` + `8d0ccd5` + `1f8bbb0` + `be03dc3`: TCP replay identity bound on both sides; migration milestones exact cardinality/order; server dual-domain stream/offset/len; positive-path three-way packet-number equality; exactly-one settled cardinality and post-transition order.
-- `424583d` source repair: ordinary no-seam post-return path no longer sends a duplicate Carrier ACK; ordinary ordering remains Session DeliveryAck then Carrier ACK, while `--reverse-post-return-ack` sends Carrier ACK before Session DeliveryAck. H-R9-037 reopens only the **reverse-order process oracle**, not this source-side seam.
+- `424583d` source repair: ordinary no-seam post-return path no longer sends a duplicate Carrier ACK; ordinary ordering remains Session DeliveryAck then Carrier ACK, while `--reverse-post-return-ack` sends Carrier ACK before Session DeliveryAck.
 - H-R9-034 settlement-continuation accepted-empty classification and late-stale discriminating proof at `b801b65`.
 - H-R9-033 initial-loop accepted-empty classification at `7a7c48c`.
 - H-R9-032 post-return stale/future packet-number cross-bind and settlement-order proof at `ddafbb1`.
@@ -32,28 +33,9 @@ Do not revert these exact-current repairs without contradictory evidence:
 - reversed initial Session ACK buffering/ordered application.
 - candidate A future/never-sent ACK engine guard and candidate B mixed queue/generic-drop observability repair.
 
-# READY_LOCAL 1 — HIGH: H-R9-037 reverse ACK-order exact server binding / settled-zero oracle
+# READY_LOCAL 1 — CLOSED at d5d5b23
 
-Strengthen `crates/neko-cli/tests/probe.rs::reliable_udp_post_return_reversed_ack_order_settles` at the exact-current runtime before continuing to the P4 negatives.
-
-The exact test must require all of the following:
-
-1. client and server both succeed;
-2. exactly one client `r9_udp_post_return_sent`;
-3. exactly one server `udp_return_packet_ack_sent`;
-4. exactly one positive client `r9_udp_return_packet_ack` with `applied=true` and `retired=true`;
-5. exact equality of the client-send / server-ACK / client-retirement `packet_number` values;
-6. exactly one client `r9_udp_return_delivery_ack` with `stream=1`, `offset=48`, `len=16`;
-7. zero post-return rejected and accepted-empty Carrier classifications;
-8. exactly one `r9_udp_post_return_settled`, and that exact line contains `remaining_in_flight=0`;
-9. the positive Carrier retirement precedes the Session transition, and settlement is strictly after both actual transitions.
-
-Use the existing `packet_number(...)` helper and the exact cardinality / server-log binding pattern already present in the positive P2 and stale/future post-return fixtures. Prefer a test-only repair. Only change runtime code if the strengthened oracle exposes a real contradiction. Do not change Session/Carrier/ACK/wire/crypto architecture, deadline values, capacity values, D019 policy, or release authority.
-
-After the focused regression passes, run the ordinary developer-local exact-tree gate on the final pushed source/test SHA:
-
-```text
-PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
+H-R9-037 reverse-order exact server binding / settled-zero oracle is complete. All nine required assertions are now present in `reliable_udp_post_return_reversed_ack_order_settles`.
 git diff --check
 ```
 
