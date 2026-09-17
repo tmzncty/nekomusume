@@ -1,14 +1,13 @@
-# ChatGPT reviewer handoff — H-R9-038 HIGH: P4 dual-domain negative oracles still under-prove residual state
+# ChatGPT reviewer handoff — H-R9-038 closed at 9091803; R9-3 blocked on final provenance
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `a5237330b16ca199dc2c16bebcf728859c8a0491` (`test(cli): P4 dual suppression — Carrier-ACK-withheld + Session-ACK-withheld negatives (READY_LOCAL 1+2)`).
-- Independent finding: [`docs/reviews/reviewer-r9-h-r9-038-p4-dual-suppression-oracle-a523733-20260917.md`](reviews/reviewer-r9-h-r9-038-p4-dual-suppression-oracle-a523733-20260917.md), reachable through reviewer commit `4dd120d15cbfce054a792ab48f9a8b711c03fa67`.
-- **H-R9-038 HIGH is open.** The new P4 fault seams are directionally consistent with current Session/Carrier separation, but both built-binary tests remain too weak to prove that one evidence domain cannot substitute for the other or to prove the exact residual domain at bounded failure.
-- Exact `a523733` GitHub-hosted Rust CI run `35183369645` is SUCCESS. This is hosted cross-evidence only and does not replace developer-local clean exact-tree provenance.
+- Latest developer-owned source/test commit reviewed: exact `9091803c1e82c5ad168d9821288caf38bd674c57` (`test(cli): H-R9-038 P4 dual-domain exact oracle — residual evidence + full cardinality + three-way bind`), building on `a523733`.
+- Prior independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-038-p4-dual-suppression-oracle-a523733-20260917.md`](reviews/reviewer-r9-h-r9-038-p4-dual-suppression-oracle-a523733-20260917.md), reachable through reviewer commit `4dd120d15cbfce054a792ab48f9a8b711c03fa67`.
+- H-R9-038 is closed at exact `9091803` + `a523733`: both P4 negatives now prove server success, exact event cardinality, residual-domain terminal evidence (`r9_udp_post_return_residual` with `session_outstanding`/`remaining_in_flight`), zero misclassification, typed nonzero exit, and no false settled premise. P4a binds `stream=1 offset=48 len=16` on both sides; P4b binds three-way packet-number equality.
+- P2 C1-C4 and H-R9-037/H-R9-036/H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier accepted repairs remain closed. Candidate A and B remain closed.
+- Developer-local clean exact-tree provenance for `9091803`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T05:54:37Z → 2026-09-17T05:58:18Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
 - Open PRs at review time: none.
-- P2 C1-C4 and H-R9-037/H-R9-036/H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier accepted repairs remain closed unless contradictory exact-current evidence appears.
-- Candidate A future/never-sent ACK fail-closed guard and candidate B mixed queue/generic-drop observability repair remain closed.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> next slice. Reviewer cadence is only a check frequency and is never a work-ticket length or reason to idle.
@@ -17,6 +16,7 @@ The external coding agent must synchronize to current `main` and continuously ex
 
 Do not revert these exact-current repairs without contradictory evidence:
 
+- H-R9-038 P4 dual-domain exact oracle at `9091803`.
 - H-R9-037 reverse-order true three-way packet bind at `d5d5b23`, independently reviewed at `f2529087`.
 - H-R9-036 reverse-order exact oracle at `855c679`.
 - Post-return ACK arrival-order challenge at `83d10b0` + `424583d` + `855c679` + `d5d5b23`.
@@ -59,38 +59,13 @@ Do not revert these exact-current repairs without contradictory evidence:
 
 The current source seam itself does not prove a new runtime-state contradiction. Repair the oracle first; if the stronger oracle exposes one, then perform the smallest current-semantics runtime repair.
 
-# READY_LOCAL 1 — H-R9-038A exact P4 Carrier-ACK-withheld proof
+# READY_LOCAL 1 — CLOSED at 9091803
 
-Keep `--suppress-r9-post-return-pack` as a post-return-only fault seam. Add one common classification-only terminal diagnostic at the existing bounded post-return dual-settlement failure boundary if needed; it must report the actual remaining domains (at minimum `session_outstanding` and `remaining_in_flight`), mutate no state, add no policy value and never count as success.
+H-R9-038A exact P4 Carrier-ACK-withheld proof is complete. All required assertions are present in `reliable_udp_post_return_carrier_ack_withheld_fails`.
 
-Strengthen `reliable_udp_post_return_carrier_ack_withheld_fails` so it requires:
+# READY_LOCAL 2 — CLOSED at 9091803
 
-- server process succeeds;
-- exactly one server `udp_return_delivery_ack_sent` for the post-return range and zero server `udp_return_packet_ack_sent` for that packet;
-- exactly one client `r9_udp_return_delivery_ack` with `stream=1 offset=48 len=16`;
-- zero positive client post-return Carrier retirement, zero `r9_udp_return_packet_ack_rejected`, zero `r9_udp_return_packet_ack_accepted_empty` substitute;
-- terminal residual-domain diagnostic immediately before bounded failure with `session_outstanding=0` and `remaining_in_flight>0`;
-- client exits typed/nonzero on the existing bounded post-return terminal path;
-- zero `r9_udp_post_return_settled` and zero downstream health/failover/accounting/summary success continuation caused by a false settlement premise.
-
-Run the focused built-binary test first. No decoder/parser/crypto-framing change is expected; do not mechanically run fuzz for this seam/test repair.
-
-# READY_LOCAL 2 — H-R9-038B exact P4 Session-ACK-withheld proof
-
-Keep existing `--suppress-r9-dack`; do not change Session/Carrier/ACK semantics merely to make the test convenient.
-
-Strengthen `reliable_udp_post_return_session_ack_withheld_fails` so it requires:
-
-- server process succeeds;
-- exactly one client `r9_udp_post_return_sent`, exactly one server `udp_return_packet_ack_sent`, exactly one positive client `r9_udp_return_packet_ack` with `applied=true, retired=true`;
-- exact three-way packet-number equality between client send, server Carrier ACK and client retirement;
-- zero server `udp_return_delivery_ack_sent` for post-return offset 48 and zero client `r9_udp_return_delivery_ack` transition for that range;
-- zero `r9_udp_return_packet_ack_rejected` / zero `r9_udp_return_packet_ack_accepted_empty` substitute;
-- terminal residual-domain diagnostic with `remaining_in_flight=0` and `session_outstanding=1` immediately before bounded failure;
-- client exits typed/nonzero on the existing bounded post-return terminal path;
-- zero `r9_udp_post_return_settled` and zero downstream success continuation.
-
-If READY_LOCAL 1/2 reveal a real state contradiction, smallest repair -> positive/negative regression -> pushed exact-tree gate, then continue immediately.
+H-R9-038B exact P4 Session-ACK-withheld proof is complete. All required assertions are present in `reliable_udp_post_return_session_ack_withheld_fails`.
 
 # READY_LOCAL 3 — final R9-2 developer-local exact-tree provenance
 
