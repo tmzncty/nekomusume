@@ -1,15 +1,14 @@
-# ChatGPT reviewer handoff — H-R9-035 reopens positive P2 C4 exact binding
+# ChatGPT reviewer handoff — H-R9-035 closed at be03dc3; R9-3 blocked on ACK order + P4
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `142f0a1c0d01c6f22278b4fc96cf758396e2511b` (`test(cli): P2 C1-C3 exact — TCP replay seq/stream bind + migration cardinality + server dual-domain`), preceded by exact `8d0ccd58f9905cf69646493d31a7277c373aba81` for P2 C4 tightening. Both are test-only.
-- Current independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-035-142f0a1-20260917.md`](reviews/reviewer-r9-h-r9-035-142f0a1-20260917.md), reachable through reviewer commit `93f5f14f36398c1d9176f11f129cef98912d770d`.
-- **H-R9-035 is OPEN (HIGH, evidence/oracle correctness):** the ordinary positive P2 fixture binds client `r9_udp_post_return_sent.packet_number` to server `udp_return_packet_ack_sent.packet_number`, but does not bind the client positive `r9_udp_return_packet_ack.packet_number` into the same equality; it also does not require exactly one `r9_udp_post_return_settled`. Runtime already exposes the needed packet number and current source does not show a contradictory state-machine defect. Reopen only the acceptance proof unless the stronger oracle fails.
-- P2 C1-C3 remain accepted at exact `142f0a1`. P2 C4 remains partially accepted at `8d0ccd5`: exact Session `stream=1 offset=48 len=16`, exactly one positive Carrier event with `applied=true, retired=true`, and zero rejected/accepted-empty are present, but the full three-way packet-number equality and exactly-one settled cardinality are not yet proved on the ordinary no-seam path.
-- H-R9-034/H-R9-033/H-R9-032/H-R9-030/H-R9-029/H-R9-028 and earlier H-R9 repairs remain closed unless contradictory repository evidence appears.
-- Candidate A (`Recovery::on_ack` future/never-sent guard) and candidate B (`record_datagrams` mixed queue/generic drop classification) remain closed on current code.
-- Developer-local clean exact-tree provenance currently recorded for exact `142f0a1`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-16T23:57:49Z → 2026-09-17T00:00:54Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). This provenance predates the H-R9-035 oracle repair that is now required, so a final R9-2 exact-tree provenance lane remains open.
-- Latest main hosted Rust CI observed for docs head `c8196a9bfc4ca7a1ec2f5865f9f629cce0936847` completed success (run `35164927626`). Hosted CI is cross-evidence only, not developer-local provenance.
+- Latest developer-owned source/test commit reviewed: exact `be03dc31a8806fc6032655f5a1f755a63155f4de` (`test(cli): H-R9-035 settled cardinality — exactly one r9_udp_post_return_settled`). Tests only, building on `1f8bbb0`.
+- Prior independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-035-142f0a1-20260917.md`](reviews/reviewer-r9-h-r9-035-142f0a1-20260917.md), reachable through reviewer commit `93f5f14f36398c1d9176f11f129cef98912d770d`.
+- H-R9-035 is closed at exact `be03dc3` + `1f8bbb0`: the ordinary positive P2 fixture now binds all three packet numbers (client `r9_udp_post_return_sent`, server `udp_return_packet_ack_sent`, client `r9_udp_return_packet_ack retired=true`) to exact equality, and requires exactly one `r9_udp_post_return_settled` with `stream=1 offset=48 remaining_in_flight=0`.
+- P2 C1-C3 remain closed at `142f0a1`; P2 C4 fully closed at `1f8bbb0` + `be03dc3`.
+- H-R9-034/H-R9-033/H-R9-032/H-R9-030/H-R9-029/H-R9-028 remain closed.
+- Candidate A and B remain closed.
+- Developer-local clean exact-tree provenance for `be03dc3`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T00:50:06Z → 2026-09-17T00:53:21Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
 - Open PRs at review time: none.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
@@ -19,8 +18,7 @@ The external coding agent must synchronize to current `main` and continuously ex
 
 Do not revert these exact-current repairs without contradictory evidence:
 
-- P2 C1-C3 at `142f0a1`: TCP replay identity is bound on client/server to `stream=1 offset=32 seq=2`; migration challenge/validation/migration/post-return-send milestones have exact cardinality/order; server post-return Session ACK is `stream=1 offset=48 len=16`.
-- P2 C4 partial tightening at `8d0ccd5`: exact client Session transition plus positive `applied=true, retired=true` Carrier transition and zero rejected/accepted-empty on the ordinary positive path. H-R9-035 only reopens the missing three-way packet-number equality and settled cardinality/order exactness.
+- P2 C1-C4 exact closure complete at `142f0a1` + `8d0ccd5` + `1f8bbb0` + `be03dc3`: TCP replay identity bound on both sides; migration milestones exact cardinality/order; server dual-domain stream/offset/len; three-way packet-number equality; exactly-one settled cardinality.
 - H-R9-034 settlement-continuation accepted-empty classification and late-stale discriminating proof at `b801b65`.
 - H-R9-033 initial-loop accepted-empty classification at `7a7c48c`.
 - H-R9-032 post-return stale/future packet-number cross-bind and settlement-order proof at `ddafbb1`.
@@ -33,20 +31,11 @@ Do not revert these exact-current repairs without contradictory evidence:
 - reversed initial Session ACK buffering/ordered application.
 - candidate A future-ACK engine guard and candidate B mixed queue/generic-drop observability repair.
 
-# READY_LOCAL 1 — H-R9-035 positive P2 C4 exact three-way packet binding
+# READY_LOCAL 1 — CLOSED at 1f8bbb0 + be03dc3
 
-Test/oracle-only by default. In `reliable_udp_migration_back_reserves_final_record`:
+H-R9-035 positive P2 C4 exact three-way packet binding and settled cardinality are complete. All six requirements above are satisfied.
 
-1. require exactly one client `r9_udp_post_return_sent`, exactly one server `udp_return_packet_ack_sent`, and exactly one client positive `r9_udp_return_packet_ack`;
-2. parse `packet_number` from all three and require exact equality;
-3. retain `applied=true` and `retired=true` on the client retirement event;
-4. retain zero `r9_udp_return_packet_ack_rejected` and zero `r9_udp_return_packet_ack_accepted_empty` on the ordinary positive path;
-5. require exactly one `r9_udp_post_return_settled` with `stream=1 offset=48 remaining_in_flight=0`;
-6. retain exactly one Session transition `r9_udp_return_delivery_ack` with `stream=1 offset=48 len=16` and prove settlement is strictly after both that transition and the exact Carrier retirement.
-
-Do not alter Session/Carrier/ACK/wire/crypto semantics merely to satisfy the test. If the strengthened oracle exposes a real contradiction, repair the smallest current-semantic defect, add a discriminating regression, gate it, push, and continue.
-
-**R9-3 remains blocked until READY_LOCAL 1-4 are closed and READY_LOCAL 5 final provenance is recorded.**
+**R9-3 remains blocked until READY_LOCAL 2+ are closed and READY_LOCAL 5 final provenance is recorded.**
 
 # READY_LOCAL 2 — post-return ACK arrival-order challenge
 
