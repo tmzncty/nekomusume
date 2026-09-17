@@ -1,10 +1,12 @@
-# ChatGPT reviewer handoff — R9-3 READY with PTO time-base navigation
+# ChatGPT reviewer handoff — R9-3 READY with PTO/ACK-time navigation
 
 ## Current repository truth
 
-- Current `main` reviewer/navigation anchor: exact `319c6bbbb0a033237435c31aa6225ee18eaeaa02` (`docs(review): sharpen R9-3 PTO time-base contract`).
+- Current `main` reviewer/navigation anchor before this handoff update: exact `938e2901184aa0ddafcc7ed5a4993b3fc631ee36` (`docs(review): pin R9-3 ACK observation time`).
 - Latest developer-owned source/test commit reviewed remains exact `021d79d88dadc9dbc7cf749745b2395c06602b29` (`test(cli): P4-B assert server success (H-R9-039)`), building on `9091803`.
-- R9-3 navigation note: [`docs/reviews/reviewer-r9-3-pto-timebase-navigation-021d79d-20260917.md`](reviews/reviewer-r9-3-pto-timebase-navigation-021d79d-20260917.md), reachable at `319c6bb`.
+- R9-3 navigation notes:
+  - [`docs/reviews/reviewer-r9-3-pto-timebase-navigation-021d79d-20260917.md`](reviews/reviewer-r9-3-pto-timebase-navigation-021d79d-20260917.md), reachable at `319c6bb`;
+  - [`docs/reviews/reviewer-r9-3-ack-observation-time-021d79d-20260917.md`](reviews/reviewer-r9-3-ack-observation-time-021d79d-20260917.md), reachable at `938e290`.
 - H-R9-039 is closed at exact `021d79d`: P4-B retains `srv_status` and asserts `srv_status.success()` while preserving all exact P4-B residual-domain/oracle checks.
 - H-R9-038 is closed across exact `236e962` + `9091803` + `021d79d`: both P4 negatives prove server success, exact cardinality/identity, residual-domain terminal evidence, zero misclassification, typed nonzero client exit and no false settled premise.
 - P2 C1-C4 and H-R9-037/H-R9-036/H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier accepted repairs remain closed. Candidate A and B remain closed.
@@ -52,10 +54,20 @@ Use **one bounded monotonic relative recovery clock** for the complete cross-pro
 1. establish one local `Instant` origin for the reliable operation;
 2. convert `elapsed().as_micros()` into the existing `u64` recovery time domain with checked/saturating conversion;
 3. pass that time consistently to every relevant `on_packet_sent`, `on_retransmit_sent`, and Carrier `apply_ack` call owned by the operation;
-4. thread `now_us` into the existing shared `recv_udp_delivery_ack` owner (or an equivalently small wrapper) instead of creating a second ACK parser/demux owner;
+4. keep the existing shared `recv_udp_delivery_ack` ACK parser/demux owner rather than creating a second owner;
 5. keep Session DeliveryAck evidence separate from Carrier packet-ACK evidence.
 
+### ACK observation-time refinement
+
+`recv_udp_delivery_ack` may block in `recv_from` while waiting for a datagram. Therefore **do not sample one scalar `now_us` before entering the helper and reuse it after the blocking receive**. Thread the operation clock origin (or an equivalently tiny value source derived from it) into the existing ACK owner and sample elapsed time only after the authenticated Carrier ACK has actually been received/decrypted/decoded, immediately before `apply_ack`.
+
+This placement is required because `Recovery::on_ack` performs checked `now_us - sent_at_us`, `RttEstimator::update` ignores a zero RTT sample, time-threshold loss remains disabled while `loss_delay_us()==0`, and PTO itself does not declare the suppressed original lost. A retransmission ACK must therefore not be allowed to retire only the fresh copy while an intentionally suppressed original silently remains in flight.
+
+### PTO scheduling ownership
+
 The existing bounded `lab_pump` is the scheduling reference: drain ACKs, compute the PTO deadline from the oldest outstanding send plus committed Recovery PTO state, never fire before the deadline, call `pto_probe` at/after deadline, run `can_send` before retransmission ownership, re-seal the same logical Data under a fresh secure envelope/packet number, then call `on_retransmit_sent(fresh_pn, now_us, ..., stable_frame_id)` before socket send. Preserve current R9 `seal_unreliable(ProcessMessage::Data)` framing; do not copy the R8 lab's extra wire wrapper into R9.
+
+For cross-process R9, prefer a small **read-only Recovery/Runtime query** for authoritative oldest outstanding send time or PTO deadline rather than maintaining a second mutable recovery/timing ledger in `failover_client`. Any caller-side mirror must be derived-only and exact under ACK/loss/retransmit removal. `docs/spec/m2-udp-recovery.md` fixes the PTO formula but does not authorize this reviewer to invent new granularity/max-ACK-delay policy values; reuse already-committed M2 inputs and do not promote R8 lab fixture constants into a new runtime policy merely for convenience.
 
 For the discriminating regression, suppress exactly one reliable-owned Data **after** congestion admission and Recovery ownership commit:
 
@@ -68,13 +80,15 @@ Do not suppress before `on_packet_sent`, because that would test an unowned unse
 Implement and independently challenge the complete current M2 recovery contract on the cross-process R9 path:
 
 - the selected first packet is Recovery-owned before intentional wire suppression;
-- no PTO/retransmission event occurs before the computed deadline;
+- no PTO/retransmission event occurs before the computed deadline; diagnostic evidence must be strong enough to show `fired_at_us >= deadline_us`;
 - after the deadline, exactly the expected stable `FrameId` probe is scheduled;
 - retransmission preserves stream/offset/payload/logical identity and stable `FrameId`, but uses a fresh packet number / crypto nonce;
 - every first send and retransmission calls `can_send` before committing Recovery ownership;
 - receiver Session delivery for the logical range remains exactly once;
 - Session DeliveryAck and Carrier ACK are separately observable and neither substitutes for the other;
-- retransmission ACK application uses the same monotonic recovery time base and is not spuriously rejected;
+- retransmission ACK application samples observation time after receipt from the same monotonic recovery origin and is not spuriously rejected;
+- the positive Carrier retirement for the fresh retransmission is not by itself final settlement: prove the intentionally suppressed original is also removed by the committed loss rules and final Recovery `in_flight == 0` exactly;
+- accepted-empty or typed-rejected ACK evidence cannot substitute for the required real retransmission retirement/loss closure;
 - positive completion requires Session logical confirmation complete and Recovery `in_flight == 0`;
 - any bounded terminal negative reports the actual residual domain and emits no false settlement/failover success.
 
