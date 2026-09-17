@@ -218,6 +218,10 @@ pub struct Recovery {
     sent: BTreeMap<u64, SentPacket>,
     // Count copies: original and retransmission may overlap in flight.
     outstanding_frames: BTreeMap<FrameId, usize>,
+    // H-R9-040: frames with positive Carrier-ACK evidence on at least one
+    // packet copy. Once a frame is positively ACKed it is never again
+    // retransmission-eligible, even if another overlapping copy is lost later.
+    acked_frames: BTreeSet<FrameId>,
     max_sent_packets: usize,
     max_frames_per_packet: usize,
     pub rtt: RttEstimator,
@@ -243,6 +247,7 @@ impl Recovery {
         Ok(Self {
             sent: BTreeMap::new(),
             outstanding_frames: BTreeMap::new(),
+            acked_frames: BTreeSet::new(),
             max_sent_packets,
             max_frames_per_packet,
             rtt: RttEstimator::default(),
@@ -280,6 +285,20 @@ impl Recovery {
     pub fn in_flight(&self) -> usize {
         self.sent.len()
     }
+    /// Read-only PTO deadline query — the earliest outstanding sent timestamp
+    /// plus the current PTO interval. None when nothing is in flight. The
+    /// caller reads this BEFORE firing `pto_probe`; `ReliableUdpRuntime`
+    /// advances `pto_count` only on probe.
+    pub fn next_pto_deadline_us(&self, granularity_us: u64, max_ack_delay_us: u64) -> Option<u64> {
+        let oldest = self.sent.values().map(|p| p.sent_at_us).min()?;
+        Some(
+            oldest.saturating_add(self.rtt.pto_us(
+                granularity_us,
+                max_ack_delay_us,
+                self.pto_count,
+            )),
+        )
+    }
     pub fn on_ack(
         &mut self,
         ack: &AckRanges,
@@ -315,6 +334,9 @@ impl Recovery {
             out.acked_bytes = out.acked_bytes.saturating_add(p.bytes);
             out.acked_packets.push(n);
             for f in p.frames {
+                // H-R9-040: mark the frame positively ACKed — it is never
+                // retransmission-eligible again even if another copy is lost.
+                self.acked_frames.insert(f);
                 Self::release_frame(&mut self.outstanding_frames, f);
             }
         }
@@ -335,6 +357,13 @@ impl Recovery {
             out.retransmit_bytes = out.retransmit_bytes.saturating_add(p.bytes);
             out.lost_packets.push(n);
             for f in p.frames {
+                // H-R9-040: a frame already positively ACKed on another copy is
+                // not retransmission-eligible — its final-copy removal here is
+                // copy lifetime only, not scheduled retransmit work.
+                if self.acked_frames.contains(&f) {
+                    Self::release_frame(&mut self.outstanding_frames, f);
+                    continue;
+                }
                 if Self::release_frame(&mut self.outstanding_frames, f) {
                     frames.insert(f);
                 }
@@ -382,6 +411,7 @@ impl Recovery {
             .outstanding_frames
             .keys()
             .copied()
+            .filter(|f| !self.acked_frames.contains(f))
             .take(max_probe_frames)
             .collect())
     }
@@ -655,7 +685,10 @@ mod tests {
         ack.insert(1).unwrap();
         let first = r.on_ack(&ack, 2, 0).unwrap();
         assert_eq!(first.retransmit_frames, Vec::<FrameId>::new());
-        assert_eq!(r.on_pto(1).unwrap(), vec![FrameId(9)]);
+        // H-R9-040: frame 9 already has positive ACK evidence on packet 1 —
+        // it is no longer retransmission-eligible even though the overlapping
+        // packet-2 copy is still outstanding.
+        assert!(r.on_pto(1).unwrap().is_empty());
         ack.insert(2).unwrap();
         let second = r.on_ack(&ack, 3, 0).unwrap();
         assert_eq!(second.acked_packets, vec![2]);
