@@ -2112,10 +2112,16 @@ fn failover_server(args: &[String]) {
                                         ),
                                     );
                                 }
+                                // READY_LOCAL 1 P4 seam: suppress ONLY the
+                                // post-return Carrier packet ACK — Session
+                                // DeliveryAck is still sent. The pending ACK
+                                // obligation is consumed but not sent.
+                                let suppress_pack =
+                                    args.iter().any(|a| a == "--suppress-r9-post-return-pack");
                                 // Ordinary path (no seam): emit the Carrier
                                 // packet ACK after the Session DeliveryAck,
                                 // preserving the pre-H-R9-030 P2 ordering.
-                                if reliable_udp && !seam_active {
+                                if reliable_udp && !seam_active && !suppress_pack {
                                     if let Some(pack) = &post_ack_pack {
                                         if let Ok(sealed_pack) = udp_session.seal_unreliable(pack) {
                                             let _ = udp.send_to(&sealed_pack, post_source);

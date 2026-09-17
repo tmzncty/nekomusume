@@ -3162,6 +3162,219 @@ fn reliable_udp_stale_ack_settlement_phase_is_accepted_empty() {
     );
 }
 #[test]
+fn reliable_udp_post_return_carrier_ack_withheld_fails() {
+    // READY_LOCAL 1 P4: Session DeliveryAck arrives but the post-return
+    // Carrier packet ACK is withheld. Client must exit typed/nonzero with
+    // Session complete but Recovery still nonzero — no settled premise.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-p4a-server");
+    let cp = tmp("r9-p4a-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--suppress-r9-post-return-pack",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-p4a-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-p4a-cli",
+        ])
+        .output()
+        .unwrap();
+    let (_srv_status, server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    // Session ACK arrived and was applied; Carrier ACK was withheld.
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_return_delivery_ack\""),
+        "{client_log}"
+    );
+    // Client exits nonzero on the bounded post-return deadline — no settled
+    // premise, no Carrier transition.
+    assert!(!out.status.success(), "{client_log}");
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
+        "{client_log}"
+    );
+    // Server proved the post-return owner was reached and sent the Session
+    // ACK but no Carrier packet ACK.
+    assert!(
+        server_log.contains("\"event\":\"udp_return_delivery_ack_sent\""),
+        "{server_log}"
+    );
+    assert!(
+        !server_log.contains("\"event\":\"udp_return_packet_ack_sent\""),
+        "{server_log}"
+    );
+}
+#[test]
+fn reliable_udp_post_return_session_ack_withheld_fails() {
+    // READY_LOCAL 2 P4: post-return Carrier packet ACK arrives but the Session
+    // DeliveryAck is withheld. Client must exit typed/nonzero — Recovery may
+    // settle but Session stays outstanding, no settled premise.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-p4b-server");
+    let cp = tmp("r9-p4b-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--suppress-r9-dack",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-p4b-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-p4b-cli",
+        ])
+        .output()
+        .unwrap();
+    let (_srv_status, server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    // Carrier packet ACK arrived and retired the packet; Session ACK withheld.
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_return_packet_ack\""),
+        "{client_log}"
+    );
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_return_delivery_ack\""),
+        "{client_log}"
+    );
+    // Typed nonzero exit on the bounded deadline — no settled premise, no
+    // downstream success continuation.
+    assert!(!out.status.success(), "{client_log}");
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
+        "{client_log}"
+    );
+    // Server sent the Carrier ACK but no Session DeliveryAck.
+    assert!(
+        server_log.contains("\"event\":\"udp_return_packet_ack_sent\""),
+        "{server_log}"
+    );
+    assert!(
+        !server_log.contains("\"event\":\"udp_return_delivery_ack_sent\""),
+        "{server_log}"
+    );
+}
+#[test]
 fn reliable_udp_post_return_reversed_ack_order_settles() {
     // READY_LOCAL 2: pure order challenge — Carrier packet ACK arrives BEFORE
     // the Session DeliveryAck on the post-return owner. Settlement still
