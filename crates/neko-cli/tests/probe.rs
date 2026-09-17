@@ -3624,24 +3624,6 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
             .unwrap_or(u64::MAX);
         assert!(f >= d, "{client_log}");
     }
-    let deadline_us = pto_ev[0]
-        .split("\"deadline_us\":")
-        .nth(1)
-        .and_then(|v| {
-            v.trim_end_matches(|c: char| !c.is_ascii_digit())
-                .parse::<u64>()
-                .ok()
-        })
-        .unwrap_or(u64::MAX);
-    let fired_at_us = pto_ev[0]
-        .split("\"fired_at_us\":")
-        .nth(1)
-        .and_then(|v| {
-            v.trim_end_matches(|c: char| !c.is_ascii_digit())
-                .parse::<u64>()
-                .ok()
-        })
-        .unwrap_or(u64::MAX);
     // PTO retransmitted with fresh packet numbers, stable frame identity.
     let re_ev: Vec<&str> = client_log
         .lines()
