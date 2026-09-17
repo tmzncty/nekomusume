@@ -1,14 +1,14 @@
-# ChatGPT reviewer handoff — H-R9-034 independently closed; P2 exact closure is queue head
+# ChatGPT reviewer handoff — P2 C1-C4 closed at 142f0a1; R9-3 blocked on ACK order + P4
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit independently reviewed: exact `b801b65cee8bfef196b6142ee6f5a9bfa876691a` (`fix(cli): H-R9-034 settlement-phase accepted-empty classification + late stale seam`).
-- Latest independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-034-b801b65-20260917.md`](reviews/reviewer-r9-h-r9-034-b801b65-20260917.md), reachable through reviewer commit `52e94036e84e819a80c1c654b6ed5332e8f038ce`.
-- H-R9-034 is closed at exact `b801b65`: settlement and initial receive continuations now classify authenticated accepted-empty Carrier feedback consistently without promoting it to a transition/rejection; the late-stale built-binary seam proves the settlement continuation can actually consume that class after the logical confirmations.
-- H-R9-033 initial-loop accepted-empty classification remains closed at `7a7c48c`; H-R9-028 one-shot initial stale/future injection remains closed at `206b4b9`; H-R9-032 post-return packet-number cross-bind/order proof remains closed at `ddafbb1`; H-R9-031/H-R9-030/H-R9-029/H-R9-026 semantics remain accepted absent contradictory exact-current evidence.
-- Candidate A remains closed in exact-current `Recovery::on_ack`: `largest > largest_sent` rejects before RTT/loss/PTO mutation. Candidate B remains closed in exact-current `record_datagrams`: only the queue-dropped subset maps to `queue_full`; remaining generic drops are `terminal`.
-- Repository-persisted **developer-local** clean exact-tree provenance for pushed `b801b65` records `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, 2026-09-16T23:12:11Z → 2026-09-16T23:15:35Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). This is developer-local evidence, not reviewer execution.
-- Separate GitHub-hosted Rust CI for exact `b801b65`, run `35161172315`, completed SUCCESS: `stable checks` passed `bash scripts/check.sh`; `nightly decode fuzz smoke` also passed. Hosted CI is cross-evidence only.
+- Latest developer-owned source/test commit reviewed: exact `142f0a1c0d01c6f22278b4fc96cf758396e2511b` (`test(cli): P2 C1-C3 exact — TCP replay seq/stream bind + migration cardinality + server dual-domain`). Tests only.
+- Prior independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-034-b801b65-20260917.md`](reviews/reviewer-r9-h-r9-034-b801b65-20260917.md), reachable through reviewer commit `52e94036e84e819a80c1c654b6ed5332e8f038ce`.
+- H-R9-034 is closed at exact `b801b65`: settlement and initial receive continuations now classify authenticated accepted-empty Carrier feedback consistently.
+- P2 C1-C4 exact closure is complete at `142f0a1` + `8d0ccd5`: C1 binds `seq=2`/`stream=1`/`offset=32` on both client and server; C2 requires exactly once each milestone with strict order and offset-48 pre-promotion exclusion; C3 requires full `stream=1`/`offset=48`/`len=16` on `udp_return_delivery_ack_sent`; C4 requires `retired:true` and zero rejected/accepted-empty.
+- H-R9-033/H-R9-028/H-R9-032 remain closed.
+- Candidate A and B remain closed.
+- Developer-local clean exact-tree provenance for `142f0a1`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-16T23:57:49Z → 2026-09-17T00:00:54Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
 - Open PRs at review time: none.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
