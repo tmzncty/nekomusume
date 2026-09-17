@@ -336,8 +336,14 @@ impl Recovery {
             for f in p.frames {
                 // H-R9-040: mark the frame positively ACKed — it is never
                 // retransmission-eligible again even if another copy is lost.
-                self.acked_frames.insert(f);
-                Self::release_frame(&mut self.outstanding_frames, f);
+                // If this ACK removed the last outstanding copy, the frame
+                // lifecycle ends here and the marker is pruned so a later
+                // fresh lifecycle reusing the same FrameId is not suppressed.
+                if Self::release_frame(&mut self.outstanding_frames, f) {
+                    self.acked_frames.remove(&f);
+                } else {
+                    self.acked_frames.insert(f);
+                }
             }
         }
         let delay = self.rtt.loss_delay_us();
@@ -359,9 +365,12 @@ impl Recovery {
             for f in p.frames {
                 // H-R9-040: a frame already positively ACKed on another copy is
                 // not retransmission-eligible — its final-copy removal here is
-                // copy lifetime only, not scheduled retransmit work.
+                // copy lifetime only, not scheduled retransmit work. When the
+                // last outstanding copy retires the marker is pruned.
                 if self.acked_frames.contains(&f) {
-                    Self::release_frame(&mut self.outstanding_frames, f);
+                    if Self::release_frame(&mut self.outstanding_frames, f) {
+                        self.acked_frames.remove(&f);
+                    }
                     continue;
                 }
                 if Self::release_frame(&mut self.outstanding_frames, f) {
@@ -693,6 +702,50 @@ mod tests {
         let second = r.on_ack(&ack, 3, 0).unwrap();
         assert_eq!(second.acked_packets, vec![2]);
         assert!(r.on_pto(1).unwrap().is_empty());
+    }
+    #[test]
+    fn acked_frame_marker_pruned_after_final_copy_retires() {
+        // H-R9-040 prune contract: the positive-ACK marker is state for the
+        // current frame lifecycle only — once the last outstanding copy
+        // retires, a fresh lifecycle reusing the same FrameId must be
+        // retransmission-eligible again.
+        let mut r = Recovery::new(4, 1).unwrap();
+        r.on_sent(packet(1, 0, 9)).unwrap();
+        let mut ack = AckRanges::new(1).unwrap();
+        ack.insert(1).unwrap();
+        r.on_ack(&ack, 2, 0).unwrap();
+        // Single-copy lifecycle fully retired — marker pruned, not stale.
+        assert!(!r.frame_outstanding(FrameId(9)));
+        // Fresh higher-numbered packet carries the same FrameId 9. Before any
+        // ACK of the new lifecycle, PTO must be allowed to select it.
+        r.on_sent(packet(2, 3, 9)).unwrap();
+        assert_eq!(r.on_pto(1).unwrap(), vec![FrameId(9)]);
+    }
+    #[test]
+    fn acked_marker_survives_while_sibling_copy_outstanding() {
+        // Split-call: sibling ACK then later loss — PTO suppressed while the
+        // old sibling copy remains, final loss emits no retransmit, marker
+        // pruned once the last copy retires.
+        let mut r = Recovery::new(4, 1).unwrap();
+        r.on_sent(packet(1, 0, 9)).unwrap();
+        r.on_sent(packet(2, 1, 9)).unwrap();
+        let mut ack = AckRanges::new(1).unwrap();
+        ack.insert(1).unwrap();
+        r.on_ack(&ack, 2, 0).unwrap();
+        assert!(r.on_pto(1).unwrap().is_empty());
+        // Declare packet 2 lost via packet threshold after later sends.
+        r.on_sent(packet(3, 3, 20)).unwrap();
+        r.on_sent(packet(4, 4, 21)).unwrap();
+        r.on_sent(packet(5, 5, 22)).unwrap();
+        let mut a2 = AckRanges::new(5).unwrap();
+        a2.insert(3).unwrap();
+        a2.insert(4).unwrap();
+        a2.insert(5).unwrap();
+        let x = r.on_ack(&a2, 10_000, 0).unwrap();
+        // Frame 9's last copy (packet 2) was lost — but it was already ACKed,
+        // so it emits no retransmit work and the marker is pruned.
+        assert!(!x.retransmit_frames.contains(&FrameId(9)));
+        assert!(!r.frame_outstanding(FrameId(9)));
     }
 
     #[test]

@@ -3560,9 +3560,10 @@ fn failover_client(args: &[String]) {
                     );
                     let probes = rt.pto_probe();
                     for (frame, plaintext) in probes {
-                        if !rt.can_send(plaintext.len() as u64) {
-                            continue;
-                        }
+                        // H-R9-041: congestion admission is checked on the
+                        // exact encoded wire bytes, not the plaintext — encode
+                        // and seal first, then admit re_sealed.len() before
+                        // Recovery ownership commit.
                         let re_msg = ProcessMessage::Data {
                             session: SessionId(7001),
                             record: OutboundRecord {
@@ -3576,6 +3577,9 @@ fn failover_client(args: &[String]) {
                         let Ok(re_sealed) = us.seal_unreliable(&re_msg) else {
                             continue;
                         };
+                        if !rt.can_send(re_sealed.len() as u64) {
+                            continue;
+                        }
                         let rpn = u64::from_be_bytes(re_sealed[..8].try_into().unwrap_or([0u8; 8]));
                         if rt
                             .on_retransmit_sent(rpn, now_us, re_sealed.len() as u64, frame)
@@ -4680,10 +4684,6 @@ fn lab_pump(
             }
             for (frame, plaintext) in probes {
                 st.c.retransmit_attempts += 1;
-                if !rt.can_send(plaintext.len() as u64) {
-                    st.c.retransmit_refused += 1;
-                    continue;
-                }
                 let msg = ProcessMessage::Data {
                     session: SessionId(1),
                     record: OutboundRecord {
@@ -4702,6 +4702,11 @@ fn lab_pump(
                     Ok(s) => s,
                     Err(_) => continue,
                 };
+                // H-R9-041: admission on exact encoded wire bytes.
+                if !rt.can_send(sealed.len() as u64) {
+                    st.c.retransmit_refused += 1;
+                    continue;
+                }
                 let rpn = u64::from_be_bytes(sealed[..8].try_into().expect("sequence prefix"));
                 if rt
                     .on_retransmit_sent(rpn, st.now_us, sealed.len() as u64, frame)
