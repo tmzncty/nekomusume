@@ -3757,6 +3757,17 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
         .map(|(i, _)| i)
         .next()
         .expect("lifecycle-resolving Carrier retirement present");
+    // H-R9-046: every retransmit diagnostic occurs strictly before the
+    // lifecycle-resolving retirement — after the frame is positively ACKed,
+    // no further retransmit is emitted for it.
+    for (i, l) in client_log.lines().enumerate() {
+        if l.contains("\"event\":\"r9_udp_retransmit_sent\"") {
+            assert!(
+                i < resolve_pos,
+                "post-retirement retransmit at line {i} {client_log}"
+            );
+        }
+    }
     let dack_pos = client_log
         .lines()
         .enumerate()
