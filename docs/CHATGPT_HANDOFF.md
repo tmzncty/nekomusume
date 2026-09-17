@@ -1,12 +1,13 @@
-# ChatGPT reviewer handoff — R9-3 READY with PTO/ACK-time navigation
+# ChatGPT reviewer handoff — R9-3 READY with implementation-ready PTO/ACK ownership
 
 ## Current repository truth
 
-- Current `main` reviewer/navigation anchor before this handoff update: exact `938e2901184aa0ddafcc7ed5a4993b3fc631ee36` (`docs(review): pin R9-3 ACK observation time`).
+- Current `main` reviewer/navigation anchor before this handoff update: exact `bb96fabf666e776584f1d9f6d286974752434ef8` (`docs(review): make R9-3 PTO ownership implementation-ready`).
 - Latest developer-owned source/test commit reviewed remains exact `021d79d88dadc9dbc7cf749745b2395c06602b29` (`test(cli): P4-B assert server success (H-R9-039)`), building on `9091803`.
 - R9-3 navigation notes:
   - [`docs/reviews/reviewer-r9-3-pto-timebase-navigation-021d79d-20260917.md`](reviews/reviewer-r9-3-pto-timebase-navigation-021d79d-20260917.md), reachable at `319c6bb`;
-  - [`docs/reviews/reviewer-r9-3-ack-observation-time-021d79d-20260917.md`](reviews/reviewer-r9-3-ack-observation-time-021d79d-20260917.md), reachable at `938e290`.
+  - [`docs/reviews/reviewer-r9-3-ack-observation-time-021d79d-20260917.md`](reviews/reviewer-r9-3-ack-observation-time-021d79d-20260917.md), reachable at `938e290`;
+  - [`docs/reviews/reviewer-r9-3-pto-api-ownership-021d79d-20260917.md`](reviews/reviewer-r9-3-pto-api-ownership-021d79d-20260917.md), reachable at `bb96fab`.
 - H-R9-039 is closed at exact `021d79d`: P4-B retains `srv_status` and asserts `srv_status.success()` while preserving all exact P4-B residual-domain/oracle checks.
 - H-R9-038 is closed across exact `236e962` + `9091803` + `021d79d`: both P4 negatives prove server success, exact cardinality/identity, residual-domain terminal evidence, zero misclassification, typed nonzero client exit and no false settled premise.
 - P2 C1-C4 and H-R9-037/H-R9-036/H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier accepted repairs remain closed. Candidate A and B remain closed.
@@ -63,17 +64,28 @@ Use **one bounded monotonic relative recovery clock** for the complete cross-pro
 
 This placement is required because `Recovery::on_ack` performs checked `now_us - sent_at_us`, `RttEstimator::update` ignores a zero RTT sample, time-threshold loss remains disabled while `loss_delay_us()==0`, and PTO itself does not declare the suppressed original lost. A retransmission ACK must therefore not be allowed to retire only the fresh copy while an intentionally suppressed original silently remains in flight.
 
-### PTO scheduling ownership
+### PTO scheduling / API ownership refinement
 
 The existing bounded `lab_pump` is the scheduling reference: drain ACKs, compute the PTO deadline from the oldest outstanding send plus committed Recovery PTO state, never fire before the deadline, call `pto_probe` at/after deadline, run `can_send` before retransmission ownership, re-seal the same logical Data under a fresh secure envelope/packet number, then call `on_retransmit_sent(fresh_pn, now_us, ..., stable_frame_id)` before socket send. Preserve current R9 `seal_unreliable(ProcessMessage::Data)` framing; do not copy the R8 lab's extra wire wrapper into R9.
 
-For cross-process R9, prefer a small **read-only Recovery/Runtime query** for authoritative oldest outstanding send time or PTO deadline rather than maintaining a second mutable recovery/timing ledger in `failover_client`. Any caller-side mirror must be derived-only and exact under ACK/loss/retransmit removal. `docs/spec/m2-udp-recovery.md` fixes the PTO formula but does not authorize this reviewer to invent new granularity/max-ACK-delay policy values; reuse already-committed M2 inputs and do not promote R8 lab fixture constants into a new runtime policy merely for convenience.
+Exact-current ownership is now narrow enough to implement without a maintainer decision:
 
-For the discriminating regression, suppress exactly one reliable-owned Data **after** congestion admission and Recovery ownership commit:
+- `Recovery` already owns the authoritative outstanding `SentPacket` map, RTT estimator and `pto_count`;
+- `ReliableUdpRuntime::pto_probe()` advances PTO state, so the deadline must be queried before firing it;
+- `ReliableUdpRuntime::on_retransmit_sent(...)` does not itself enforce congestion admission, so the caller must prove `can_send(exact_encoded_bytes)` before retransmission Recovery ownership commit;
+- the R8 lab already uses `LAB_PTO_GRANULARITY_US = 1_000` and `LAB_MAX_ACK_DELAY_US = 0`. Those values may be reused for this existing M2 fixture baseline; do not turn them into a new global runtime/security policy.
 
-`can_send -> seal/current packet number -> on_packet_sent -> [test-only one-shot socket-send suppression]`.
+Prefer a small **read-only Recovery/Runtime deadline query** over a second mutable ledger in `failover_client`. The smallest acceptable conceptual API is:
 
-Do not suppress before `on_packet_sent`, because that would test an unowned unsent record rather than packet loss after congestion admission.
+`next_pto_deadline_us(granularity_us, max_ack_delay_us) -> Option<u64>`
+
+computed from the authoritative oldest outstanding ack-eliciting `SentPacket.sent_at_us` plus the current `rtt.pto_us(..., pto_count)`, then threaded read-only through `PathRecovery` / `ReliableUdpRuntime`. Exact function naming is not normative. Do not expose the mutable sent map, allocate a second packet number, or alter ACK/Session/crypto/wire semantics.
+
+For the discriminating regression, suppress exactly one reliable-owned Data **after** congestion admission and Recovery ownership commit. Because exact congestion bytes are the encoded packet bytes, sealing may occur before the gate if needed to know the exact length; burning a fresh nonce is acceptable, nonce reuse is not. The invariant is:
+
+`seal/current packet number -> can_send(exact encoded bytes) -> on_packet_sent -> [test-only one-shot socket-send suppression]`.
+
+No socket send and no Recovery ownership commit may occur after a failed congestion gate.
 
 # READY_LOCAL 1 — R9-3 Data-loss recovery
 
@@ -81,6 +93,7 @@ Implement and independently challenge the complete current M2 recovery contract 
 
 - the selected first packet is Recovery-owned before intentional wire suppression;
 - no PTO/retransmission event occurs before the computed deadline; diagnostic evidence must be strong enough to show `fired_at_us >= deadline_us`;
+- add a deterministic just-before-deadline negative proving zero PTO/retransmit event, then advance to/after deadline and prove exactly one firing;
 - after the deadline, exactly the expected stable `FrameId` probe is scheduled;
 - retransmission preserves stream/offset/payload/logical identity and stable `FrameId`, but uses a fresh packet number / crypto nonce;
 - every first send and retransmission calls `can_send` before committing Recovery ownership;
