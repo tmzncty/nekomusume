@@ -3257,9 +3257,21 @@ fn reliable_udp_post_return_carrier_ack_withheld_fails() {
             && dack_ev[0].contains("\"len\":16"),
         "{client_log}"
     );
+    // Exactly one client post-return send (identity for the withheld domain).
+    let send_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_sent\""))
+        .collect();
+    assert_eq!(send_ev.len(), 1, "{client_log}");
     // Zero positive Carrier transition for the post-return packet.
     assert!(
         !client_log.contains("\"event\":\"r9_udp_return_packet_ack\""),
+        "{client_log}"
+    );
+    // Zero rejected/accepted-empty substitute on the withheld-Carrier path.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\"")
+            && !client_log.contains("\"event\":\"r9_udp_return_packet_ack_accepted_empty\""),
         "{client_log}"
     );
     // Residual evidence: Session complete, Recovery still nonzero.
