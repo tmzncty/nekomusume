@@ -2348,11 +2348,17 @@ fn reliable_udp_migration_back_reserves_final_record() {
             "{client_log}"
         );
         // Dedicated post-return terminal evidence: exact stream/offset and
-        // authoritative post-return remaining_in_flight=0.
+        // authoritative post-return remaining_in_flight=0. H-R9-035: exactly
+        // one settled event — not merely "contains".
+        let settled: Vec<&str> = client_log
+            .lines()
+            .filter(|l| l.contains("\"event\":\"r9_udp_post_return_settled\""))
+            .collect();
+        assert_eq!(settled.len(), 1, "{client_log}");
         assert!(
-            client_log.contains(
-                "\"event\":\"r9_udp_post_return_settled\",\"seq\":0,\"stream\":1,\"offset\":48,\"remaining_in_flight\":0"
-            ),
+            settled[0].contains("\"stream\":1")
+                && settled[0].contains("\"offset\":48")
+                && settled[0].contains("\"remaining_in_flight\":0"),
             "{client_log}"
         );
     }
