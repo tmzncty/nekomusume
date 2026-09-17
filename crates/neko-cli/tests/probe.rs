@@ -3601,6 +3601,29 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
         .filter(|l| l.contains("\"event\":\"r9_udp_pto_fired\""))
         .collect();
     assert!(!pto_ev.is_empty(), "{client_log}");
+    // H-R9-044: EVERY PTO event must fire at/after its own deadline, not just
+    // the first. Parse and check each one.
+    for e in &pto_ev {
+        let d = e
+            .split("\"deadline_us\":")
+            .nth(1)
+            .and_then(|v| {
+                v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                    .parse::<u64>()
+                    .ok()
+            })
+            .unwrap_or(u64::MAX);
+        let f = e
+            .split("\"fired_at_us\":")
+            .nth(1)
+            .and_then(|v| {
+                v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                    .parse::<u64>()
+                    .ok()
+            })
+            .unwrap_or(u64::MAX);
+        assert!(f >= d, "{client_log}");
+    }
     let deadline_us = pto_ev[0]
         .split("\"deadline_us\":")
         .nth(1)
@@ -3619,7 +3642,6 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
                 .ok()
         })
         .unwrap_or(u64::MAX);
-    assert!(fired_at_us >= deadline_us, "{client_log}");
     // PTO retransmitted with fresh packet numbers, stable frame identity.
     let re_ev: Vec<&str> = client_log
         .lines()
@@ -3697,10 +3719,12 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
         })
         .unwrap_or(u64::MAX);
     assert_eq!(re_pn, srv_ack_pn, "{client_log} {server_log}");
-    // Zero rejected/accepted-empty on this recovery path.
+    // H-R9-044: typed rejection stays zero, but a sibling/late Carrier ACK
+    // may legitimately classify accepted-empty under repeated PTO — it is a
+    // classification-only outcome that must not create a second Session
+    // transition or a new ownership transition.
     assert!(
-        !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\"")
-            && !client_log.contains("\"event\":\"r9_udp_return_packet_ack_accepted_empty\""),
+        !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\""),
         "{client_log}"
     );
     // Exactly one settled event with remaining_in_flight=0.
