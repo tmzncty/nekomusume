@@ -1,12 +1,14 @@
-# ChatGPT reviewer handoff — H-R9-038 closed at 9091803; R9-3 blocked on final provenance
+# ChatGPT reviewer handoff — H-R9-039 reopened at exact `9091803`; R9-3 blocked
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `9091803c1e82c5ad168d9821288caf38bd674c57` (`test(cli): H-R9-038 P4 dual-domain exact oracle — residual evidence + full cardinality + three-way bind`), building on `a523733`.
-- Prior independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-038-p4-dual-suppression-oracle-a523733-20260917.md`](reviews/reviewer-r9-h-r9-038-p4-dual-suppression-oracle-a523733-20260917.md), reachable through reviewer commit `4dd120d15cbfce054a792ab48f9a8b711c03fa67`.
-- H-R9-038 is closed at exact `9091803` + `a523733`: both P4 negatives now prove server success, exact event cardinality, residual-domain terminal evidence (`r9_udp_post_return_residual` with `session_outstanding`/`remaining_in_flight`), zero misclassification, typed nonzero exit, and no false settled premise. P4a binds `stream=1 offset=48 len=16` on both sides; P4b binds three-way packet-number equality.
-- P2 C1-C4 and H-R9-037/H-R9-036/H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier accepted repairs remain closed. Candidate A and B remain closed.
-- Developer-local clean exact-tree provenance for `9091803`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T05:54:37Z → 2026-09-17T05:58:18Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- Latest developer-owned source/test commit reviewed: exact `9091803c1e82c5ad168d9821288caf38bd674c57` (`test(cli): H-R9-038 P4 dual-domain exact oracle — residual evidence + full cardinality + three-way bind`).
+- Latest independent reviewer finding: [`docs/reviews/reviewer-r9-h-r9-039-p4b-server-exit-oracle-9091803-20260917.md`](reviews/reviewer-r9-h-r9-039-p4b-server-exit-oracle-9091803-20260917.md), reachable through reviewer commit `fe3c87330c7e23986f893d98b3ff22d578e7bae5`.
+- **H-R9-039 is OPEN (HIGH, evidence/oracle correctness).** P4-B still discards `finish_server` status and therefore does not prove the server succeeded, despite the prior handoff/commit message claiming that both P4 negatives prove server success.
+- H-R9-038 is otherwise substantially closed at exact `9091803` + `236e962` + `a523733`: P4-A has server-success proof, exact Session identity/cardinality, residual-domain terminal evidence, zero false Carrier transition/classification and no false settlement; P4-B already has exact positive Carrier retirement, three-way packet-number equality, residual-domain evidence, zero Session transition, zero rejected/accepted-empty substitute, client nonzero terminal and no false settlement. H-R9-039 is the remaining P4-B server-exit subclaim.
+- P2 C1-C4 and H-R9-037/H-R9-036/H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier accepted repairs remain closed. Candidate A (`Recovery::on_ack` future/never-sent guard) and candidate B (`record_datagrams` mixed queue/generic drop classification) remain closed.
+- Developer-local clean exact-tree provenance for exact `9091803` is persisted in repository history: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T05:54:37Z → 2026-09-17T05:58:18Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). This provenance remains valid for exact `9091803`, but **cannot close the final R9-2 tree after H-R9-039 changes tests/source**; rerun the exact-tree gate on the final pushed H-R9-039 closure SHA.
+- GitHub-hosted Rust CI for exact `9091803` run `35187570848` is green (`stable checks`, `nightly decode fuzz smoke`). Hosted CI is separate cross-evidence and does not repair the weak P4-B assertion.
 - Open PRs at review time: none.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
@@ -16,7 +18,7 @@ The external coding agent must synchronize to current `main` and continuously ex
 
 Do not revert these exact-current repairs without contradictory evidence:
 
-- H-R9-038 P4 dual-domain exact oracle at `9091803`.
+- H-R9-038 P4 dual-domain residual diagnostics and exact-oracle strengthening at `236e962` + `9091803`, except for H-R9-039's P4-B server-exit gap.
 - H-R9-037 reverse-order true three-way packet bind at `d5d5b23`, independently reviewed at `f2529087`.
 - H-R9-036 reverse-order exact oracle at `855c679`.
 - Post-return ACK arrival-order challenge at `83d10b0` + `424583d` + `855c679` + `d5d5b23`.
@@ -33,52 +35,36 @@ Do not revert these exact-current repairs without contradictory evidence:
 - H-R9-020 count=4 ownership accounting (`2 reliable UDP + 1 uncertain TCP + 1 post-return reliable = 4`).
 - reversed initial Session ACK buffering/ordered application.
 
-## H-R9-038 exact finding
+## H-R9-039 exact finding
 
-`a523733` adds the smallest post-return-only Carrier-ACK suppression seam and two P4 process tests, but the tests do not yet satisfy the handoff acceptance contract.
+`reliable_udp_post_return_session_ack_withheld_fails` at exact `9091803` still contains:
 
-### P4-A current weakness — Session ACK present / Carrier ACK withheld
-
-`reliable_udp_post_return_carrier_ack_withheld_fails` currently:
-
-- discards server exit status returned by `finish_server`;
-- checks only broad presence of `r9_udp_return_delivery_ack`, not exactly one `stream=1 offset=48 len=16` transition;
-- checks broad server presence/absence rather than exact cardinality;
-- has no classification-only residual-state proof that Session is complete while Recovery remains nonzero;
-- does not fully exclude downstream success continuation from a false settlement premise.
-
-### P4-B current weakness — Carrier ACK present / Session ACK withheld
-
-`reliable_udp_post_return_session_ack_withheld_fails` currently:
-
-- discards server exit status;
-- checks only broad presence of `r9_udp_return_packet_ack`, not exactly one positive `applied=true, retired=true` transition;
-- does not require exactly-one client send / server Carrier ACK / client retirement or their three-way packet-number equality;
-- does not exclude accepted-empty/rejected substitutes;
-- has no residual-state proof that Recovery is zero while one Session range remains outstanding.
-
-The current source seam itself does not prove a new runtime-state contradiction. Repair the oracle first; if the stronger oracle exposes one, then perform the smallest current-semantics runtime repair.
-
-# READY_LOCAL 1 — CLOSED at 9091803
-
-H-R9-038A exact P4 Carrier-ACK-withheld proof is complete. All required assertions are present in `reliable_udp_post_return_carrier_ack_withheld_fails`.
-
-# READY_LOCAL 2 — CLOSED at 9091803
-
-H-R9-038B exact P4 Session-ACK-withheld proof is complete. All required assertions are present in `reliable_udp_post_return_session_ack_withheld_fails`.
-
-# READY_LOCAL 3 — final R9-2 developer-local exact-tree provenance
-
-After READY_LOCAL 1-2 are on one final pushed R9-2 source/test SHA, use a safe clean checkout/worktree and run at least:
-
-```text
-PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
-git diff --check
+```rust
+let (_srv_status, server_log) = finish_server(server);
 ```
 
-Persist exact reachable pushed SHA, UTC start/end, OS/arch, Rust stable version, both exit codes, clean initial/final tree, and clearly label the evidence developer-local. Run `cargo fuzz build decode` plus `cargo fuzz run decode -- -max_total_time=30 -max_len=8192` through `scripts/fuzz-toolchain.sh` only if this R9-2 closure actually changes decoder/parser/crypto framing. Hosted Actions remain separate cross-evidence. Continue directly to R9-3 after this gate; do not wait for the next reviewer.
+P4-B then proves exactly one positive Carrier retirement, three-way packet-number equality, residual `remaining_in_flight=0` / `session_outstanding=1`, zero Session transition, zero rejected/accepted-empty substitute, client nonzero terminal, no false settlement, exactly one server Carrier ACK and zero server Session ACK — but it never requires the server process itself to exit successfully.
 
-# READY_LOCAL 4 — R9-3 Data-loss recovery
+A server can therefore emit the expected ACK diagnostic and fail later in the bounded lifecycle/cleanup path while this test remains green. This falsifies the handoff/commit-message subclaim that P4-B proves server success. No new Recovery/Session state-machine defect is presently proven.
+
+# READY_LOCAL 1 — H-R9-039 P4-B server-success oracle
+
+Smallest repair first:
+
+1. In `reliable_udp_post_return_session_ack_withheld_fails`, bind `srv_status` instead of `_srv_status`.
+2. Assert `srv_status.success()` with `server_log` in the failure message.
+3. Preserve every existing discriminating P4-B assertion: exactly-one positive Carrier retirement with `applied=true`/`retired=true`; exactly-one client post-return send; exactly-one server Carrier ACK; client send == server ACK == client retire packet number; zero Session transition; residual `remaining_in_flight=0` and `session_outstanding=1`; zero rejected/accepted-empty substitute; client nonzero terminal; no settled event; zero server Session ACK.
+4. Do not change Session/Carrier/ACK/wire/crypto semantics merely to make the test pass. If the stronger assertion exposes a runtime contradiction, perform the smallest current-semantics repair and add the discriminating regression.
+5. Run the focused P4-B process test, then on the final pushed source/test SHA run:
+   - `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`
+   - `git diff --check`
+   - verify clean initial/final tree
+   - persist exact reachable pushed SHA, UTC start/end, OS/arch, Rust stable version and exit codes.
+6. This is a test/oracle repair unless a runtime contradiction appears. No decoder/parser/crypto-framing change is implied; do not mechanically run fuzz solely for H-R9-039.
+
+After this closure, **immediately continue to R9-3 in the same coding-agent work cycle**. Do not insert an idle reviewer wait. The H-R9-039 final exact-tree gate is the new final R9-2 provenance.
+
+# READY_LOCAL 2 — R9-3 Data-loss recovery
 
 Suppress one reliable-owned Data only after congestion admission so the fault seam cannot bypass ownership accounting. Challenge the full current recovery contract:
 
@@ -90,42 +76,46 @@ Suppress one reliable-owned Data only after congestion admission so the fault se
 
 Use current M2 semantics; do not invent a new ACK or retransmission architecture.
 
-# READY_LOCAL 5 — R9-4 ACK-loss + delayed original/reorder
+# READY_LOCAL 3 — R9-4 ACK-loss + delayed original/reorder
 
 Suppress one legitimate Carrier ACK, force a legitimate retransmission, then release the delayed original ACK. Require one logical Session delivery, Session dedup authority, fresh packet numbers/nonces, truthful PTO/loss/retransmit evidence and settled Recovery. A late original may be accepted-empty/stale but must never manufacture a second transition or rejection.
 
-# READY_LOCAL 6 — R9-5 adversarial feedback / every Carrier caller
+# READY_LOCAL 4 — R9-5 adversarial feedback / every Carrier caller
 
 Challenge future/never-sent/stale/duplicate/tampered feedback across every exact-current `UdpAcknowledgement::Carrier` continuation, including initial receive, settlement and post-return owners. Rejected feedback must be atomic and fail closed without RTT/PTO/loss/cwnd/Session mutation; accepted-empty must not become transition or rejection. H-R9-033/H-R9-034 are closed examples, not reasons to skip the rest of the exact-current call surface.
 
-# READY_LOCAL 7 — R9-6 ownership/resource boundedness
+# READY_LOCAL 5 — R9-6 ownership/resource boundedness
 
 Every first send and retransmit must consult congestion admission before ownership commit; refusal commits no recovery or logical state. Keep one bounded retransmit-plaintext owner and deterministic teardown. Challenge algorithmic boundedness without adding a capacity-pressure benchmark or inventing new capacity/security values.
 
-# READY_LOCAL 8 — R9-7 process/result truth
+# READY_LOCAL 6 — R9-7 process/result truth
 
 Independently challenge that Data, Carrier ACK, Session DeliveryAck, PTO/retransmit, Recovery, Session delivery, malformed budget, accepted-empty feedback, rejected feedback and terminal result remain distinct in structured process evidence. Emit/accept a diagnostic only after the exact claimed transition or classification has occurred.
 
-# READY_LOCAL 9 — R9-8 warm TCP readiness
+# READY_LOCAL 7 — R9-8 warm TCP readiness
 
 Challenge the existing single-active/multi-ready contract: authenticated resume-bound warm standby may carry readiness/control only and **no application Data before promotion**. Readiness/resource admission remains separate from packet feedback and Session delivery evidence. Use D064/current Carrier Manager semantics; no architecture change.
 
-# READY_LOCAL 10 — R9-9/R9-10 health, promotion, uncertain replay and cleanup
+# READY_LOCAL 8 — R9-9 health + promotion
 
 Challenge the integrated path rather than isolated helpers:
 
 - resolved UDP outcomes feed existing health/hysteresis;
 - recoverable reliable-UDP loss remains on UDP instead of spuriously promoting TCP;
 - promotion happens only after existing readiness/health gates;
-- only genuine uncertain Session ranges replay on promoted TCP;
-- draining/failed UDP receives no new Data ownership;
-- receiver Session dedup is exactly-once;
-- TCP gets no duplicate UDP packet-ACK layer;
-- shutdown/error negatives clean resources and do not emit false success.
+- draining/failed UDP receives no new Data ownership.
 
-# READY_LOCAL 11 — R9-11/R9-12 complete cross-process slice
+# READY_LOCAL 9 — R9-10 uncertain replay + dedup + cleanup
 
-Close remaining lifecycle/terminal invariants for the materially new cross-process reliable-UDP/failover integration and run its clean exact-tree developer-local gate. Preserve source/test/evidence provenance boundaries; do not rewrite historical live evidence to describe the new local tree.
+Challenge only genuine uncertain Session ranges replaying on promoted TCP; receiver Session dedup must remain exactly-once; TCP gets no duplicate UDP packet-ACK layer; shutdown/error negatives must clean resources and emit no false success.
+
+# READY_LOCAL 10 — R9-11 lifecycle/terminal invariants
+
+Close remaining lifecycle and terminal invariants for the materially new cross-process reliable-UDP/failover integration. Keep terminal classification distinct from intermediate diagnostics and preserve deterministic cleanup.
+
+# READY_LOCAL 11 — R9-12 complete cross-process slice + exact-tree gate
+
+Finish the remaining R9 cross-process implementation/test slice and run its clean exact-tree developer-local gate. Preserve source/test/evidence provenance boundaries; do not rewrite historical live evidence to describe the new local tree.
 
 # READY_LOCAL 12 — dedicated independent R9 review
 
@@ -135,7 +125,7 @@ A bounded no-finding review is valid release-item-4 support if scope, inspected 
 
 # READY_LOCAL 13 — Q10/Q11/Q12 factual reconciliation
 
-Only after a reachable independent R9 review anchor exists, factually reconcile `docs/status.md`, `docs/release-security-review-packet.md` and the related Q10/Q11/Q12 evidence text with the exact reachable implementation/review anchors. Preserve historical evidence boundaries and do **not** change RC/freeze/release/production authority flags.
+Only after a reachable independent R9 review anchor exists, factually reconcile `docs/status.md`, `docs/release-security-review-packet.md` and related Q10/Q11/Q12 evidence text with exact reachable implementation/review anchors. Preserve historical evidence boundaries and do **not** change RC/freeze/release/production authority flags.
 
 ## Item-4 / core-surface inventory
 
