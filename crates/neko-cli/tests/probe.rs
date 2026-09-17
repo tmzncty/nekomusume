@@ -3277,16 +3277,40 @@ fn reliable_udp_post_return_reversed_ack_order_settles() {
             && dack_ev[0].contains("\"len\":16"),
         "{client_log}"
     );
-    let client_pn = client_log
+    // H-R9-037: true three-way packet-number equality — client send ==
+    // server Carrier ACK == client retirement.
+    let send_ev: Vec<&str> = client_log
         .lines()
-        .find(|l| l.contains("\"event\":\"r9_udp_post_return_sent\""))
-        .and_then(|l| l.split("\"packet_number\":").nth(1))
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_sent\""))
+        .collect();
+    assert_eq!(send_ev.len(), 1, "{client_log}");
+    let client_pn = send_ev[0]
+        .split("\"packet_number\":")
+        .nth(1)
         .and_then(|v| {
             v.trim_end_matches(|c: char| !c.is_ascii_digit())
                 .parse::<u64>()
                 .ok()
         })
         .unwrap_or(u64::MAX);
+    let srv_pack_ev: Vec<&str> = server_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_sent\""))
+        .collect();
+    assert_eq!(srv_pack_ev.len(), 1, "{server_log}");
+    let server_pn = srv_pack_ev[0]
+        .split("\"packet_number\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    assert_eq!(
+        client_pn, server_pn,
+        "client/server pn {client_log} {server_log}"
+    );
     let retire_pn = pack_ev[0]
         .split("\"packet_number\":")
         .nth(1)
@@ -3303,6 +3327,10 @@ fn reliable_udp_post_return_reversed_ack_order_settles() {
         .filter(|l| l.contains("\"event\":\"r9_udp_post_return_settled\""))
         .collect();
     assert_eq!(settled.len(), 1, "{client_log}");
+    assert!(
+        settled[0].contains("\"remaining_in_flight\":0"),
+        "{client_log}"
+    );
     let settled_pos = client_log
         .find("\"event\":\"r9_udp_post_return_settled\"")
         .unwrap_or(usize::MAX);
