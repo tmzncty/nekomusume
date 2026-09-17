@@ -1,14 +1,15 @@
-# ChatGPT reviewer handoff — H-R9-035 closed at be03dc3; R9-3 blocked on ACK order + P4
+# ChatGPT reviewer handoff — H-R9-035 independently closed; R9-2 now ACK-order + dual P4
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `be03dc31a8806fc6032655f5a1f755a63155f4de` (`test(cli): H-R9-035 settled cardinality — exactly one r9_udp_post_return_settled`). Tests only, building on `1f8bbb0`.
-- Prior independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-035-142f0a1-20260917.md`](reviews/reviewer-r9-h-r9-035-142f0a1-20260917.md), reachable through reviewer commit `93f5f14f36398c1d9176f11f129cef98912d770d`.
-- H-R9-035 is closed at exact `be03dc3` + `1f8bbb0`: the ordinary positive P2 fixture now binds all three packet numbers (client `r9_udp_post_return_sent`, server `udp_return_packet_ack_sent`, client `r9_udp_return_packet_ack retired=true`) to exact equality, and requires exactly one `r9_udp_post_return_settled` with `stream=1 offset=48 remaining_in_flight=0`.
-- P2 C1-C3 remain closed at `142f0a1`; P2 C4 fully closed at `1f8bbb0` + `be03dc3`.
-- H-R9-034/H-R9-033/H-R9-032/H-R9-030/H-R9-029/H-R9-028 remain closed.
-- Candidate A and B remain closed.
-- Developer-local clean exact-tree provenance for `be03dc3`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T00:50:06Z → 2026-09-17T00:53:21Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- Latest developer-owned source/test commit reviewed: exact `be03dc31a8806fc6032655f5a1f755a63155f4de` (`test(cli): H-R9-035 settled cardinality — exactly one r9_udp_post_return_settled`), test-only and building on exact `1f8bbb01fa08ebdd889ac70ccbb12c1185aa5a1e`.
+- Current independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-035-close-be03dc3-20260917.md`](reviews/reviewer-r9-h-r9-035-close-be03dc3-20260917.md), reachable through reviewer commit `2e414f57fcf8bd29f69ce4d83b00c9a6f5d032d7`.
+- H-R9-035 is independently closed at exact `be03dc3` + `1f8bbb0`: the ordinary positive P2 fixture binds client `r9_udp_post_return_sent`, server `udp_return_packet_ack_sent`, and client real `r9_udp_return_packet_ack retired=true` packet numbers to exact equality, requires exactly one exact Session transition, zero rejected/accepted-empty shortcuts, exactly one settled-zero event, and settlement after both real ACK-domain transitions. The bounded review found no contradictory source/oracle defect.
+- P2 C1-C3 remain closed at `142f0a1`; P2 C4 remains closed at `8d0ccd5` + `1f8bbb0` + `be03dc3`.
+- H-R9-034/H-R9-033/H-R9-032/H-R9-030/H-R9-029/H-R9-028 remain closed unless contradictory repository evidence appears.
+- Candidate A (`Recovery::on_ack` future/never-sent guard) and candidate B (`record_datagrams` mixed queue/generic-drop classification) remain closed on current code.
+- Developer-local clean exact-tree provenance for exact `be03dc3` is recorded by the developer handoff: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T00:50:06Z → 2026-09-17T00:53:21Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). The independent reviewer did not re-execute this local gate.
+- GitHub-hosted Rust CI run `35168132685` for exact `be03dc3` completed SUCCESS. Hosted CI is cross-evidence only, not developer-local provenance.
 - Open PRs at review time: none.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
@@ -18,7 +19,7 @@ The external coding agent must synchronize to current `main` and continuously ex
 
 Do not revert these exact-current repairs without contradictory evidence:
 
-- P2 C1-C4 exact closure complete at `142f0a1` + `8d0ccd5` + `1f8bbb0` + `be03dc3`: TCP replay identity bound on both sides; migration milestones exact cardinality/order; server dual-domain stream/offset/len; three-way packet-number equality; exactly-one settled cardinality.
+- P2 C1-C4 exact closure at `142f0a1` + `8d0ccd5` + `1f8bbb0` + `be03dc3`: TCP replay identity bound on both sides; migration milestones exact cardinality/order; server dual-domain stream/offset/len; three-way packet-number equality; exactly-one settled cardinality and post-transition order.
 - H-R9-034 settlement-continuation accepted-empty classification and late-stale discriminating proof at `b801b65`.
 - H-R9-033 initial-loop accepted-empty classification at `7a7c48c`.
 - H-R9-032 post-return stale/future packet-number cross-bind and settlement-order proof at `ddafbb1`.
@@ -33,43 +34,73 @@ Do not revert these exact-current repairs without contradictory evidence:
 
 # READY_LOCAL 1 — CLOSED at 1f8bbb0 + be03dc3
 
-H-R9-035 positive P2 C4 exact three-way packet binding and settled cardinality are complete. All six requirements above are satisfied.
+H-R9-035 positive P2 C4 exact three-way packet binding and settled cardinality are complete and independently bounded-reviewed at reviewer commit `2e414f5`.
 
-**R9-3 remains blocked until READY_LOCAL 2+ are closed and READY_LOCAL 5 final provenance is recorded.**
+**R9-3 remains blocked until READY_LOCAL 2-4 are closed and READY_LOCAL 5 final provenance is recorded.**
 
 # READY_LOCAL 2 — post-return ACK arrival-order challenge
 
-Through the exact same authenticated post-return receive owner, same absolute deadline and same malformed budget, deterministically cover both:
+Use the exact current post-return server/client owners. The current source already constructs the two canonical outputs from the same authenticated post-return Data, and the client already waits for Session completion and Recovery zero independently under one absolute deadline and one malformed budget.
+
+Deterministically cover both pure orders without changing protocol semantics:
 
 1. Session DeliveryAck -> Carrier packet ACK;
 2. Carrier packet ACK -> Session DeliveryAck.
 
-Both must converge to exactly one logical confirmation, exactly one exact cross-bound packet retirement, zero false/rejected/accepted-empty shortcut, exactly one settled-zero result and both processes success. Reorder only already-produced authenticated ACK datagrams with a narrow test seam; do not add another protocol owner or policy value.
+Important exact-current navigator detail:
 
-# READY_LOCAL 3 — P4 Session ACK present / Carrier ACK withheld
+- the ordinary no-seam path already sends Session ACK then Carrier ACK;
+- the existing `--send-stale-ack` / `--send-future-ack` branch sends the legitimate Carrier ACK before Session ACK **but also injects accepted-empty/rejected feedback**, so it is not a valid substitute for this pure order challenge;
+- add a narrow order-only test seam that reorders only the already-produced authenticated Session ACK and canonical Carrier ACK. Do not add another receive owner, deadline, malformed budget, ACK architecture or policy value.
 
-Add/strengthen one deterministic built-binary negative where the exact post-return Session DeliveryAck arrives but the Carrier ACK is withheld. Require:
+For each arm require:
 
-- exact positive Session transition for `stream=1 offset=48 len=16`;
-- Recovery remains unsettled;
-- typed bounded nonzero terminal failure;
+- both processes success;
+- exactly one client Session transition `stream=1 offset=48 len=16`;
+- exactly one positive Carrier retirement for the post-return packet;
+- exact three-way packet-number equality: client send == server Carrier ACK == client real retirement;
+- zero `r9_udp_return_packet_ack_rejected` and zero `r9_udp_return_packet_ack_accepted_empty`;
+- exactly one `r9_udp_post_return_settled` with `remaining_in_flight=0`;
+- settled strictly after both client-side ACK-domain transitions;
+- assert the intended **client-observed** transition order, not merely server send order.
+
+Test/seam-only is the default. If the stronger reverse-order oracle exposes a real runtime contradiction, repair the smallest current-semantic defect, add the discriminating regression, gate, push and continue.
+
+# READY_LOCAL 3 — P4 Session ACK present / post-return Carrier ACK withheld
+
+Create/strengthen one deterministic built-binary negative that reaches the existing post-return reliable owner, sends the exact Session DeliveryAck, but withholds only the **post-return** Carrier packet ACK.
+
+Do not use a broad suppression that prevents the run from reaching migration-back. Historical `--suppress-r9-ack` is wired to the initial reliable-UDP packet-ACK path; either add a post-return-only Carrier-ACK suppression seam or make an exact-current refactor whose scope is demonstrably equivalent.
+
+Require:
+
+- exact positive Session transition `stream=1 offset=48 len=16`;
+- no positive post-return Carrier retirement;
+- Recovery remains nonzero/unsettled until the bounded terminal path;
+- client exits typed/nonzero within the existing bounded post-return deadline;
 - no `r9_udp_post_return_settled` marker;
-- no downstream health/failover/migration success continuation caused by a false premise.
+- no downstream health/failover/migration success continuation caused by a false settlement premise.
+
+If current process evidence cannot distinguish which domain remains outstanding, a minimal classification-only terminal diagnostic is allowed; it must not alter Session/Recovery state or invent a policy value.
 
 # READY_LOCAL 4 — P4 Carrier ACK present / Session ACK withheld
 
-Mirror the previous lane for the other evidence domain:
+The existing post-return `--suppress-r9-dack` seam already has the correct runtime shape: it withholds only the Session DeliveryAck while the real Carrier ACK is sent. Strengthen the existing `reliable_udp_post_return_incomplete_is_terminal` oracle before changing runtime semantics.
 
-- exact positive Carrier retirement for the cross-bound post-return packet;
-- logical Session confirmation remains outstanding;
-- typed bounded nonzero terminal failure;
-- no settled marker and no downstream success continuation.
+Require:
 
-These two P4 lanes prove neither evidence domain substitutes for the other.
+- exactly one positive Carrier retirement `applied=true, retired=true` for the exact post-return packet;
+- exact three-way packet-number equality between client send, server Carrier ACK and client retirement;
+- no client `r9_udp_return_delivery_ack` transition for offset 48;
+- logical Session confirmation remains outstanding until the bounded terminal failure;
+- client exits typed/nonzero;
+- no `r9_udp_post_return_settled` marker and no downstream success continuation.
+
+Only repair runtime code if the strengthened oracle exposes a real contradiction. READY_LOCAL 3+4 together prove neither evidence domain substitutes for the other.
 
 # READY_LOCAL 5 — final R9-2 developer-local exact-tree provenance
 
-After READY_LOCAL 1-4 are on one final pushed R9-2 source/test SHA, use a safe clean checkout/worktree and run at least:
+After READY_LOCAL 2-4 are on one final pushed R9-2 source/test SHA, use a safe clean checkout/worktree and run at least:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
