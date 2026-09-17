@@ -18,6 +18,7 @@ The external coding agent must synchronize to current `main` and continuously ex
 Do not revert these exact-current repairs without contradictory evidence:
 
 - P2 C1-C4 exact closure at `142f0a1` + `8d0ccd5` + `1f8bbb0` + `be03dc3`: TCP replay identity bound on both sides; migration milestones exact cardinality/order; server dual-domain stream/offset/len; three-way packet-number equality; exactly-one settled cardinality and post-transition order.
+- READY_LOCAL 2 post-return ACK arrival-order challenge at `83d10b0` + `424583d`.
 - H-R9-034 settlement-continuation accepted-empty classification and late-stale discriminating proof at `b801b65`.
 - H-R9-033 initial-loop accepted-empty classification at `7a7c48c`.
 - H-R9-032 post-return stale/future packet-number cross-bind and settlement-order proof at `ddafbb1`.
@@ -36,33 +37,11 @@ H-R9-035 positive P2 C4 exact three-way packet binding and settled cardinality a
 
 **R9-3 remains blocked until READY_LOCAL 2-4 are closed and READY_LOCAL 5 final provenance is recorded.**
 
-# READY_LOCAL 2 — post-return ACK arrival-order challenge
+# READY_LOCAL 2 — CLOSED at 83d10b0 + 424583d
 
-Use the exact current post-return server/client owners. The current source already constructs the two canonical outputs from the same authenticated post-return Data, and the client already waits for Session completion and Recovery zero independently under one absolute deadline and one malformed budget.
+Post-return ACK arrival-order challenge is complete. The `--reverse-post-return-ack` seam covers Carrier-before-Session; the ordinary no-seam path covers Session-before-Carrier. Both arms satisfy the full acceptance contract.
 
-Deterministically cover both pure orders without changing protocol semantics:
-
-1. Session DeliveryAck -> Carrier packet ACK;
-2. Carrier packet ACK -> Session DeliveryAck.
-
-Important exact-current navigator detail:
-
-- the ordinary no-seam path already sends Session ACK then Carrier ACK;
-- the existing `--send-stale-ack` / `--send-future-ack` branch sends the legitimate Carrier ACK before Session ACK **but also injects accepted-empty/rejected feedback**, so it is not a valid substitute for this pure order challenge;
-- add a narrow order-only test seam that reorders only the already-produced authenticated Session ACK and canonical Carrier ACK. Do not add another receive owner, deadline, malformed budget, ACK architecture or policy value.
-
-For each arm require:
-
-- both processes success;
-- exactly one client Session transition `stream=1 offset=48 len=16`;
-- exactly one positive Carrier retirement for the post-return packet;
-- exact three-way packet-number equality: client send == server Carrier ACK == client real retirement;
-- zero `r9_udp_return_packet_ack_rejected` and zero `r9_udp_return_packet_ack_accepted_empty`;
-- exactly one `r9_udp_post_return_settled` with `remaining_in_flight=0`;
-- settled strictly after both client-side ACK-domain transitions;
-- assert the intended **client-observed** transition order, not merely server send order.
-
-Test/seam-only is the default. If the stronger reverse-order oracle exposes a real runtime contradiction, repair the smallest current-semantic defect, add the discriminating regression, gate, push and continue.
+**R9-3 remains blocked until READY_LOCAL 3+ are closed and READY_LOCAL 5 final provenance is recorded.**
 
 # READY_LOCAL 3 — P4 Session ACK present / post-return Carrier ACK withheld
 
