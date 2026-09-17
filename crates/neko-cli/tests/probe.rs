@@ -3734,6 +3734,43 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
         !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\""),
         "{client_log}"
     );
+    // H-R9-045 order/terminal: identify the first lifecycle-resolving positive
+    // Carrier retirement event — a pack_ev line whose packet number is in the
+    // client retransmit set (the value-bind above). The final settlement must
+    // occur AFTER both the exact Session confirmation and that retirement.
+    let resolve_pos = client_log
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains("\"event\":\"r9_udp_return_packet_ack\""))
+        .filter(|(_, l)| {
+            let pn = l
+                .split("\"packet_number\":")
+                .nth(1)
+                .and_then(|v| {
+                    v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                        .parse::<u64>()
+                        .ok()
+                })
+                .unwrap_or(u64::MAX);
+            re_pns.contains(&pn)
+        })
+        .map(|(i, _)| i)
+        .next()
+        .expect("lifecycle-resolving Carrier retirement present");
+    let dack_pos = client_log
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("\"event\":\"r9_udp_return_delivery_ack\""))
+        .map(|(i, _)| i)
+        .expect("Session transition present");
+    let settled_pos = client_log
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("\"event\":\"r9_udp_post_return_settled\""))
+        .map(|(i, _)| i)
+        .expect("settled event present");
+    assert!(settled_pos > dack_pos, "{client_log}");
+    assert!(settled_pos > resolve_pos, "{client_log}");
     // Exactly one settled event with remaining_in_flight=0.
     let settled: Vec<&str> = client_log
         .lines()
