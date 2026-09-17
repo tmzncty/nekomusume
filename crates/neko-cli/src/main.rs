@@ -3673,10 +3673,13 @@ fn failover_client(args: &[String]) {
                     rejected,
                 }) => {
                     // H-R9-025/026/029: three distinct Carrier outcome classes.
-                    // Only claim the post-return packet applied when the actual
-                    // recovery outcome retired that exact packet number.
-                    let retired = acked_packets.contains(&post_pn_client);
+                    // H-R9-047: a positive ACK that retires ANY packet copy —
+                    // including an older sibling under repeated PTO — is a real
+                    // retirement, not accepted-empty. `applied` is set from
+                    // `acked_packets` non-empty; emit the actually-retired pn.
+                    let retired = !acked_packets.is_empty();
                     if applied && retired {
+                        let acked_pn = *acked_packets.last().unwrap_or(&post_pn_client);
                         emit_diagnostic(
                             args,
                             "client",
@@ -3684,7 +3687,7 @@ fn failover_client(args: &[String]) {
                             0,
                             &format!(
                                 ",\"applied\":true,\"packet_number\":{},\"retired\":true",
-                                post_pn_client
+                                acked_pn
                             ),
                         );
                     } else if rejected {
