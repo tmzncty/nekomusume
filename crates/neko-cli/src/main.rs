@@ -2095,22 +2095,6 @@ fn failover_server(args: &[String]) {
                                         }
                                     }
                                 }
-                                if reliable_udp && !seam_active {
-                                    // Ordinary P2 order: Carrier ACK after the
-                                    // Session DeliveryAck (emitted below).
-                                    if let Some(pack) = &post_ack_pack {
-                                        if let Ok(sealed_pack) = udp_session.seal_unreliable(pack) {
-                                            let _ = udp.send_to(&sealed_pack, post_source);
-                                            emit_diagnostic(
-                                                args,
-                                                "server",
-                                                "udp_return_packet_ack_sent",
-                                                0,
-                                                &format!(",\"packet_number\":{}", post_pn),
-                                            );
-                                        }
-                                    }
-                                }
                                 // P4 fault seam: --suppress-r9-dack withholds the post-return Session
                                 // DeliveryAck; the Carrier packet ACK is still sent.
                                 let suppress_dack = args.iter().any(|a| a == "--suppress-r9-dack");
