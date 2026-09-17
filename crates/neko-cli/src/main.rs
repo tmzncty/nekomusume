@@ -952,6 +952,10 @@ fn recv_udp_delivery_ack(
     // receive/settlement operation, not one helper invocation — caller keeps a
     // persistent count across every demux return (Session ACK or Carrier ACK).
     malformed: &mut usize,
+    // R9-3: monotonic recovery clock origin for the cross-process reliable
+    // operation. Sampled after authenticated Carrier ACK receipt, before
+    // apply_ack — never a stale pre-receive scalar.
+    recovery_epoch: Instant,
 ) -> Result<UdpAcknowledgement, &'static str> {
     let mut buf = [0u8; 65536];
     loop {
@@ -1018,9 +1022,14 @@ fn recv_udp_delivery_ack(
                         // was accepted — a stale/duplicate ACK may retire
                         // nothing. Surface the actual acked_packets so the
                         // caller can prove a real packet transition occurred.
+                        // R9-3 ACK observation time: sample the monotonic
+                        // recovery clock AFTER the authenticated ACK was
+                        // received/decrypted/decoded — not before the blocking
+                        // recv, so RTT/PTO math sees the true observation time.
+                        let now_us = recovery_epoch.elapsed().as_micros() as u64;
                         let outcome = rt
                             .as_deref_mut()
-                            .map(|r| r.apply_ack(&ranges, 0, ack.ack_delay_us));
+                            .map(|r| r.apply_ack(&ranges, now_us, ack.ack_delay_us));
                         let (applied, acked_packets, rejected) = match outcome {
                             Some(Ok(o)) => (!o.acked_packets.is_empty(), o.acked_packets, false),
                             Some(Err(_)) => (false, Vec::new(), true),
@@ -1958,7 +1967,10 @@ fn failover_server(args: &[String]) {
                             // proves the owner transition carries DeliveryAck,
                             // not merely a readiness response.
                             let reliable_udp = args.iter().any(|a| a == "--reliable-udp");
-                            let post_deadline = Instant::now() + Duration::from_secs(2);
+                            // R9-3: tolerate PTO retransmission — the client
+                            // may suppress the first post-return Data and
+                            // retransmit after a bounded PTO delay.
+                            let post_deadline = Instant::now() + Duration::from_secs(5);
                             while Instant::now() < post_deadline {
                                 let Ok((n, post_source)) = udp.recv_from(&mut recovery_buf) else {
                                     continue;
@@ -2139,7 +2151,10 @@ fn failover_server(args: &[String]) {
                                     app.extend_from_slice(&delivered.data);
                                 }
                                 migration_back_complete = true;
-                                break;
+                                // R9-3: keep receiving — a suppressed original
+                                // may be retransmitted after PTO; the server
+                                // must still ACK the fresh copy.
+                                continue;
                             }
                             break;
                         }
@@ -2361,6 +2376,10 @@ fn failover_client(args: &[String]) {
     // committed ReliableUdpRuntime — cwnd admission, packet->stable-FrameId
     // recording, socket send, authenticated packet ACKs, in-flight settlement.
     // Session DeliveryAck remains a separate logical confirmation path.
+    // R9-3: one bounded monotonic relative recovery clock for the entire
+    // cross-process reliable operation — initial sends and post-return share
+    // the same origin.
+    let recovery_epoch = Instant::now();
     let reliable_udp = args.iter().any(|a| a == "--reliable-udp");
     let mut rt = if reliable_udp {
         let mut r = neko_carrier::ReliableUdpRuntime::new(1, 1200)
@@ -2378,7 +2397,7 @@ fn failover_client(args: &[String]) {
         let pn = u64::from_be_bytes(encrypted[..8].try_into().unwrap());
         rt.on_packet_sent(
             pn,
-            0,
+            recovery_epoch.elapsed().as_micros() as u64,
             encrypted.len() as u64,
             neko_reliable::FrameId(udp_record.offset),
             &udp_record.data,
@@ -2417,7 +2436,7 @@ fn failover_client(args: &[String]) {
         let pn = u64::from_be_bytes(e2[..8].try_into().unwrap());
         rt.on_packet_sent(
             pn,
-            0,
+            recovery_epoch.elapsed().as_micros() as u64,
             e2.len() as u64,
             neko_reliable::FrameId(rec.offset),
             &rec.data,
@@ -2473,6 +2492,7 @@ fn failover_client(args: &[String]) {
             &mut admission_diagnostic,
             rt.as_mut(),
             &mut malformed,
+            recovery_epoch,
         )
         .unwrap_or_else(|e| fail(&format!("UDP delivery acknowledgement failed: {e:?}")));
         match outcome {
@@ -2630,6 +2650,7 @@ fn failover_client(args: &[String]) {
                 &mut admission_diagnostic,
                 Some(rt),
                 &mut malformed,
+                recovery_epoch,
             ) {
                 Ok(UdpAcknowledgement::Carrier {
                     applied, rejected, ..
@@ -3454,16 +3475,22 @@ fn failover_client(args: &[String]) {
         // H-R9-015: under --reliable-udp the post-return Data is reliable-owned
         // — congestion admission + on_packet_sent + socket send, and its ACK
         // drain reuses the same bounded demux owner (not a None rt).
+        // R9-3: one bounded monotonic relative recovery clock for this
+        // post-return operation — sampled at send time, shared by PTO and ACK.
+        let post_recovery_epoch = Instant::now();
         let mut post_pn_client: u64 = 0;
+        #[allow(unused_assignments)]
+        let mut post_sent_at_us: u64 = 0;
         if let Some(rt) = rt.as_mut() {
             if !rt.can_send(sealed.len() as u64) {
                 fail("r9 post-return cwnd refused send");
             }
             let pn = u64::from_be_bytes(sealed[..8].try_into().unwrap());
             post_pn_client = pn;
+            post_sent_at_us = post_recovery_epoch.elapsed().as_micros() as u64;
             rt.on_packet_sent(
                 pn,
-                0,
+                post_sent_at_us,
                 sealed.len() as u64,
                 neko_reliable::FrameId(post_record.offset),
                 &post_record.data,
@@ -3480,13 +3507,28 @@ fn failover_client(args: &[String]) {
                 ),
             );
         }
-        u.send_to(&sealed, target).unwrap();
+        // R9-3: suppress exactly one reliable-owned Data after congestion
+        // admission and Recovery ownership commit. The packet was sent to
+        // Recovery (on_packet_sent above) but the wire send is dropped — this
+        // tests data-loss recovery, not an unowned unsent record.
+        let drop_r9_data = args.iter().any(|a| a == "--drop-r9-data");
+        if drop_r9_data {
+            emit_diagnostic(args, "client", "r9_udp_post_return_data_dropped", 0, "");
+        }
+        if !drop_r9_data {
+            u.send_to(&sealed, target).unwrap();
+        }
         // H-R9-015: under --reliable-udp the post-return receive owner waits for
         // BOTH the Session DeliveryAck (logical confirmation) AND the Carrier
         // packet ACK to drain rt.in_flight to zero — a Carrier ACK arriving
         // first is applied, never a protocol error; success requires both
         // logical ownership retired and post-return recovery settled.
-        let deadline = Instant::now() + Duration::from_secs(2);
+        // R9-3: under the data-drop seam the settle deadline must cover at
+        // least one PTO fire + retransmission round-trip, not just the
+        // ordinary immediate-ACK window.
+        let drop_r9_data_settle = args.iter().any(|a| a == "--drop-r9-data");
+        let deadline =
+            Instant::now() + Duration::from_secs(if drop_r9_data_settle { 8 } else { 2 });
         let mut post_outstanding = vec![post_record.clone()];
         let mut malformed = 0usize;
         let mut ack_len = 0usize;
@@ -3495,6 +3537,69 @@ fn failover_client(args: &[String]) {
             let carrier_done = rt.as_ref().is_none_or(|r| r.in_flight() == 0);
             if session_done && carrier_done {
                 break;
+            }
+            // R9-3: fire PTO/retransmission BEFORE the blocking receive so a
+            // due probe is never deferred until the settle deadline. The
+            // receive deadline below is then clamped to the next PTO deadline
+            // so the loop wakes up to retransmit on time.
+            if let Some(rt) = rt.as_mut() {
+                let now_us = post_recovery_epoch.elapsed().as_micros() as u64;
+                let pto_deadline = rt.recovery_engine().next_pto_deadline_us(1_000, 0);
+                if let Some(pto_deadline) = pto_deadline.filter(|d| now_us >= *d) {
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "r9_udp_pto_fired",
+                        0,
+                        &format!(
+                            ",\"deadline_us\":{},\"fired_at_us\":{},\"pto_count\":{}",
+                            pto_deadline,
+                            now_us,
+                            rt.recovery_engine().pto_count
+                        ),
+                    );
+                    let probes = rt.pto_probe();
+                    for (frame, plaintext) in probes {
+                        if !rt.can_send(plaintext.len() as u64) {
+                            continue;
+                        }
+                        let re_msg = ProcessMessage::Data {
+                            session: SessionId(7001),
+                            record: OutboundRecord {
+                                stream: post_record.stream,
+                                offset: post_record.offset,
+                                data: plaintext.clone(),
+                            },
+                        }
+                        .encode();
+                        let Ok(re_msg) = re_msg else { continue };
+                        let Ok(re_sealed) = us.seal_unreliable(&re_msg) else {
+                            continue;
+                        };
+                        let rpn = u64::from_be_bytes(re_sealed[..8].try_into().unwrap_or([0u8; 8]));
+                        if rt
+                            .on_retransmit_sent(rpn, now_us, re_sealed.len() as u64, frame)
+                            .is_err()
+                        {
+                            continue;
+                        }
+                        let _ = u.send_to(&re_sealed, target);
+                        emit_diagnostic(
+                            args,
+                            "client",
+                            "r9_udp_retransmit_sent",
+                            0,
+                            &format!(
+                                ",\"packet_number\":{},\"original_packet_number\":{},\"frame\":{}",
+                                rpn, post_pn_client, frame.0
+                            ),
+                        );
+                        // R9-3: the active post-return packet identity moves to
+                        // the fresh retransmission — its ACK is the positive
+                        // retirement that settles this frame's ownership.
+                        post_pn_client = rpn;
+                    }
+                }
             }
             if Instant::now() >= deadline {
                 // H-R9-038: classification-only residual-domain evidence —
@@ -3513,6 +3618,15 @@ fn failover_client(args: &[String]) {
                 );
                 fail("post-return reliable-UDP dual settlement timeout");
             }
+            // R9-3: clamp the blocking receive deadline to the next PTO
+            // deadline so the loop wakes to retransmit instead of sleeping
+            // through the entire settle window.
+            let recv_deadline = rt
+                .as_ref()
+                .and_then(|r| r.recovery_engine().next_pto_deadline_us(1_000, 0))
+                .map(|d| post_recovery_epoch + Duration::from_micros(d))
+                .map(|i| i.min(deadline))
+                .unwrap_or(deadline);
             match recv_udp_delivery_ack(
                 &u,
                 target,
@@ -3520,10 +3634,11 @@ fn failover_client(args: &[String]) {
                 &mut post_outstanding,
                 &negotiation_response,
                 &noise_response,
-                deadline,
+                recv_deadline,
                 &mut |_| {},
                 rt.as_mut(),
                 &mut malformed,
+                post_recovery_epoch,
             ) {
                 Ok(UdpAcknowledgement::Session { record, bytes }) => {
                     delivery
@@ -3584,6 +3699,12 @@ fn failover_client(args: &[String]) {
                             "",
                         );
                     }
+                }
+                Err(_) if drop_r9_data => {
+                    // R9-3: under the data-drop seam a receive timeout is not
+                    // terminal — fall through to the PTO/retransmission block
+                    // below before deciding bounded failure.
+                    emit_diagnostic(args, "client", "r9_udp_post_return_recv_timeout", 0, "");
                 }
                 Err(_) => {
                     // H-R9-038: classification-only residual-domain evidence
@@ -5569,6 +5690,7 @@ mod cli_regression_tests {
             &mut |d| diagnostics.push(d),
             None,
             &mut malformed,
+            Instant::now(),
         )
         .unwrap();
         match outcome {
@@ -5618,6 +5740,7 @@ mod cli_regression_tests {
             &mut |_| {},
             None,
             &mut malformed,
+            Instant::now(),
         )
         .unwrap_err();
         assert_eq!(err, "UDP delivery acknowledgement malformed bound exceeded");
@@ -5670,6 +5793,7 @@ mod cli_regression_tests {
             &mut |_| {},
             None,
             &mut malformed,
+            Instant::now(),
         )
         .unwrap();
         match outcome {
@@ -5734,6 +5858,7 @@ mod cli_regression_tests {
             &mut |d| reasons.push(d),
             None,
             &mut malformed,
+            Instant::now(),
         )
         .unwrap_err();
         assert_eq!(err, "UDP delivery acknowledgement malformed bound exceeded");

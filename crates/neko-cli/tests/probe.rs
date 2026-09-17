@@ -3492,6 +3492,204 @@ fn reliable_udp_post_return_session_ack_withheld_fails() {
     );
 }
 #[test]
+fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
+    // R9-3: suppress the post-return Data after congestion admission and
+    // Recovery ownership commit. PTO must fire, retransmit with a fresh packet
+    // number/nonce but stable frame/logical identity, and the run must settle.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-dl-server");
+    let cp = tmp("r9-dl-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "15",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-dl-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--drop-r9-data",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-dl-cli",
+        ])
+        .output()
+        .unwrap();
+    let (srv_status, server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let client_err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{client_log} {client_err}");
+    assert!(srv_status.success(), "{server_log}");
+    // The suppressed original packet was recovery-owned before the drop.
+    let send_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_sent\""))
+        .collect();
+    assert_eq!(send_ev.len(), 1, "{client_log}");
+    let orig_pn = send_ev[0]
+        .split("\"packet_number\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    // PTO fired at or after the computed deadline — timing evidence.
+    let pto_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_pto_fired\""))
+        .collect();
+    assert_eq!(pto_ev.len(), 1, "{client_log}");
+    let deadline_us = pto_ev[0]
+        .split("\"deadline_us\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    let fired_at_us = pto_ev[0]
+        .split("\"fired_at_us\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    assert!(fired_at_us >= deadline_us, "{client_log}");
+    // PTO fired and retransmitted with a fresh packet number.
+    let re_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_retransmit_sent\""))
+        .collect();
+    assert_eq!(re_ev.len(), 1, "{client_log}");
+    // Take the leading digits of the packet_number field — trailing fields
+    // like original_packet_number must not contaminate the parse.
+    let re_pn = re_ev[0]
+        .split("\"packet_number\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    assert_ne!(orig_pn, re_pn, "{client_log}");
+    // Retransmission carries the same stable frame/logical identity.
+    assert!(re_ev[0].contains("\"frame\":48"), "{client_log}");
+    // Exactly one Session transition for the post-return range.
+    let dack_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_return_delivery_ack\""))
+        .collect();
+    assert_eq!(dack_ev.len(), 1, "{client_log}");
+    assert!(
+        dack_ev[0].contains("\"stream\":1")
+            && dack_ev[0].contains("\"offset\":48")
+            && dack_ev[0].contains("\"len\":16"),
+        "{client_log}"
+    );
+    // Exactly one positive Carrier retirement for the retransmitted packet.
+    let pack_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_return_packet_ack\""))
+        .collect();
+    assert_eq!(pack_ev.len(), 1, "{client_log}");
+    assert!(
+        pack_ev[0].contains("\"applied\":true") && pack_ev[0].contains("\"retired\":true"),
+        "{client_log}"
+    );
+    // Three-way bind: retransmitted packet is the one retired.
+    let retire_pn = pack_ev[0]
+        .split("\"packet_number\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    assert_eq!(re_pn, retire_pn, "{client_log}");
+    // Zero rejected/accepted-empty on this recovery path.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\"")
+            && !client_log.contains("\"event\":\"r9_udp_return_packet_ack_accepted_empty\""),
+        "{client_log}"
+    );
+    // Exactly one settled event with remaining_in_flight=0.
+    let settled: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_settled\""))
+        .collect();
+    assert_eq!(settled.len(), 1, "{client_log}");
+    assert!(
+        settled[0].contains("\"remaining_in_flight\":0"),
+        "{client_log}"
+    );
+}
+#[test]
 fn reliable_udp_post_return_reversed_ack_order_settles() {
     // READY_LOCAL 2: pure order challenge — Carrier packet ACK arrives BEFORE
     // the Session DeliveryAck on the post-return owner. Settlement still
