@@ -3395,10 +3395,13 @@ fn reliable_udp_post_return_session_ack_withheld_fails() {
         ])
         .output()
         .unwrap();
-    let (_srv_status, server_log) = finish_server(server);
+    let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
+    // H-R9-039: server must also succeed — the suppressed Session ACK is a
+    // deliberate fault injection, not a server lifecycle failure.
+    assert!(srv_status.success(), "{server_log}");
     // Carrier packet ACK arrived and retired the packet; Session ACK withheld.
     // Exactly one positive Carrier retirement; zero Session transition.
     let pack_ev: Vec<&str> = client_log
