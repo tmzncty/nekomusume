@@ -3255,6 +3255,48 @@ fn reliable_udp_post_return_reversed_ack_order_settles() {
         .find("\"event\":\"r9_udp_return_delivery_ack\"")
         .unwrap_or(usize::MAX);
     assert!(pack_pos < dack_pos, "{client_log}");
+    // Exact cardinality + three-way packet bind: exactly one positive Carrier
+    // retirement and one Session transition, all bound to the same packet.
+    let pack_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_return_packet_ack\""))
+        .collect();
+    assert_eq!(pack_ev.len(), 1, "{client_log}");
+    assert!(
+        pack_ev[0].contains("\"applied\":true") && pack_ev[0].contains("\"retired\":true"),
+        "{client_log}"
+    );
+    let dack_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_return_delivery_ack\""))
+        .collect();
+    assert_eq!(dack_ev.len(), 1, "{client_log}");
+    assert!(
+        dack_ev[0].contains("\"stream\":1")
+            && dack_ev[0].contains("\"offset\":48")
+            && dack_ev[0].contains("\"len\":16"),
+        "{client_log}"
+    );
+    let client_pn = client_log
+        .lines()
+        .find(|l| l.contains("\"event\":\"r9_udp_post_return_sent\""))
+        .and_then(|l| l.split("\"packet_number\":").nth(1))
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    let retire_pn = pack_ev[0]
+        .split("\"packet_number\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    assert_eq!(client_pn, retire_pn, "{client_log}");
     // Settlement strictly after both, remaining_in_flight=0.
     let settled: Vec<&str> = client_log
         .lines()
