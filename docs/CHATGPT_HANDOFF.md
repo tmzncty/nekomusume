@@ -18,6 +18,7 @@ The external coding agent must synchronize to current `main` and continuously ex
 
 Do not revert these exact-current repairs without contradictory evidence:
 
+- P2 C1-C4 exact closure at `142f0a1` + `8d0ccd5`.
 - H-R9-034 settlement-continuation accepted-empty classification and late-stale discriminating proof at `b801b65`.
 - H-R9-033 initial-loop accepted-empty classification at `7a7c48c`.
 - H-R9-032 exact post-return packet-number cross-bind and settlement-order proof at `ddafbb1`.
@@ -32,40 +33,11 @@ Do not revert these exact-current repairs without contradictory evidence:
 
 The previous handoff accidentally left the already-completed H-R9-034 repair as a READY lane below a header that said it was closed. That stale ticket is removed here: **do not repeat H-R9-034.**
 
-# READY_LOCAL 1 — positive P2 C1-C4 exact closure
+# READY_LOCAL 1 — CLOSED at 142f0a1 + 8d0ccd5
 
-Keep and strengthen the existing count=4 `reliable_udp_migration_back_reserves_final_record` built-binary fixture. Exact-current `probe.rs` already proves both processes succeed, broad server/client migration ordering, the 2+1+1 ownership accounting, one post-return send, one server post-return Session/Carrier ACK pair, server/client packet-number equality for the positive post-return packet, and settlement after both client ACK-domain events. The remaining gaps are oracle precision, not permission to redesign runtime architecture.
+P2 C1-C4 exact closure is complete. All four groups now satisfy the full acceptance contract: TCP replay identity bound on both sides, migration ownership chain with exact cardinality and strict order, server dual-domain stream/offset/len contract, and client actual transitions with packet-number cross-bind and zero-misclassification proof.
 
-Close all four groups together if practical rather than splitting them into checker churn:
-
-- **C1 TCP replay identity**
-  - client exactly once `tcp_delivery_ack_validated` for `stream=1 offset=32`, with `seq=2` when that structured field is emitted;
-  - server exactly once `tcp_delivery_ack_sent` for the same logical record (`stream=1 offset=32`, `seq=2` where emitted);
-  - reject client **and server** TCP replay/ACK evidence for offsets `0`, `16`, or `48`.
-  - Exact-current fixture currently asserts one client/server offset-32 ACK and rejects some client offset aliases, but does not fully bind `seq=2`/stream on both sides or exclude all server-side wrong ownership.
-
-- **C2 migration ownership chain**
-  - require exactly once each `udp_recovery_challenge_sent`, `udp_recovery_validated`, `udp_migrated_back`, and `r9_udp_post_return_sent`;
-  - strict order `challenge < validated < migrated_back < post_return_sent`;
-  - prove reserved offset `48` is absent from all pre-promotion owners: initial/reliable `r9_udp_record_sent`, `udp_uncertain_range_sent`, and TCP replay ownership/evidence;
-  - retain the existing final accounting proof (`2 reliable UDP + 1 uncertain/TCP + 1 post-return reliable`).
-  - Exact-current fixture proves broad order and one post-return send but not exact cardinality of every preceding milestone and not every offset-48 pre-promotion exclusion.
-
-- **C3 server dual-domain truth**
-  - exactly one `udp_return_delivery_ack_sent` with `stream=1 offset=48 len=16`;
-  - exactly one `udp_return_packet_ack_sent`;
-  - that Carrier ACK packet number must equal the exact client `r9_udp_post_return_sent.packet_number`.
-  - Exact-current fixture already binds packet number and event cardinality, but its Session-side assertion is still narrower than the full `stream/offset/len` contract.
-
-- **C4 client actual transitions**
-  - exactly one `r9_udp_return_delivery_ack` with `stream=1 offset=48 len=16`;
-  - exactly one positive `r9_udp_return_packet_ack` with `applied=true`, `retired=true`, and the exact same client/server post-return packet number;
-  - zero `r9_udp_return_packet_ack_rejected` and zero `r9_udp_return_packet_ack_accepted_empty` in this ordinary positive fixture;
-  - exactly one `r9_udp_post_return_settled` with `stream=1 offset=48 remaining_in_flight=0`;
-  - settlement strictly after both actual ACK-domain transitions.
-  - Exact-current runtime already emits the needed fields and gates positive retirement on `acked_packets.contains(post_pn_client)`; this lane should first be a test/oracle tightening. If the stronger oracle exposes a runtime contradiction, switch immediately to the smallest repair plus regression.
-
-No Session/Carrier/ACK/wire/crypto redesign and no new policy number. If this remains tests only, do not mechanically fuzz; if a decoder/parser/crypto framing file actually changes, use the pinned fuzz toolchain contract.
+**R9-3 remains blocked until READY_LOCAL 2+ are closed.**
 
 # READY_LOCAL 2 — post-return ACK arrival-order challenge
 
