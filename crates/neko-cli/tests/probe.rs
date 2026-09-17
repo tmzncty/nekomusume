@@ -2328,6 +2328,18 @@ fn reliable_udp_migration_back_reserves_final_record() {
                 && pack_lines[0].contains("\"retired\":true"),
             "{client_log}"
         );
+        // C4 three-way packet bind: client send pn == server ACK pn == client
+        // actual Recovery retirement pn.
+        let retire_pn = pack_lines[0]
+            .split("\"packet_number\":")
+            .nth(1)
+            .and_then(|v| {
+                v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                    .parse::<u64>()
+                    .ok()
+            })
+            .unwrap_or(u64::MAX);
+        assert_eq!(retire_pn, client_pn, "{client_log}");
         // C4 negatives: no rejected and no accepted-empty on the ordinary
         // positive post-return path.
         assert!(
