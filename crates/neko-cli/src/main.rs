@@ -2029,7 +2029,12 @@ fn failover_server(args: &[String]) {
                                 // unchanged.
                                 let seam_stale = args.iter().any(|a| a == "--send-stale-ack");
                                 let seam_future = args.iter().any(|a| a == "--send-future-ack");
-                                let seam_active = seam_stale || seam_future;
+                                // READY_LOCAL 2 order-only seam: Carrier ACK
+                                // before Session DeliveryAck with no injected
+                                // stale/future feedback.
+                                let seam_reverse =
+                                    args.iter().any(|a| a == "--reverse-post-return-ack");
+                                let seam_active = seam_stale || seam_future || seam_reverse;
                                 let post_ack_pack = if reliable_udp {
                                     server_rt.poll_outgoing_ack(0).map(|ranges| {
                                         neko_wire::encode(&neko_wire::Record {
@@ -2087,6 +2092,22 @@ fn failover_server(args: &[String]) {
                                             && let Ok(resealed) = udp_session.seal_unreliable(pack)
                                         {
                                             let _ = udp.send_to(&resealed, post_source);
+                                        }
+                                    }
+                                }
+                                if reliable_udp && !seam_active {
+                                    // Ordinary P2 order: Carrier ACK after the
+                                    // Session DeliveryAck (emitted below).
+                                    if let Some(pack) = &post_ack_pack {
+                                        if let Ok(sealed_pack) = udp_session.seal_unreliable(pack) {
+                                            let _ = udp.send_to(&sealed_pack, post_source);
+                                            emit_diagnostic(
+                                                args,
+                                                "server",
+                                                "udp_return_packet_ack_sent",
+                                                0,
+                                                &format!(",\"packet_number\":{}", post_pn),
+                                            );
                                         }
                                     }
                                 }

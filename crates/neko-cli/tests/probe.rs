@@ -3162,6 +3162,118 @@ fn reliable_udp_stale_ack_settlement_phase_is_accepted_empty() {
     );
 }
 #[test]
+fn reliable_udp_post_return_reversed_ack_order_settles() {
+    // READY_LOCAL 2: pure order challenge — Carrier packet ACK arrives BEFORE
+    // the Session DeliveryAck on the post-return owner. Settlement still
+    // requires both actual ACK-domain transitions.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-rord-server");
+    let cp = tmp("r9-rord-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--reverse-post-return-ack",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-rord-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "10",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-rord-cli",
+        ])
+        .output()
+        .unwrap();
+    let (srv_status, server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let client_err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{client_log} {client_err}");
+    assert!(srv_status.success(), "{server_log}");
+    // Client-observed order: Carrier ACK (packet transition) arrives BEFORE
+    // the Session DeliveryAck transition.
+    let pack_pos = client_log
+        .find("\"event\":\"r9_udp_return_packet_ack\"")
+        .unwrap_or(usize::MAX);
+    let dack_pos = client_log
+        .find("\"event\":\"r9_udp_return_delivery_ack\"")
+        .unwrap_or(usize::MAX);
+    assert!(pack_pos < dack_pos, "{client_log}");
+    // Settlement strictly after both, remaining_in_flight=0.
+    let settled: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_settled\""))
+        .collect();
+    assert_eq!(settled.len(), 1, "{client_log}");
+    let settled_pos = client_log
+        .find("\"event\":\"r9_udp_post_return_settled\"")
+        .unwrap_or(usize::MAX);
+    assert!(dack_pos < settled_pos, "{client_log}");
+    assert!(pack_pos < settled_pos, "{client_log}");
+    // No rejected / accepted-empty on the ordinary reversed path.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\"")
+            && !client_log.contains("\"event\":\"r9_udp_return_packet_ack_accepted_empty\""),
+        "{client_log}"
+    );
+}
+#[test]
 fn reliable_udp_post_return_stale_ack_is_accepted_empty() {
     // H-R9-029/H-R9-030: after migration-back the post-return receive owner
     // classifies a re-sealed duplicate of the canonical current Carrier ACK
