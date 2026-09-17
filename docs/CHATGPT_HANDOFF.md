@@ -1,14 +1,14 @@
-# ChatGPT reviewer handoff — H-R9-044 closed at ebfc620; R9-3 blocked on H-R9-041/042 negatives
+# ChatGPT reviewer handoff — R9-3 reopened on H-R9-045 exact repeated-PTO identity/order oracle
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `ebfc620` (`test(cli): drop unused deadline/fired_at scalars after per-event proof`).
-- Its parent `05b1d7b` closes H-R9-044: every `r9_udp_pto_fired` event must fire at/after its own deadline (per-event proof, not just the first), typed Carrier rejection stays zero, and a sibling/late ACK may legitimately classify accepted-empty under repeated PTO.
-- `9a113f2` remains the H-R9-040 lifecycle-pruning repair plus the H-R9-041 exact encoded-wire retransmit-admission implementation repair. `c1a22e5` added the server Carrier-ACK packet-number side of the R9-3 oracle.
-- H-R9-043's semantic conclusion remains accepted and is now enforced: bounded repeated PTO before the first positive Carrier retirement is legal while sibling copies remain outstanding; Session DeliveryAck stays a separate evidence domain.
-- Still open before R9-3 completion: H-R9-041 discriminating exact-wire refusal regression and H-R9-042 deterministic just-before-PTO-deadline negative.
-- Developer-local clean exact-tree provenance for exact `ebfc620`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T19:48:52Z → 2026-09-17T19:53:02Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
-- GitHub-hosted Rust CI for exact `5be123b`, run `35260878111`, previously failed in the pre-`05b1d7b` oracle; hosted CI is cross-evidence only and does not replace developer-local provenance for the current head.
+- Latest developer-owned source/test commit: exact `ebfc620344d5abf4799883290c2ceb311079f951` (`test(cli): drop unused deadline/fired_at scalars after per-event proof`). Its parent `05b1d7b` correctly repairs two H-R9-044 subclaims: every observed PTO event is checked against its own deadline, and sibling/late Carrier ACK may classify accepted-empty while typed rejection stays zero.
+- Independent reviewer finding H-R9-045 is anchored at exact `7f66bfc98c8d02f569547e702357b2f10bc2b66e`: the current repeated-PTO process fixture still relies on `last retransmit == last server ACK == last positive retirement`, does not prove pairwise-fresh retransmit packet numbers or stable frame identity for every retransmit, does not prove no retransmit after lifecycle-resolving Carrier retirement, and does not prove final settlement ordering after both evidence domains. H-R9-044 therefore must not be treated as fully closed yet.
+- `9a113f2` remains the H-R9-040 lifecycle-pruning repair plus the H-R9-041 exact encoded-wire retransmit-admission implementation repair. `c1a22e5` added the server Carrier-ACK packet-number diagnostic needed for the R9-3 three-way oracle.
+- H-R9-043's semantic conclusion remains accepted: bounded repeated PTO before the first positive Carrier retirement is legal while sibling packet copies remain outstanding; Session DeliveryAck is a separate evidence domain and must not suppress Carrier recovery.
+- Still open before R9-3 completion: H-R9-045 exact repeated-PTO identity/order oracle, H-R9-041 discriminating exact-wire refusal regression, and H-R9-042 deterministic just-before-PTO-deadline negative.
+- Developer-local clean exact-tree provenance recorded by the developer for exact `ebfc620`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T19:48:52Z → 2026-09-17T19:53:02Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). This remains developer-reported local provenance, not reviewer execution.
+- GitHub-hosted Rust CI for exact `ebfc620`, run `35266888219`, completed successfully. Hosted CI is cross-evidence only and does not repair a weak oracle.
 - Open PRs at review time: none.
 - Candidate A (future/never-sent ACK atomic rejection) remains closed. Candidate B (mixed generic/queue datagram-drop observability) remains closed.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
@@ -21,16 +21,29 @@ Do not revert these repairs without contradictory repository evidence:
 
 - H-R9-040 source repair at `9a113f2`: `acked_frames` is lifecycle-scoped, survives only while an ACKed frame still has sibling packet copies outstanding, and is pruned when the final copy retires on ACK or loss. Single-copy FrameId reuse and sibling-copy regressions challenge stale-marker poisoning.
 - H-R9-041 implementation ordering at `9a113f2`: post-return and `lab_pump` retransmissions build/seal first, call `can_send` on exact encoded wire bytes, then commit `on_retransmit_sent` with that same byte count before socket send. **Only the implementation seam is closed; the discriminating refusal regression remains open.**
-- H-R9-043 semantic correction at `5be123b`: do not force exactly one PTO/retransmit and do not merge Session DeliveryAck with Carrier packet recovery. **Its process-oracle acceptance is reopened by H-R9-044.**
+- H-R9-043 semantic correction at `5be123b`: do not force exactly one PTO/retransmit and do not merge Session DeliveryAck with Carrier packet recovery.
+- H-R9-044 partial repair at `05b1d7b` + `ebfc620`: every observed `r9_udp_pto_fired` is checked against its own deadline; typed Carrier rejection remains zero; accepted-empty sibling/late ACK remains legal and classification-only. **Exact sibling packet identity/order closure is reopened by H-R9-045.**
 - H-R9-039 P4-B server-exit assertion at `021d79d`; H-R9-038 P4 residual diagnostics/oracles at `236e962` + `9091803` + `021d79d`.
 - H-R9-037 reverse-order three-way packet bind at `d5d5b23`, independently reviewed at `f2529087`; H-R9-036 reverse-order exact oracle at `855c679`.
 - P2 C1-C4 exact closure at `142f0a1` + `8d0ccd5` + `1f8bbb0` + `be03dc3`.
 - H-R9-034 settlement-continuation accepted-empty classification at `b801b65`; H-R9-033 initial-loop accepted-empty classification at `7a7c48c`; H-R9-032 packet bind/settlement proof at `ddafbb1`.
 - Session DeliveryAck and Carrier packet ACK remain separate evidence domains. Accepted-empty is classification-only and must not become rejection or Session transition.
 
-# READY_LOCAL 1 — CLOSED at ebfc620
+# READY_LOCAL 1 — H-R9-045 exact repeated-PTO identity/order oracle
 
-H-R9-044 repeated-PTO sibling-ACK oracle is repaired at `05b1d7b` + `ebfc620`: every `r9_udp_pto_fired` event must fire at/after its own deadline (per-event proof), typed Carrier rejection stays zero, a sibling/late ACK may legitimately classify accepted-empty, and the positive-retired packet is bound to its client retransmit + server `udp_return_packet_ack_sent`.
+Test/oracle-first. Do not redesign Recovery/Session semantics.
+
+For `reliable_udp_post_return_data_loss_recovers_via_pto_retransmit`:
+
+1. Parse every `r9_udp_retransmit_sent`. Every retransmit packet number must be valid, differ from the original, and be pairwise distinct from sibling retransmits; every retransmit must preserve the expected stable frame/logical identity (`frame=48`).
+2. Parse all positive `r9_udp_return_packet_ack` events and identify the first event that positively retires the frame lifecycle. Extract that exact packet number.
+3. Bind by packet-number membership, not by final log position: the lifecycle-resolving retired packet number must occur in the client retransmit set and in the server `udp_return_packet_ack_sent` set. Do **not** rely on `last retransmit == last server ACK == last client retirement` under UDP reordering.
+4. Require exactly one exact Session transition for `stream=1 offset=48 len=16`; typed Carrier rejection remains zero. Accepted-empty sibling/late ACK is legal and classification-only.
+5. Prove no `r9_udp_retransmit_sent` occurs after the lifecycle-resolving positive Carrier retirement.
+6. Require exactly one final `r9_udp_post_return_settled` with `remaining_in_flight=0`, and prove it occurs after both the exact Session confirmation and lifecycle-resolving Carrier retirement.
+7. Both client and server processes must succeed.
+
+If this strengthened oracle exposes a real runtime contradiction, immediately switch to smallest owner repair + deterministic regression. Otherwise keep this test-only.
 
 # READY_LOCAL 2 — H-R9-041 exact-wire refusal regression
 
@@ -46,7 +59,7 @@ Suppress one legitimate Carrier ACK, force legitimate retransmission, then relea
 
 # READY_LOCAL 5 — R9-5 adversarial feedback / every Carrier continuation
 
-Challenge future/never-sent/stale/duplicate/tampered feedback across each exact-current `UdpAcknowledgement::Carrier` continuation: initial receive, settlement and post-return owners. Rejected feedback must be atomic and fail closed without RTT/PTO/loss/cwnd/Session mutation; accepted-empty must remain classification-only. Recheck overlap-copy feedback after H-R9-040/H-R9-044.
+Challenge future/never-sent/stale/duplicate/tampered feedback across each exact-current `UdpAcknowledgement::Carrier` continuation: initial receive, settlement and post-return owners. Rejected feedback must be atomic and fail closed without RTT/PTO/loss/cwnd/Session mutation; accepted-empty must remain classification-only. Recheck overlap-copy feedback after H-R9-040/H-R9-045.
 
 # READY_LOCAL 6 — R9-6 ownership/resource boundedness
 
@@ -88,11 +101,11 @@ Only after a reachable independent R9 review anchor exists, reconcile `docs/stat
 
 Earlier reachable independent bounded review already covers reliable-UDP engine basics including future/never-sent ACK guard, `CarrierState`, concurrent Carrier Manager/health/migration-back, FairScheduler/flow accounting, carrier adapters, `SessionRuntime`, observability including mixed queue/generic drop classification, package/reproducibility/operator scripts, dependency/build surface, CLI portability/output, algorithmic boundedness/validators, DeliveryLedger/process codec/datagram/crypto API and wire/parser surfaces.
 
-The materially new cross-process R9 integration remains uncovered until READY_LOCAL 13. H-R9-044 plus H-R9-041/H-R9-042 are concrete dependency-ready work, so repository-wide queue exhaustion is false.
+The materially new cross-process R9 integration remains uncovered until READY_LOCAL 13. H-R9-045 plus H-R9-041/H-R9-042 are concrete dependency-ready work, so repository-wide queue exhaustion is false.
 
 ## VPS opportunity
 
-**Not READY.** Standing authorization remains valid, but authoritative classification is `READY_LIVE: none`. H-R9-044 and the remaining R9 work are local correctness/evidence questions. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
+**Not READY.** Standing authorization remains valid, but authoritative classification is `READY_LIVE: none`. H-R9-045 and the remaining R9 work are local correctness/evidence questions. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
 
 Only create a new READY_LIVE row if later code/instrumentation/hypothesis/path conditions produce a concrete unresolved real-network question that local/loopback evidence cannot answer.
 
