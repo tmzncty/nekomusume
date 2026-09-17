@@ -1,15 +1,13 @@
-# ChatGPT reviewer handoff — H-R9-035 independently closed; R9-2 now ACK-order + dual P4
+# ChatGPT reviewer handoff — READY_LOCAL 2 closed at 424583d; R9-3 blocked on dual P4 + provenance
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `be03dc31a8806fc6032655f5a1f755a63155f4de` (`test(cli): H-R9-035 settled cardinality — exactly one r9_udp_post_return_settled`), test-only and building on exact `1f8bbb01fa08ebdd889ac70ccbb12c1185aa5a1e`.
-- Current independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-035-close-be03dc3-20260917.md`](reviews/reviewer-r9-h-r9-035-close-be03dc3-20260917.md), reachable through reviewer commit `2e414f57fcf8bd29f69ce4d83b00c9a6f5d032d7`.
-- H-R9-035 is independently closed at exact `be03dc3` + `1f8bbb0`: the ordinary positive P2 fixture binds client `r9_udp_post_return_sent`, server `udp_return_packet_ack_sent`, and client real `r9_udp_return_packet_ack retired=true` packet numbers to exact equality, requires exactly one exact Session transition, zero rejected/accepted-empty shortcuts, exactly one settled-zero event, and settlement after both real ACK-domain transitions. The bounded review found no contradictory source/oracle defect.
-- P2 C1-C3 remain closed at `142f0a1`; P2 C4 remains closed at `8d0ccd5` + `1f8bbb0` + `be03dc3`.
-- H-R9-034/H-R9-033/H-R9-032/H-R9-030/H-R9-029/H-R9-028 remain closed unless contradictory repository evidence appears.
-- Candidate A (`Recovery::on_ack` future/never-sent guard) and candidate B (`record_datagrams` mixed queue/generic-drop classification) remain closed on current code.
-- Developer-local clean exact-tree provenance for exact `be03dc3` is recorded by the developer handoff: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T00:50:06Z → 2026-09-17T00:53:21Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). The independent reviewer did not re-execute this local gate.
-- GitHub-hosted Rust CI run `35168132685` for exact `be03dc3` completed SUCCESS. Hosted CI is cross-evidence only, not developer-local provenance.
+- Latest developer-owned source/test commit reviewed: exact `424583dd32fc4bbe3bd69d616ceb40de1a6b45a6` (`fix(cli): remove duplicate post-return Carrier ACK on ordinary path (READY_LOCAL 2)`), building on `83d10b0`.
+- Prior independent reviewer checkpoint: [`docs/reviews/reviewer-r9-h-r9-035-close-be03dc3-20260917.md`](reviews/reviewer-r9-h-r9-035-close-be03dc3-20260917.md), reachable through reviewer commit `2e414f57fcf8bd29f69ce4d83b00c9a6f5d032d7`.
+- READY_LOCAL 2 is closed at exact `424583d` + `83d10b0`: `--reverse-post-return-ack` emits the canonical Carrier ACK before the Session DeliveryAck with no stale/future injection; `reliable_udp_post_return_reversed_ack_order_settles` proves client-observed Carrier-before-Session order, exactly one Session transition, one positive Carrier retirement, three-way packet-number equality, zero rejected/accepted-empty, exactly one settled-zero, and settlement after both transitions.
+- P2 C1-C4 remain closed; H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier repairs remain closed.
+- Candidate A and B remain closed.
+- Developer-local clean exact-tree provenance for `424583d`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T01:59:34Z → 2026-09-17T02:03:04Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
 - Open PRs at review time: none.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
