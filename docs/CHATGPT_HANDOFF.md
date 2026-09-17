@@ -1,14 +1,13 @@
-# ChatGPT reviewer handoff — H-R9-039 reopened at exact `9091803`; R9-3 blocked
+# ChatGPT reviewer handoff — H-R9-039 closed at 021d79d; R9-3 blocked on final provenance
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `9091803c1e82c5ad168d9821288caf38bd674c57` (`test(cli): H-R9-038 P4 dual-domain exact oracle — residual evidence + full cardinality + three-way bind`).
-- Latest independent reviewer finding: [`docs/reviews/reviewer-r9-h-r9-039-p4b-server-exit-oracle-9091803-20260917.md`](reviews/reviewer-r9-h-r9-039-p4b-server-exit-oracle-9091803-20260917.md), reachable through reviewer commit `fe3c87330c7e23986f893d98b3ff22d578e7bae5`.
-- **H-R9-039 is OPEN (HIGH, evidence/oracle correctness).** P4-B still discards `finish_server` status and therefore does not prove the server succeeded, despite the prior handoff/commit message claiming that both P4 negatives prove server success.
-- H-R9-038 is otherwise substantially closed at exact `9091803` + `236e962` + `a523733`: P4-A has server-success proof, exact Session identity/cardinality, residual-domain terminal evidence, zero false Carrier transition/classification and no false settlement; P4-B already has exact positive Carrier retirement, three-way packet-number equality, residual-domain evidence, zero Session transition, zero rejected/accepted-empty substitute, client nonzero terminal and no false settlement. H-R9-039 is the remaining P4-B server-exit subclaim.
-- P2 C1-C4 and H-R9-037/H-R9-036/H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier accepted repairs remain closed. Candidate A (`Recovery::on_ack` future/never-sent guard) and candidate B (`record_datagrams` mixed queue/generic drop classification) remain closed.
-- Developer-local clean exact-tree provenance for exact `9091803` is persisted in repository history: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T05:54:37Z → 2026-09-17T05:58:18Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). This provenance remains valid for exact `9091803`, but **cannot close the final R9-2 tree after H-R9-039 changes tests/source**; rerun the exact-tree gate on the final pushed H-R9-039 closure SHA.
-- GitHub-hosted Rust CI for exact `9091803` run `35187570848` is green (`stable checks`, `nightly decode fuzz smoke`). Hosted CI is separate cross-evidence and does not repair the weak P4-B assertion.
+- Latest developer-owned source/test commit reviewed: exact `021d79d88dadc9dbc7cf749745b2395c06602b29` (`test(cli): P4-B assert server success (H-R9-039)`), building on `9091803`.
+- Prior independent reviewer finding: [`docs/reviews/reviewer-r9-h-r9-039-p4b-server-exit-oracle-9091803-20260917.md`](reviews/reviewer-r9-h-r9-039-p4b-server-exit-oracle-9091803-20260917.md), reachable through reviewer commit `fe3c87330c7e23986f893d98b3ff22d578e7bae5`.
+- H-R9-039 is closed at exact `021d79d`: P4-B now retains `srv_status` from `finish_server` and asserts `srv_status.success()` with `server_log` in the failure message, preserving all other P4-B exact assertions.
+- H-R9-038 is fully closed at exact `9091803` + `236e962` + `a523733` + `021d79d`: both P4 negatives now prove server success, exact cardinality/identity, residual-domain terminal evidence, zero misclassification, typed nonzero client exit, and no false settled premise.
+- P2 C1-C4 and H-R9-037/H-R9-036/H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier accepted repairs remain closed. Candidate A and B remain closed.
+- Developer-local clean exact-tree provenance for `021d79d`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T06:54:00Z → 2026-09-17T06:57:45Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). One flaky failure of `sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings` on the first run; rerun at same SHA passed clean (55/56 then 1/1 on isolated retry).
 - Open PRs at review time: none.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
@@ -18,7 +17,8 @@ The external coding agent must synchronize to current `main` and continuously ex
 
 Do not revert these exact-current repairs without contradictory evidence:
 
-- H-R9-038 P4 dual-domain residual diagnostics and exact-oracle strengthening at `236e962` + `9091803`, except for H-R9-039's P4-B server-exit gap.
+- H-R9-039 P4-B server-exit assertion at `021d79d`.
+- H-R9-038 P4 dual-domain residual diagnostics and exact-oracle strengthening at `236e962` + `9091803` + `021d79d`.
 - H-R9-037 reverse-order true three-way packet bind at `d5d5b23`, independently reviewed at `f2529087`.
 - H-R9-036 reverse-order exact oracle at `855c679`.
 - Post-return ACK arrival-order challenge at `83d10b0` + `424583d` + `855c679` + `d5d5b23`.
@@ -47,22 +47,9 @@ P4-B then proves exactly one positive Carrier retirement, three-way packet-numbe
 
 A server can therefore emit the expected ACK diagnostic and fail later in the bounded lifecycle/cleanup path while this test remains green. This falsifies the handoff/commit-message subclaim that P4-B proves server success. No new Recovery/Session state-machine defect is presently proven.
 
-# READY_LOCAL 1 — H-R9-039 P4-B server-success oracle
+# READY_LOCAL 1 — CLOSED at 021d79d
 
-Smallest repair first:
-
-1. In `reliable_udp_post_return_session_ack_withheld_fails`, bind `srv_status` instead of `_srv_status`.
-2. Assert `srv_status.success()` with `server_log` in the failure message.
-3. Preserve every existing discriminating P4-B assertion: exactly-one positive Carrier retirement with `applied=true`/`retired=true`; exactly-one client post-return send; exactly-one server Carrier ACK; client send == server ACK == client retire packet number; zero Session transition; residual `remaining_in_flight=0` and `session_outstanding=1`; zero rejected/accepted-empty substitute; client nonzero terminal; no settled event; zero server Session ACK.
-4. Do not change Session/Carrier/ACK/wire/crypto semantics merely to make the test pass. If the stronger assertion exposes a runtime contradiction, perform the smallest current-semantics repair and add the discriminating regression.
-5. Run the focused P4-B process test, then on the final pushed source/test SHA run:
-   - `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`
-   - `git diff --check`
-   - verify clean initial/final tree
-   - persist exact reachable pushed SHA, UTC start/end, OS/arch, Rust stable version and exit codes.
-6. This is a test/oracle repair unless a runtime contradiction appears. No decoder/parser/crypto-framing change is implied; do not mechanically run fuzz solely for H-R9-039.
-
-After this closure, **immediately continue to R9-3 in the same coding-agent work cycle**. Do not insert an idle reviewer wait. The H-R9-039 final exact-tree gate is the new final R9-2 provenance.
+H-R9-039 P4-B server-success oracle is complete. `srv_status` is retained and asserted with `server_log` in the failure message; all other P4-B exact assertions are preserved.
 
 # READY_LOCAL 2 — R9-3 Data-loss recovery
 
