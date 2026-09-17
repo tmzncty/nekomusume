@@ -3672,6 +3672,23 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
         })
         .unwrap_or(u64::MAX);
     assert_eq!(re_pn, retire_pn, "{client_log}");
+    // H-R9-042: server Carrier ACK identity is also bound to the same
+    // retransmitted packet number — three-way cross-process bind.
+    let srv_ack_ev: Vec<&str> = server_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_sent\""))
+        .collect();
+    assert_eq!(srv_ack_ev.len(), 1, "{server_log}");
+    let srv_ack_pn = srv_ack_ev[0]
+        .split("\"packet_number\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    assert_eq!(re_pn, srv_ack_pn, "{client_log} {server_log}");
     // Zero rejected/accepted-empty on this recovery path.
     assert!(
         !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\"")
