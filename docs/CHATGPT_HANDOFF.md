@@ -1,14 +1,14 @@
-# ChatGPT reviewer handoff — H-R9-037 independently closed; R9-3 blocked on dual P4 + provenance
+# ChatGPT reviewer handoff — H-R9-038 HIGH: P4 dual-domain negative oracles still under-prove residual state
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `d5d5b23dd007c4293e9df7e0eb9aa2bee828bc74` (`test(cli): H-R9-037 reverse-order true three-way packet bind — client send == server ACK == client retire`).
-- Independent bounded no-finding review: [`docs/reviews/reviewer-r9-h-r9-037-close-d5d5b23-20260917.md`](reviews/reviewer-r9-h-r9-037-close-d5d5b23-20260917.md), reachable through reviewer commit `f2529087d4898d5d177adc0e41fe986aa93fe0c0`.
-- H-R9-037 is closed at exact `d5d5b23`: the reverse-order fixture requires both processes to succeed, exactly one client post-return send, exactly one server Carrier ACK, exactly one positive client Carrier retirement, exact three-way packet-number equality, exactly one Session transition `stream=1 offset=48 len=16`, zero rejected/accepted-empty classification, exactly one `r9_udp_post_return_settled` containing `remaining_in_flight=0`, Carrier-before-Session order, and settlement after both transitions.
-- GitHub-hosted Rust CI run `35179469348` for exact `d5d5b23` is SUCCESS: `stable checks` and `nightly decode fuzz smoke` both completed successfully. This is hosted cross-evidence only.
-- Developer-local clean exact-tree provenance for `d5d5b23` remains repository-recorded separately: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T03:49:17Z → 2026-09-17T03:53:01Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). The reviewer did not relabel this as reviewer-executed evidence.
-- P2 C1-C4 remain closed. H-R9-036/H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier repairs remain closed. Candidate A future/never-sent ACK guard and candidate B mixed queue/generic-drop observability repair remain closed.
+- Latest developer-owned source/test commit reviewed: exact `a5237330b16ca199dc2c16bebcf728859c8a0491` (`test(cli): P4 dual suppression — Carrier-ACK-withheld + Session-ACK-withheld negatives (READY_LOCAL 1+2)`).
+- Independent finding: [`docs/reviews/reviewer-r9-h-r9-038-p4-dual-suppression-oracle-a523733-20260917.md`](reviews/reviewer-r9-h-r9-038-p4-dual-suppression-oracle-a523733-20260917.md), reachable through reviewer commit `4dd120d15cbfce054a792ab48f9a8b711c03fa67`.
+- **H-R9-038 HIGH is open.** The new P4 fault seams are directionally consistent with current Session/Carrier separation, but both built-binary tests remain too weak to prove that one evidence domain cannot substitute for the other or to prove the exact residual domain at bounded failure.
+- Exact `a523733` GitHub-hosted Rust CI run `35183369645` is SUCCESS. This is hosted cross-evidence only and does not replace developer-local clean exact-tree provenance.
 - Open PRs at review time: none.
+- P2 C1-C4 and H-R9-037/H-R9-036/H-R9-035/H-R9-034/H-R9-033/H-R9-032 and earlier accepted repairs remain closed unless contradictory exact-current evidence appears.
+- Candidate A future/never-sent ACK fail-closed guard and candidate B mixed queue/generic-drop observability repair remain closed.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> next slice. Reviewer cadence is only a check frequency and is never a work-ticket length or reason to idle.
@@ -33,48 +33,64 @@ Do not revert these exact-current repairs without contradictory evidence:
 - H-R9-020 count=4 ownership accounting (`2 reliable UDP + 1 uncertain TCP + 1 post-return reliable = 4`).
 - reversed initial Session ACK buffering/ordered application.
 
-# READY_LOCAL 1 — P4 Session ACK present / post-return Carrier ACK withheld
+## H-R9-038 exact finding
 
-Create one deterministic built-binary negative that reaches the existing post-return reliable owner, sends the exact Session DeliveryAck, but withholds only the **post-return** Carrier packet ACK.
+`a523733` adds the smallest post-return-only Carrier-ACK suppression seam and two P4 process tests, but the tests do not yet satisfy the handoff acceptance contract.
 
-Exact-current implementation facts:
+### P4-A current weakness — Session ACK present / Carrier ACK withheld
 
-- historical `--suppress-r9-ack` is wired to the initial reliable-UDP packet-ACK path and is too broad/wrong-phase for this question;
-- the post-return server owner already consumes the pending ACK obligation once into retained `post_ack_pack`, sends Session DeliveryAck, then on the ordinary path sends `post_ack_pack` afterward;
-- therefore the smallest seam is a post-return-only Carrier-ACK suppression flag at the ordinary post-return send branch. Do not fold that flag into stale/future/reverse `seam_active`, because those seams intentionally change ACK ordering/classification. Consuming `post_ack_pack` and deliberately not sending it is sufficient for this fault injection; do not redesign ACK generation or Recovery.
+`reliable_udp_post_return_carrier_ack_withheld_fails` currently:
 
-Prefer one common classification-only terminal diagnostic immediately before the existing post-return dual-settlement timeout if needed to make both P4 negatives discriminating. A suitable existing-semantics shape is to report the exact two remaining domains, for example Session outstanding count plus Recovery `remaining_in_flight`; this diagnostic must not mutate Session/Recovery, add a policy value, or become a success signal.
+- discards server exit status returned by `finish_server`;
+- checks only broad presence of `r9_udp_return_delivery_ack`, not exactly one `stream=1 offset=48 len=16` transition;
+- checks broad server presence/absence rather than exact cardinality;
+- has no classification-only residual-state proof that Session is complete while Recovery remains nonzero;
+- does not fully exclude downstream success continuation from a false settlement premise.
 
-Require:
+### P4-B current weakness — Carrier ACK present / Session ACK withheld
 
-- server process succeeds and proves the post-return owner was reached;
-- exactly one server `udp_return_delivery_ack_sent` and zero server `udp_return_packet_ack_sent` for the post-return packet;
-- exactly one positive client Session transition `r9_udp_return_delivery_ack` with `stream=1 offset=48 len=16`;
-- zero positive client `r9_udp_return_packet_ack` for the post-return packet;
-- if the terminal diagnostic is added, it must show Session complete but Recovery still nonzero (`session_outstanding=0`, `remaining_in_flight>0`) immediately before the existing bounded terminal failure;
-- client exits typed/nonzero on the existing post-return bounded deadline; use the exact current terminal path rather than a new sleep/policy timeout;
-- no `r9_udp_post_return_settled` and no downstream health/failover/migration success continuation caused by a false settlement premise.
+`reliable_udp_post_return_session_ack_withheld_fails` currently:
 
-Run the focused process test first, then the normal exact-tree local gate for the pushed developer SHA. No decoder/parser/crypto-framing change is expected; do not mechanically run fuzz for a CLI seam/test-only repair.
+- discards server exit status;
+- checks only broad presence of `r9_udp_return_packet_ack`, not exactly one positive `applied=true, retired=true` transition;
+- does not require exactly-one client send / server Carrier ACK / client retirement or their three-way packet-number equality;
+- does not exclude accepted-empty/rejected substitutes;
+- has no residual-state proof that Recovery is zero while one Session range remains outstanding.
 
-# READY_LOCAL 2 — P4 Carrier ACK present / Session ACK withheld
+The current source seam itself does not prove a new runtime-state contradiction. Repair the oracle first; if the stronger oracle exposes one, then perform the smallest current-semantics runtime repair.
 
-The existing post-return `--suppress-r9-dack` seam already has the correct runtime shape: it withholds only the Session DeliveryAck while the real Carrier ACK is sent. Strengthen `reliable_udp_post_return_incomplete_is_terminal` before changing runtime semantics.
+# READY_LOCAL 1 — H-R9-038A exact P4 Carrier-ACK-withheld proof
 
-Current test is intentionally not yet acceptance-grade: it ignores server status/log, proves only client nonzero + absent settlement + broad error text, and does not prove that the Carrier domain really completed while the Session domain remained outstanding.
+Keep `--suppress-r9-post-return-pack` as a post-return-only fault seam. Add one common classification-only terminal diagnostic at the existing bounded post-return dual-settlement failure boundary if needed; it must report the actual remaining domains (at minimum `session_outstanding` and `remaining_in_flight`), mutate no state, add no policy value and never count as success.
 
-Require:
+Strengthen `reliable_udp_post_return_carrier_ack_withheld_fails` so it requires:
 
 - server process succeeds;
-- exactly one client `r9_udp_post_return_sent` and exactly one server `udp_return_packet_ack_sent`;
-- exactly one positive client `r9_udp_return_packet_ack` with `applied=true, retired=true`;
-- exact three-way packet-number equality between client send, server Carrier ACK and client retirement;
-- zero server `udp_return_delivery_ack_sent` for the post-return offset and zero client `r9_udp_return_delivery_ack` transition for offset 48;
-- if the common terminal diagnostic from READY_LOCAL 1 is added, it must show Recovery settled but Session still outstanding (`remaining_in_flight=0`, `session_outstanding=1`) immediately before bounded failure;
-- client exits typed/nonzero on the existing post-return dual-settlement deadline;
-- no `r9_udp_post_return_settled`, no accepted-empty/rejected substitute for the real positive Carrier retirement, and no downstream success continuation.
+- exactly one server `udp_return_delivery_ack_sent` for the post-return range and zero server `udp_return_packet_ack_sent` for that packet;
+- exactly one client `r9_udp_return_delivery_ack` with `stream=1 offset=48 len=16`;
+- zero positive client post-return Carrier retirement, zero `r9_udp_return_packet_ack_rejected`, zero `r9_udp_return_packet_ack_accepted_empty` substitute;
+- terminal residual-domain diagnostic immediately before bounded failure with `session_outstanding=0` and `remaining_in_flight>0`;
+- client exits typed/nonzero on the existing bounded post-return terminal path;
+- zero `r9_udp_post_return_settled` and zero downstream health/failover/accounting/summary success continuation caused by a false settlement premise.
 
-Only repair runtime semantics if this strengthened oracle exposes a real contradiction. READY_LOCAL 1+2 together must prove neither evidence domain substitutes for the other.
+Run the focused built-binary test first. No decoder/parser/crypto-framing change is expected; do not mechanically run fuzz for this seam/test repair.
+
+# READY_LOCAL 2 — H-R9-038B exact P4 Session-ACK-withheld proof
+
+Keep existing `--suppress-r9-dack`; do not change Session/Carrier/ACK semantics merely to make the test convenient.
+
+Strengthen `reliable_udp_post_return_session_ack_withheld_fails` so it requires:
+
+- server process succeeds;
+- exactly one client `r9_udp_post_return_sent`, exactly one server `udp_return_packet_ack_sent`, exactly one positive client `r9_udp_return_packet_ack` with `applied=true, retired=true`;
+- exact three-way packet-number equality between client send, server Carrier ACK and client retirement;
+- zero server `udp_return_delivery_ack_sent` for post-return offset 48 and zero client `r9_udp_return_delivery_ack` transition for that range;
+- zero `r9_udp_return_packet_ack_rejected` / zero `r9_udp_return_packet_ack_accepted_empty` substitute;
+- terminal residual-domain diagnostic with `remaining_in_flight=0` and `session_outstanding=1` immediately before bounded failure;
+- client exits typed/nonzero on the existing bounded post-return terminal path;
+- zero `r9_udp_post_return_settled` and zero downstream success continuation.
+
+If READY_LOCAL 1/2 reveal a real state contradiction, smallest repair -> positive/negative regression -> pushed exact-tree gate, then continue immediately.
 
 # READY_LOCAL 3 — final R9-2 developer-local exact-tree provenance
 
