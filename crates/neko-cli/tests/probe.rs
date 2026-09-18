@@ -3794,6 +3794,136 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
     );
 }
 #[test]
+fn reliable_udp_ack_loss_delayed_original_reorder_settles() {
+    // R9-4: server withholds the FIRST post-return Carrier ACK long enough to
+    // force a legitimate PTO/retransmission, then releases the delayed
+    // original ACK BEFORE the fresh copy's ACK — deterministic ACK-loss +
+    // delayed/sibling reorder challenging duplicate handling.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-alo-server");
+    let cp = tmp("r9-alo-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "15",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--delay-r9-ack-reorder",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-alo-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-alo-cli",
+        ])
+        .output()
+        .unwrap();
+    let (srv_status, server_log) = finish_server(server);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let client_err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{client_log} {client_err}");
+    assert!(srv_status.success(), "{server_log}");
+    // PTO fired and a fresh retransmit went out on a fresh packet number.
+    let pto_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_pto_fired\""))
+        .collect();
+    assert!(!pto_ev.is_empty(), "{client_log}");
+    let re_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_retransmit_sent\""))
+        .collect();
+    assert!(!re_ev.is_empty(), "{client_log}");
+    // Exactly one Session transition for the post-return range.
+    let dack_ev: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_return_delivery_ack\""))
+        .collect();
+    assert_eq!(dack_ev.len(), 1, "{client_log}");
+    // Delayed original + fresh-copy Carrier ACKs both observed by the client —
+    // the delayed original is classification-only (accepted-empty or retired)
+    // and must not create a second Session transition or a rejection.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\""),
+        "{client_log}"
+    );
+    // Server emitted at least two post-return Carrier ACKs (delayed original +
+    // fresh copy), released in the reorder (delayed first).
+    let srv_ack_ev: Vec<&str> = server_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_sent\""))
+        .collect();
+    assert!(srv_ack_ev.len() >= 2, "{server_log}");
+    // Terminal: exactly one zero-in-flight settlement.
+    let settled: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_post_return_settled\""))
+        .collect();
+    assert_eq!(settled.len(), 1, "{client_log}");
+    assert!(
+        settled[0].contains("\"remaining_in_flight\":0"),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains("failover_client_ok"),
+        "{client_log}"
+    );
+}
+#[test]
 fn reliable_udp_post_return_reversed_ack_order_settles() {
     // READY_LOCAL 2: pure order challenge — Carrier packet ACK arrives BEFORE
     // the Session DeliveryAck on the post-return owner. Settlement still
