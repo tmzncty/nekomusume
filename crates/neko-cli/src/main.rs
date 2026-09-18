@@ -1040,11 +1040,12 @@ fn recv_udp_delivery_ack(
                             let record = outstanding.remove(pos);
                             return Ok(UdpAcknowledgement::Session { record, bytes: n });
                         }
-                        // H-R9-056: a freshly sealed exact duplicate DeliveryAck
-                        // for an already-confirmed range is accepted-empty —
-                        // idempotent zero-delta acknowledgement, not malformed.
-                        let end = offset.checked_add(len as u64).unwrap_or(u64::MAX);
-                        if session_rt.confirmed_watermark(stream) >= end {
+                        // H-R9-056/058: a freshly sealed EXACT duplicate
+                        // DeliveryAck for a range this Session actually
+                        // confirmed is accepted-empty — idempotent zero-delta
+                        // acknowledgement, not malformed. A merely-below-
+                        // watermark wrong-range ACK is still fail-closed.
+                        if session_rt.is_confirmed_range(stream, offset, len) {
                             diagnostic("accepted_empty_logical_ack");
                             continue;
                         }
@@ -1244,6 +1245,9 @@ fn failover_server(args: &[String]) {
     // until a second post packet arrives, then releases the delayed original
     // before the fresh copy's ACK — a deterministic ACK-loss + reorder seam.
     let mut delayed_post_ack: Option<(Vec<u8>, u64)> = None;
+    // H-R9-057: the delay/reorder challenge is exactly one-shot — after the
+    // first withheld ACK is released, later post packets ACK normally.
+    let mut delay_reorder_done = false;
     let udp_local_port = udp.local_addr().map(|a| a.port()).unwrap_or(up);
     let tcp_local_port = tcp.local_addr().map(|a| a.port()).unwrap_or(tp);
     let mut runtime =
@@ -2198,7 +2202,7 @@ fn failover_server(args: &[String]) {
                                 // next post packet the delayed original is
                                 // released BEFORE the fresh copy's ACK —
                                 // deterministic ACK-loss + delayed/reorder.
-                                if reliable_udp && delay_reorder {
+                                if reliable_udp && delay_reorder && !delay_reorder_done {
                                     if delayed_post_ack.is_none() {
                                         if let Some(pack) = &post_ack_pack {
                                             if let Ok(sealed_pack) =
@@ -2208,6 +2212,7 @@ fn failover_server(args: &[String]) {
                                             }
                                         }
                                     } else {
+                                        delay_reorder_done = true;
                                         let (delayed, dpn) = delayed_post_ack.take().unwrap();
                                         let _ = udp.send_to(&delayed, post_source);
                                         emit_diagnostic(
