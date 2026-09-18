@@ -4146,6 +4146,22 @@ impl PathRecovery {
         Ok(())
     }
 
+    /// H-R9-051: roll back a packet whose socket send failed after admission —
+    /// remove only this packet copy's Recovery entry, Reno charge, and charged
+    /// bookkeeping. Retained retransmit plaintext and largest_sent survive so
+    /// the stable frame stays available for a later legitimate retry.
+    pub fn abandon_sent(&mut self, packet_number: u64) -> bool {
+        if self.recovery.abandon_sent(packet_number).is_none() {
+            return false;
+        }
+        if let Some(charge) = self.charged.remove(&packet_number) {
+            // Reverse ONLY the in-flight bytes charged at on_sent — cwnd and
+            // ssthresh are congestion state, not affected by a socket failure.
+            self.reno.bytes_in_flight = self.reno.bytes_in_flight.saturating_sub(charge);
+        }
+        true
+    }
+
     /// Apply an authenticated ACK range set. `generation` must match this
     /// path's current generation — a stale/other-generation ACK is rejected
     /// before any RTT/loss/PTO mutation. Returns Carrier-local recovery
@@ -4241,6 +4257,12 @@ impl PathRecovery {
     /// projection (`neko_observe::record_recovery_ack`/`record_pto`).
     pub fn recovery(&self) -> &neko_reliable::Recovery {
         &self.recovery
+    }
+    /// H-R9-051: mutable access for transactional rollback — socket-send
+    /// failure must reverse the new packet copy's Recovery charge without
+    /// touching retained plaintext or largest_sent monotonicity.
+    pub fn recovery_mut(&mut self) -> &mut neko_reliable::Recovery {
+        &mut self.recovery
     }
 
     pub fn path(&self) -> PathId {
@@ -4719,6 +4741,15 @@ impl ReliableUdpRuntime {
         Ok(())
     }
 
+    /// H-R9-051: roll back a retransmit whose socket send failed after the
+    /// pre-send reservation — remove only this packet copy's Recovery entry,
+    /// Reno charge, and packet->frame map. The stable retained frame/plaintext
+    /// survives so a later legitimate retry can re-probe it.
+    pub fn abandon_retransmit(&mut self, packet_number: u64) -> bool {
+        self.packet_frames.remove(&packet_number);
+        self.recovery.abandon_sent(packet_number)
+    }
+
     /// Deterministic path/generation teardown: drop the packet->frame map and
     /// the one bounded plaintext owner together, so no stale frame ownership
     /// outlives the runtime's recovery state.
@@ -4737,6 +4768,13 @@ impl ReliableUdpRuntime {
     /// Read-only recovery engine for observability projection.
     pub fn recovery_engine(&self) -> &neko_reliable::Recovery {
         self.recovery.recovery()
+    }
+    /// H-R9-051: roll back a packet that was sent to the socket but whose
+    /// socket call failed — remove only that packet's Recovery charge and
+    /// reverse its outstanding-frame copies. Retained plaintext and
+    /// largest_sent monotonicity are untouched so a later retry is legal.
+    pub fn abandon_sent(&mut self, number: u64) -> Option<neko_reliable::SentPacket> {
+        self.recovery.recovery_mut().abandon_sent(number)
     }
     pub fn in_flight(&self) -> usize {
         self.recovery.in_flight()

@@ -3612,7 +3612,14 @@ fn failover_client(args: &[String]) {
                         if !admit_retransmit(rt, rpn, now_us, &re_sealed, frame) {
                             continue;
                         }
-                        let _ = u.send_to(&re_sealed, target);
+                        // H-R9-051: socket send is part of the transaction —
+                        // a failed send rolls back Recovery ownership for this
+                        // packet copy and must not emit r9_udp_retransmit_sent
+                        // or advance the active packet identity.
+                        if u.send_to(&re_sealed, target).is_err() {
+                            let _ = rt.abandon_retransmit(rpn);
+                            continue;
+                        }
                         emit_diagnostic(
                             args,
                             "client",
@@ -4731,9 +4738,14 @@ fn lab_pump(
                     st.c.retransmit_refused += 1;
                     continue;
                 }
-                if sock.send(&sealed).is_ok() {
-                    st.c.retransmit_wire_sent += 1;
+                // H-R9-051: socket send is part of the transaction — a failed
+                // send rolls back Recovery ownership and must not count as
+                // wire-sent or caller outstanding.
+                if sock.send(&sealed).is_err() {
+                    let _ = rt.abandon_retransmit(rpn);
+                    continue;
                 }
+                st.c.retransmit_wire_sent += 1;
                 st.outstanding.insert(rpn, st.now_us);
             }
         }

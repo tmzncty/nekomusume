@@ -282,6 +282,18 @@ impl Recovery {
         self.sent.insert(p.number, p);
         Ok(())
     }
+    /// H-R9-051: roll back a packet that was sent to the socket but whose
+    /// socket call failed — remove only that packet's sent entry and reverse
+    /// its outstanding-frame copies. The retained retransmit plaintext and
+    /// `largest_sent` monotonicity are untouched so a later retry is legal.
+    /// Returns the removed packet's bytes so the caller can uncharge Reno.
+    pub fn abandon_sent(&mut self, number: u64) -> Option<SentPacket> {
+        let p = self.sent.remove(&number)?;
+        for f in &p.frames {
+            Self::release_frame(&mut self.outstanding_frames, *f);
+        }
+        Some(p)
+    }
     pub fn in_flight(&self) -> usize {
         self.sent.len()
     }
