@@ -1,12 +1,13 @@
-# ChatGPT reviewer handoff — H-R9-054 closed at b69c20e; R9-3 blocked on H-R9-042
+# ChatGPT reviewer handoff — H-R9-054 independently closed; R9-3 blocked on H-R9-042
 
 ## Current repository truth
 
 - Latest developer-owned source/test commit: exact `b69c20e050a5ce777608ffa8a2260fb6a6cf42b2` (`style(cli): cargo fmt — H-R9-054 reuse assertions`), on top of `d995afddc819964a5f994eba960071e840334337` (`test(cli): H-R9-054 send-reuse discriminator — reuse at/below committed watermark refused`).
-- **H-R9-054 closed:** `cli_regression_tests::abandoned_retransmit_preserves_retired_committed_watermark` now proves packet-number reuse at or below the committed watermark is refused by the send owner — reuse of committed `N=0` and current watermark `=1` both refused with no new Recovery/Reno ownership; fresh `101` succeeds as paired control.
+- **H-R9-054 closed and independently challenged:** developer regressions at `4761827b7edd4ad149c884f47f1232738ca5377e` + `d995afddc819964a5f994eba960071e840334337` prove packet-number reuse at/below committed watermark is refused without new Recovery/Reno ownership, with fresh higher packet numbers admitted. Independent bounded no-finding review is reachable at `bb988bc35d88ea825d938496c61766cc30bb036d` (`docs/reviews/reviewer-r9-h-r9-054-close-b69c20e-20260918.md`).
 - `cli_regression_tests::abandoned_retransmit_restores_committed_sent_watermark` (H-R9-052) and `socket_send_failure_rolls_back_retransmit_ownership` (H-R9-051) retained.
 - `Recovery::watermark_on_reserve` records pre-reservation committed `largest_sent`; `abandon_sent` restores exact committed watermark; `PathRecovery::abandon_sent` rolls back `packets_sent`; `abandon_retransmit` is the single complete rollback owner.
 - Developer-local clean exact-tree provenance for exact `b69c20e`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-18T09:51:22Z → 2026-09-18T09:55:41Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- Reviewer did not run a local gate for the H-R9-054 closure note; do not conflate the independent source/test review with developer-local provenance. GitHub-hosted CI is cross-evidence only: run `35331703441` on `b69c20e` and run `35332312955` on docs-only descendant `6853d369001049cc76eb846c86d3a3e76b5c7786` both succeeded.
 - Still open before R9-3 completion: **H-R9-042 deterministic just-before-PTO-deadline negative**.
 - Open PRs: none at this review.
 - Candidate A (future/never-sent ACK atomic rejection) remains closed; H-R9-054 closed the send-side reuse discriminator. Candidate B (mixed queue/generic datagram-drop observability) remains closed.
@@ -21,18 +22,21 @@ Do not revert accepted repairs without contradictory current repository evidence
 - H-R9-050 exact-wire executable admission at `c2e263e`: retransmit admission/ownership uses encoded/sealed wire bytes.
 - H-R9-051 socket-outcome transaction work at `267604d` + `f954a83`: socket result checks, success-only sent evidence, complete rollback owner, Reno/accounting rollback, partial rollback API removed.
 - H-R9-052/H-R9-053 source semantics at `4488d09` + `f954a83` + `9f3786b` + `4821789`: aborted reservation is not ACK-valid; committed high-water survives prior packet retirement; format/clippy gate repaired.
+- H-R9-054 send-side committed-watermark reuse discriminator at `4761827` + `d995afd` + formatting-only `b69c20e`, independently rechecked with no finding at `bb988bc`.
 - H-R9-040 lifecycle-scoped `acked_frames` pruning and H-R9-041 exact-wire implementation ordering at `9a113f2`.
 - H-R9-043 through H-R9-049 repeated-PTO identity/deadline/accepted-empty/retirement/source-projection work at the reachable anchors already recorded in repository history.
 - H-R9-038/H-R9-039 P4 residual/server-exit evidence, H-R9-036/H-R9-037 reverse-order exact oracle, H-R9-032..034 settlement evidence, and P2 C1-C4 remain closed.
 - Session DeliveryAck and Carrier packet ACK remain separate evidence domains. Accepted-empty is classification-only and must not describe a positive Recovery retirement.
 
-# READY_LOCAL 1 — CLOSED at b69c20e (H-R9-054 send-side committed-watermark discriminator)
+# READY_LOCAL 1 — CLOSED at b69c20e / independently rechecked at bb988bc (H-R9-054)
 
-H-R9-054 discriminator is complete: `cli_regression_tests::abandoned_retransmit_preserves_retired_committed_watermark` now proves packet-number reuse at or below the committed watermark is refused by the send owner — reuse of committed `N=0` and current watermark `=1` both refused with no new Recovery/Reno ownership; fresh `101` succeeds as paired control. `cargo fmt` repaired.
+H-R9-054 discriminator is complete: Carrier-level coverage rejects reuse at/below a restored committed watermark without changing in-flight ownership and admits a fresh higher packet; the executable CLI/runtime owner rejects committed `N=0` and current watermark `=1` with Recovery/Reno accounting unchanged, then admits fresh `101`. Independent bounded review at `bb988bc35d88ea825d938496c61766cc30bb036d` found no contradictory current evidence. Do not spend another slice reopening it absent new source/test changes or a concrete counterexample.
 
 # READY_LOCAL 2 — H-R9-042 deterministic just-before-PTO-deadline negative
 
 At authoritative Recovery/runtime query level, challenge PTO at `deadline_us - 1` (or equivalent injected deterministic time): zero PTO/retransmit transition before deadline, expected probe at/after deadline. Wall-clock sleep is not the oracle. Reuse current M2 timing inputs; do not select a new PTO policy value. Preserve all accepted repeated-PTO identity/retirement semantics and H-R9-051/H-R9-053 send/commit truth.
+
+Current source navigation already shows two independent guards that the test must discriminate rather than merely restate: the executable post-return/lab callers check `now_us >= deadline_us` before invoking timeout work, and Recovery `pto_probe` itself returns no probe when `now_us < deadline_us`. Prefer an exact deterministic owner-level negative with a paired boundary positive; do not manufacture sleeps/process timing. If this focused regression disproves current behavior, repair the smallest owner and retain the negative.
 
 # READY_LOCAL 3 — R9-4 ACK-loss + delayed original/reorder
 
@@ -86,11 +90,11 @@ If Q10/Q11/Q12 cannot yet close because item 4 still lacks independent coverage,
 
 Earlier reachable independent bounded review covers reliable-UDP engine basics, `CarrierState`, concurrent Carrier Manager/health/migration-back, FairScheduler/flow accounting, carrier adapters, `SessionRuntime`, observability including mixed queue/generic drop classification, package/reproducibility/operator scripts, dependency/build surface, CLI portability/output, algorithmic boundedness/validators, DeliveryLedger/process codec/datagram/crypto API and wire/parser surfaces.
 
-The materially new cross-process R9 integration remains under active independent challenge. H-R9-054 is a concrete acceptance-oracle defect, so repository-wide queue exhaustion is false even before downstream R9-4..R9-12 lanes.
+The materially new cross-process R9 integration remains under active independent challenge. H-R9-054 is now independently closed; H-R9-042 and downstream R9-4..R9-12 plus the dedicated R9 review remain real dependency-ready work, so repository-wide queue exhaustion is false.
 
 ## VPS opportunity
 
-**Not READY.** Standing authorization remains valid, but authoritative classification is `READY_LIVE: none`. H-R9-054, H-R9-042 and downstream R9 work are deterministic local correctness/evidence questions and create no unresolved real-network hypothesis. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
+**Not READY.** Standing authorization remains valid, but authoritative classification is `READY_LIVE: none`. H-R9-042 and downstream R9 work are deterministic local correctness/evidence questions and create no unresolved real-network hypothesis. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
 
 Only create a new READY_LIVE row if later code/instrumentation/hypothesis/path conditions produce a concrete unresolved real-network question that local/loopback evidence cannot answer.
 
