@@ -3274,7 +3274,9 @@ fn reliable_udp_post_return_carrier_ack_withheld_fails() {
             && !client_log.contains("\"event\":\"r9_udp_return_packet_ack_accepted_empty\""),
         "{client_log}"
     );
-    // Residual evidence: Session complete, Recovery still nonzero.
+    // Residual evidence: Session complete, Recovery still nonzero. The
+    // bounded PTO/recovery loop keeps running until the operation deadline,
+    // so the terminal residual is the LAST diagnostic, not the only one.
     assert!(
         client_log.contains("\"event\":\"r9_udp_post_return_residual\""),
         "{client_log}"
@@ -3283,13 +3285,13 @@ fn reliable_udp_post_return_carrier_ack_withheld_fails() {
         .lines()
         .filter(|l| l.contains("\"event\":\"r9_udp_post_return_residual\""))
         .collect();
-    assert_eq!(residual.len(), 1, "{client_log}");
+    let terminal = residual.last().expect("residual diagnostics");
     assert!(
-        residual[0].contains("\"session_outstanding\":0"),
+        terminal.contains("\"session_outstanding\":0"),
         "{client_log}"
     );
     assert!(
-        !residual[0].contains("\"remaining_in_flight\":0"),
+        !terminal.contains("\"remaining_in_flight\":0"),
         "{client_log}"
     );
     // Client exits nonzero on the bounded post-return deadline — no settled
@@ -3300,16 +3302,17 @@ fn reliable_udp_post_return_carrier_ack_withheld_fails() {
         "{client_log}"
     );
     // Server proved the post-return owner was reached and sent the Session
-    // ACK but no Carrier packet ACK. Exact cardinality + identity binding.
+    // ACK but no Carrier packet ACK. The bounded recovery loop may retransmit
+    // the same Session ACK — every emission must bind the same exact range.
     let srv_dack: Vec<&str> = server_log
         .lines()
         .filter(|l| l.contains("\"event\":\"udp_return_delivery_ack_sent\""))
         .collect();
-    assert_eq!(srv_dack.len(), 1, "{server_log}");
+    assert!(!srv_dack.is_empty(), "{server_log}");
     assert!(
-        srv_dack[0].contains("\"stream\":1")
-            && srv_dack[0].contains("\"offset\":48")
-            && srv_dack[0].contains("\"len\":16"),
+        srv_dack.iter().all(|l| l.contains("\"stream\":1")
+            && l.contains("\"offset\":48")
+            && l.contains("\"len\":16")),
         "{server_log}"
     );
     assert!(
@@ -3417,15 +3420,17 @@ fn reliable_udp_post_return_session_ack_withheld_fails() {
         !client_log.contains("\"event\":\"r9_udp_return_delivery_ack\""),
         "{client_log}"
     );
-    // Residual: Recovery settled but Session still outstanding.
+    // Residual: Recovery settled but Session still outstanding. The bounded
+    // PTO loop keeps running until the operation deadline — the terminal
+    // residual is the LAST diagnostic.
     let residual: Vec<&str> = client_log
         .lines()
         .filter(|l| l.contains("\"event\":\"r9_udp_post_return_residual\""))
         .collect();
-    assert_eq!(residual.len(), 1, "{client_log}");
+    let terminal = residual.last().expect("residual diagnostics");
     assert!(
-        residual[0].contains("\"remaining_in_flight\":0")
-            && residual[0].contains("\"session_outstanding\":1"),
+        terminal.contains("\"remaining_in_flight\":0")
+            && terminal.contains("\"session_outstanding\":1"),
         "{client_log}"
     );
     // Three-way packet bind: client send == server ACK == client retire.

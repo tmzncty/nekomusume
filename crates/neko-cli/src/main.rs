@@ -6372,6 +6372,60 @@ mod cli_regression_tests {
     }
 
     #[test]
+    fn reliable_demux_rejects_zero_length_ack_even_at_watermark() {
+        // H-R9-058 negative: a fresh authenticated len==0 DeliveryAck is
+        // malformed, never accepted-empty — even when the operation witness
+        // already holds a confirmed range at the same stream.
+        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let peer = server.local_addr().unwrap();
+        let (mut sender, mut receiver) = secure_pair();
+        let mut confirmed_acks = std::collections::BTreeSet::new();
+        confirmed_acks.insert((1u64, 0u64, 16u64));
+        // Zero-length ACK at offset 0 — never an admitted record.
+        let zero = ProcessMessage::DeliveryAck {
+            session: SessionId(7001),
+            stream: StreamId(1),
+            offset: 0,
+            len: 0,
+        }
+        .encode()
+        .unwrap();
+        let sealed = sender.seal_unreliable(&zero).unwrap();
+        for _ in 0..MAX_POST_HANDSHAKE_MALFORMED {
+            server
+                .send_to(&sealed, client.local_addr().unwrap())
+                .unwrap();
+        }
+        let mut outstanding = vec![OutboundRecord {
+            stream: StreamId(1),
+            offset: 64,
+            data: vec![9; 16],
+        }];
+        let mut reasons = Vec::new();
+        let mut malformed = 0usize;
+        let _err = recv_udp_delivery_ack(
+            &client,
+            peer,
+            &mut receiver,
+            &mut outstanding,
+            b"selection",
+            b"noise",
+            Instant::now() + Duration::from_secs(1),
+            &mut |d| reasons.push(d),
+            None,
+            &mut malformed,
+            Instant::now(),
+            &mut confirmed_acks,
+        );
+        assert!(malformed > 0, "{reasons:?}");
+        assert!(
+            !reasons.contains(&"accepted_empty_logical_ack"),
+            "{reasons:?}"
+        );
+    }
+
+    #[test]
     fn delivery_ack_requires_authenticated_exact_range_and_rejects_replay() {
         let expected = OutboundRecord {
             stream: StreamId(1),
