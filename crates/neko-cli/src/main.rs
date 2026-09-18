@@ -5656,6 +5656,61 @@ mod cli_regression_tests {
         assert!(admit_retransmit(&mut rt, 101, 1_000_000, &small, frame));
     }
     #[test]
+    fn abandoned_retransmit_restores_committed_sent_watermark() {
+        // H-R9-052: a socket-failed retransmit reservation must not become
+        // ACK-valid future/never-sent history. After abandon_retransmit, an
+        // ACK whose largest == the aborted packet number must be rejected
+        // atomically (largest > restored committed largest_sent).
+        let mut rt = neko_carrier::ReliableUdpRuntime::new(1, 1200).unwrap();
+        // Send a real packet that stays in flight — frame 1 retains plaintext.
+        rt.on_packet_sent(0, 0, 400, neko_reliable::FrameId(1), b"real")
+            .unwrap();
+        // Admit a retransmit reservation for a new packet number carrying
+        // the same stable frame.
+        let wire = vec![0u8; 400];
+        assert!(admit_retransmit(&mut rt, 100, 1_000_000, &wire, neko_reliable::FrameId(1)));
+        assert_eq!(rt.in_flight(), 2);
+        // Socket send fails — roll back the reservation.
+        assert!(rt.abandon_retransmit(100));
+        assert_eq!(rt.in_flight(), 1);
+        // The aborted number must now be rejected as never-sent: largest=100
+        // exceeds the restored committed watermark (largest_sent=0).
+        let mut ack = neko_reliable::AckRanges::new(4).unwrap();
+        ack.insert(100).unwrap();
+        assert!(
+            rt.apply_ack(&ack, 1_000_000, 0).is_err(),
+            "ACK of aborted packet must be rejected atomically"
+        );
+        // Real packet remains in flight; no loss/RTT mutation.
+        assert_eq!(rt.in_flight(), 1);
+    }
+    #[test]
+    fn socket_send_failure_rolls_back_retransmit_ownership() {
+        // H-R9-051: after exact-wire admission succeeds, a socket Err must
+        // reverse Recovery ownership, Reno charge, and packet->frame map —
+        // no positive sent evidence, no in-flight packet, no caller
+        // outstanding identity.
+        let mut rt = neko_carrier::ReliableUdpRuntime::new(1, 1200).unwrap();
+        // Outstanding frame whose plaintext is retained for retransmit.
+        rt.on_packet_sent(0, 0, 400, neko_reliable::FrameId(9), b"p")
+            .unwrap();
+        let before_flight = rt.in_flight();
+        let before_bytes = rt.recovery_bytes_in_flight();
+        // Admit a retransmit reservation.
+        let wire = vec![0u8; 400];
+        assert!(admit_retransmit(&mut rt, 100, 1_000_000, &wire, neko_reliable::FrameId(9)));
+        assert_eq!(rt.in_flight(), before_flight + 1);
+        assert!(rt.recovery_bytes_in_flight() > before_bytes);
+        // Socket send fails — roll back.
+        assert!(rt.abandon_retransmit(100));
+        assert_eq!(rt.in_flight(), before_flight, "aborted packet must not remain in flight");
+        assert_eq!(rt.recovery_bytes_in_flight(), before_bytes, "Reno charge must be reversed");
+        // Paired control: a successful send path commits exactly once.
+        let wire2 = vec![0u8; 400];
+        assert!(admit_retransmit(&mut rt, 101, 1_000_000, &wire2, neko_reliable::FrameId(9)));
+        assert_eq!(rt.in_flight(), before_flight + 1);
+    }
+    #[test]
     fn carrier_retired_fields_projects_every_retired_packet() {
         // H-R9-049 projection discriminator: a multi-retirement typed result
         // must produce one evidence field per packet — never a representative
