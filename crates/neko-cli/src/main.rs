@@ -6287,7 +6287,7 @@ mod cli_regression_tests {
         }];
         let mut reasons = Vec::new();
         let mut malformed = 0usize;
-        let err = recv_udp_delivery_ack(
+        let _err = recv_udp_delivery_ack(
             &client,
             peer,
             &mut receiver,
