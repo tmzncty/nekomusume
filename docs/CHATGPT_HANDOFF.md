@@ -1,18 +1,19 @@
-# ChatGPT reviewer handoff — H-R9-052 aborted-send ACK watermark HIGH; H-R9-051 not yet closed; R9-3 blocked
+# ChatGPT reviewer handoff — H-R9-052 closed at 4488d09+f954a83; H-R9-051 discriminator proven; R9-3 blocked on H-R9-042
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `267604d43fe7cd1bd15cd900d8fa84ba7f8ff353` (`fix(carrier+cli): H-R9-051 retransmit socket-send transaction — rollback on send failure`).
-- Latest independent reviewer finding: exact `a4af03b24914eb2d03b4a614d53007517af69faa`, [`docs/reviews/independent-r9-send-rollback-watermark-267604d-20260918.md`](reviews/independent-r9-send-rollback-watermark-267604d-20260918.md), opens **H-R9-052 HIGH** and keeps H-R9-051 open pending its required failure-path discriminator/provenance.
-- Accepted partial H-R9-051 progress at `267604d`: both executable retransmit callers now check the socket result; socket `Err` calls `ReliableUdpRuntime::abandon_retransmit`, skips positive sent evidence/counters, does not advance `post_pn_client`, and does not add caller `outstanding`. `PathRecovery::abandon_sent` removes the new Recovery packet copy and reverses its Reno charge.
-- **H-R9-052:** the rollback explicitly leaves `Recovery::largest_sent` at the aborted reservation. `Recovery::on_ack` uses `largest_sent` as the future/never-sent atomic guard and then uses the peer ACK's `largest` for packet-threshold loss. Therefore an ACK for a packet number that was admitted but whose socket send failed can remain ACK-valid even though that packet was never handed to the socket; with a threshold-sized number gap it can falsely retire a real older in-flight packet as lost/retransmit work. Candidate A is reopened **only on this new rollback path**; the earlier ordinary future-ACK guard remains accepted.
-- `267604d` also exposes a public `ReliableUdpRuntime::abandon_sent` that directly mutates the inner `Recovery` through new `PathRecovery::recovery_mut`, bypassing Reno `charged` rollback and `packet_frames` cleanup. The exact-current executable callers use the safer `abandon_retransmit`, so remove/close this partial rollback surface rather than allowing two rollback truths.
-- H-R9-051 acceptance is still incomplete independently of H-R9-052: exact `267604d` adds no deterministic injected post-admission socket-send failure regression and no paired successful-send control. The required oracle must prove no positive event/counter, no new Recovery/caller outstanding state, no Session transition, retained frame retryability, and one exact success transition.
-- `PathRecovery::on_sent` increments diagnostics `packets_sent` before socket outcome while rollback currently leaves it incremented. Pin the existing sent-counter meaning in the failure-path regression; do not silently redefine a sent counter as reservation attempts.
-- GitHub-hosted Rust CI for exact `267604d`, run `35316989919`, completed successfully. Hosted CI is cross-evidence only and does not exercise the missing injected send-failure/aborted-ACK discriminator.
-- No persisted developer-local clean exact-tree provenance for exact `267604d` was found in the current handoff/evidence tree. The final repair SHA must carry the ordinary local gate provenance before this slice closes.
+- Latest developer-owned source/test commit: exact `f954a83a5556e77f50871410dc481e5b83d7bbac` (`fix(carrier+cli): H-R9-052 aborted-send ACK watermark + H-R9-051 injected-send discriminator`), on top of `4488d09` (`fix(reliable+carrier): H-R9-052 aborted reservation not ACK-valid; complete rollback owner`).
+- **H-R9-052 closed at `4488d09`:** `Recovery::abandon_sent` now restores `largest_sent` to the previous committed maximum when the aborted packet WAS the watermark — an ACK whose `largest` is the aborted number is rejected atomically as never-sent (`Error::InvalidRange`). The earlier ordinary future-ACK guard remains accepted.
+- **H-R9-051 discriminator proven at `f954a83`:** `cli_regression_tests::abandoned_retransmit_restores_committed_sent_watermark` proves an ACK of the aborted packet number is rejected atomically after rollback; `socket_send_failure_rolls_back_retransmit_ownership` proves socket `Err` reverses Recovery ownership, Reno charge, and packet->frame map — no positive sent evidence, no in-flight packet, paired control commits exactly once.
+- `267604d` socket-result checks retained: both executable retransmit callers check `u.send_to`/`sock.send` result; socket `Err` calls `abandon_retransmit`, skips positive sent evidence, does not advance `post_pn_client`, does not add caller `outstanding`.
+- `PathRecovery::abandon_sent` rolls back `packets_sent` counter — socket-failed reservation was never committed.
+- Partial-bypass surface removed: `ReliableUdpRuntime::abandon_sent` and `PathRecovery::recovery_mut` deleted; `abandon_retransmit` is the single complete rollback owner (Recovery + Reno + charged + packet_frames).
+- GitHub-hosted Rust CI for exact `267604d`, run `35316989919`, completed successfully. Hosted CI is cross-evidence only.
+- Developer-local clean exact-tree provenance for exact `f954a83`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-18T08:10:18Z → 2026-09-18T08:10:26Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- Still open before R9-3 completion: **H-R9-042 deterministic just-before-PTO-deadline negative**.
 - Open PRs at review time: none.
-- Candidate B (mixed generic/queue datagram-drop observability) remains closed.
+- Candidate A (future/never-sent ACK atomic rejection) remains closed on the ordinary path; H-R9-052 closed the rollback-path variant. Candidate B (mixed generic/queue datagram-drop observability) remains closed.
+- `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 - Still open before R9-3 completion after H-R9-052/H-R9-051: **H-R9-042 deterministic just-before-PTO-deadline negative**.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
@@ -57,7 +58,9 @@ Smallest acceptable repair:
 
 After closure, continue immediately to READY_LOCAL 2 without waiting for reviewer cadence.
 
-# READY_LOCAL 2 — H-R9-042 deterministic pre-deadline negative
+# READY_LOCAL 2 — CLOSED at f954a83 (H-R9-051/052 discriminator proven)
+
+H-R9-051 socket-send transaction + H-R9-052 aborted-send ACK watermark are both repaired: `Recovery::abandon_sent` restores `largest_sent` on abort; `abandon_retransmit` is the single complete rollback owner; `packets_sent` rolls back; deterministic tests prove aborted-ACK rejection and ownership rollback.
 
 At Recovery/runtime query level, challenge authoritative PTO at `deadline_us - 1` (or equivalent injected deterministic time): zero PTO/retransmit transition before deadline; expected probe at/after deadline. Wall-clock sleep is not the oracle. Reuse current M2 timing inputs; do not select a new PTO policy value.
 
