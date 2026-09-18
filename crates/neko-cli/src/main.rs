@@ -5739,15 +5739,35 @@ mod cli_regression_tests {
         let before_bytes = rt.recovery_bytes_in_flight();
         let wire_reuse = vec![0u8; 400];
         assert!(
-            !admit_retransmit(&mut rt, 0, 2_000_000, &wire_reuse, neko_reliable::FrameId(2)),
+            !admit_retransmit(
+                &mut rt,
+                0,
+                2_000_000,
+                &wire_reuse,
+                neko_reliable::FrameId(2)
+            ),
             "reuse of committed N=0 must be refused"
         );
         assert!(
-            !admit_retransmit(&mut rt, 1, 2_000_000, &wire_reuse, neko_reliable::FrameId(2)),
+            !admit_retransmit(
+                &mut rt,
+                1,
+                2_000_000,
+                &wire_reuse,
+                neko_reliable::FrameId(2)
+            ),
             "reuse of committed watermark=1 must be refused"
         );
-        assert_eq!(rt.in_flight(), before_flight, "reuse must not commit ownership");
-        assert_eq!(rt.recovery_bytes_in_flight(), before_bytes, "reuse must not charge Reno");
+        assert_eq!(
+            rt.in_flight(),
+            before_flight,
+            "reuse must not commit ownership"
+        );
+        assert_eq!(
+            rt.recovery_bytes_in_flight(),
+            before_bytes,
+            "reuse must not charge Reno"
+        );
         // Paired control: a fresh packet number > committed watermark succeeds.
         let wire2 = vec![0u8; 400];
         assert!(admit_retransmit(
