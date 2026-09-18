@@ -301,10 +301,10 @@ impl Recovery {
         for f in &p.frames {
             Self::release_frame(&mut self.outstanding_frames, *f);
         }
-        if let Some(prev) = self.watermark_on_reserve.remove(&number) {
-            if self.largest_sent == Some(number) {
-                self.largest_sent = prev;
-            }
+        if let Some(prev) = self.watermark_on_reserve.remove(&number)
+            && self.largest_sent == Some(number)
+        {
+            self.largest_sent = prev;
         }
         Some(p)
     }
