@@ -1,16 +1,17 @@
-# ChatGPT reviewer handoff — R9-3 independently closed; R9-4 is queue head
+# ChatGPT reviewer handoff — H-R9-056 blocks R9-4; deep queue remains open
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `b41e37a03594e040faeedf4d78ed2115fc10e160` (`fix(cli): type alias for due_pto_probe return — clippy type_complexity`), on top of `6221f8d40aaeb01e277ba27700f57fa73be74cc6` (`fix(cli): H-R9-055 executable pre-deadline PTO guard — due_pto_probe helper`).
+- Latest developer-owned source/test commit remains exact `b41e37a03594e040faeedf4d78ed2115fc10e160` (`fix(cli): type alias for due_pto_probe return — clippy type_complexity`), on top of `6221f8d40aaeb01e277ba27700f57fa73be74cc6` (`fix(cli): H-R9-055 executable pre-deadline PTO guard — due_pto_probe helper`). No newer developer-owned implementation/test commit was reachable when this review began.
 - **H-R9-054 remains closed and independently challenged:** developer regressions at `4761827b7edd4ad149c884f47f1232738ca5377e` + `d995afddc819964a5f994eba960071e840334337` prove packet-number reuse at/below committed watermark is refused without new Recovery/Reno ownership. Independent bounded no-finding review is reachable at `bb988bc35d88ea825d938496c61766cc30bb036d`.
-- **H-R9-055 / R9-3 are independently closed:** `due_pto_probe(rt, now_us)` owns both the real deadline decision and the mutating `rt.pto_probe()` call. It returns `None` before `next_pto_deadline_us`, and the focused regression exercises that same production owner at `deadline - 1` and exactly at the deadline. Independent bounded no-finding review is reachable at `57bb1826532864310a2170049bb3016c131b53b3` (`docs/reviews/independent-r9-h055-predeadline-closure-20260918.md`).
+- **H-R9-055 / R9-3 remain independently closed:** `due_pto_probe(rt, now_us)` owns both the real deadline decision and mutating `rt.pto_probe()` call. Independent bounded no-finding review is reachable at `57bb1826532864310a2170049bb3016c131b53b3`.
+- **New HIGH H-R9-056:** exact-current post-return ACK-loss semantics make the server send a freshly authenticated duplicate Session `DeliveryAck` after a PTO retransmission is Session-deduplicated, while client `recv_udp_delivery_ack` classifies that exact already-confirmed logical ACK as `unexpected_logical_ack`, increments the operation-wide malformed budget, and can terminalize repeated legitimate recovery feedback. Source-derived independent finding is reachable at `27b30daf93cdda2b49aa4401ebc5a681ce634eef` (`docs/reviews/independent-r9-h056-duplicate-session-ack-20260918.md`). R9-4 is blocked on the smallest repair + deterministic discriminator below.
+- The H-R9-056 path is not crypto-envelope replay: the server produces a fresh authenticated envelope in response to a fresh-PN retransmission of the same stable logical bytes. `SessionRuntime::receive` deliberately accepts the byte-identical retransmission as `DuplicateDedup` without a second application enqueue, and `SessionRuntime::delivery_ack` already treats `end == confirmed_watermark` as zero-delta/idempotent rather than a second window release.
 - `cli_regression_tests::abandoned_retransmit_restores_committed_sent_watermark` (H-R9-052), `socket_send_failure_rolls_back_retransmit_ownership` (H-R9-051), and `abandoned_retransmit_preserves_retired_committed_watermark` (H-R9-053/054) remain retained.
 - `Recovery::watermark_on_reserve` records pre-reservation committed `largest_sent`; `abandon_sent` restores exact committed watermark; `PathRecovery::abandon_sent` rolls back `packets_sent`; `abandon_retransmit` is the single complete rollback owner.
 - Developer-local clean exact-tree provenance for exact `b41e37a`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-18T11:54:02Z → 2026-09-18T11:58:23Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
-- GitHub-hosted Rust CI run `35341890289` for exact `b41e37a` completed success: `stable checks` ran `bash scripts/check.sh` successfully; the separate nightly decode fuzz-smoke job also succeeded. This is cross-evidence, not a replacement for developer-local provenance.
-- Reviewer-local execution is not claimed for the H-R9-055 closure because the current automation sandbox could not resolve `github.com` for a local clone; exact pushed source/test inspection plus separately classified developer-local and hosted evidence were used.
-- Open PRs: none at this review.
+- GitHub-hosted Rust CI run `35341890289` for exact `b41e37a` completed success. This is cross-evidence only and does not exercise H-R9-056/R9-4.
+- Reviewer-local execution is not claimed for H-R9-056; the finding is a deterministic exact-pushed-source path analysis. Do not rewrite earlier developer-local/hosted evidence as reviewer execution.
 - Candidate A (future/never-sent ACK atomic rejection) remains closed; H-R9-054 closed the send-side reuse discriminator. Candidate B (mixed queue/generic datagram-drop observability) remains closed.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
@@ -32,26 +33,41 @@ Do not revert accepted repairs without contradictory current repository evidence
 
 ## Closed R9-3 reviewer gate
 
-R9-3 no longer blocks downstream work. The H-R9-055 independent closure at `57bb1826532864310a2170049bb3016c131b53b3` found no contradictory current evidence: the pre-deadline branch exits before the sole PTO mutator, the production caller uses the same helper exercised by the regression, and removing/weaking the deadline guard deterministically trips the pre-deadline `pto_count` assertion. Do not spend another slice reopening R9-3 absent new source/test changes or a concrete counterexample.
+R9-3 no longer blocks downstream work. The H-R9-055 independent closure at `57bb1826532864310a2170049bb3016c131b53b3` found no contradictory current evidence. Do not spend another slice reopening R9-3 absent new source/test changes or a concrete counterexample.
 
-# READY_LOCAL 1 — R9-4 ACK-loss + delayed original/reorder
+# READY_LOCAL 1 — H-R9-056 exact duplicate Session ACK repair + R9-4 discriminator
 
-Challenge the current cross-process post-return reliable-UDP owners, not a synthetic copy of them. Read the exact-current `failover_client`/server Carrier-ACK + Session-DeliveryAck continuations, `ReliableUdpRuntime::{poll_outgoing_ack,apply_ack,pto_probe,on_retransmit_sent,abandon_retransmit}`, current R9 fixture/oracle, and the applicable Session/Carrier evidence rules before editing.
+Read the exact-current server post-return continuation, `SessionRuntime::receive`, client `recv_udp_delivery_ack`, `SessionRuntime::delivery_ack`, `ReliableUdpRuntime::{poll_outgoing_ack,apply_ack,pto_probe,on_retransmit_sent,abandon_retransmit}`, and the R9 process fixture before editing.
 
-Construct one deterministic bounded scenario that suppresses exactly one legitimate Carrier ACK long enough to force a legitimate PTO/retransmission, then releases delayed original/sibling feedback in a reorder that challenges duplicate handling. Preserve the current architecture and require all of the following:
+The concrete defect to close is narrow: after the original post-return Data is accepted and its Session DeliveryAck logically confirms the current bounded record, loss of only the Carrier ACK forces a fresh-PN retransmission. The server Session runtime byte-deduplicates that retransmission and returns `Ok(())`, but the surrounding real owner sends a freshly authenticated exact Session DeliveryAck again. The client has already removed the logical record from `outstanding`, so the same exact current-range ACK is presently labeled `unexpected_logical_ack` and charged to `malformed`.
 
-1. exactly one logical Session delivery/confirmation transition for the tested stream/range; Session dedup remains the authority for logical delivery;
-2. retransmission uses a fresh packet number/AEAD sequence while retaining the same stable frame/logical bytes;
-3. PTO/retransmit diagnostics correspond to real typed transitions, and every positive Carrier retirement names a packet actually retired by Recovery;
-4. delayed original/sibling Carrier feedback after one copy has already retired may be accepted-empty/stale according to current committed semantics, but must not create a second Session transition, false rejection, additional loss, or another retransmit after settlement;
-5. final Recovery settles to zero in-flight ownership and retained retransmit plaintext for the resolved frame is released exactly once;
-6. any rejected/malformed branch remains atomic with RTT/PTO/loss/Reno/cwnd/Session state unchanged.
+Smallest repair contract:
 
-Prefer a focused extension of the existing R9 process fixture/helper over a parallel test-only state machine. No wire/parser/crypto-framing change is expected, so fuzz is not mechanically required. After the final pushed developer SHA, run the normal clean exact-tree local gate and persist truthful provenance, then continue immediately into R9-5 without waiting for reviewer cadence.
+1. preserve crypto replay rejection: replaying the same authenticated envelope remains invalid;
+2. preserve fail-closed treatment for wrong session/stream/offset/length or otherwise unadmitted logical ACKs;
+3. classify a **freshly authenticated exact ACK for the already-confirmed current bounded logical range** as accepted-empty/stale Session feedback (or equivalent zero-transition class), not malformed and not a second positive logical confirmation;
+4. prefer the existing `SessionRuntime` confirmation state or an equivalent bounded exact current-operation record context; do not add unbounded Session-ACK history, TTL/LRU/capacity policy, or a second delivery architecture;
+5. do not weaken the separation between Session DeliveryAck and Carrier packet ACK evidence.
+
+The focused cross-process regression must use the real post-return owners and deterministically:
+
+- deliver the original post-return Data;
+- withhold **exactly the first legitimate Carrier ACK** long enough to force a real PTO + fresh packet-number/AEAD-sequence retransmission while still allowing the first Session DeliveryAck through;
+- have the server deduplicate the retransmitted stable logical bytes exactly once at the application layer and emit the fresh duplicate Session DeliveryAck generated by the real owner;
+- release the delayed original and retransmission/sibling Carrier feedback in a deterministic reorder rather than suppressing all packet feedback;
+- prove exactly one positive Session confirmation transition for stream 1 / the tested range and exactly-once application delivery;
+- prove the exact duplicate Session DeliveryAck is classification-only, does not increment the malformed budget, and cannot substitute for Carrier settlement;
+- prove every positive Carrier retirement names a packet actually retired by Recovery; stale/duplicate Carrier feedback may classify accepted-empty only when current committed semantics allow it;
+- prove no false rejection, no additional loss/retransmit after lifecycle resolution, final Recovery `in_flight == 0`, and retained retransmit plaintext releases exactly once;
+- make the regression deterministic red if the current exact-duplicate `unexpected_logical_ack -> malformed += 1` behavior is restored.
+
+The current `reliable_demux_bounds_an_authenticated_unexpected_logical_ack` test is not the discriminator: it uses an unrelated offset (`4096`) and repeated identical ciphertexts. Keep that negative intact while adding the exact confirmed-range case.
+
+No wire/parser/crypto-framing change is expected; fuzz is not mechanically required. After the final pushed developer SHA, run the normal clean exact-tree local gate, persist truthful provenance, and continue immediately into R9-5 without waiting for reviewer cadence.
 
 # READY_LOCAL 2 — R9-5 adversarial feedback / every Carrier continuation
 
-Challenge future/never-sent/stale/duplicate/tampered and multi-range feedback across each current `UdpAcknowledgement::Carrier` continuation: initial receive, settlement and post-return owners. Rejected feedback must be atomic/fail closed without RTT/PTO/loss/cwnd/Session mutation. Distinguish genuinely sent-and-retired historical identities from aborted pre-send reservation identities.
+Challenge future/never-sent/stale/duplicate/tampered and multi-range feedback across each current `UdpAcknowledgement::Carrier` continuation: initial receive, settlement and post-return owners. Rejected feedback must be atomic/fail closed without RTT/PTO/loss/cwnd/Session mutation. Distinguish genuinely sent-and-retired historical identities from aborted pre-send reservation identities. Include the newly repaired Session duplicate classification in the cross-domain audit so it cannot be confused with Carrier accepted-empty.
 
 # READY_LOCAL 3 — R9-6 ownership/resource boundedness
 
@@ -59,7 +75,7 @@ Every first send and retransmit must consult congestion admission before ownersh
 
 # READY_LOCAL 4 — R9-7 process/result truth
 
-Independently challenge Data, Carrier ACK, Session DeliveryAck, PTO/retransmit, Recovery ACK/loss, successful/failed socket send, aborted reservation, Session delivery, malformed budget, accepted-empty, rejected feedback, residual-domain failure and terminal result as distinct structured evidence. Diagnostics must follow the typed transition/classification they claim.
+Independently challenge Data, Carrier ACK, Session DeliveryAck, PTO/retransmit, Recovery ACK/loss, successful/failed socket send, aborted reservation, Session delivery, malformed budget, Session accepted-empty/stale, Carrier accepted-empty/stale, rejected feedback, residual-domain failure and terminal result as distinct structured evidence. Diagnostics must follow the typed transition/classification they claim.
 
 # READY_LOCAL 5 — R9-8 warm TCP readiness
 
@@ -97,11 +113,11 @@ If Q10/Q11/Q12 cannot yet close because item 4 still lacks independent coverage,
 
 Earlier reachable independent bounded review covers reliable-UDP engine basics, `CarrierState`, concurrent Carrier Manager/health/migration-back, FairScheduler/flow accounting, carrier adapters, `SessionRuntime`, observability including mixed queue/generic drop classification, package/reproducibility/operator scripts, dependency/build surface, CLI portability/output, algorithmic boundedness/validators, DeliveryLedger/process codec/datagram/crypto API and wire/parser surfaces.
 
-The materially new cross-process R9 integration remains under active independent challenge. H-R9-054 and H-R9-055/R9-3 are independently closed; R9-4 through R9-12 plus the dedicated R9 review remain real dependency-ready work. Repository-wide queue exhaustion is therefore false.
+The materially new cross-process R9 integration remains under active independent challenge. H-R9-054 and H-R9-055/R9-3 remain independently closed; H-R9-056 is now the concrete R9-4 blocker, followed by R9-5 through R9-12 plus the dedicated R9 review. Repository-wide queue exhaustion is therefore false.
 
 ## VPS opportunity
 
-**Not READY.** Standing authorization remains valid, but authoritative classification is `READY_LIVE: none`. Downstream R9 work is presently deterministic local correctness/evidence work and creates no unresolved real-network hypothesis. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
+**Not READY.** Standing authorization remains valid, but authoritative classification is `READY_LIVE: none`. H-R9-056/R9 work is deterministic local correctness/evidence work and creates no unresolved real-network hypothesis. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
 
 Only create a new READY_LIVE row if later code/instrumentation/hypothesis/path conditions produce a concrete unresolved real-network question that local/loopback evidence cannot answer.
 
