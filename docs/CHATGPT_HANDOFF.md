@@ -1,77 +1,70 @@
-# ChatGPT reviewer handoff — R9-4 independently closed; R9-5 audited no-finding at b9f0dc5; R9-6 is front READY_LOCAL
+# ChatGPT reviewer handoff — H-R9-061 blocks R9-6 first-send socket transaction; R9-4/R9-5 remain closed
 
 ## Current repository truth
 
-- Current reviewer anchor: `docs/reviews/independent-r9-r9-4-closure-95d9388-20260919.md`, added by reviewer commit `8c21e24e436379abc13b41e4f163da61b5720193`.
-- Latest developer-owned source/test commit reviewed: exact `95d938859bbe7a42c3e2bf26e09729ba55de5cf0`, on top of implementation/test commit `7ea9a8442563ef7d0dd7f6c70acdba53a003fdff`.
-- New developer commits reviewed this pass, by class:
-  - `7ea9a84` — **implementation + deterministic process test**: production post-return Session-demux typed classification is emitted instead of discarded; R9-4 observes `accepted_empty_logical_ack` and rejects `unexpected_logical_ack`.
-  - `95d9388` — **test/evidence**: every positive client Carrier retirement packet number must be present in the server-emitted Carrier-ACK packet-number set.
-  - `d4e19fd` — **docs/handoff only**; no runtime semantics.
-- **H-R9-060 is independently closed.** The post-return operation starts with one admitted logical record and an empty operation-owned exact witness. The first genuine exact Session DeliveryAck populates `(stream, offset, len)`; the fresh same-range ACK produced after the real PTO/fresh-PN retransmission is visibly classified `accepted_empty_logical_ack`, produces no second positive Session transition, and `unexpected_logical_ack` is absent. The focused helper regression separately proves this exact accepted-empty branch leaves the malformed counter unchanged; subrange/interior and zero-length authenticated feedback remain fail-closed negatives.
-- **R9-4 is independently closed** at exact source/test tree `95d9388`. The one-shot ACK-delay/reorder seam, real PTO + fresh-PN retransmission, exact Session duplicate classification, Carrier identity projection, exactly-one positive Session confirmation, and zero-in-flight terminal settlement were source/oracle challenged with no new BLOCKER/HIGH. See the reviewer anchor above for scope and exclusions.
-- H-R9-059 remains closed: no Session-lifetime confirmed-range history; duplicate witness is caller-owned current-operation `BTreeSet<(stream,offset,len)>`.
-- H-R9-058 remains closed: exact witness predicate; authenticated subrange/interior and zero-length feedback fail closed.
-- H-R9-057 remains closed: `delay_reorder_done` makes `--delay-r9-ack-reorder` exactly one-shot.
-- Earlier accepted work remains closed absent contradictory current repository evidence: H-R9-050 exact-wire retransmit admission; H-R9-051 retransmit socket-send rollback; H-R9-052/H-R9-053 committed ACK-valid watermark restoration; H-R9-054 committed-watermark reuse discriminator; H-R9-055 executable pre-deadline PTO owner; H-R9-040 lifecycle-scoped `acked_frames`; H-R9-043..049 repeated-PTO identity/deadline/retirement/source-projection; H-R9-038/H-R9-039 residual/server-exit; H-R9-036/H-R9-037 reverse-order exact oracle; H-R9-032..034 settlement; P2 C1-C4.
-- Candidate A (future/never-sent ACK atomic rejection) remains closed. Candidate B (mixed queue/generic datagram-drop observability) remains closed.
-- Developer-persisted exact-tree provenance for `95d9388`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, UTC 2026-09-18T17:58:47Z → 18:03:19Z, Linux x86_64, rustc 1.98.0.
-- GitHub-hosted Rust CI run `35377470589` for exact `95d9388` is green: `stable checks` succeeded; nightly pinned decode fuzz build/run also succeeded. Hosted CI is cross-evidence only.
-- Reviewer-local execution is **not** claimed for this pass. Reviewer truth is exact pushed source/test inspection + repository-persisted developer provenance + hosted cross-evidence, kept as distinct evidence classes.
+- Current reviewer finding anchor: [`docs/reviews/independent-r9-6-first-send-socket-transaction-20260919.md`](reviews/independent-r9-6-first-send-socket-transaction-20260919.md), added by reviewer commit `c9dbbb072eccd3106c93d28c41d30a2e702e8025` from exact reviewed HEAD `4816e46e4a95634b3abe7392b3ddd6068e7de35a`.
+- Latest developer-owned source/test commit reviewed remains exact `95d938859bbe7a42c3e2bf26e09729ba55de5cf0`, on top of implementation/test commit `7ea9a8442563ef7d0dd7f6c70acdba53a003fdff`. Commits `d4e19fd`, `8c21e24`, `67028be`, `b9f0dc5`, and `4816e46` are review/handoff documentation only.
+- **H-R9-061 is OPEN HIGH — correctness/evidence.** The post-return reliable-UDP first-send owner performs exact-wire congestion admission and `ReliableUdpRuntime::on_packet_sent(...)`, then emits positive `r9_udp_post_return_sent`, and only afterwards performs the real `UdpSocket::send_to`. A real socket error therefore occurs after Recovery/Reno/packet-to-frame ownership and after positive sent evidence have already been committed; no first-send rollback runs before the `unwrap` terminates the process. The two earlier reliable-UDP first-send owners also commit Recovery before `send_to`; their positive diagnostics are later, but they likewise have no socket-error rollback.
+- This is **not** the deliberate `--drop-r9-data` seam. That seam intentionally leaves Recovery ownership for an owned-but-wire-suppressed packet so PTO can model loss. Ordinary OS/socket failure must remain a distinct abort outcome.
+- The retransmit path remains correctly shaped under H-R9-051: exact-wire admission -> packet-copy reservation -> real socket send -> on `Err`, `abandon_retransmit` rollback; only socket success emits `r9_udp_retransmit_sent` and advances active retransmit identity. Do not regress it.
+- **R9-4 / H-R9-060 remain independently closed** at exact source/test tree `95d9388`. The one-shot Carrier-ACK suppression, real PTO/fresh-PN retransmission, operation-owned exact Session duplicate witness, typed accepted-empty projection, Carrier packet-identity binding and zero-in-flight terminal settlement were bounded-challenged with no contradictory current evidence.
+- **R9-5 remains closed no-finding** at `b9f0dc5467771f2398d06f2f6a66ebb3a36c1111`: current future/never-sent, stale/duplicate, tampered, multi-range and aborted-reservation Carrier feedback continuations have reachable deterministic seams and remained atomic under the bounded audit.
+- Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 exact-wire retransmit admission; H-R9-051 retransmit socket rollback; H-R9-052/H-R9-053 committed ACK-valid watermark restoration; H-R9-054 committed-watermark reuse discriminator; H-R9-055 executable pre-deadline PTO owner; H-R9-057 one-shot ACK-delay/reorder; H-R9-058 exact Session ACK witness; H-R9-059 operation-owned bounded witness.
+- Developer-persisted provenance for exact source/test tree `95d9388`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, UTC 2026-09-18T17:58:47Z -> 18:03:19Z, Linux x86_64, rustc 1.98.0.
+- GitHub-hosted Rust CI for docs-only exact HEAD `4816e46`, run `35382804116`, is green. Hosted CI is cross-evidence only and does not inject the H-R9-061 first-send socket-failure condition.
+- Reviewer-local execution is **not claimed** this pass. The reviewer environment could not resolve `github.com` for a local clone/check. Exact pushed source/test inspection, repository-persisted developer provenance and hosted CI are separate evidence classes.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
-The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency and is never a work-ticket length or reason to idle.
+The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency and is never a work-ticket length or reason to idle.
 
-## Accepted R9-4 closure boundary
+# READY_LOCAL 1 — H-R9-061 / R9-6A first-send socket-outcome transaction repair — FRONT HIGH
 
-Do not reopen R9-4 for cosmetic oracle strengthening unless contradictory current evidence appears. The bounded closure establishes all of the following together:
+Repair the concrete first-send transaction divergence without changing core Session/Carrier/ACK/crypto/wire architecture.
 
-- the server withholds only the first post-return Carrier ACK, then releases delayed-original before fresh-copy ACK and thereafter ACKs normally;
-- the client reaches a real PTO and sends at least one fresh-PN retransmission through the exact-wire admission and socket-outcome transaction path;
-- the first exact Session DeliveryAck populates the current-operation witness through the real demux, not by test prefill;
-- the retransmission causes a freshly sealed same-range Session ACK and the real post-return caller visibly classifies it accepted-empty;
-- exact accepted-empty is classification-only: no malformed charge in focused helper coverage and no second positive `r9_udp_return_delivery_ack` in the process regression;
-- authenticated unadmitted/subrange/zero-length Session feedback remains fail-closed; identical authenticated-envelope replay remains a crypto replay rejection, not Session accepted-empty;
-- every positive client Carrier retirement comes from Recovery `acked_packets` and is covered by the server's emitted Carrier-ACK identity set;
-- terminal settlement occurs exactly once with `remaining_in_flight == 0` after both Session and Carrier domains are resolved.
+Required contract:
 
-This does **not** close the still-unreviewed adversarial continuations, first-send socket transaction, broad evidence truth, warm-readiness/promotion/replay/cleanup/lifecycle surfaces below.
+1. Preserve exact-wire congestion admission and `SecureSession` sequence/nonce as the single packet-number source.
+2. Make **every executable reliable-UDP first-send owner** a bounded reserve/commit/abort socket transaction (shared production owner/helper is preferred when it is the smallest shape):
+   - admission may reserve Recovery/Reno/packet-to-frame/plaintext state;
+   - real socket `Ok` commits the packet copy and only then permits positive `sent` evidence;
+   - real socket `Err` aborts exactly that packet copy before positive sent evidence escapes, removes Recovery/Reno and packet-to-frame ownership, and leaves the aborted PN non-ACK-valid;
+   - stable retained plaintext survives only where current retry semantics require it; do not create a second history/plaintext owner.
+3. Keep `--drop-r9-data` semantically separate. Controlled packet loss intentionally retains Recovery ownership so PTO/retransmission can recover it. Do not “repair” that seam into socket-abort semantics.
+4. A failed real send must not advance active packet identity, create Session/Carrier success evidence, mutate RTT/PTO from nonexistent feedback, or let the aborted PN become valid historical ACK high-water.
+5. Add a deterministic discriminator against the **production first-send owner**. Inject a socket/send failure only after admission, and prove:
+   - no positive first-send diagnostic;
+   - no packet-copy Recovery/Reno/packet-frame ownership remains;
+   - failed PN is not ACK-valid;
+   - retained stable plaintext is bounded according to existing retry semantics;
+   - a paired success with a fresh legal PN emits positive evidence and can settle normally.
+6. Audit all current reliable-UDP first-send call sites, not only post-return. Keep the already-correct retransmit transaction as a control.
+7. No new TTL/LRU/history-size/capacity/security values, no D019 change, no ACK redesign, no capacity-pressure benchmark.
 
-# READY_LOCAL 1 — CLOSED at b9f0dc5 (R9-5 bounded audit — no defect across Carrier continuations)
+After the final pushed repair SHA, run and persist the ordinary exact-tree gate:
 
-Challenge future/never-sent/stale/duplicate/tampered and multi-range Carrier feedback across **every current `UdpAcknowledgement::Carrier` continuation**, not only the R9-4 happy/reorder owner. Include initial receive, settlement and post-return owners.
+```text
+PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
+git diff --check
+```
 
-Contract:
+Record exact reachable SHA, UTC start/end, exit codes, OS/arch, stable Rust version and clean-tree state. Decoder/parser/crypto-framing fuzz is required only if those surfaces actually change.
 
-1. Read exact-current Carrier ACK decode/demux owner, `ReliableUdpRuntime` / Recovery ACK application, all caller continuations, and relevant prior ACK-review notes.
-2. For each continuation distinguish:
-   - positive retirement of currently Recovery-owned sent packet(s);
-   - sent-and-retired historical identity accepted-empty/stale where current semantics permit;
-   - future / never-sent identity rejected atomically;
-   - pre-send reservation that was aborted and therefore must **not** become ACK-valid history;
-   - malformed/tampered authenticated/wire failures at the correct layer.
-3. Rejected feedback must leave RTT, PTO count/deadline, loss/retransmit eligibility, Reno/cwnd/in-flight, retained frame/plaintext ownership and Session state unchanged.
-4. Multi-range ACK must project every actual retired packet, not collapse to a representative PN; accepted-empty cannot fabricate positive retirement.
-5. Keep Session duplicate classification separate: Session accepted-empty may not substitute for Carrier accepted-empty or Carrier retirement evidence.
-6. Use focused deterministic tests against the production owner. If current semantics already decide the answer, repair the smallest caller/runtime seam and add positive + negative regressions. Do not redesign ACK architecture.
-7. If no concrete defect is found, persist a bounded independent no-finding note naming owners, tests/commands, exclusions and the exact reachable anchor; then continue immediately to R9-6.
+On closure, continue immediately to READY_LOCAL 2 without waiting for reviewer cadence.
 
-Normal exact-tree gate applies to any source/test repair. Wire/parser/crypto framing fuzz is required only if those surfaces actually change.
+# READY_LOCAL 2 — R9-6B ownership / resource boundedness completion
 
-# READY_LOCAL 2 — R9-6 ownership / resource boundedness
-
-Challenge first-send and retransmit ownership as transactions rather than assuming H-R9-051 covers both.
+After H-R9-061 closes, finish the remainder of R9-6 as an independent bounded challenge rather than assuming the socket fix closes all resource ownership questions.
 
 Minimum scope:
 
-- post-return **first-send** owner currently performs congestion admission + Recovery ownership before the real socket send; explicitly challenge socket-send failure ordering and whether Recovery/caller ownership / ACK-valid history / positive `r9_udp_post_return_sent` evidence can survive a real send failure;
-- retransmit owner must keep exact-wire admission, rollback failed socket reservations, retain stable logical plaintext only as current semantics require, and never reuse a committed packet number;
-- every first-send/retransmit path must be congestion-admitted before irreversible ownership commit or use an equivalent bounded reserve/commit/abort transaction;
-- retained retransmit plaintext/frame ownership must be bounded by existing owners and deterministically released on ACK/loss/terminal cleanup;
-- historical classification metadata must remain bounded/accounted by existing ownership; do not introduce TTL/LRU/history-size/capacity policy;
-- no capacity-pressure benchmark and no new numeric policy.
+- first-send and retransmit packet-copy ownership cannot survive refusal/abort/terminal teardown incorrectly;
+- retransmit exact-wire admission remains truthful;
+- committed packet numbers are never reused; aborted reservations do not become ACK-valid history;
+- stable retained plaintext/frame ownership is bounded by existing owners and deterministically released on ACK/loss/terminal cleanup;
+- packet-to-frame maps, Reno bytes-in-flight and Recovery packet state reconcile after each positive/negative outcome;
+- historical classification metadata stays bounded/accounted by existing ownership; do not invent TTL/LRU/history-size/capacity policy.
 
-A concrete first-send socket-outcome defect is correctness HIGH and goes to the front as smallest repair + injected failure/success regression + exact-tree gate.
+If a concrete correctness/security/evidence defect appears, repair the smallest current-semantics seam with discriminating positive/negative tests and exact-tree gate. If no defect appears, persist a precise bounded no-finding note and continue immediately.
 
 # READY_LOCAL 3 — R9-7 process / result truth
 
@@ -90,11 +83,21 @@ Independently challenge that structured diagnostics correspond to the typed stat
 - residual-domain failure;
 - terminal result/settlement.
 
-No diagnostic may manufacture evidence in another domain. H-R9-060's Session accepted-empty projection is part of this audit, not a substitute for the whole audit. Add only discriminators that can actually fail when the production owner regresses; do not generate schema/checker filler.
+H-R9-061's socket-success evidence boundary must be included. No diagnostic may manufacture evidence in another domain. Add only discriminators that would actually fail if the production owner regressed; do not generate schema/checker filler.
 
-After R9-5 through R9-7 (or any coherent group of 3–4 slices), perform one small factual reconciliation of release/item-4 state before continuing; do not rewrite large docs after each microchange.
+# READY_LOCAL 4 — R9 mid-slice factual reconciliation
 
-# READY_LOCAL 4 — R9-8 warm TCP readiness
+After the coherent R9-4/R9-5/R9-6/R9-7 group is closed, perform one **small factual reconciliation** of release/item-4 state before continuing. Do not rewrite the full release packet yet.
+
+Check only current facts:
+
+- exact reachable R9 anchors and evidence classes;
+- item 3 remains incomplete unless repository truth changed independently;
+- item 4 remains incomplete until the later dedicated R9 review/reconciliation;
+- `READY_LIVE` remains `none` unless the new code creates a concrete unresolved real-network question;
+- release/freeze/production flags remain unchanged.
+
+# READY_LOCAL 5 — R9-8 warm TCP readiness
 
 Challenge D064 single-active / multi-ready semantics on the materially new cross-process integration:
 
@@ -106,17 +109,17 @@ Challenge D064 single-active / multi-ready semantics on the materially new cross
 
 No policy-value changes.
 
-# READY_LOCAL 5 — R9-9 health + promotion
+# READY_LOCAL 6 — R9-9 health + promotion
 
 Challenge integrated resolved reliable-UDP outcomes -> Carrier health/hysteresis -> promotion:
 
 - recoverable reliable-UDP loss/PTO that successfully settles must stay on UDP rather than spuriously promote TCP;
 - actual promotion requires existing readiness + health/hysteresis gates;
 - draining/failed UDP cannot receive new Session Data ownership;
-- single-active invariant holds through the transition;
-- health/decision evidence is distinct from packet feedback and Session delivery evidence.
+- single-active invariant holds through transition;
+- health/decision evidence remains distinct from packet feedback and Session delivery evidence.
 
-# READY_LOCAL 6 — R9-10 uncertain replay + dedup + cleanup
+# READY_LOCAL 7 — R9-10 uncertain replay + dedup + cleanup
 
 Challenge failover after a genuinely unresolved UDP logical range:
 
@@ -127,38 +130,38 @@ Challenge failover after a genuinely unresolved UDP logical range:
 - resolved UDP ranges do not replay;
 - shutdown/error/partial-promotion negatives clean retained ownership and emit no false success.
 
-Do not change core replay architecture; any ambiguity requiring such a change is a maintainer/architecture gate while independent lanes continue.
+Do not change core replay architecture. Any ambiguity requiring such a change is a maintainer/architecture gate while independent local lanes continue.
 
-# READY_LOCAL 7 — R9-11 lifecycle / terminal invariants
+# READY_LOCAL 8 — R9-11 lifecycle / terminal invariants
 
-Close the remaining lifecycle and terminal invariants for the new cross-process reliable-UDP/failover integration:
+Close remaining lifecycle and terminal invariants for the new cross-process reliable-UDP/failover integration:
 
 - exactly one terminal success/failure classification per bounded operation;
 - intermediate timeout/residual diagnostics are not terminal success/failure;
-- no post-terminal retransmit, delivery confirmation, promotion, or new Data ownership;
+- no post-terminal retransmit, delivery confirmation, promotion or new Data ownership;
 - listener/socket/session/recovery retained state is deterministically cleaned on normal and error exits;
 - cleanup observations do not rewrite historical failure evidence.
 
-# READY_LOCAL 8 — R9-12 complete cross-process slice + final exact-tree provenance
+# READY_LOCAL 9 — R9-12 complete cross-process slice + final exact-tree provenance
 
-After R9-5 through R9-11 close, run on the final pushed developer SHA in a safe clean checkout/worktree:
+After R9-6 through R9-11 close, run on the final pushed developer SHA in a safe clean checkout/worktree:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
 git diff --check
 ```
 
-Confirm clean tree and persist exact reachable pushed SHA, UTC start/end, OS/arch, stable Rust version, exit codes and clean-tree state. Keep developer-local provenance distinct from hosted CI and reviewer execution. Run pinned decode fuzz only if the accumulated R9 work actually changes wire decoder/parser/crypto framing.
+Confirm clean tree and persist exact reachable pushed SHA, UTC start/end, OS/arch, stable Rust version, exit codes and clean-tree state. Keep developer-local provenance distinct from hosted CI and reviewer execution. Run pinned decode fuzz only if accumulated R9 work actually changes wire decoder/parser/crypto framing.
 
 Do not rewrite historical live evidence.
 
-# READY_LOCAL 9 — dedicated independent R9 review
+# READY_LOCAL 10 — dedicated independent R9 review
 
 Perform a fresh independent bounded challenge of the materially new R9 send/admission/reservation/socket-outcome/recovery/PTO/demux/Session-ACK/Carrier-ACK/failover/migration/cleanup/diagnostic behavior at the final R9 implementation anchor.
 
 A no-finding review is valid item-4 support only when it names inspected owners, challenged invariants, focused deterministic tests/commands, exclusions, exact reachable anchor and evidence class. Any concrete correctness/security/evidence BLOCKER/HIGH returns immediately to smallest repair -> regression -> exact-tree gate.
 
-# READY_LOCAL 10 — Q10/Q11/Q12 factual reconciliation
+# READY_LOCAL 11 — Q10/Q11/Q12 factual reconciliation
 
 Only after a reachable independent R9 review anchor exists, reconcile `docs/status.md`, `docs/release-security-review-packet.md`, `IMPLEMENTATION_PLAN.md` and related Q10/Q11/Q12 evidence text against exact reachable implementation/review anchors.
 
@@ -170,7 +173,7 @@ Preserve evidence boundaries:
 - no automatic RC/freeze/release/production transition;
 - policy/authority gates stay separate.
 
-# READY_LOCAL 11 — repository-wide item-4 inventory refill if reconciliation remains blocked
+# READY_LOCAL 12 — repository-wide item-4 inventory refill if reconciliation remains blocked
 
 If item 4 remains incomplete after R9 independent review/reconciliation, perform one repository-wide inventory against the mandatory core surfaces:
 
@@ -194,7 +197,7 @@ Repository-wide `queue exhausted` is permitted only when this broad inventory fi
 
 ## VPS opportunity
 
-**Not READY. `READY_LIVE: none`.** Standing authorization remains valid, but the current R9 queue is deterministic local correctness/evidence work and produces no unresolved real-network question that loopback/process evidence cannot answer. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
+**Not READY. `READY_LIVE: none`.** Standing authorization remains valid, but H-R9-061 and the current R9 queue are deterministic local correctness/evidence work and produce no unresolved real-network question that loopback/process evidence cannot answer. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
 
 Only create a new READY_LIVE row if later code/instrumentation/hypothesis/path conditions produce a concrete unresolved real-network question and the run stays inside `docs/standing-vps-lab-authorization.md`.
 
@@ -203,7 +206,7 @@ Only create a new READY_LIVE row if later code/instrumentation/hypothesis/path c
 Do not decide or modify while executing this queue:
 
 - `SessionRuntime.events` retention/capacity policy;
-- D019 source-retention/no-reset policy or its numeric candidate values;
+- D019 source-retention/no-reset policy or numeric candidate values;
 - RSEC-001 adversarial-load/capacity suitability conditions;
 - signing/key-custody/SBOM/publication policy;
 - previous frozen-release policy;
