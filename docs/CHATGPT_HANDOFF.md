@@ -1,4 +1,4 @@
-# ChatGPT reviewer handoff — R9-4 independently closed; R9-5 is front READY_LOCAL
+# ChatGPT reviewer handoff — R9-4 independently closed; R9-5 audited no-finding at b9f0dc5; R9-6 is front READY_LOCAL
 
 ## Current repository truth
 
@@ -37,7 +37,7 @@ Do not reopen R9-4 for cosmetic oracle strengthening unless contradictory curren
 
 This does **not** close the still-unreviewed adversarial continuations, first-send socket transaction, broad evidence truth, warm-readiness/promotion/replay/cleanup/lifecycle surfaces below.
 
-# READY_LOCAL 1 — R9-5 adversarial Carrier feedback / every continuation
+# READY_LOCAL 1 — CLOSED at b9f0dc5 (R9-5 bounded audit — no defect across Carrier continuations)
 
 Challenge future/never-sent/stale/duplicate/tampered and multi-range Carrier feedback across **every current `UdpAcknowledgement::Carrier` continuation**, not only the R9-4 happy/reorder owner. Include initial receive, settlement and post-return owners.
 
