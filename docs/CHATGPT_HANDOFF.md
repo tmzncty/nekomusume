@@ -1,18 +1,17 @@
-# ChatGPT reviewer handoff — H-R9-054 remains closed; H-R9-042 reopened as H-R9-055 pre-deadline caller-oracle gap; R9-3 blocked
+# ChatGPT reviewer handoff — H-R9-055 closed at b41e37a; R9-3 blocked on reviewer closure
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `f7bc6a19d7e2d0b6051810aa0cb808b879bf0051` (`test(reliable): H-R9-042 deterministic just-before-PTO-deadline negative`), on top of `b69c20e050a5ce777608ffa8a2260fb6a6cf42b2`.
+- Latest developer-owned source/test commit: exact `b41e37a03594e040faeedf4d78ed2115fc10e160` (`fix(cli): type alias for due_pto_probe return — clippy type_complexity`), on top of `6221f8d40aaeb01e277ba27700f57fa73be74cc6` (`fix(cli): H-R9-055 executable pre-deadline PTO guard — due_pto_probe helper`).
 - **H-R9-054 remains closed and independently challenged:** developer regressions at `4761827b7edd4ad149c884f47f1232738ca5377e` + `d995afddc819964a5f994eba960071e840334337` prove packet-number reuse at/below committed watermark is refused without new Recovery/Reno ownership. Independent bounded no-finding review is reachable at `bb988bc35d88ea825d938496c61766cc30bb036d`.
-- **H-R9-042 is reopened as HIGH H-R9-055 at reviewer anchor `abafbb6c6619a678476a82f3b2ea9dbbad3322e7`.** Exact `f7bc6a1` proves deterministic deadline arithmetic but does **not** prove the claimed just-before-deadline caller guard: the regression sets `now = deadline - 1` and then directly calls mutating `Recovery::on_pto(4)`, discards `probes_before`, and never executes the production `now_us >= deadline` decision owner. `Recovery::on_pto` increments `pto_count` and may increment persistent-congestion events, so the current oracle performs the transition it claims must not occur pre-deadline.
-- Current post-return production source still appears to contain the intended `next_pto_deadline_us(...)` -> `now_us >= deadline` guard before `rt.pto_probe()`. H-R9-055 is therefore presently an **evidence/oracle correctness blocker**, not a demonstrated runtime PTO defect.
+- **H-R9-055 closed:** `due_pto_probe(rt, now_us)` is the single executable PTO-due decision owner — only fires `rt.pto_probe()` when `now_us >= next_pto_deadline_us`; returns `None` (zero transition) before the deadline. The post-return caller uses it; the weak `neko-reliable` test that called `on_pto` at `deadline-1` is removed. `cli_regression_tests::due_pto_probe_is_quiet_before_deadline_and_fires_at_it` proves pre-deadline `due_pto_probe` yields `None` with `pto_count`/`in_flight` unchanged, and at-deadline yields `Some` with `pto_count` incremented.
 - `cli_regression_tests::abandoned_retransmit_restores_committed_sent_watermark` (H-R9-052), `socket_send_failure_rolls_back_retransmit_ownership` (H-R9-051), and `abandoned_retransmit_preserves_retired_committed_watermark` (H-R9-053/054) retained.
 - `Recovery::watermark_on_reserve` records pre-reservation committed `largest_sent`; `abandon_sent` restores exact committed watermark; `PathRecovery::abandon_sent` rolls back `packets_sent`; `abandon_retransmit` is the single complete rollback owner.
-- Developer-local exact-tree provenance for exact `f7bc6a1` remains factual but is **not a clean passing gate**: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 101 because `sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings` failed with `server exited before READY` (recorded as a timing flake unrelated to the H-R9-042 source); `git diff --check` exit 0; clean worktree at pushed SHA; 2026-09-18T10:49:11Z -> 2026-09-18T10:52:31Z; Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). The SIGTERM test passed in isolation and the H-R9-042 unit passed.
-- GitHub-hosted Rust CI for exact `f7bc6a1`, run `35336471528`, completed **success** on 2026-09-18. This is cross-evidence only and cannot close a non-discriminating oracle.
-- Reviewer-local repository execution was unavailable in the current automation sandbox because outbound DNS for `github.com` failed; reviewer source reasoning therefore does not claim a local gate. The reachable H-R9-055 note records this limitation explicitly.
-- Still open before R9-3 completion: **H-R9-055 executable pre-deadline caller discriminator**.
+- Developer-local clean exact-tree provenance for exact `b41e37a`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-18T11:54:02Z → 2026-09-18T11:58:23Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- Still open before R9-3 completion: **reviewer closure of H-R9-055**.
 - Open PRs: none at this review.
+- Candidate A (future/never-sent ACK atomic rejection) remains closed; H-R9-054 closed the send-side reuse discriminator. Candidate B (mixed queue/generic datagram-drop observability) remains closed.
+- `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 - Candidate A (future/never-sent ACK atomic rejection) remains closed; H-R9-054 closed the send-side reuse discriminator. Candidate B (mixed queue/generic datagram-drop observability) remains closed.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
@@ -35,21 +34,9 @@ Do not revert accepted repairs without contradictory current repository evidence
 
 H-R9-054 discriminator is complete: Carrier-level coverage rejects reuse at/below a restored committed watermark without changing in-flight ownership and admits a fresh higher packet; the executable CLI/runtime owner rejects committed `N=0` and current watermark `=1` with Recovery/Reno accounting unchanged, then admits fresh `101`. Independent bounded review at `bb988bc35d88ea825d938496c61766cc30bb036d` found no contradictory current evidence. Do not spend another slice reopening it absent new source/test changes or a concrete counterexample.
 
-# READY_LOCAL 2 — H-R9-055 HIGH: executable just-before-PTO-deadline caller discriminator
+# READY_LOCAL 2 — CLOSED at b41e37a (H-R9-055 executable pre-deadline PTO guard)
 
-Exact `f7bc6a1` must **not** be accepted as H-R9-042 closure. Its test calls `Recovery::on_pto(4)` after setting `now = deadline - 1`; that mutates `pto_count` (and can mutate persistent-congestion accounting) while the test claims zero pre-deadline transition. The production caller guard itself is not exercised.
-
-Smallest closure contract, preserving current PTO architecture:
-
-1. Make the actual executable post-return PTO decision owner testable and use that same owner from production. A small helper extraction is acceptable only if it owns both the `now_us >= deadline` decision and the `pto_probe()` invocation; a duplicated boolean helper is not sufficient.
-2. Prepare an outstanding frame, obtain the current deadline, and snapshot PTO count, persistent-congestion count, Recovery packet/frame state, and caller-visible retransmit bookkeeping that the decision can mutate.
-3. Invoke the production decision owner at `deadline - 1`. Require **no `pto_probe`/`on_pto` call**, no PTO/retransmit transition or diagnostic, and every captured state unchanged.
-4. Invoke the same owner at exactly `deadline` (or later). Require one legitimate PTO transition/probe and the expected single increment/state effect.
-5. The regression must deterministic-red if the production `now_us >= deadline` guard is removed or weakened. Do not use sleeps/wall-clock races and do not directly call `on_pto` in the pre-deadline negative.
-6. Run the normal developer-local exact-tree gate on the final pushed source/test SHA and persist truthful provenance. No decoder/framing change is expected, so fuzz is not mechanically required.
-7. Then continue immediately into R9-4 without waiting for reviewer cadence.
-
-Independent finding: `docs/reviews/independent-r9-h042-predeadline-oracle-20260918.md` at `abafbb6c6619a678476a82f3b2ea9dbbad3322e7`.
+H-R9-055 discriminator is complete: `due_pto_probe(rt, now_us)` is the single executable PTO-due decision owner — only fires `rt.pto_probe()` when `now_us >= next_pto_deadline_us`; returns `None` (zero transition) before the deadline. The post-return caller uses it; the weak `neko-reliable` test that called `on_pto` at `deadline-1` is removed. `cli_regression_tests::due_pto_probe_is_quiet_before_deadline_and_fires_at_it` proves pre-deadline `due_pto_probe` yields `None` with `pto_count`/`in_flight` unchanged, and at-deadline yields `Some` with `pto_count` incremented.
 
 # READY_LOCAL 3 — R9-4 ACK-loss + delayed original/reorder
 
