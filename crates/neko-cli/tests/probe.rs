@@ -3918,10 +3918,7 @@ fn reliable_udp_ack_loss_delayed_original_reorder_settles() {
         settled[0].contains("\"remaining_in_flight\":0"),
         "{client_log}"
     );
-    assert!(
-        client_log.contains("failover_client_ok"),
-        "{client_log}"
-    );
+    assert!(client_log.contains("failover_client_ok"), "{client_log}");
 }
 #[test]
 fn reliable_udp_post_return_reversed_ack_order_settles() {
