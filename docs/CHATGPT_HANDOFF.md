@@ -1,14 +1,14 @@
-# ChatGPT reviewer handoff — H-R9-060 closed at 7ea9a84; R9-4 blocked on reviewer closure
+# ChatGPT reviewer handoff — H-R9-060 closed at 95d9388; R9-4 blocked on reviewer closure
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `7ea9a8442563ef7d0dd7f6c70acdba53a003fdff` (`fix(cli): H-R9-060 emit demux typed classification as observable evidence`), on top of `8d2eea9ec66fb4260c93a86e683d77f47faa9923`.
+- Latest developer-owned source/test commit: exact `95d938859bbe7a42c3e2bf26e09729ba55de5cf0` (`test(probe): H-R9-060 client-retired packet_number ⊆ server ACK set`), on top of `7ea9a8442563ef7d0dd7f6c70acdba53a003fdff`.
 - **H-R9-059 source/resource repair is independently accepted.** `SessionRuntime.confirmed_ranges` is removed; the exact-duplicate Session ACK witness is caller-owned current-operation `BTreeSet<(stream,offset,len)>`, populated only when an authenticated Session DeliveryAck exact-matches an admitted `outstanding` record. It dies with the operation and adds no Session-lifetime history/TTL/LRU/capacity policy.
 - **H-R9-058 predicate repair is independently accepted.** Current deterministic negatives reject a fresh authenticated interior/subrange tuple and `len == 0`; broad `confirmed_watermark >= end` acceptance is no longer the current source semantics.
 - **Exact-head stable negative-oracle rebind is accepted.** The two post-return withheld-ACK negatives bind to the terminal (last) residual and allow repeated same-range Session ACK emissions during bounded PTO/recovery rather than restoring premature first-timeout termination.
 - **H-R9-057 remains closed.** `delay_reorder_done` makes `--delay-r9-ack-reorder` one-shot; do not re-open alternating ACK suppression absent contradictory current evidence.
-- **H-R9-060 closed:** the post-return `recv_udp_delivery_ack` caller now emits the demux's typed classification via `emit_diagnostic` instead of discarding it. `reliable_udp_ack_loss_delayed_original_reorder_settles` asserts `accepted_empty_logical_ack` present (exact duplicate takes repaired witness path) and `unexpected_logical_ack` absent — classification-only evidence, zero malformed charge, no second Session transition.
-- Developer-local clean exact-tree provenance for exact `7ea9a84`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 101 — `sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings` failed with `server exited before READY` (flaky SIGTERM timing, unrelated to `7ea9a84` changes); `git diff --check` exit 0; clean worktree at pushed SHA; 2026-09-18T17:50:01Z → 2026-09-18T17:53:50Z; Linux x86_64, rustc 1.98.0. `sigterm_after_ready` passes in isolation; `reliable_udp_ack_loss_delayed_original_reorder_settles` passes.
+- **H-R9-060 closed:** the post-return `recv_udp_delivery_ack` caller now emits the demux's typed classification via `emit_diagnostic` instead of discarding it. `reliable_udp_ack_loss_delayed_original_reorder_settles` asserts `accepted_empty_logical_ack` present (exact duplicate takes repaired witness path), `unexpected_logical_ack` absent, and every `r9_udp_return_packet_ack` `packet_number` is present in the server `udp_return_packet_ack_sent` set — classification-only evidence, zero malformed charge, no second Session transition, every positive Carrier retirement names a real transmitted Recovery-owned identity.
+- Developer-local clean exact-tree provenance for exact `95d9388`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-18T17:58:47Z → 2026-09-18T18:03:19Z, Linux x86_64, rustc 1.98.0.
 - GitHub-hosted Rust CI run `35372825479` for exact `8d2eea9` is green: `stable checks` success and `nightly decode fuzz smoke` success. Hosted CI is cross-evidence only.
 - Reviewer-local execution is **not** claimed for this pass. The independent review is exact pushed source/test inspection plus repository-persisted developer provenance and hosted cross-evidence.
 - H-R9-056 semantic direction remains: a **fresh authenticated exact duplicate** Session DeliveryAck for an exact already-confirmed current bounded record is classification-only accepted-empty; identical authenticated-envelope replay remains crypto replay rejection; semantically unadmitted feedback remains malformed/fail-closed.
@@ -41,7 +41,7 @@ Independent source/resource review found no remaining H-R9-058/H-R9-059 defect i
 
 Do not restore `residual.len() == 1` or terminate at the first receive timeout merely to satisfy historical cardinality. Bounded PTO/recovery may emit repeated residuals / same-range Session ACKs until the operation deadline; final truth is the terminal residual and final result.
 
-# READY_LOCAL 3 — H-R9-060 + full R9-4 ACK-loss / delayed-original-reorder closure
+# READY_LOCAL 3 — CLOSED at 95d9388 (H-R9-060 emit + R9-4 identity binding)
 
 Treat this as one coherent implementation/evidence slice, not a chain of docs-only microtickets.
 
