@@ -5668,7 +5668,13 @@ mod cli_regression_tests {
         // Admit a retransmit reservation for a new packet number carrying
         // the same stable frame.
         let wire = vec![0u8; 400];
-        assert!(admit_retransmit(&mut rt, 100, 1_000_000, &wire, neko_reliable::FrameId(1)));
+        assert!(admit_retransmit(
+            &mut rt,
+            100,
+            1_000_000,
+            &wire,
+            neko_reliable::FrameId(1)
+        ));
         assert_eq!(rt.in_flight(), 2);
         // Socket send fails — roll back the reservation.
         assert!(rt.abandon_retransmit(100));
@@ -5685,6 +5691,60 @@ mod cli_regression_tests {
         assert_eq!(rt.in_flight(), 1);
     }
     #[test]
+    fn abandoned_retransmit_preserves_retired_committed_watermark() {
+        // H-R9-053: the committed high-water must survive even when the
+        // previous committed packet was already ACKed/retired out of `sent`.
+        // After aborting a higher reservation, a late ACK for the retired
+        // committed packet must still be accepted-empty, while an ACK for
+        // the aborted number is rejected atomically.
+        let mut rt = neko_carrier::ReliableUdpRuntime::new(1, 1200).unwrap();
+        // Send and immediately ACK/retire committed packet N=0 (frame 1).
+        rt.on_packet_sent(0, 0, 400, neko_reliable::FrameId(1), b"real")
+            .unwrap();
+        let mut ack_n = neko_reliable::AckRanges::new(4).unwrap();
+        ack_n.insert(0).unwrap();
+        rt.apply_ack(&ack_n, 1_000_000, 0).unwrap();
+        assert_eq!(rt.in_flight(), 0);
+        // Reserve higher packet M=100 for a retransmit of a different frame
+        // whose plaintext is still retained; socket send fails.
+        rt.on_packet_sent(1, 1_000_000, 400, neko_reliable::FrameId(2), b"other")
+            .unwrap();
+        let wire = vec![0u8; 400];
+        assert!(admit_retransmit(
+            &mut rt,
+            100,
+            1_000_000,
+            &wire,
+            neko_reliable::FrameId(2)
+        ));
+        assert!(rt.abandon_retransmit(100));
+        // A late ACK for retired N=0 is still accepted-empty (largest_sent=1).
+        let mut ack_dup = neko_reliable::AckRanges::new(4).unwrap();
+        ack_dup.insert(0).unwrap();
+        assert!(
+            rt.apply_ack(&ack_dup, 2_000_000, 0).is_ok(),
+            "late ACK for retired committed packet must remain accepted"
+        );
+        // ACK for aborted M=100 is rejected atomically (largest_sent=1).
+        let mut ack_m = neko_reliable::AckRanges::new(4).unwrap();
+        ack_m.insert(100).unwrap();
+        assert!(
+            rt.apply_ack(&ack_m, 2_000_000, 0).is_err(),
+            "ACK of aborted packet must be rejected atomically"
+        );
+        // on_sent still rejects packet numbers <= committed watermark (1);
+        // a fresh packet number > 1 remains admissible.
+        let wire2 = vec![0u8; 400];
+        assert!(admit_retransmit(
+            &mut rt,
+            101,
+            2_000_000,
+            &wire2,
+            neko_reliable::FrameId(2)
+        ));
+        assert_eq!(rt.in_flight(), 2);
+    }
+    #[test]
     fn socket_send_failure_rolls_back_retransmit_ownership() {
         // H-R9-051: after exact-wire admission succeeds, a socket Err must
         // reverse Recovery ownership, Reno charge, and packet->frame map —
@@ -5698,16 +5758,36 @@ mod cli_regression_tests {
         let before_bytes = rt.recovery_bytes_in_flight();
         // Admit a retransmit reservation.
         let wire = vec![0u8; 400];
-        assert!(admit_retransmit(&mut rt, 100, 1_000_000, &wire, neko_reliable::FrameId(9)));
+        assert!(admit_retransmit(
+            &mut rt,
+            100,
+            1_000_000,
+            &wire,
+            neko_reliable::FrameId(9)
+        ));
         assert_eq!(rt.in_flight(), before_flight + 1);
         assert!(rt.recovery_bytes_in_flight() > before_bytes);
         // Socket send fails — roll back.
         assert!(rt.abandon_retransmit(100));
-        assert_eq!(rt.in_flight(), before_flight, "aborted packet must not remain in flight");
-        assert_eq!(rt.recovery_bytes_in_flight(), before_bytes, "Reno charge must be reversed");
+        assert_eq!(
+            rt.in_flight(),
+            before_flight,
+            "aborted packet must not remain in flight"
+        );
+        assert_eq!(
+            rt.recovery_bytes_in_flight(),
+            before_bytes,
+            "Reno charge must be reversed"
+        );
         // Paired control: a successful send path commits exactly once.
         let wire2 = vec![0u8; 400];
-        assert!(admit_retransmit(&mut rt, 101, 1_000_000, &wire2, neko_reliable::FrameId(9)));
+        assert!(admit_retransmit(
+            &mut rt,
+            101,
+            1_000_000,
+            &wire2,
+            neko_reliable::FrameId(9)
+        ));
         assert_eq!(rt.in_flight(), before_flight + 1);
     }
     #[test]

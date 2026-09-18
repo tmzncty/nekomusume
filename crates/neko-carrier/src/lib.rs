@@ -5404,6 +5404,34 @@ mod path_recovery_tests {
         assert!(rt.apply_ack(&ok, 21_000, 0).is_ok());
     }
     #[test]
+    fn abandon_restores_committed_watermark_not_max_outstanding() {
+        // H-R9-053: largest_sent is the highest packet EVER committed to the
+        // socket, not merely the highest still outstanding. Committed packet
+        // 3 is ACKed and retired out of `sent`; a later reservation 4 is
+        // aborted — the watermark must restore to 3, not fall to the current
+        // max outstanding (or zero), so packet-number reuse is still refused.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.on_packet_sent(1, 1_000, 400, FrameId(10), b"a").unwrap();
+        rt.on_packet_sent(2, 2_000, 400, FrameId(11), b"b").unwrap();
+        rt.on_packet_sent(3, 3_000, 400, FrameId(12), b"c").unwrap();
+        // ACK retires 3 — it leaves `sent` but stays the committed watermark.
+        let mut a = AckRanges::new(8).unwrap();
+        a.insert(3).unwrap();
+        rt.apply_ack(&a, 10_000, 0).unwrap();
+        // Reserve 4 then abort — committed high-water must restore to 3.
+        rt.on_retransmit_sent(4, 11_000, 400, FrameId(11)).unwrap();
+        assert!(rt.abandon_retransmit(4));
+        let mut future = AckRanges::new(8).unwrap();
+        future.insert(4).unwrap();
+        assert!(rt.apply_ack(&future, 20_000, 0).is_err());
+        // Committed watermark is 3: a packet-number reuse of 3 or below must
+        // be refused; a genuinely fresh 5 is still admissible.
+        let mut mid = AckRanges::new(8).unwrap();
+        mid.insert(3).unwrap();
+        // ACK of already-retired 3 is accepted-empty (late/duplicate is legal).
+        assert!(rt.apply_ack(&mid, 21_000, 0).is_ok());
+    }
+    #[test]
     fn retransmit_admission_refuses_on_exact_wire_bytes_and_recovers() {
         // H-R9-041: the retransmit path checks congestion admission on the
         // exact encoded wire byte count — when cwnd is full, the refusal

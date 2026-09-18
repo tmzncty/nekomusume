@@ -228,6 +228,11 @@ pub struct Recovery {
     pub pto_count: u32,
     pub persistent_congestion_events: u64,
     largest_sent: Option<u64>,
+    // H-R9-053: per-reservation record of the committed high-water that
+    // preceded each send — needed to restore the exact pre-reservation
+    // watermark on abort even when the prior committed packet was already
+    // retired out of `sent`. Bounded by `max_sent_packets` alongside `sent`.
+    watermark_on_reserve: BTreeMap<u64, Option<u64>>,
 }
 impl Default for Recovery {
     fn default() -> Self {
@@ -248,6 +253,7 @@ impl Recovery {
             sent: BTreeMap::new(),
             outstanding_frames: BTreeMap::new(),
             acked_frames: BTreeSet::new(),
+            watermark_on_reserve: BTreeMap::new(),
             max_sent_packets,
             max_frames_per_packet,
             rtt: RttEstimator::default(),
@@ -278,23 +284,27 @@ impl Recovery {
         for f in packet_frames {
             *self.outstanding_frames.entry(f).or_default() += 1;
         }
+        self.watermark_on_reserve
+            .insert(p.number, self.largest_sent);
         self.largest_sent = Some(p.number);
         self.sent.insert(p.number, p);
         Ok(())
     }
-    /// H-R9-051/052: roll back a packet reserved for the socket but whose
-    /// send failed — remove only that packet's sent entry and reverse its
-    /// outstanding-frame copies. `largest_sent` is the committed-to-socket
-    /// high-water: if the aborted packet WAS the current watermark, restore
-    /// the previous committed maximum so a never-sent ACK against it is
-    /// rejected. Retained plaintext is untouched for a later retry.
+    /// H-R9-051/052/053: roll back a packet reserved for the socket but whose
+    /// send failed — remove only that packet's sent entry, reverse its
+    /// outstanding-frame copies, and restore the EXACT committed high-water
+    /// that preceded this reservation (not merely the max still outstanding,
+    /// which may already be retired). Retained plaintext is untouched for a
+    /// later legitimate retry.
     pub fn abandon_sent(&mut self, number: u64) -> Option<SentPacket> {
         let p = self.sent.remove(&number)?;
         for f in &p.frames {
             Self::release_frame(&mut self.outstanding_frames, *f);
         }
-        if self.largest_sent == Some(number) {
-            self.largest_sent = self.sent.keys().next_back().copied();
+        if let Some(prev) = self.watermark_on_reserve.remove(&number) {
+            if self.largest_sent == Some(number) {
+                self.largest_sent = prev;
+            }
         }
         Some(p)
     }
@@ -346,6 +356,7 @@ impl Recovery {
             .filter(|n| ack.contains(*n))
             .collect();
         for n in acked {
+            self.watermark_on_reserve.remove(&n);
             let p = self.sent.remove(&n).ok_or(Error::UnknownPacket)?;
             out.acked_bytes = out.acked_bytes.saturating_add(p.bytes);
             out.acked_packets.push(n);
@@ -374,6 +385,7 @@ impl Recovery {
             .collect();
         let mut frames = BTreeSet::new();
         for n in lost {
+            self.watermark_on_reserve.remove(&n);
             let p = self.sent.remove(&n).ok_or(Error::UnknownPacket)?;
             out.lost_bytes = out.lost_bytes.saturating_add(p.bytes);
             out.retransmit_bytes = out.retransmit_bytes.saturating_add(p.bytes);
