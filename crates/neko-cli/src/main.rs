@@ -5732,8 +5732,23 @@ mod cli_regression_tests {
             rt.apply_ack(&ack_m, 2_000_000, 0).is_err(),
             "ACK of aborted packet must be rejected atomically"
         );
-        // on_sent still rejects packet numbers <= committed watermark (1);
-        // a fresh packet number > 1 remains admissible.
+        // H-R9-054: packet-number reuse at or below the committed watermark
+        // must be refused by the send owner — reuse of committed N=0 or
+        // current watermark=1 must not commit new Recovery/Reno ownership.
+        let before_flight = rt.in_flight();
+        let before_bytes = rt.recovery_bytes_in_flight();
+        let wire_reuse = vec![0u8; 400];
+        assert!(
+            !admit_retransmit(&mut rt, 0, 2_000_000, &wire_reuse, neko_reliable::FrameId(2)),
+            "reuse of committed N=0 must be refused"
+        );
+        assert!(
+            !admit_retransmit(&mut rt, 1, 2_000_000, &wire_reuse, neko_reliable::FrameId(2)),
+            "reuse of committed watermark=1 must be refused"
+        );
+        assert_eq!(rt.in_flight(), before_flight, "reuse must not commit ownership");
+        assert_eq!(rt.recovery_bytes_in_flight(), before_bytes, "reuse must not charge Reno");
+        // Paired control: a fresh packet number > committed watermark succeeds.
         let wire2 = vec![0u8; 400];
         assert!(admit_retransmit(
             &mut rt,
