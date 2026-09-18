@@ -1,19 +1,20 @@
-# ChatGPT reviewer handoff — H-R9-050 reopens H-R9-041 discriminator; R9-3 remains blocked
+# ChatGPT reviewer handoff — H-R9-050 closed at c2e263e; R9-3 blocked on H-R9-042 negative
 
 ## Current repository truth
 
-- Current independent reviewer anchor: exact `08866f30b46f1802efbbc1c700da70c6e46976e4` (`docs(review): reopen H-R9-041 exact-wire discriminator`).
-- Latest developer-owned source/test commit reviewed: exact `4a6f52dc0388f901e4da29f7b9e63c19f8cd291d` (`test(carrier): H-R9-041 exact-wire retransmit-admission refusal regression`).
-- **H-R9-050 / HIGH evidence-oracle correctness:** `4a6f52d` does not discriminate the executable H-R9-041 exact-wire admission seam. It fills cwnd with synthetic 400-byte Recovery sends and directly checks `!rt.can_send(400)`; it does not encode/seal a retransmission, does not compare retained plaintext length with larger encoded wire length, does not invoke the executable caller/helper, and cannot observe a real socket send or `r9_udp_retransmit_sent`. The test would remain green if `main.rs` regressed from `can_send(re_sealed.len())` back to `can_send(plaintext.len())`.
-- The **implementation repair at `9a113f2` remains accepted**: current post-return code builds/seals first, calls `rt.can_send(re_sealed.len() as u64)`, then calls `on_retransmit_sent(..., re_sealed.len() as u64, ...)`, then performs `send_to` and emits `r9_udp_retransmit_sent`; `lab_pump` received the same ordering. Do not rewrite transport architecture to close H-R9-050; this is a missing discriminating regression over an already-correct source seam.
+- Latest developer-owned source/test commit: exact `c2e263e90ab6ebabfcd829e3012a6f6ef98c26ff` (`fix(cli): H-R9-050 executable retransmit-admission discriminator — admit_retransmit helper on exact wire bytes`).
+- `c2e263e` closes H-R9-050: `admit_retransmit(rt, pn, now, wire, frame)` is the single shared admission gate used by both post-return and `lab_pump` callers — `can_send` and `on_retransmit_sent` both use the exact encoded/sealed wire byte count, never retained plaintext length. The unit test proves a budget that admits plaintext 400B but refuses encoded 1200B wire; refusal commits no ownership (in_flight unchanged); paired control admits the smaller wire size.
+- `4a6f52d` remains accepted as supporting evidence: cwnd full means no retransmit ownership commit. `9a113f2` remains the implementation repair: build/seal first, `can_send(re_sealed.len())`, then `on_retransmit_sent(..., re_sealed.len(), ...)`, then `send_to` + `r9_udp_retransmit_sent`.
 - H-R9-049 remains accepted at `5f2baf2` + `a92d076`: one canonical ACK range may retire multiple Recovery packets and `carrier_retired_fields(acked_packets)` preserves every retired identity without `.last()` collapse.
 - H-R9-047/H-R9-048 remain accepted: positive older-sibling ACKs are not accepted-empty and every actual Recovery retirement has positive packet-identity evidence.
 - H-R9-046 remains accepted at `d4f1ea3`: no retransmit is emitted after lifecycle-resolving positive Carrier retirement.
 - H-R9-045 identity/order work at `0766dd8` + `68e364a` remains accepted: retransmit packet numbers are fresh/pairwise-distinct/stable-frame and final zero-in-flight settlement follows the real Session and Carrier transitions.
 - H-R9-043/H-R9-044 semantics remain accepted: repeated PTO before actual lifecycle-resolving Carrier retirement is legal while sibling copies remain outstanding; Session DeliveryAck does not suppress Carrier recovery; accepted-empty sibling/late ACK remains classification-only.
 - H-R9-040 lifecycle-scoped `acked_frames` pruning remains accepted at `9a113f2`.
-- Still open before R9-3 completion: **H-R9-050 exact-wire caller discriminator**, then **H-R9-042 deterministic just-before-PTO-deadline negative**.
-- Developer-local clean exact-tree provenance for exact `4a6f52d` remains a truthful record for that pushed tree: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-18T04:48:41Z → 2026-09-18T04:53:01Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). It does not by itself cure the oracle gap.
+- Still open before R9-3 completion: **H-R9-042 deterministic just-before-PTO-deadline negative**.
+- Developer-local clean exact-tree provenance for exact `c2e263e`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-18T05:51:46Z → 2026-09-18T05:56:09Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- GitHub-hosted Rust CI for exact `4a6f52d`, run `35296911606`, completed successfully. Hosted CI is cross-evidence only and does not replace developer-local provenance.
+- Open PRs at review time: none.
 - Candidate A (future/never-sent ACK atomic rejection) remains closed. Candidate B (mixed generic/queue datagram-drop observability) remains closed.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
@@ -32,9 +33,9 @@ Do not revert these repairs without contradictory repository evidence:
 - H-R9-034 settlement-continuation accepted-empty classification at `b801b65`; H-R9-033 initial-loop accepted-empty classification at `7a7c48c`; H-R9-032 packet bind/settlement proof at `ddafbb1`.
 - Session DeliveryAck and Carrier packet ACK remain separate evidence domains. Accepted-empty is classification-only and must not describe a positive Recovery retirement.
 
-# READY_LOCAL 1 — H-R9-050 exact-wire executable-caller discriminator
+# READY_LOCAL 1 — CLOSED at c2e263e
 
-Keep `9a113f2` source semantics. Add a focused deterministic regression against the real retransmit admission owner (the executable path itself or a minimal helper actually shared by it) such that existing values produce `retained_plaintext_len < remaining_send_budget < encoded_wire_len`. The real path must build/seal first and refuse on the encoded/sealed length. On refusal prove: no `on_retransmit_sent` ownership/state commit, no datagram send, no `r9_udp_retransmit_sent`, no Session delivery transition. A paired control with enough budget must proceed and use the same encoded byte count for admission and Recovery accounting. The regression must deterministically fail if the caller is changed back to plaintext-length admission. Do not invent a new cwnd/capacity/security policy value; do not redesign wire/crypto/recovery architecture.
+H-R9-050 exact-wire executable-caller discriminator is repaired at `c2e263e`: `admit_retransmit(rt, pn, now, wire, frame)` is the single shared admission gate used by both post-return and `lab_pump` callers — `can_send` and `on_retransmit_sent` both use the exact encoded/sealed wire byte count. The unit test proves a budget that admits plaintext 400B but refuses encoded 1200B wire; refusal commits no ownership; paired control admits the smaller wire size.
 
 # READY_LOCAL 2 — H-R9-042 deterministic pre-deadline negative
 
