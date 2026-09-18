@@ -3679,17 +3679,21 @@ fn failover_client(args: &[String]) {
                     // `acked_packets` non-empty; emit the actually-retired pn.
                     let retired = !acked_packets.is_empty();
                     if applied && retired {
-                        let acked_pn = *acked_packets.last().unwrap_or(&post_pn_client);
-                        emit_diagnostic(
-                            args,
-                            "client",
-                            "r9_udp_return_packet_ack",
-                            0,
-                            &format!(
-                                ",\"applied\":true,\"packet_number\":{},\"retired\":true",
-                                acked_pn
-                            ),
-                        );
+                        // H-R9-048: one ACK range may retire several packet
+                        // identities — emit positive evidence for EVERY
+                        // retired packet so the projection is complete.
+                        for acked_pn in &acked_packets {
+                            emit_diagnostic(
+                                args,
+                                "client",
+                                "r9_udp_return_packet_ack",
+                                0,
+                                &format!(
+                                    ",\"applied\":true,\"packet_number\":{},\"retired\":true",
+                                    acked_pn
+                                ),
+                            );
+                        }
                     } else if rejected {
                         // Typed rejection (e.g. future/never-sent) — never
                         // claims the current packet was ACKed, never mutates
