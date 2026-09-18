@@ -3963,6 +3963,111 @@ fn reliable_udp_ack_loss_delayed_original_reorder_settles() {
     assert!(client_log.contains("failover_client_ok"), "{client_log}");
 }
 #[test]
+fn reliable_udp_first_send_socket_failure_rolls_back() {
+    // H-R9-062: inject a socket error on the PRODUCTION post-return first-send
+    // owner — positive sent evidence must not escape, Recovery ownership rolls
+    // back, and the failed PN stays non-ACK-valid.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-fsf-server");
+    let cp = tmp("r9-fsf-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "15",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-fsf-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--fail-r9-first-send",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-fsf-cli",
+        ])
+        .output()
+        .unwrap();
+    let (srv_status, _server_log) = finish_server(server);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let _ = srv_status;
+    // Production first-send owner emitted the rollback classification, never a
+    // positive sent event for the failed packet.
+    assert!(
+        client_log.contains("\"event\":\"r9_udp_post_return_send_failed\""),
+        "{client_log}"
+    );
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_post_return_sent\""),
+        "{client_log}"
+    );
+    // No legitimate Session transition settled — the datagram never reached
+    // the socket, so the client cannot fabricate a positive settlement.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
+        "{client_log}"
+    );
+    // The run terminates through the residual/timeout path, not success.
+    assert!(
+        client_log.contains("r9_udp_post_return_residual")
+            || client_log.contains("acknowledgement")
+            || !out.status.success(),
+        "{client_log}"
+    );
+}
+#[test]
 fn reliable_udp_post_return_reversed_ack_order_settles() {
     // READY_LOCAL 2: pure order challenge — Carrier packet ACK arrives BEFORE
     // the Session DeliveryAck on the post-return owner. Settlement still

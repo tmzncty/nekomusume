@@ -3670,7 +3670,15 @@ fn failover_client(args: &[String]) {
             // sent diagnostic is committed ONLY on real socket success; a
             // socket error rolls back exactly that packet's Recovery ownership
             // and emits no sent evidence.
-            match u.send_to(&sealed, target) {
+            // H-R9-062: --fail-r9-first-send injects a socket error on the
+            // production first-send owner — the same code path a real Err
+            // takes, proving rollback and no positive sent evidence.
+            let fail_first_send = args.iter().any(|a| a == "--fail-r9-first-send");
+            match if fail_first_send {
+                Err(std::io::Error::other("injected first-send failure"))
+            } else {
+                u.send_to(&sealed, target)
+            } {
                 Ok(_) => {
                     emit_diagnostic(
                         args,
