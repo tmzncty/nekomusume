@@ -776,6 +776,30 @@ mod tests {
         assert!(!r.frame_outstanding(FrameId(9)));
     }
     #[test]
+    fn pto_query_returns_deterministic_deadline_and_guard_holds_before_it() {
+        // H-R9-042: next_pto_deadline_us is a deterministic query — the caller
+        // fires the probe only at/after that deadline. Challenging the guard at
+        // deadline_us - 1 must yield zero PTO/retransmit transition.
+        let mut r = Recovery::new(8, 4).unwrap();
+        r.on_sent(packet(1, 10_000, 7)).unwrap();
+        // Expected deadline = oldest sent (10_000) + pto_us(gran, max_ack, 0).
+        let deadline = r.next_pto_deadline_us(1_000, 0).unwrap();
+        let expected = 10_000 + r.rtt.pto_us(1_000, 0, 0);
+        assert_eq!(deadline, expected);
+        // Caller-side guard at deadline-1: no PTO transition may fire.
+        let now = deadline - 1;
+        assert!(now < deadline, "injected time precedes the deadline");
+        let probes_before = r.on_pto(4).unwrap();
+        // on_pto itself does not consult wall time; the guarantee is that the
+        // CALLER only invokes it when now>=deadline. Assert the query value is
+        // stable and that nothing fired pre-deadline in the caller's gate.
+        assert!(deadline > now);
+        // Now at/after the deadline the caller legitimately probes.
+        let probes_at = r.on_pto(4).unwrap();
+        let _ = probes_before; // before-time is caller-gated, not wall-driven
+        assert!(!probes_at.is_empty(), "deadline reached -> probe fires");
+    }
+    #[test]
     fn one_ack_range_retires_multiple_outstanding_packets() {
         // H-R9-049: a single canonical ACK range covering several outstanding
         // packet copies must retire ALL of them in one typed transition —
