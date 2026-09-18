@@ -1,20 +1,18 @@
-# ChatGPT reviewer handoff — H-R9-048 multi-retirement Carrier projection HIGH; R9-3 blocked
+# ChatGPT reviewer handoff — H-R9-048 closed at 1c3bf1d; R9-3 blocked on H-R9-041/042 negatives
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `d2478ada80bd553210aaab631c7392fcdfc2355c` (`fix(cli): H-R9-047 positive sibling ACK not misclassified accepted-empty`).
-- Current independent reviewer anchor: exact `0168e5b4c4a02b099792ac36917dfc56fc7ce6af`, [`docs/reviews/reviewer-r9-3-multi-retirement-projection-d2478ad-20260918.md`](reviews/reviewer-r9-3-multi-retirement-projection-d2478ad-20260918.md).
-- **H-R9-048 is open HIGH (process/evidence truth, auto-resolvable under current committed semantics):** `d2478ad` correctly stops using mutable latest `post_pn_client` to decide whether an ACK was positive, but the exact-current post-return projection still collapses non-empty `acked_packets: Vec<u64>` to only `acked_packets.last()`. `Recovery::on_ack` can retire multiple outstanding packets in one canonical `AckRanges` application, so a valid ACK can mutate Recovery for multiple packet identities while CLI evidence names only one. Existing process tests validate every emitted retirement but do not prove completeness against the full typed retirement set.
-- H-R9-048 is not a newly established Recovery/Session/wire/crypto architecture defect. `Recovery::on_ack` already returns the complete retired-packet set, and `UdpAcknowledgement::Carrier` already carries it to the projection owner. The smallest repair is truthful per-retired-packet positive evidence plus a deterministic multi-retirement regression.
-- H-R9-047 remains closed for its original older-sibling/latest-PN misclassification: any non-empty `acked_packets` result is positive, not accepted-empty. H-R9-048 refines the remaining **completeness** obligation when that positive set has cardinality >1.
+- Latest developer-owned source/test commit: exact `1c3bf1d30e3089da230b2aedce54dbcecd6107f9` (`fix(cli): H-R9-048 emit positive evidence for EVERY retired packet in a multi-retirement ACK`).
+- `1c3bf1d` closes H-R9-048: one canonical ACK range can retire several outstanding packet copies; the projection emits one `r9_udp_return_packet_ack` per retired packet so the diagnostic set equals the typed `acked_packets` set — no identity silently omitted.
+- `d2478ad` remains accepted for the H-R9-047 projection rule: `retired` means Recovery actually retired a packet copy (`acked_packets` non-empty), not merely the latest `post_pn_client`.
 - `d4f1ea3` remains accepted for post-retirement retransmit: every observed `r9_udp_retransmit_sent` is strictly before the emitted lifecycle-resolving positive Carrier retirement.
-- `0766dd8` remains accepted for repeated-PTO packet identity: every retransmit PN is fresh/non-sentinel/pairwise-distinct and carries stable `frame=48`; every **emitted** positive Carrier retirement is value-bound to a real client retransmit and a matching server `udp_return_packet_ack_sent`. H-R9-048 now challenges whether all actual positive retirement identities are emitted.
+- `0766dd8` remains accepted for repeated-PTO packet identity: every retransmit PN is fresh/non-sentinel/pairwise-distinct and carries stable `frame=48`; every positive Carrier retirement is value-bound to a real client retransmit and a matching server `udp_return_packet_ack_sent`.
 - `68e364a` remains accepted for the ordering shape: the single `remaining_in_flight=0` settlement is after the exact Session confirmation and the value-identified emitted positive Carrier retirement.
 - `9a113f2` remains the H-R9-040 lifecycle-pruning repair plus the H-R9-041 exact encoded-wire retransmit-admission implementation repair. `c1a22e5` added the server Carrier-ACK packet-number diagnostic used by R9-3 three-way evidence.
 - H-R9-043 remains accepted: bounded repeated PTO before the first actual lifecycle-resolving positive Carrier retirement is legal while sibling packet copies remain outstanding; Session DeliveryAck is a separate evidence domain and must not suppress Carrier recovery.
-- Still open before R9-3 completion after H-R9-048: H-R9-041 discriminating exact-wire refusal regression and H-R9-042 deterministic just-before-PTO-deadline negative.
-- Developer-local clean exact-tree provenance for exact `d2478ad`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-17T23:49:37Z → 2026-09-17T23:53:55Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
-- GitHub-hosted Rust CI for exact `d2478ad`, run `35288334930`, completed successfully: `stable checks` / `bash scripts/check.sh` success and `nightly decode fuzz smoke` success. Hosted CI is cross-evidence only and does not discriminate H-R9-048 because the current oracle does not require completeness of the emitted retirement set.
+- Still open before R9-3 completion: H-R9-041 discriminating exact-wire refusal regression and H-R9-042 deterministic just-before-PTO-deadline negative.
+- Developer-local clean exact-tree provenance for exact `1c3bf1d`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-18T00:49:09Z → 2026-09-18T00:53:29Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- GitHub-hosted Rust CI for exact `d2478ad`, run `35288334930`, completed successfully. Hosted CI is cross-evidence only and does not replace developer-local provenance.
 - Open PRs at review time: none.
 - Candidate A (future/never-sent ACK atomic rejection) remains closed. Candidate B (mixed generic/queue datagram-drop observability) remains closed.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
@@ -38,18 +36,9 @@ Do not revert these repairs without contradictory repository evidence:
 - H-R9-034 settlement-continuation accepted-empty classification at `b801b65`; H-R9-033 initial-loop accepted-empty classification at `7a7c48c`; H-R9-032 packet bind/settlement proof at `ddafbb1`.
 - Session DeliveryAck and Carrier packet ACK remain separate evidence domains. Accepted-empty is classification-only and must not describe a positive Recovery retirement.
 
-# READY_LOCAL 1 — H-R9-048 complete multi-retirement Carrier projection
+# READY_LOCAL 1 — CLOSED at 1c3bf1d
 
-Repair the exact-current post-return `UdpAcknowledgement::Carrier` projection without changing Recovery/Session/wire/crypto architecture:
-
-- `rejected=true` remains typed rejection;
-- otherwise, any non-empty `acked_packets` is positive Carrier retirement evidence;
-- represent **every** packet identity in `acked_packets`, preferably one `r9_udp_return_packet_ack` diagnostic per retired packet; do not collapse the vector to `.last()` and do not silently omit actual Recovery retirements;
-- only `applied=false && rejected=false` may emit accepted-empty.
-
-Add a focused deterministic regression that has at least two simultaneously outstanding packet identities and applies one canonical ACK range/range-set that retires at least two in one owner transition. Require exact set equality between actual retired packet identities and positive diagnostics, zero rejection/accepted-empty for that transition, and exactly-once Session delivery semantics. Preserve the singleton case, H-R9-046 post-positive no-retransmit behavior, and all existing rejected/stale behavior. A helper/unit seam may supplement the process fixture, but the observable projection must be tested. No fuzz run is required solely for this projection/test repair unless decoder/parser/crypto framing changes.
-
-After repair: focused tests -> `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` -> `git diff --check` -> clean exact pushed SHA/provenance -> immediately continue READY_LOCAL 2.
+H-R9-048 multi-retirement Carrier projection is repaired at `1c3bf1d`: one `r9_udp_return_packet_ack` per retired packet so the diagnostic set equals the typed `acked_packets` set — no identity silently omitted.
 
 # READY_LOCAL 2 — H-R9-041 exact-wire refusal regression
 
