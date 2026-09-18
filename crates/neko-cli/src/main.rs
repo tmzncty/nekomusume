@@ -1001,10 +1001,12 @@ fn recv_udp_delivery_ack(
     // operation. Sampled after authenticated Carrier ACK receipt, before
     // apply_ack — never a stale pre-receive scalar.
     recovery_epoch: Instant,
-    // H-R9-056: Session owner for confirmed_watermark — a freshly sealed exact
-    // duplicate DeliveryAck for an already-confirmed range is accepted-empty,
-    // not malformed.
-    session_rt: &neko_session::SessionRuntime,
+    // H-R9-056/058/059: operation-owned exact ACK witness — the bounded set of
+    // (stream,offset,len) already exact-matched by this operation. A fresh
+    // exact duplicate for one of them is accepted-empty; any other unmatched
+    // ACK is the bounded unexpected negative. Cardinality derives from the
+    // operation's admitted records, never Session lifetime.
+    confirmed_acks: &mut std::collections::BTreeSet<(u64, u64, u64)>,
 ) -> Result<UdpAcknowledgement, &'static str> {
     let mut buf = [0u8; 65536];
     loop {
@@ -1038,14 +1040,16 @@ fn recv_udp_delivery_ack(
                             r.stream == stream && r.offset == offset && r.data.len() == len
                         }) {
                             let record = outstanding.remove(pos);
+                            // Record the exact admitted range so a later exact
+                            // duplicate ACK is classification-only.
+                            confirmed_acks.insert((stream.0, offset, len as u64));
                             return Ok(UdpAcknowledgement::Session { record, bytes: n });
                         }
-                        // H-R9-056/058: a freshly sealed EXACT duplicate
-                        // DeliveryAck for a range this Session actually
-                        // confirmed is accepted-empty — idempotent zero-delta
-                        // acknowledgement, not malformed. A merely-below-
-                        // watermark wrong-range ACK is still fail-closed.
-                        if session_rt.is_confirmed_range(stream, offset, len) {
+                        // H-R9-056/058/059: a freshly sealed EXACT duplicate
+                        // for a range this operation already exact-matched is
+                        // accepted-empty — idempotent zero-delta feedback, not
+                        // malformed. Any other unmatched ACK is fail-closed.
+                        if confirmed_acks.contains(&(stream.0, offset, len as u64)) {
                             diagnostic("accepted_empty_logical_ack");
                             continue;
                         }
@@ -2584,6 +2588,9 @@ fn failover_client(args: &[String]) {
     // buffered until the Session confirmed watermark reaches its offset, so it
     // can never manufacture an earlier range's confirmation.
     let mut pending_acks: Vec<OutboundRecord> = Vec::new();
+    // H-R9-059: operation-owned exact ACK witness — bounded by this operation's
+    // admitted outstanding records, cleared at operation completion.
+    let mut confirmed_acks = std::collections::BTreeSet::new();
     while !outstanding.is_empty() {
         let outcome = recv_udp_delivery_ack(
             &u,
@@ -2597,7 +2604,7 @@ fn failover_client(args: &[String]) {
             rt.as_mut(),
             &mut malformed,
             recovery_epoch,
-            &delivery,
+            &mut confirmed_acks,
         )
         .unwrap_or_else(|e| fail(&format!("UDP delivery acknowledgement failed: {e:?}")));
         match outcome {
@@ -2756,7 +2763,7 @@ fn failover_client(args: &[String]) {
                 Some(rt),
                 &mut malformed,
                 recovery_epoch,
-                &delivery,
+                &mut confirmed_acks,
             ) {
                 Ok(UdpAcknowledgement::Carrier {
                     applied, rejected, ..
@@ -3636,6 +3643,8 @@ fn failover_client(args: &[String]) {
         let deadline =
             Instant::now() + Duration::from_secs(if drop_r9_data_settle { 8 } else { 2 });
         let mut post_outstanding = vec![post_record.clone()];
+        // H-R9-059: post-return operation-owned exact ACK witness.
+        let mut post_confirmed_acks = std::collections::BTreeSet::new();
         let mut malformed = 0usize;
         let mut ack_len = 0usize;
         loop {
@@ -3748,7 +3757,7 @@ fn failover_client(args: &[String]) {
                 rt.as_mut(),
                 &mut malformed,
                 post_recovery_epoch,
-                &delivery,
+                &mut post_confirmed_acks,
             ) {
                 Ok(UdpAcknowledgement::Session { record, bytes }) => {
                     delivery
@@ -6030,7 +6039,8 @@ mod cli_regression_tests {
         let expected_len = expected.data.len();
         let mut outstanding = vec![expected.clone()];
         let mut malformed = 0usize;
-        let delivery = neko_session::SessionRuntime::new(
+        let mut confirmed_acks = std::collections::BTreeSet::new();
+        let _delivery = neko_session::SessionRuntime::new(
             SessionId(7001),
             neko_session::RuntimeLimits::default(),
             0,
@@ -6048,7 +6058,7 @@ mod cli_regression_tests {
             None,
             &mut malformed,
             Instant::now(),
-            &delivery,
+            &mut confirmed_acks,
         )
         .unwrap();
         match outcome {
@@ -6087,7 +6097,8 @@ mod cli_regression_tests {
         }
         let mut outstanding = vec![expected.clone()];
         let mut malformed = 0usize;
-        let delivery = neko_session::SessionRuntime::new(
+        let mut confirmed_acks = std::collections::BTreeSet::new();
+        let _delivery = neko_session::SessionRuntime::new(
             SessionId(7001),
             neko_session::RuntimeLimits::default(),
             0,
@@ -6105,7 +6116,7 @@ mod cli_regression_tests {
             None,
             &mut malformed,
             Instant::now(),
-            &delivery,
+            &mut confirmed_acks,
         )
         .unwrap_err();
         assert_eq!(err, "UDP delivery acknowledgement malformed bound exceeded");
@@ -6147,7 +6158,8 @@ mod cli_regression_tests {
             .unwrap();
         let mut outstanding = vec![rec0.clone(), rec1.clone()];
         let mut malformed = 0usize;
-        let delivery = neko_session::SessionRuntime::new(
+        let mut confirmed_acks = std::collections::BTreeSet::new();
+        let _delivery = neko_session::SessionRuntime::new(
             SessionId(7001),
             neko_session::RuntimeLimits::default(),
             0,
@@ -6165,7 +6177,7 @@ mod cli_regression_tests {
             None,
             &mut malformed,
             Instant::now(),
-            &delivery,
+            &mut confirmed_acks,
         )
         .unwrap();
         match outcome {
@@ -6219,7 +6231,8 @@ mod cli_regression_tests {
         let mut outstanding = vec![rec0.clone()];
         let mut reasons = Vec::new();
         let mut malformed = 0usize;
-        let delivery = neko_session::SessionRuntime::new(
+        let mut confirmed_acks = std::collections::BTreeSet::new();
+        let _delivery = neko_session::SessionRuntime::new(
             SessionId(7001),
             neko_session::RuntimeLimits::default(),
             0,
@@ -6237,7 +6250,7 @@ mod cli_regression_tests {
             None,
             &mut malformed,
             Instant::now(),
-            &delivery,
+            &mut confirmed_acks,
         )
         .unwrap_err();
         assert_eq!(err, "UDP delivery acknowledgement malformed bound exceeded");
@@ -6247,26 +6260,18 @@ mod cli_regression_tests {
 
     #[test]
     fn reliable_demux_accepts_exact_duplicate_ack_for_confirmed_range() {
-        // H-R9-056: a freshly sealed Session DeliveryAck naming a range already
-        // inside confirmed_watermark is an idempotent zero-delta duplicate —
-        // classification-only accepted-empty, never malformed.
+        // H-R9-056/059: a freshly sealed Session DeliveryAck naming a range
+        // this operation already exact-matched is an idempotent zero-delta
+        // duplicate — classification-only accepted-empty, never malformed.
         let server = UdpSocket::bind("127.0.0.1:0").unwrap();
         let client = UdpSocket::bind("127.0.0.1:0").unwrap();
         let peer = server.local_addr().unwrap();
         let (mut sender, mut receiver) = secure_pair();
-        // The client already confirmed offset 32 len 16 (watermark = 48).
-        let mut delivery = neko_session::SessionRuntime::new(
-            SessionId(7001),
-            neko_session::RuntimeLimits::default(),
-            0,
-        )
-        .unwrap();
-        delivery.open_stream(StreamId(1), 0).unwrap();
-        // Queue 16 bytes so the first ACK has real inflight to release —
-        // confirmed_watermark advances to 16.
-        delivery.queue_send(StreamId(1), &[7u8; 16], 0).unwrap();
-        delivery.delivery_ack(StreamId(1), 0, 16, 5).unwrap();
-        assert_eq!(delivery.confirmed_watermark(StreamId(1)), 16);
+        // The operation already exact-matched (stream=1, offset=0, len=16) —
+        // the caller-owned witness records it, bounded by admitted records.
+        let mut confirmed_acks = std::collections::BTreeSet::new();
+        confirmed_acks.insert((1u64, 0u64, 16u64));
+        assert!(confirmed_acks.contains(&(1u64, 0u64, 16u64)));
         // Fresh exact duplicate ACK for that confirmed range.
         let dup = ProcessMessage::DeliveryAck {
             session: SessionId(7001),
@@ -6299,7 +6304,7 @@ mod cli_regression_tests {
             None,
             &mut malformed,
             Instant::now(),
-            &delivery,
+            &mut confirmed_acks,
         );
         // The duplicate is classification-only — no malformed charge.
         assert_eq!(malformed, 0, "{reasons:?}");
@@ -6308,6 +6313,62 @@ mod cli_regression_tests {
             "{reasons:?}"
         );
         assert!(!reasons.contains(&"unexpected_logical_ack"), "{reasons:?}");
+    }
+
+    #[test]
+    fn reliable_demux_rejects_below_watermark_subrange_ack() {
+        // H-R9-058 negative: an authenticated ACK covering a SUBRANGE of a
+        // confirmed range (end <= watermark but not an exact confirmed range)
+        // is unadmitted logical feedback — bounded unexpected/malformed, never
+        // silently accepted-empty.
+        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let peer = server.local_addr().unwrap();
+        let (mut sender, mut receiver) = secure_pair();
+        let mut confirmed_acks = std::collections::BTreeSet::new();
+        confirmed_acks.insert((1u64, 0u64, 16u64));
+        // Subrange: offset 0 len 8 — below the confirmed (0,16) but not exact.
+        let sub = ProcessMessage::DeliveryAck {
+            session: SessionId(7001),
+            stream: StreamId(1),
+            offset: 0,
+            len: 8,
+        }
+        .encode()
+        .unwrap();
+        let sealed = sender.seal_unreliable(&sub).unwrap();
+        for _ in 0..MAX_POST_HANDSHAKE_MALFORMED {
+            server
+                .send_to(&sealed, client.local_addr().unwrap())
+                .unwrap();
+        }
+        let mut outstanding = vec![OutboundRecord {
+            stream: StreamId(1),
+            offset: 64,
+            data: vec![9; 16],
+        }];
+        let mut reasons = Vec::new();
+        let mut malformed = 0usize;
+        let _err = recv_udp_delivery_ack(
+            &client,
+            peer,
+            &mut receiver,
+            &mut outstanding,
+            b"selection",
+            b"noise",
+            Instant::now() + Duration::from_secs(1),
+            &mut |d| reasons.push(d),
+            None,
+            &mut malformed,
+            Instant::now(),
+            &mut confirmed_acks,
+        );
+        assert!(reasons.contains(&"unexpected_logical_ack"), "{reasons:?}");
+        assert!(malformed > 0, "{reasons:?}");
+        assert!(
+            !reasons.contains(&"accepted_empty_logical_ack"),
+            "{reasons:?}"
+        );
     }
 
     #[test]

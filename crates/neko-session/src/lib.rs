@@ -1,5 +1,5 @@
 //! Pure synchronous candidate delivery ledger and state machine.
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 pub const DEFAULT_MAX_REORDER: u64 = 64;
 pub const DEFAULT_MAX_STREAMS: usize = 64;
@@ -1181,10 +1181,6 @@ pub struct SessionRuntime {
     recv: VecDeque<InboundRecord>,
     received: BTreeMap<(StreamId, u64), Vec<u8>>,
     confirmed: BTreeMap<StreamId, u64>,
-    // H-R9-058: every (offset,end) pair this runtime has actually confirmed —
-    // needed to classify an exact duplicate ACK versus a merely-below-watermark
-    // wrong-range ACK. Bounded alongside confirmed records.
-    confirmed_ranges: BTreeMap<StreamId, BTreeSet<(u64, u64)>>,
     send_inflight: BTreeMap<StreamId, usize>,
     recv_window_used: BTreeMap<StreamId, usize>,
     session_send_inflight: usize,
@@ -1225,7 +1221,6 @@ impl SessionRuntime {
             recv: VecDeque::new(),
             received: BTreeMap::new(),
             confirmed: BTreeMap::new(),
-            confirmed_ranges: BTreeMap::new(),
             send_inflight: BTreeMap::new(),
             recv_window_used: BTreeMap::new(),
             session_send_inflight: 0,
@@ -1519,10 +1514,6 @@ impl SessionRuntime {
             *self.send_inflight.get_mut(&stream).unwrap() -= delta;
             self.session_send_inflight -= delta;
             self.confirmed.insert(stream, end);
-            self.confirmed_ranges
-                .entry(stream)
-                .or_default()
-                .insert((offset, end));
             self.event(now_ms, RuntimeEventKind::AckReleased);
             self.event(now_ms, RuntimeEventKind::Resumed);
         }
@@ -1531,17 +1522,6 @@ impl SessionRuntime {
     }
     pub fn confirmed_watermark(&self, stream: StreamId) -> u64 {
         self.confirmed.get(&stream).copied().unwrap_or(0)
-    }
-    /// H-R9-058: whether this exact `(offset, offset+len)` range was confirmed
-    /// by a real delivery_ack — the bounded-exact duplicate discriminator.
-    /// A merely-below-watermark wrong-range ACK is NOT a confirmed range.
-    pub fn is_confirmed_range(&self, stream: StreamId, offset: u64, len: usize) -> bool {
-        let Some(end) = offset.checked_add(len as u64) else {
-            return false;
-        };
-        self.confirmed_ranges
-            .get(&stream)
-            .is_some_and(|s| s.contains(&(offset, end)))
     }
 
     pub fn pop_receive(&mut self, now_ms: u64) -> Result<Option<InboundRecord>, RuntimeError> {
@@ -1606,7 +1586,6 @@ impl SessionRuntime {
         self.recv.clear();
         self.received.clear();
         self.confirmed.clear();
-        self.confirmed_ranges.clear();
         self.send_inflight.clear();
         self.recv_window_used.clear();
         self.session_send_inflight = 0;
