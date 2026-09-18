@@ -4483,6 +4483,10 @@ pub struct ReliableUdpRuntime {
     /// Which stable frames each sent packet carries — packet number is fresh
     /// per transmission while frame identity is stable across retransmits.
     packet_frames: BTreeMap<u64, Vec<neko_reliable::FrameId>>,
+    /// H-R9-065: terminal/quiesced for this runtime/path generation — after
+    /// teardown every data/feedback mutator is fail-closed or observationally
+    /// inert; a fresh same-generation runtime never silently re-opens.
+    torn_down: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4531,6 +4535,7 @@ impl ReliableUdpRuntime {
                 .map_err(|_| PathRecoveryError::GenerationMismatch)?,
             manager,
             packet_frames: BTreeMap::new(),
+            torn_down: false,
         })
     }
 
@@ -4555,7 +4560,8 @@ impl ReliableUdpRuntime {
     /// nothing is sent-but-untracked). Pacing is the deterministic
     /// `pacing_interval_us` deadline the caller honors between admissions.
     pub fn can_send(&self, bytes: u64) -> bool {
-        self.recovery.can_send(bytes)
+        // H-R9-065: a torn-down runtime admits nothing.
+        !self.torn_down && self.recovery.can_send(bytes)
     }
     /// Deterministic pacing deadline between admissions (microseconds) for a
     /// `bytes`-sized send.
@@ -4577,6 +4583,11 @@ impl ReliableUdpRuntime {
         frame: neko_reliable::FrameId,
         frame_plaintext: &[u8],
     ) -> Result<(), PathRecoveryError> {
+        // H-R9-065: terminal teardown is fail-closed — no new admission,
+        // ownership, or positive evidence after the runtime is quiesced.
+        if self.torn_down {
+            return Err(PathRecoveryError::GenerationMismatch);
+        }
         // Congestion admission: refused sends charge/record nothing.
         if !self.recovery.can_send(bytes) {
             return Err(PathRecoveryError::CongestionWindowFull);
@@ -4617,6 +4628,10 @@ impl ReliableUdpRuntime {
         packet_number: u64,
         ack_eliciting: bool,
     ) -> Result<(), AckTrackerError> {
+        // H-R9-065: a torn-down runtime records no new receiver obligation.
+        if self.torn_down {
+            return Err(AckTrackerError::GenerationMismatch);
+        }
         self.acks
             .observe_packet(self.generation, packet_number, ack_eliciting)
     }
@@ -4624,6 +4639,11 @@ impl ReliableUdpRuntime {
     /// If an ack-eliciting packet awaits a response, return the canonical
     /// `AckPayload` to seal back (consumed once; no ACK-of-ACK).
     pub fn poll_outgoing_ack(&mut self, ack_delay_us: u64) -> Option<neko_wire::AckPayload> {
+        // H-R9-065: no Carrier ACK evidence escapes a torn-down runtime —
+        // pending obligations are quiesced, not emitted.
+        if self.torn_down {
+            return None;
+        }
         self.acks.take_ack(ack_delay_us)
     }
 
@@ -4635,6 +4655,10 @@ impl ReliableUdpRuntime {
         now_us: u64,
         ack_delay_us: u64,
     ) -> Result<RecoveryAckOutcome, PathRecoveryError> {
+        // H-R9-065: no recovery ACK transition after terminal teardown.
+        if self.torn_down {
+            return Err(PathRecoveryError::GenerationMismatch);
+        }
         let out = self
             .recovery
             .on_ack(self.generation, ack, now_us, ack_delay_us)?;
@@ -4665,6 +4689,10 @@ impl ReliableUdpRuntime {
     /// as `FallbackFailed`, never silently treated as a handled fallback. The
     /// real switch event is returned for the caller's observability sink.
     pub fn poll_health(&mut self, now_ms: u64) -> RuntimeEvent {
+        // H-R9-065: a torn-down runtime emits no fresh health transition.
+        if self.torn_down {
+            return RuntimeEvent::Idle;
+        }
         match self.recovery.fresh_health_sample() {
             None => RuntimeEvent::Idle,
             Some(s) => {
@@ -4732,6 +4760,10 @@ impl ReliableUdpRuntime {
         bytes: u64,
         frame: neko_reliable::FrameId,
     ) -> Result<(), PathRecoveryError> {
+        // H-R9-065: a torn-down runtime accepts no retransmit admission.
+        if self.torn_down {
+            return Err(PathRecoveryError::GenerationMismatch);
+        }
         // Fail before recording a packet unless the stable frame still has
         // retained resealable plaintext ownership: no outstanding recovery
         // packet may exist without the bytes needed to re-encode it.
@@ -4793,6 +4825,9 @@ impl ReliableUdpRuntime {
         if let Ok(fresh) = PathRecovery::new(self.path.path, self.generation, self.mss) {
             self.recovery = fresh;
         }
+        // H-R9-065: mark the runtime terminal — every data/feedback mutator
+        // is fail-closed or observationally inert from here on.
+        self.torn_down = true;
     }
 
     pub fn manager(&self) -> &ConcurrentCarrierManager {
@@ -5392,6 +5427,45 @@ mod path_recovery_tests {
             pto_before,
             "post-teardown probe manufactures no PTO transition"
         );
+    }
+
+    #[test]
+    fn teardown_is_terminal_and_fail_closed_on_every_mutator() {
+        // H-R9-065: after teardown the runtime is terminal — no new packet
+        // admission, receiver obligation, ACK emission, PTO/health transition
+        // or success evidence escapes.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.on_packet_sent(0, 0, 400, FrameId(9), b"x").unwrap();
+        // Pending receiver ACK obligation recorded BEFORE teardown must not
+        // escape after it.
+        rt.on_packet_received(7, true).unwrap();
+        rt.teardown();
+        // All mutators fail-closed / inert.
+        assert!(!rt.can_send(400), "terminal admits nothing");
+        assert!(
+            rt.on_packet_sent(1, 1_000, 400, FrameId(10), b"y").is_err(),
+            "terminal refuses new send ownership"
+        );
+        assert!(
+            rt.on_retransmit_sent(1, 1_000, 400, FrameId(9)).is_err(),
+            "terminal refuses retransmit admission"
+        );
+        assert!(
+            rt.on_packet_received(8, true).is_err(),
+            "terminal refuses new receiver obligation"
+        );
+        assert!(
+            rt.poll_outgoing_ack(0).is_none(),
+            "terminal emits no pending Carrier ACK"
+        );
+        let mut a = AckRanges::new(8).unwrap();
+        a.insert(0).unwrap();
+        assert!(
+            rt.apply_ack(&a, 10_000, 0).is_err(),
+            "terminal refuses recovery ACK transition"
+        );
+        assert!(rt.pto_probe().is_empty());
+        assert!(matches!(rt.poll_health(100), RuntimeEvent::Idle));
     }
 
     #[test]
