@@ -2,12 +2,13 @@
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit is exact `1bbf7e8939ba2c6a73015a6a57b0c63ac6706018` (`style(cli): underscore unused recv result — clippy`), directly above substantive repair `08cbdaf63fa24152eb3387cb9eae98a34e9d21c3` (`fix(session+cli): H-R9-057 one-shot delay/reorder seam; H-R9-058 bounded-exact confirmed range`).
+- Latest developer-owned source/test commit is exact `8d2eea9` (`fix(cli): H-R9-058/059 caller-owned confirmed_acks + discriminator negatives + residual rebind`), directly above `5f99a51` (`fix(cli+session): H-R9-058/059 operation-owned exact ACK witness — remove Session-lifetime history`).
+- **H-R9-059 repair landed.** `SessionRuntime.confirmed_ranges` is removed; the exact-duplicate witness is a caller-owned `BTreeSet<(stream,offset,len)>` bounded by the operation's admitted records and cleared at operation completion. `recv_udp_delivery_ack` now takes `&mut BTreeSet<(u64,u64,u64)>` instead of `&SessionRuntime`.
+- **H-R9-058 discriminator negatives landed.** `reliable_demux_rejects_below_watermark_subrange_ack` (subrange below confirmed → malformed) and `reliable_demux_rejects_zero_length_ack_even_at_watermark` (len==0 → malformed) prove the broad-watermark predicate cannot silently return accepted-empty.
+- **Exact-head stable gate rebind landed.** `reliable_udp_post_return_carrier_ack_withheld_fails` and `reliable_udp_post_return_session_ack_withheld_fails` now bind to the terminal (LAST) `r9_udp_post_return_residual` diagnostic and require every `udp_return_delivery_ack_sent` emission to name the same exact range — bounded PTO/recovery legitimately emits multiple residuals and Session-ACK retransmissions until the operation deadline.
+- **Local gate provenance:** exact pushed `8d2eea9`, clean detached worktree, `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` clean, `git status` empty, 2026-09-19 ~01:05–01:10 UTC+8.
 - Latest independent reviewer finding is reachable at `4a85b360d9ba4a1fafee3d38e3e231e777520b50`, `docs/reviews/independent-r9-h059-bounded-session-ack-witness-20260919.md`.
 - **H-R9-057 source defect is closed.** `delay_reorder_done` makes `--delay-r9-ack-reorder` genuinely one-shot; exact-head hosted run `35365100701` now passes `reliable_udp_ack_loss_delayed_original_reorder_settles`. Do not re-open the alternating-ACK defect absent contradictory current evidence.
-- **Exact-head stable gate is still red.** Hosted Rust CI run `35365100701` for exact `1bbf7e8` completed `failure`: nightly decode fuzz smoke succeeded, while `stable checks` failed in `bash scripts/check.sh`. The only observed process failures are the two older post-return negative tests that still demand `residual.len() == 1`; current bounded recovery correctly emits repeated residual diagnostics while continuing PTO/recovery until the operation deadline. Repair the oracles, not the runtime semantics.
-- **H-R9-058 remains open.** The old broad `confirmed_watermark >= end` predicate was removed, but current tests only prove a positive exact-duplicate case. There is still no discriminator proving authenticated interior/subrange and zero-length feedback below the watermark stay malformed if the broad predicate is restored.
-- **H-R9-059 HIGH — the H-R9-058 witness is retained Session-lifetime ACK history.** `SessionRuntime.confirmed_ranges: BTreeMap<StreamId, BTreeSet<(u64,u64)>>` inserts one historical tuple for every positive `delivery_ack` and clears only with the whole runtime. Its B-tree metadata is not charged to queue/window/total-byte accounting and grows with historical confirmations rather than current operation ownership. This violates the prior no-unbounded-history repair contract and the repository's per-connection/global resource-bound security requirement. Do not patch it with a new TTL/LRU/history-size/capacity number.
 - H-R9-056 semantic direction remains accepted but not yet closed: a **fresh authenticated exact duplicate** Session DeliveryAck for an exact already-confirmed current bounded record is classification-only accepted-empty; identical authenticated-envelope replay remains crypto replay rejection; semantically unadmitted feedback remains malformed/fail-closed.
 - R9-3, H-R9-054 and H-R9-055 remain independently closed. Earlier H-R9-050 exact-wire admission, H-R9-051 socket-send transaction rollback, H-R9-052/H-R9-053 committed ACK-valid watermark restoration, H-R9-043..049 repeated-PTO identity/deadline/retirement/source-projection work, H-R9-040 lifecycle-scoped `acked_frames`, and prior settlement/reverse-order findings remain retained.
 - Candidate A (future/never-sent ACK atomic rejection) remains closed. Candidate B (mixed queue/generic datagram-drop observability) remains closed.
@@ -29,9 +30,7 @@ Do not revert accepted repairs without contradictory current repository evidence
 - H-R9-040 lifecycle-scoped `acked_frames`; H-R9-043..H-R9-049 repeated-PTO identity/deadline/accepted-empty/retirement/source-projection; H-R9-038/H-R9-039 residual/server-exit; H-R9-036/H-R9-037 reverse-order exact oracle; H-R9-032..034 settlement; P2 C1-C4.
 - Session DeliveryAck and Carrier packet ACK are separate evidence domains. Session accepted-empty and Carrier accepted-empty are separate classification-only outcomes and cannot fabricate a positive transition in the other domain.
 
-# READY_LOCAL 1 — H-R9-059 + H-R9-058: bounded exact current-operation Session ACK witness
-
-Read exact-current `SessionRuntime`, `recv_udp_delivery_ack`, the current R9 client operation owner and the review note at `4a85b36` before editing.
+# READY_LOCAL 1 — DONE at `5f99a51`+`8d2eea9`: bounded exact current-operation Session ACK witness
 
 Smallest repair contract:
 
@@ -51,15 +50,7 @@ Required regressions must be red if broad watermark acceptance returns:
 
 Do not use an arbitrary direct `SessionRuntime::delivery_ack` call alone as proof that a range was an admitted operation record unless the same test binds it to real current-operation ownership.
 
-# READY_LOCAL 2 — exact-head stable-gate restoration for post-return negative oracles
-
-Do not reintroduce first-timeout terminalization.
-
-- Carrier ACK suppressed: Session may confirm and PTO/retransmit may repeat. Bind the oracle to the final/terminal residual: `session_outstanding == 0`, `remaining_in_flight > 0`; zero positive Carrier settlement/retirement for the suppressed domain; nonzero terminal result; no settled marker. Intermediate residual count may be greater than one.
-- Session ACK suppressed: Carrier may settle. Bind the oracle to final/terminal residual: `remaining_in_flight == 0`, `session_outstanding > 0`; zero positive Session confirmation for the suppressed domain; nonzero terminal result; no settled marker. Intermediate residual count may be greater than one.
-- Preserve existing exact identity/cardinality checks for actual positive transitions and server fault-injection truth.
-
-Run both focused process negatives first. Then continue directly into full R9-4 rather than waiting for reviewer cadence.
+# READY_LOCAL 2 — DONE at `8d2eea9`: exact-head stable-gate restoration for post-return negative oracles
 
 # READY_LOCAL 3 — R9-4 full ACK-loss + delayed original/reorder closure
 
