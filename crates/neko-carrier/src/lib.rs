@@ -4472,6 +4472,9 @@ pub struct ReliableUdpRuntime {
     path: ConcurrentPathKey,
     tcp: ConcurrentPathKey,
     generation: u64,
+    // H-R9-064: retained so teardown can quiesce Recovery into a fresh owner
+    // for this path/generation without a divergent cleanup implementation.
+    mss: u64,
     recovery: PathRecovery,
     acks: PacketAckTracker,
     retransmit: RetransmitBuffer,
@@ -4519,6 +4522,7 @@ impl ReliableUdpRuntime {
             path: udp,
             tcp,
             generation: path_generation,
+            mss,
             recovery: PathRecovery::new(PathId(1), path_generation, mss)?,
             acks: PacketAckTracker::new(path_generation),
             retransmit: RetransmitBuffer::new(64, 8192)
@@ -4700,6 +4704,13 @@ impl ReliableUdpRuntime {
     /// re-encode under a FRESH packet number — the caller re-sends the same
     /// frame identity, not a new FrameId keyed by the new packet number.
     pub fn pto_probe(&mut self) -> Vec<(neko_reliable::FrameId, Vec<u8>)> {
+        // H-R9-064: with zero in-flight ownership there is no legitimate PTO
+        // transition — do not increment pto_count or manufacture an outcome
+        // epoch on an empty/quiesced recovery. Teardown and settled states
+        // stay observationally inert.
+        if self.in_flight() == 0 {
+            return Vec::new();
+        }
         self.recovery
             .on_pto(4)
             .map(|frames| {
@@ -4769,12 +4780,19 @@ impl ReliableUdpRuntime {
         self.recovery.abandon_sent(packet_number)
     }
 
-    /// Deterministic path/generation teardown: drop the packet->frame map and
-    /// the one bounded plaintext owner together, so no stale frame ownership
-    /// outlives the runtime's recovery state.
+    /// H-R9-064: true quiescent terminal ownership transition — drop
+    /// packet->frame ownership AND the bounded plaintext owner AND quiesce the
+    /// live PathRecovery into a fresh owner for this path/generation. After
+    /// teardown, Recovery in-flight, Reno bytes/charge, sent-map and retained
+    /// plaintext are all zero; a post-teardown probe/ACK manufactures no new
+    /// PTO/loss/Carrier-health evidence from the terminated generation.
+    /// Historical resolved counters remain history, not live ownership.
     pub fn teardown(&mut self) {
         self.packet_frames.clear();
         self.retransmit.clear();
+        if let Ok(fresh) = PathRecovery::new(self.path.path, self.generation, self.mss) {
+            self.recovery = fresh;
+        }
     }
 
     pub fn manager(&self) -> &ConcurrentCarrierManager {
@@ -5351,10 +5369,28 @@ mod path_recovery_tests {
         assert_eq!(rt.in_flight(), before, "no packet without ownership");
         rt.on_packet_sent(0, 0, 400, FrameId(9), b"kept").unwrap();
         assert_eq!(rt.on_retransmit_sent(1, 500, 400, FrameId(9)).unwrap(), ());
+        // H-R9-064: before teardown, live Recovery + Reno ownership is nonzero.
+        assert!(rt.in_flight() > 0, "in-flight before teardown");
+        assert!(
+            rt.recovery_bytes_in_flight() > 0,
+            "reno charged before teardown"
+        );
         rt.teardown();
+        // Quiescent: Recovery in-flight, Reno bytes, sent map, plaintext are 0.
+        assert_eq!(rt.in_flight(), 0, "recovery ownership quiesced");
+        assert_eq!(rt.recovery_bytes_in_flight(), 0, "reno bytes quiesced");
+        assert_eq!(rt.retained_frames(), 0, "plaintext owner dropped");
+        // Post-teardown probe is observationally inert — no PTO transition
+        // may fire or mutate pto_count from the terminated generation.
+        let pto_before = rt.recovery_engine().pto_count;
         assert!(
             rt.pto_probe().is_empty(),
             "teardown dropped the bounded plaintext owner"
+        );
+        assert_eq!(
+            rt.recovery_engine().pto_count,
+            pto_before,
+            "post-teardown probe manufactures no PTO transition"
         );
     }
 
