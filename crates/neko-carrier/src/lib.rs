@@ -5430,6 +5430,23 @@ mod path_recovery_tests {
         mid.insert(3).unwrap();
         // ACK of already-retired 3 is accepted-empty (late/duplicate is legal).
         assert!(rt.apply_ack(&mid, 21_000, 0).is_ok());
+        // H-R9-054 discriminator: the send owner must refuse packet-number
+        // reuse at/below the restored committed watermark (3), committing no
+        // new Recovery/Reno/frame ownership; a genuinely fresh 5 is admitted.
+        let before = rt.in_flight();
+        assert!(
+            rt.on_retransmit_sent(3, 22_000, 400, FrameId(11)).is_err(),
+            "reuse at committed watermark must be refused"
+        );
+        assert!(
+            rt.on_retransmit_sent(2, 23_000, 400, FrameId(11)).is_err(),
+            "reuse below committed watermark must be refused"
+        );
+        assert_eq!(rt.in_flight(), before, "refused reuse commits nothing");
+        assert!(
+            rt.on_retransmit_sent(5, 24_000, 400, FrameId(11)).is_ok(),
+            "genuinely fresh packet is admitted"
+        );
     }
     #[test]
     fn retransmit_admission_refuses_on_exact_wire_bytes_and_recovers() {
