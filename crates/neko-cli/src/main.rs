@@ -6259,7 +6259,7 @@ mod cli_regression_tests {
         delivery.open_stream(StreamId(1), 0).unwrap();
         // Queue 16 bytes so the first ACK has real inflight to release —
         // confirmed_watermark advances to 16.
-        delivery.queue_send(StreamId(1), &vec![7u8; 16], 0).unwrap();
+        delivery.queue_send(StreamId(1), &[7u8; 16], 0).unwrap();
         delivery.delivery_ack(StreamId(1), 0, 16, 5).unwrap();
         assert_eq!(delivery.confirmed_watermark(StreamId(1)), 16);
         // Fresh exact duplicate ACK for that confirmed range.
