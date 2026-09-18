@@ -747,6 +747,23 @@ mod tests {
         assert!(!x.retransmit_frames.contains(&FrameId(9)));
         assert!(!r.frame_outstanding(FrameId(9)));
     }
+    #[test]
+    fn one_ack_range_retires_multiple_outstanding_packets() {
+        // H-R9-049: a single canonical ACK range covering several outstanding
+        // packet copies must retire ALL of them in one typed transition —
+        // acked_packets exposes the complete set, never a representative last.
+        let mut r = Recovery::new(8, 1).unwrap();
+        r.on_sent(packet(1, 0, 10)).unwrap();
+        r.on_sent(packet(2, 1, 11)).unwrap();
+        r.on_sent(packet(3, 2, 12)).unwrap();
+        let mut a = AckRanges::new(4).unwrap();
+        a.insert(1).unwrap();
+        a.insert(2).unwrap();
+        a.insert(3).unwrap();
+        let x = r.on_ack(&a, 5_000, 0).unwrap();
+        assert_eq!(x.acked_packets, vec![1, 2, 3]);
+        assert!(r.in_flight() == 0);
+    }
 
     #[test]
     fn reorder_inside_threshold_is_not_loss() {
