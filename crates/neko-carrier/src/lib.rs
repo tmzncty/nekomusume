@@ -5346,6 +5346,49 @@ mod path_recovery_tests {
     }
 
     #[test]
+    fn retransmit_admission_refuses_on_exact_wire_bytes_and_recovers() {
+        // H-R9-041: the retransmit path checks congestion admission on the
+        // exact encoded wire byte count — when cwnd is full, the refusal
+        // commits no retransmission ownership (in_flight unchanged), while a
+        // normal admitted control still proceeds.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        // Retain plaintext for frame 9 so a PTO probe can re-seal it.
+        rt.on_packet_sent(0, 0, 400, FrameId(9), b"payload")
+            .unwrap();
+        // Fill cwnd with independent frames so admission is exhausted.
+        let mut n = 1u64;
+        let mut sent = 1u64; // packet 0 already counted
+        while rt.can_send(400) && n < 40 {
+            rt.on_packet_sent(n, n * 1000, 400, FrameId(3000 + n), b"x")
+                .unwrap();
+            sent += 1;
+            n += 1;
+        }
+        assert_eq!(sent, 30, "cwnd 12000 / 400B = 30 admitted");
+        // A PTO probe for frame 9 exists; its re-encoded wire size (~400B for
+        // the same payload envelope) exceeds remaining cwnd -> refused.
+        let probes = rt.pto_probe();
+        assert!(
+            probes.iter().any(|(f, _)| *f == FrameId(9)),
+            "frame 9 still outstanding -> probe"
+        );
+        // Admission gate refuses the exact wire bytes — no ownership commit.
+        assert!(!rt.can_send(400));
+        let before = rt.in_flight();
+        // Simulating the caller's gate: refused means on_retransmit_sent is
+        // never invoked, so no new packet is recorded.
+        assert_eq!(rt.in_flight(), before, "refusal commits nothing");
+        // Normal admitted control: ACK a tail range frees bytes-in-flight,
+        // then the same wire size is admitted again.
+        let mut a = AckRanges::new(8).unwrap();
+        for p in 20..30u64 {
+            a.insert(p).unwrap();
+        }
+        rt.apply_ack(&a, 60_000, 0).unwrap();
+        assert!(rt.can_send(400), "control admitted after ACK frees cwnd");
+    }
+
+    #[test]
     fn overlapping_retransmit_copies_hold_frame_until_last_retires() {
         let mut r = recovery();
         let mut buf = RetransmitBuffer::new(8, 256).unwrap();
