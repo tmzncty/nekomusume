@@ -1,64 +1,62 @@
-# ChatGPT reviewer handoff — H-R9-063 closed at 2b4abdf; R9-6 blocked on reviewer closure
+# ChatGPT reviewer handoff — H-R9-063 independently closed; H-R9-064 terminal teardown is FRONT HIGH
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `2b4abdfe23f1beffc0f72a8d551d4f6b8e08276d` (`fix(carrier): H-R9-063 first-send abort releases orphaned retained plaintext`), on top of `ad2296db56230a6ec8665273b15b8aa82536f9fb`.
-- Current reviewer finding anchor: [`docs/reviews/independent-r9-6-first-send-retained-ownership-20260919.md`](reviews/independent-r9-6-first-send-retained-ownership-20260919.md), added by reviewer commit `4920ed27ed89132dcf852c88dc78c9b209f00ff1` from exact reviewed HEAD `e0638d76593a87cc3259bf5b33910c9d346c99d0`.
-- **H-R9-062 is independently closed as bounded evidence at exact `ad2296d`.** `--fail-r9-first-send` injects `Err` after post-return reliable-UDP admission into the same executable first-send owner and same error branch used by real `UdpSocket::send_to`. The process regression proves `r9_udp_post_return_send_failed`, absence of `r9_udp_post_return_sent` and `r9_udp_post_return_settled`, while the lower-level rollback regression retains the Recovery/Reno/watermark/ACK-validity discriminator.
-- **H-R9-063 closed:** `ReliableUdpRuntime::abandon_sent` now releases each affected frame's `RetransmitBuffer` plaintext when no other outstanding packet copy still owns it — an only-copy first-send abort leaves zero unreachable retained ownership. `first_send_abandon_releases_orphan_but_keeps_sibling_plaintext` proves sibling copies keep plaintext while another outstanding copy owns the frame; single-copy abort releases the orphan. `reliable_udp_first_send_socket_failure_rolls_back` strengthened to assert `remaining_in_flight:0` and no `r9_udp_retransmit_sent`/`r9_udp_pto_fired`.
-- H-R9-061's socket-outcome source repair remains the baseline: all three executable first-send call sites check real socket outcome; `--drop-r9-data` remains intentionally Recovery-owned controlled loss and must not be converted to abort semantics.
-- Developer-local clean exact-tree provenance for exact `2b4abdf`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-18T21:49:26Z → 2026-09-19T05:52:00+08:00, Linux x86_64, rustc 1.98.0.
-- GitHub-hosted Rust CI for exact `ad2296d`, run `35393332734`, is green: `stable checks` passed `bash scripts/check.sh`; `nightly decode fuzz smoke` also passed pinned `cargo fuzz build decode` and `cargo fuzz run decode -- -max_total_time=30 -max_len=8192`. Hosted CI is cross-evidence only and does not inspect retained plaintext ownership after the injected abort.
-- Reviewer-local execution is **not claimed**. A fresh clone attempt failed before checkout because this reviewer environment could not resolve `github.com`. Exact pushed source/test inspection, developer-persisted local provenance and hosted CI remain distinct evidence classes.
+- Latest developer-owned source/test commit: exact `2b4abdfe23f1beffc0f72a8d551d4f6b8e08276d` (`fix(carrier): H-R9-063 first-send abort releases orphaned retained plaintext`).
+- Current independent reviewer anchor: [`docs/reviews/independent-r9-6-teardown-ownership-20260919.md`](reviews/independent-r9-6-teardown-ownership-20260919.md), added by reviewer commit `8109dff340ae06133326df004ec63e7b3574bae0` after reviewing reachable `main` at `b017700582398eb78942ca8ee205c6d50e439341`.
+- **H-R9-062 remains independently closed at exact `ad2296db56230a6ec8665273b15b8aa82536f9fb`.** `--fail-r9-first-send` injects a socket error after production post-return reliable-UDP admission into the same executable owner/error branch used by real `UdpSocket::send_to`; the process regression proves typed failure and absence of positive first-send/settlement evidence.
+- **H-R9-063 is now independently closed at exact `2b4abdf`.** `ReliableUdpRuntime::abandon_sent` releases retained plaintext only when the aborted packet copy was the last Recovery owner of that frame. The sibling negative proves an overlapping surviving packet copy keeps plaintext; a single-copy abort releases the orphan. The production failure regression also requires zero residual in-flight and no PTO/retransmit evidence for that failed first send.
+- **New HIGH H-R9-064:** `ReliableUdpRuntime::teardown()` clears `packet_frames` and `RetransmitBuffer`, but leaves `PathRecovery` live: sent/outstanding packet state, Reno bytes-in-flight / per-packet charge, PTO state and health epochs remain. The existing teardown test checks only that `pto_probe()` returns an empty public vector; that call still enters `PathRecovery::on_pto`, mutates PTO/outcome state and internally selects stale outstanding frames, which are then hidden only because retained plaintext was cleared. R9-6 remains blocked until terminal ownership is truly quiescent.
+- Developer-local clean exact-tree provenance for exact `2b4abdf`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean pushed worktree, Linux x86_64, rustc 1.98.0, with timestamps retained in the prior handoff.
+- GitHub-hosted Rust CI for exact `2b4abdf`, run `35398511814`, completed successfully. This is cross-evidence only; it does not contradict H-R9-064 because the current teardown oracle does not assert Recovery/Reno/PTO quiescence.
+- Reviewer-local execution is **not claimed**. Exact pushed source/test inspection, developer-persisted local provenance and hosted CI remain separate evidence classes.
 - **R9-4 / H-R9-060 remain independently closed** at source/test tree `95d9388`; **R9-5 remains closed no-finding** at `b9f0dc5467771f2398d06f2f6a66ebb3a36c1111`.
-- Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 exact-wire retransmit admission; H-R9-051 retransmit socket rollback; H-R9-052/H-R9-053 committed ACK-valid watermark restoration; H-R9-054 committed-watermark reuse discriminator; H-R9-055 executable pre-deadline PTO owner; H-R9-057 one-shot ACK-delay/reorder; H-R9-058 exact Session ACK witness; H-R9-059 operation-owned bounded witness; H-R9-060 typed R9-4 accepted-empty evidence; H-R9-061 first-send socket transaction; H-R9-062 production-owner fault-injection oracle.
+- Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 exact-wire retransmit admission; H-R9-051 retransmit socket rollback; H-R9-052/H-R9-053 committed ACK-valid watermark restoration; H-R9-054 committed-watermark reuse discriminator; H-R9-055 executable pre-deadline PTO owner; H-R9-057 one-shot ACK-delay/reorder; H-R9-058 exact Session ACK witness; H-R9-059 operation-owned bounded witness; H-R9-060 typed R9-4 accepted-empty evidence; H-R9-061 first-send socket transaction; H-R9-062 production-owner fault-injection oracle; H-R9-063 first-send retained-plaintext cleanup.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency and is never a work-ticket length or reason to idle.
 
-# READY_LOCAL 1 — H-R9-063 / R9-6B retained first-send ownership — FRONT HIGH
+# READY_LOCAL 1 — H-R9-064 / R9-6 terminal teardown ownership — FRONT HIGH
 
-Repair the concrete orphan-retained-plaintext defect without inventing new retention policy or changing core transport architecture.
+Repair the concrete terminal-lifecycle defect without inventing new policy values or changing core Session/Carrier/ACK/crypto/wire architecture.
 
 Required contract:
 
-1. Preserve exact-wire congestion admission, `SecureSession` sequence/nonce as the single packet-number source, current Recovery/Reno rollback, and packet-number monotonicity. An aborted PN remains non-ACK-valid and is never reused.
-2. Make **first-send socket abort ownership complete**. After removing the aborted packet copy from Recovery, stable plaintext for each affected frame must be released when no other Recovery packet copy still owns that frame and no already-existing retry owner can schedule it.
-3. Preserve retransmit-abort semantics. A failed retransmission must not discard stable plaintext while another legitimate packet copy remains outstanding or an already-existing retry lifecycle still requires it. Do not blindly `clear()` the retransmit buffer and do not conflate first-send abort with retransmit abort.
-4. Add a focused deterministic `ReliableUdpRuntime` discriminator:
-   - `on_packet_sent(frame A)` -> `abandon_sent` leaves `in_flight == 0`, Reno bytes-in-flight zero for that copy, no packet->frame ownership, rolled-back sent count/watermark, ACK(aborted PN) rejected, and **zero retained plaintext ownership for frame A**;
-   - several distinct first-send aborts do not accumulate retained frame/byte ownership. This is an ownership regression, not a capacity-pressure benchmark;
-   - paired success retains plaintext while a packet copy is genuinely outstanding and releases it through the existing ACK/loss lifecycle.
-5. Add a sibling/retransmit negative: if frame F still has another legitimate outstanding packet copy, aborting one packet copy must leave F resealable/retransmittable until the surviving lifecycle settles. This is the discriminator against over-release.
-6. Strengthen the existing `--fail-r9-first-send` process regression only where it binds the real owner: terminal residual should show `remaining_in_flight:0`; no positive `r9_udp_post_return_sent`, `r9_udp_retransmit_sent`, `r9_udp_pto_fired`, settlement, Session-delivery or Carrier-retirement evidence may be fabricated from the failed first send.
-7. Re-audit the initial, second-record and post-return executable first-send callers after the runtime cleanup repair. Prefer one correct `ReliableUdpRuntime::abandon_sent` ownership owner rather than three divergent caller-side cleanup implementations.
-8. Preserve `--drop-r9-data` as deliberate Recovery-owned loss. It must keep retained plaintext and PTO/retransmission semantics.
-9. No new TTL/LRU/history-size/capacity/security values, no D019 change, no ACK redesign, no wire/crypto architecture change, no release-authority change.
-
-After the final pushed repair SHA, run and persist the ordinary exact-tree developer gate:
+1. Make `ReliableUdpRuntime::teardown` a true quiescent terminal ownership transition for the current runtime/path generation. After teardown, current live state must reconcile to zero: Recovery in-flight packets/outstanding-frame copies, `packet_frames`, Reno bytes-in-flight/per-packet charge, and retained plaintext ownership.
+2. Preserve historical facts. Do not erase or rewrite already-emitted loss/failure diagnostics merely to obtain zero ownership; distinguish current live ownership from historical counters/evidence.
+3. After terminal teardown, `pto_probe`, recovery ACK application, health polling, or related paths must be fail-closed or observationally inert. They must not create fresh PTO/loss/ACK/Carrier-health/success evidence derived from pre-teardown packets.
+4. Strengthen or replace `retransmit_requires_retained_ownership_and_teardown_is_deterministic`. The current oracle is insufficient because `pto_probe().is_empty()` can be true solely because plaintext was cleared. New deterministic assertions must establish:
+   - before teardown, overlapping original/retransmit copies produce nonzero `in_flight` and congestion bytes;
+   - after teardown, `in_flight == 0`, congestion bytes are zero, packet->frame ownership is gone, retained frames/bytes are zero;
+   - a post-teardown PTO/ACK/health call cannot mutate PTO/outcome/health state or manufacture a positive transition.
+5. Include a paired normal-lifecycle control: ordinary ACK/loss settlement must still retire exactly the correct packet/frame/plaintext/Reno owners and must not rely on teardown to mask leaks.
+6. Re-audit executable terminal/error exits that own `ReliableUdpRuntime`. They must either perform the correct terminal cleanup or drop the owner without later consulting stale recovery state for success/health/diagnostic claims. Prefer one runtime-owned cleanup transition rather than caller-side duplicated field cleanup.
+7. Preserve H-R9-061/H-R9-062/H-R9-063 semantics: first-send socket abort remains transactional; `--drop-r9-data` remains deliberate Recovery-owned loss; retransmit socket abort keeps stable plaintext while a legitimate retry owner exists; committed packet numbers are never reused; aborted reservations remain non-ACK-valid.
+8. No new TTL/LRU/history-size/capacity/security values, no D019 change, no `SessionRuntime.events` retention decision, no release-authority change.
+9. On the final pushed repair SHA, run and persist:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
 git diff --check
 ```
 
-Record exact reachable pushed SHA, UTC start/end, exit codes, OS/arch, stable Rust version and clean-tree state. The finding requires no decoder/parser/crypto-framing change, so fuzz is not mechanically required unless the actual repair touches those surfaces.
+Record exact reachable pushed SHA, UTC start/end, exit codes, OS/arch, stable Rust version and clean-tree state. This finding does not require fuzz unless the actual repair touches wire decoder/parser/crypto framing.
 
 On closure, continue immediately to READY_LOCAL 2 without waiting for reviewer cadence.
 
 # READY_LOCAL 2 — R9-6 remaining ownership / resource boundedness completion
 
-After H-R9-063 closes, finish R9-6 as an independent bounded challenge rather than assuming the retained-plaintext repair closes every ownership question.
+After H-R9-064 closes, complete the rest of R9-6 as a bounded independent challenge rather than assuming one teardown repair covers every ownership seam.
 
 Minimum scope:
 
-- first-send and retransmit packet-copy ownership cannot survive refusal/abort/terminal teardown incorrectly;
+- first-send and retransmit packet-copy ownership cannot survive refusal/abort/terminal cleanup incorrectly;
 - retransmit exact-wire admission remains truthful;
-- committed packet numbers are never reused; aborted reservations do not become ACK-valid history;
-- retained plaintext/frame ownership stays tied to a real Recovery/retry owner and releases deterministically on ACK/loss/final teardown;
-- packet-to-frame maps, Reno bytes-in-flight, Recovery sent/outstanding state and retained plaintext reconcile after each positive/negative outcome;
-- retransmit socket-abort with overlapping sibling copies preserves exactly the needed stable plaintext, no more and no less;
-- terminal teardown deterministically clears residual packet/frame/plaintext ownership without rewriting historical failure evidence;
+- committed packet numbers are never reused and aborted reservations never become ACK-valid history;
+- retained plaintext/frame ownership remains tied to a real Recovery/retry owner and releases deterministically on ACK/loss/final teardown;
+- packet-to-frame maps, Reno bytes-in-flight, Recovery sent/outstanding state and retained plaintext reconcile after positive and negative outcomes;
+- retransmit socket-abort with overlapping sibling copies preserves exactly the stable plaintext still needed, no more and no less;
+- repeated bounded first-send aborts do not accumulate orphan ownership;
 - historical classification metadata remains bounded/accounted by existing owners.
 
 If a concrete correctness/security/evidence defect appears, repair the smallest current-semantics seam with discriminating positive/negative tests and exact-tree gate. If no defect appears, persist a precise bounded no-finding note and continue immediately.
@@ -77,15 +75,15 @@ Independently challenge that structured diagnostics correspond to the typed stat
 - PTO fired / retransmit sent;
 - Recovery loss/ACK;
 - successful vs failed socket send / aborted reservation;
-- retained-ownership release vs packet-copy retirement;
+- retained-ownership release vs packet-copy retirement vs terminal teardown;
 - residual-domain failure;
 - terminal result/settlement.
 
-H-R9-062/H-R9-063's production socket-success/failure and retained-ownership boundaries must be included. No diagnostic may manufacture evidence in another domain. Add only discriminators that would actually fail if the production owner regressed; do not generate schema/checker filler.
+H-R9-062/H-R9-063/H-R9-064 production socket-success/failure, retained-ownership and teardown boundaries must be included. No diagnostic may manufacture evidence in another domain. Add only discriminators that would actually fail if the production owner regressed; do not generate schema/checker filler.
 
 # READY_LOCAL 4 — R9 mid-slice factual reconciliation
 
-After the coherent R9-4/R9-5/R9-6/R9-7 group is closed, perform one **small factual reconciliation** of release/item-4 state before continuing. Do not rewrite the full release packet yet.
+After the coherent R9-4/R9-5/R9-6/R9-7 group is closed, perform one small factual reconciliation of release/item-4 state before continuing. Do not rewrite the full release packet yet.
 
 Check only current facts:
 
@@ -112,6 +110,7 @@ No policy-value changes.
 Challenge integrated resolved reliable-UDP outcomes -> Carrier health/hysteresis -> promotion:
 
 - recoverable reliable-UDP loss/PTO that successfully settles must stay on UDP rather than spuriously promote TCP;
+- terminated/torn-down UDP state must not generate fresh health samples or promotion input;
 - actual promotion requires existing readiness + health/hysteresis gates;
 - draining/failed UDP cannot receive new Session Data ownership;
 - single-active invariant holds through transition;
@@ -126,7 +125,7 @@ Challenge failover after a genuinely unresolved UDP logical range:
 - receiver dedup remains exactly-once and conflicting bytes fail closed;
 - TCP path does not grow a duplicate UDP packet-ACK layer;
 - resolved UDP ranges do not replay;
-- shutdown/error/partial-promotion negatives clean retained ownership and emit no false success.
+- shutdown/error/partial-promotion negatives clean Recovery/packet/plaintext ownership and emit no false success.
 
 Do not change core replay architecture. Any ambiguity requiring such a change is a maintainer/architecture gate while independent local lanes continue.
 
@@ -136,8 +135,8 @@ Close remaining lifecycle and terminal invariants for the cross-process reliable
 
 - exactly one terminal success/failure classification per bounded operation;
 - intermediate timeout/residual diagnostics are not terminal success/failure;
-- no post-terminal retransmit, delivery confirmation, promotion or new Data ownership;
-- listener/socket/session/recovery/retained-plaintext state is deterministically cleaned on normal and error exits;
+- no post-terminal retransmit, delivery confirmation, health-driven promotion or new Data ownership;
+- listener/socket/session/recovery/Reno/retained-plaintext state is deterministically cleaned on normal and error exits;
 - cleanup observations do not rewrite historical failure evidence.
 
 # READY_LOCAL 9 — R9-12 complete cross-process slice + final exact-tree provenance
@@ -195,7 +194,7 @@ Repository-wide `queue exhausted` is permitted only when this broad inventory fi
 
 ## VPS opportunity
 
-**Not READY. `READY_LIVE: none`.** Standing authorization remains valid, but H-R9-063 and the current R9 queue are deterministic local correctness/evidence work and create no unresolved real-network question that loopback/process evidence cannot answer. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
+**Not READY. `READY_LIVE: none`.** Standing authorization remains valid, but H-R9-064 and the current R9 queue are deterministic local correctness/evidence work and create no unresolved real-network question that loopback/process evidence cannot answer. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
 
 Only create a new READY_LIVE row if later code/instrumentation/hypothesis/path conditions produce a concrete unresolved real-network question and the run stays inside `docs/standing-vps-lab-authorization.md`.
 
