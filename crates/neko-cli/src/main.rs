@@ -143,6 +143,20 @@ fn diagnostic_id(args: &[String]) -> String {
     }
     id
 }
+// H-R9-048/049: project the complete typed `acked_packets` retirement set
+// into per-packet positive evidence fields — one entry per retired packet,
+// never a representative-only `.last()` collapse.
+fn carrier_retired_fields(acked_packets: &[u64]) -> Vec<String> {
+    acked_packets
+        .iter()
+        .map(|pn| {
+            format!(
+                ",\"applied\":true,\"packet_number\":{},\"retired\":true",
+                pn
+            )
+        })
+        .collect()
+}
 fn emit_diagnostic(args: &[String], role: &str, event: &str, seq: usize, fields: &str) {
     if diagnostic_mode(args) {
         println!(
@@ -3679,20 +3693,11 @@ fn failover_client(args: &[String]) {
                     // `acked_packets` non-empty; emit the actually-retired pn.
                     let retired = !acked_packets.is_empty();
                     if applied && retired {
-                        // H-R9-048: one ACK range may retire several packet
+                        // H-R9-048/049: one ACK range may retire several packet
                         // identities — emit positive evidence for EVERY
                         // retired packet so the projection is complete.
-                        for acked_pn in &acked_packets {
-                            emit_diagnostic(
-                                args,
-                                "client",
-                                "r9_udp_return_packet_ack",
-                                0,
-                                &format!(
-                                    ",\"applied\":true,\"packet_number\":{},\"retired\":true",
-                                    acked_pn
-                                ),
-                            );
+                        for fields in carrier_retired_fields(&acked_packets) {
+                            emit_diagnostic(args, "client", "r9_udp_return_packet_ack", 0, &fields);
                         }
                     } else if rejected {
                         // Typed rejection (e.g. future/never-sent) — never
@@ -5599,6 +5604,21 @@ fn main() {
 #[cfg(test)]
 mod cli_regression_tests {
     use super::*;
+    #[test]
+    fn carrier_retired_fields_projects_every_retired_packet() {
+        // H-R9-049 projection discriminator: a multi-retirement typed result
+        // must produce one evidence field per packet — never a representative
+        // `.last()` collapse.
+        let fields = carrier_retired_fields(&[4, 5, 6]);
+        assert_eq!(fields.len(), 3);
+        assert!(fields[0].contains("\"packet_number\":4"));
+        assert!(fields[1].contains("\"packet_number\":5"));
+        assert!(fields[2].contains("\"packet_number\":6"));
+        assert!(fields.iter().all(|f| f.contains("\"retired\":true")));
+        // Singleton stays a singleton.
+        let one = carrier_retired_fields(&[7]);
+        assert_eq!(one.len(), 1);
+    }
     #[test]
     fn health_observe_arguments_are_bounded_and_parseable() {
         let args = vec![
