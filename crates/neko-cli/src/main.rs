@@ -177,10 +177,11 @@ fn admit_retransmit(
 // H-R9-055: the single executable PTO-due decision owner — only fires the
 // mutating probe when `now_us >= next_pto_deadline_us`. Returns the deadline
 // and the probe frames; yields None (zero transition) before the deadline.
+type PtoProbes = Vec<(neko_reliable::FrameId, Vec<u8>)>;
 fn due_pto_probe(
     rt: &mut neko_carrier::ReliableUdpRuntime,
     now_us: u64,
-) -> Option<(u64, Vec<(neko_reliable::FrameId, Vec<u8>)>)> {
+) -> Option<(u64, PtoProbes)> {
     let deadline = rt.recovery_engine().next_pto_deadline_us(1_000, 0)?;
     if now_us < deadline {
         return None;
