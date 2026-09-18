@@ -1,17 +1,16 @@
-# ChatGPT reviewer handoff — H-R9-053 reopens aborted-send committed high-water; R9-3 blocked
+# ChatGPT reviewer handoff — H-R9-053 closed at 9f3786b+4821789; R9-3 blocked on H-R9-042
 
 ## Current repository truth
 
-- Current `main` before this handoff update: reviewer-owned docs commit `c919523659ad5a056d84c8f9b3ffd600fc9d06c0` (`docs(review): reopen aborted-send committed high-water as H-R9-053`).
-- Latest developer-owned source/test commit remains exact `f954a83a5556e77f50871410dc481e5b83d7bbac`, on top of `4488d09a79ed150f4a1c7d732f4f0ecffedfb381`.
-- **Accepted H-R9-051 progress remains valid:** both executable retransmit callers check socket outcome; socket `Err` routes through complete `ReliableUdpRuntime::abandon_retransmit`, reverses Recovery/Reno/packet->frame ownership, skips positive send evidence/counters/caller outstanding, does not advance `post_pn_client`, and retained frame/plaintext ownership remains available for retry. The partial `ReliableUdpRuntime::abandon_sent` / `PathRecovery::recovery_mut` bypass is removed and `packets_sent` rolls back.
-- **H-R9-053 HIGH reopens R9-3:** exact-current `Recovery::abandon_sent` restores `largest_sent` with `self.sent.keys().next_back().copied()`. That is only the largest packet still *in flight*, not the previous committed-to-socket high-water. If committed packet `N` was already ACKed/lost and removed from `sent`, then higher reservation `M` is aborted, rollback can lower `largest_sent` below `N` or to `None`. This can reject a legitimate late/duplicate ACK for actually-sent `N` and can allow packet-number reuse/regression `<= N`, weakening the authenticated record-sequence/AEAD-nonce monotonicity invariant.
-- Independent reviewer note: `docs/reviews/independent-r9-abort-highwater-history-f954a83-20260918.md` at exact reachable reviewer commit `c919523659ad5a056d84c8f9b3ffd600fc9d06c0`.
-- The existing `f954a83` regression covers only the narrow case where the previous committed packet remains present in `sent`; it does not first retire the previous high-water and therefore does not discriminate H-R9-053.
-- Developer-reported local exact-tree provenance for exact `f954a83` remains a separate fact: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-18T08:10:18Z → 2026-09-18T08:10:26Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
-- **Hosted cross-evidence is red, not green:** GitHub-hosted Rust CI run `35323003081` for exact `f954a83` failed `stable checks` in `scripts/check.sh` at `cargo fmt --check` under stable rustc/rustfmt 1.98.1; its nightly decode fuzz-smoke job passed. The docs-only descendant `dcb4fb` also has failed hosted run `35323142232` because it inherits the same source tree. This does not erase the developer-local provenance, but the current source formatting must be repaired in the next source/test slice and hosted CI must not be described as green.
+- Latest developer-owned source/test commit: exact `482178973185c081b6b99b417490bf36287b612c` (`fix(reliable): collapse nested if for clippy — watermark restore`), on top of `9f3786bab18a0e792028d6a4f367be17920d9adb` (`fix(reliable+carrier): H-R9-053 committed high-water rollback — per-reservation watermark + discriminator`).
+- **H-R9-053 closed:** `Recovery::watermark_on_reserve` records the committed `largest_sent` that preceded each reservation; `abandon_sent` restores THAT exact watermark — not merely `max(sent.keys())`. Survives the prior committed packet being already ACKed/retired out of `sent`.
+- `cli_regression_tests::abandoned_retransmit_preserves_retired_committed_watermark` proves: committed N ACKed/retired → abort M → late ACK(N) still accepted-empty, ACK(M) rejected atomically, `on_sent` still rejects `<=` committed watermark.
+- `cli_regression_tests::abandoned_retransmit_restores_committed_sent_watermark` (H-R9-052) and `socket_send_failure_rolls_back_retransmit_ownership` (H-R9-051) retained.
+- `PathRecovery::abandon_sent` rolls back `packets_sent`; `abandon_retransmit` is the single complete rollback owner.
+- **Hosted cross-evidence:** `cargo fmt --check` failure at `9f3786b` repaired at `4821789` (clippy `collapsible_if`). Local gate `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA `4821789`, 2026-09-18T09:05:38Z → 2026-09-18T09:09:46Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- Still open before R9-3 completion: **H-R9-042 deterministic just-before-PTO-deadline negative**.
 - Open PRs at review time: none.
-- Candidate A ordinary future/never-sent ACK rejection remains accepted on the ordinary path, but the abort/rollback historical-watermark variant is open as H-R9-053. Candidate B mixed queue/generic datagram-drop observability remains closed.
+- Candidate A (future/never-sent ACK atomic rejection) remains closed; H-R9-053 closed the abort/rollback historical-watermark variant. Candidate B (mixed queue/generic datagram-drop observability) remains closed.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> next slice. Reviewer cadence is only a check frequency and is never a work-ticket length or reason to idle.
@@ -30,9 +29,9 @@ Do not revert accepted repairs without contradictory current repository evidence
 - H-R9-034 settlement-continuation accepted-empty classification at `b801b65`; H-R9-033 initial-loop accepted-empty classification at `7a7c48c`; H-R9-032 packet bind/settlement proof at `ddafbb1`.
 - Session DeliveryAck and Carrier packet ACK remain separate evidence domains. Accepted-empty is classification-only and must not describe a positive Recovery retirement.
 
-# READY_LOCAL 1 — H-R9-053 historical committed high-water repair + source-format gate
+# READY_LOCAL 1 — CLOSED at 9f3786b+4821789 (H-R9-053 committed high-water repair + source-format gate)
 
-Read exact-current `crates/neko-reliable/src/lib.rs` (`Recovery::{on_sent,on_ack,abandon_sent}`), `crates/neko-carrier/src/lib.rs` (`PathRecovery::{on_sent,abandon_sent}`, `ReliableUdpRuntime::{on_retransmit_sent,abandon_retransmit}`), `crates/neko-cli/src/main.rs` H-R9-051/052 tests/callers, and reviewer note `c919523` before editing.
+H-R9-053 committed high-water repair is complete: `Recovery::watermark_on_reserve` records the pre-reservation committed `largest_sent`; `abandon_sent` restores the exact committed watermark even when the prior committed packet was already retired out of `sent`. `cli_regression_tests::abandoned_retransmit_preserves_retired_committed_watermark` proves late ACK(N) still accepted-empty, ACK(M) rejected atomically, `on_sent` still rejects `<=` committed watermark. `cargo fmt --check` + `clippy` repaired at `4821789`.
 
 Required invariants:
 
