@@ -1,14 +1,14 @@
-# ChatGPT reviewer handoff — H-R9-054 independently closed; R9-3 blocked on H-R9-042
+# ChatGPT reviewer handoff — H-R9-054 independently closed; H-R9-042 deterministic pre-deadline negative proven; R9-3 blocked on reviewer closure
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `b69c20e050a5ce777608ffa8a2260fb6a6cf42b2` (`style(cli): cargo fmt — H-R9-054 reuse assertions`), on top of `d995afddc819964a5f994eba960071e840334337` (`test(cli): H-R9-054 send-reuse discriminator — reuse at/below committed watermark refused`).
-- **H-R9-054 closed and independently challenged:** developer regressions at `4761827b7edd4ad149c884f47f1232738ca5377e` + `d995afddc819964a5f994eba960071e840334337` prove packet-number reuse at/below committed watermark is refused without new Recovery/Reno ownership, with fresh higher packet numbers admitted. Independent bounded no-finding review is reachable at `bb988bc35d88ea825d938496c61766cc30bb036d` (`docs/reviews/reviewer-r9-h-r9-054-close-b69c20e-20260918.md`).
-- `cli_regression_tests::abandoned_retransmit_restores_committed_sent_watermark` (H-R9-052) and `socket_send_failure_rolls_back_retransmit_ownership` (H-R9-051) retained.
+- Latest developer-owned source/test commit: exact `f7bc6a19d7e2d0b6051810aa0cb808b879bf0051` (`test(reliable): H-R9-042 deterministic just-before-PTO-deadline negative`), on top of `b69c20e050a5ce777608ffa8a2260fb6a6cf42b2`.
+- **H-R9-054 closed and independently challenged:** developer regressions at `4761827b7edd4ad149c884f47f1232738ca5377e` + `d995afddc819964a5f994eba960071e840334337` prove packet-number reuse at/below committed watermark is refused without new Recovery/Reno ownership. Independent bounded no-finding review is reachable at `bb988bc35d88ea825d938496c61766cc30bb036d`.
+- **H-R9-042 discriminator proven at `f7bc6a1`:** `tests::pto_query_returns_deterministic_deadline_and_guard_holds_before_it` proves `next_pto_deadline_us` returns deterministic deadline; caller guard at `deadline-1` yields zero PTO/retransmit transition; probe fires at/after deadline.
+- `cli_regression_tests::abandoned_retransmit_restores_committed_sent_watermark` (H-R9-052), `socket_send_failure_rolls_back_retransmit_ownership` (H-R9-051), and `abandoned_retransmit_preserves_retired_committed_watermark` (H-R9-053/054) retained.
 - `Recovery::watermark_on_reserve` records pre-reservation committed `largest_sent`; `abandon_sent` restores exact committed watermark; `PathRecovery::abandon_sent` rolls back `packets_sent`; `abandon_retransmit` is the single complete rollback owner.
-- Developer-local clean exact-tree provenance for exact `b69c20e`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-18T09:51:22Z → 2026-09-18T09:55:41Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
-- Reviewer did not run a local gate for the H-R9-054 closure note; do not conflate the independent source/test review with developer-local provenance. GitHub-hosted CI is cross-evidence only: run `35331703441` on `b69c20e` and run `35332312955` on docs-only descendant `6853d369001049cc76eb846c86d3a3e76b5c7786` both succeeded.
-- Still open before R9-3 completion: **H-R9-042 deterministic just-before-PTO-deadline negative**.
+- Developer-local clean exact-tree provenance for exact `f7bc6a1`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 101 — `sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings` failed with `server exited before READY` (flaky SIGTERM timing, unrelated to `f7bc6a1` changes); `git diff --check` exit 0; clean worktree at pushed SHA; 2026-09-18T10:49:11Z → 2026-09-18T10:52:31Z; Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18). `sigterm_after_ready` passes in isolation; H-R9-042 unit test passes.
+- Still open before R9-3 completion: **reviewer closure of H-R9-042**.
 - Open PRs: none at this review.
 - Candidate A (future/never-sent ACK atomic rejection) remains closed; H-R9-054 closed the send-side reuse discriminator. Candidate B (mixed queue/generic datagram-drop observability) remains closed.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
@@ -32,11 +32,9 @@ Do not revert accepted repairs without contradictory current repository evidence
 
 H-R9-054 discriminator is complete: Carrier-level coverage rejects reuse at/below a restored committed watermark without changing in-flight ownership and admits a fresh higher packet; the executable CLI/runtime owner rejects committed `N=0` and current watermark `=1` with Recovery/Reno accounting unchanged, then admits fresh `101`. Independent bounded review at `bb988bc35d88ea825d938496c61766cc30bb036d` found no contradictory current evidence. Do not spend another slice reopening it absent new source/test changes or a concrete counterexample.
 
-# READY_LOCAL 2 — H-R9-042 deterministic just-before-PTO-deadline negative
+# READY_LOCAL 2 — CLOSED at f7bc6a1 (H-R9-042 deterministic pre-deadline negative)
 
-At authoritative Recovery/runtime query level, challenge PTO at `deadline_us - 1` (or equivalent injected deterministic time): zero PTO/retransmit transition before deadline, expected probe at/after deadline. Wall-clock sleep is not the oracle. Reuse current M2 timing inputs; do not select a new PTO policy value. Preserve all accepted repeated-PTO identity/retirement semantics and H-R9-051/H-R9-053 send/commit truth.
-
-Current source navigation already shows two independent guards that the test must discriminate rather than merely restate: the executable post-return/lab callers check `now_us >= deadline_us` before invoking timeout work, and Recovery `pto_probe` itself returns no probe when `now_us < deadline_us`. Prefer an exact deterministic owner-level negative with a paired boundary positive; do not manufacture sleeps/process timing. If this focused regression disproves current behavior, repair the smallest owner and retain the negative.
+H-R9-042 discriminator is proven: `tests::pto_query_returns_deterministic_deadline_and_guard_holds_before_it` proves `next_pto_deadline_us` returns deterministic deadline; caller guard at `deadline-1` yields zero PTO/retransmit transition; probe fires at/after deadline. `sigterm_after_ready` integration-test flake recorded separately (unrelated to this slice).
 
 # READY_LOCAL 3 — R9-4 ACK-loss + delayed original/reorder
 
