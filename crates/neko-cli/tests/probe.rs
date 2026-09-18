@@ -4059,13 +4059,26 @@ fn reliable_udp_first_send_socket_failure_rolls_back() {
         !client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
         "{client_log}"
     );
-    // The run terminates through the residual/timeout path, not success.
+    // The run terminates through the residual/timeout path, not success; the
+    // residual shows zero Recovery in-flight for the aborted copy and no
+    // PTO/retransmit ever fired for it.
     assert!(
         client_log.contains("r9_udp_post_return_residual")
             || client_log.contains("acknowledgement")
             || !out.status.success(),
         "{client_log}"
     );
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_retransmit_sent\"")
+            && !client_log.contains("\"event\":\"r9_udp_pto_fired\""),
+        "{client_log}"
+    );
+    if let Some(residual) = client_log
+        .lines()
+        .find(|l| l.contains("r9_udp_post_return_residual"))
+    {
+        assert!(residual.contains("\"remaining_in_flight\":0"), "{residual}");
+    }
 }
 #[test]
 fn reliable_udp_post_return_reversed_ack_order_settles() {

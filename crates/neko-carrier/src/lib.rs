@@ -4747,8 +4747,22 @@ impl ReliableUdpRuntime {
     /// charge, charged map, packet->frame, packets_sent and the committed
     /// watermark all stay consistent.
     pub fn abandon_sent(&mut self, packet_number: u64) -> bool {
-        self.packet_frames.remove(&packet_number);
-        self.recovery.abandon_sent(packet_number)
+        // H-R9-063: complete first-send abort ownership — capture the packet's
+        // frames, roll back Recovery/Reno/packet->frame/watermark, then release
+        // retained plaintext for any frame with NO remaining outstanding
+        // packet copy (an orphan with no retry owner). A frame still owned by
+        // another outstanding copy keeps its plaintext for legitimate retry.
+        let frames = self
+            .packet_frames
+            .remove(&packet_number)
+            .unwrap_or_default();
+        let removed = self.recovery.abandon_sent(packet_number);
+        for f in frames {
+            if !self.recovery.frame_outstanding(f) {
+                self.retransmit.release(f);
+            }
+        }
+        removed
     }
     pub fn abandon_retransmit(&mut self, packet_number: u64) -> bool {
         self.packet_frames.remove(&packet_number);
@@ -4777,6 +4791,11 @@ impl ReliableUdpRuntime {
     /// H-R9-061: committed socket-send count — socket errors roll it back.
     pub fn packets_sent(&self) -> u64 {
         self.recovery.packets_sent()
+    }
+    /// H-R9-063: retained retransmit-plaintext frames — first-send abort must
+    /// release orphans so no unreachable ownership poisons future transport.
+    pub fn retained_frames(&self) -> usize {
+        self.retransmit.retained()
     }
     pub fn in_flight(&self) -> usize {
         self.recovery.in_flight()
@@ -5439,6 +5458,29 @@ mod path_recovery_tests {
         let mut ok = AckRanges::new(8).unwrap();
         ok.insert(3).unwrap();
         assert!(rt.apply_ack(&ok, 11_000, 0).is_ok());
+        // H-R9-063: frame 11's plaintext was released — it had no remaining
+        // outstanding copy after the abort; frame 10 stays retained while in
+        // flight; frame 12 was released by the normal ACK lifecycle.
+        assert!(rt.retransmit.get(FrameId(11)).is_none());
+        assert!(rt.retransmit.get(FrameId(10)).is_some());
+        assert!(rt.retransmit.get(FrameId(12)).is_none());
+    }
+    #[test]
+    fn first_send_abandon_releases_orphan_but_keeps_sibling_plaintext() {
+        // H-R9-063 sibling negative: aborting one copy of frame F leaves its
+        // plaintext while ANOTHER outstanding packet copy still owns it.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        // Packet 1 and packet 2 BOTH carry frame 20 — aborting packet 2 must
+        // not release frame 20's plaintext while packet 1 is outstanding.
+        rt.on_packet_sent(1, 1_000, 400, FrameId(20), b"x").unwrap();
+        rt.on_packet_sent(2, 2_000, 400, FrameId(20), b"x").unwrap();
+        assert!(rt.abandon_sent(2));
+        assert!(rt.retransmit.get(FrameId(20)).is_some());
+        assert!(rt.in_flight() == 1);
+        // Single-copy abort releases the orphan.
+        rt.on_packet_sent(3, 3_000, 400, FrameId(21), b"y").unwrap();
+        assert!(rt.abandon_sent(3));
+        assert!(rt.retransmit.get(FrameId(21)).is_none());
     }
     #[test]
     fn abandon_restores_committed_watermark_not_max_outstanding() {
