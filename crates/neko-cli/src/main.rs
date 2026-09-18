@@ -174,6 +174,19 @@ fn admit_retransmit(
     rt.on_retransmit_sent(pn, now_us, wire.len() as u64, frame)
         .is_ok()
 }
+// H-R9-055: the single executable PTO-due decision owner — only fires the
+// mutating probe when `now_us >= next_pto_deadline_us`. Returns the deadline
+// and the probe frames; yields None (zero transition) before the deadline.
+fn due_pto_probe(
+    rt: &mut neko_carrier::ReliableUdpRuntime,
+    now_us: u64,
+) -> Option<(u64, Vec<(neko_reliable::FrameId, Vec<u8>)>)> {
+    let deadline = rt.recovery_engine().next_pto_deadline_us(1_000, 0)?;
+    if now_us < deadline {
+        return None;
+    }
+    Some((deadline, rt.pto_probe()))
+}
 fn emit_diagnostic(args: &[String], role: &str, event: &str, seq: usize, fields: &str) {
     if diagnostic_mode(args) {
         println!(
@@ -3575,8 +3588,7 @@ fn failover_client(args: &[String]) {
             // so the loop wakes up to retransmit on time.
             if let Some(rt) = rt.as_mut() {
                 let now_us = post_recovery_epoch.elapsed().as_micros() as u64;
-                let pto_deadline = rt.recovery_engine().next_pto_deadline_us(1_000, 0);
-                if let Some(pto_deadline) = pto_deadline.filter(|d| now_us >= *d) {
+                if let Some((pto_deadline, probes)) = due_pto_probe(rt, now_us) {
                     emit_diagnostic(
                         args,
                         "client",
@@ -3589,7 +3601,6 @@ fn failover_client(args: &[String]) {
                             rt.recovery_engine().pto_count
                         ),
                     );
-                    let probes = rt.pto_probe();
                     for (frame, plaintext) in probes {
                         // H-R9-041: congestion admission is checked on the
                         // exact encoded wire bytes, not the plaintext — encode
@@ -5824,6 +5835,30 @@ mod cli_regression_tests {
             neko_reliable::FrameId(9)
         ));
         assert_eq!(rt.in_flight(), before_flight + 1);
+    }
+    #[test]
+    fn due_pto_probe_is_quiet_before_deadline_and_fires_at_it() {
+        // H-R9-055: exercise the real executable decision owner — at
+        // deadline_us - 1 the helper performs zero PTO transition (no
+        // pto_probe/on_pto, no pto_count increment, no retransmit work); at
+        // deadline it performs the legitimate transition.
+        let mut rt = neko_carrier::ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.on_packet_sent(0, 0, 400, neko_reliable::FrameId(9), b"p")
+            .unwrap();
+        let deadline = rt.recovery_engine().next_pto_deadline_us(1_000, 0).unwrap();
+        let pto_before = rt.recovery_engine().pto_count;
+        let inflight_before = rt.in_flight();
+        // Pre-deadline challenge: the same decision owner must do nothing.
+        assert!(
+            due_pto_probe(&mut rt, deadline - 1).is_none(),
+            "pre-deadline must produce zero PTO transition"
+        );
+        assert_eq!(rt.recovery_engine().pto_count, pto_before);
+        assert_eq!(rt.in_flight(), inflight_before);
+        // At the deadline the same owner performs the legitimate transition.
+        let fired = due_pto_probe(&mut rt, deadline);
+        assert!(fired.is_some(), "at-deadline must probe");
+        assert!(rt.recovery_engine().pto_count > pto_before);
     }
     #[test]
     fn carrier_retired_fields_projects_every_retired_packet() {
