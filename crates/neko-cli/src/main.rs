@@ -3753,7 +3753,12 @@ fn failover_client(args: &[String]) {
                 &negotiation_response,
                 &noise_response,
                 recv_deadline,
-                &mut |_| {},
+                &mut |d| {
+                    // H-R9-060: the demux's typed classification (accepted-empty
+                    // exact duplicate / unexpected logical ACK) is emitted as
+                    // observable evidence, not discarded.
+                    emit_diagnostic(args, "client", d, 0, "");
+                },
                 rt.as_mut(),
                 &mut malformed,
                 post_recovery_epoch,

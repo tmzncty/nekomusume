@@ -3906,6 +3906,17 @@ fn reliable_udp_ack_loss_delayed_original_reorder_settles() {
         !client_log.contains("\"event\":\"r9_udp_return_packet_ack_rejected\""),
         "{client_log}"
     );
+    // H-R9-060: the retransmitted range's duplicate Session DeliveryAck takes
+    // the repaired exact-witness accepted-empty path — classification-only
+    // evidence, never malformed/unexpected.
+    assert!(
+        client_log.contains("\"event\":\"accepted_empty_logical_ack\""),
+        "{client_log}"
+    );
+    assert!(
+        !client_log.contains("\"event\":\"unexpected_logical_ack\""),
+        "{client_log}"
+    );
     // Server emitted at least two post-return Carrier ACKs (delayed original +
     // fresh copy), released in the reorder (delayed first).
     let srv_ack_ev: Vec<&str> = server_log
