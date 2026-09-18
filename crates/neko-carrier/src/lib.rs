@@ -4742,6 +4742,14 @@ impl ReliableUdpRuntime {
     /// pre-send reservation — remove only this packet copy's Recovery entry,
     /// Reno charge, and packet->frame map. The stable retained frame/plaintext
     /// survives so a later legitimate retry can re-probe it.
+    /// H-R9-061: first-send socket-outcome rollback — route through the SAME
+    /// complete transactional owner as retransmit rollback so Recovery, Reno
+    /// charge, charged map, packet->frame, packets_sent and the committed
+    /// watermark all stay consistent.
+    pub fn abandon_sent(&mut self, packet_number: u64) -> bool {
+        self.packet_frames.remove(&packet_number);
+        self.recovery.abandon_sent(packet_number)
+    }
     pub fn abandon_retransmit(&mut self, packet_number: u64) -> bool {
         self.packet_frames.remove(&packet_number);
         self.recovery.abandon_sent(packet_number)
@@ -4765,6 +4773,10 @@ impl ReliableUdpRuntime {
     /// Read-only recovery engine for observability projection.
     pub fn recovery_engine(&self) -> &neko_reliable::Recovery {
         self.recovery.recovery()
+    }
+    /// H-R9-061: committed socket-send count — socket errors roll it back.
+    pub fn packets_sent(&self) -> u64 {
+        self.recovery.packets_sent()
     }
     pub fn in_flight(&self) -> usize {
         self.recovery.in_flight()
@@ -5402,6 +5414,31 @@ mod path_recovery_tests {
         let mut ok = AckRanges::new(8).unwrap();
         ok.insert(3).unwrap();
         assert!(rt.apply_ack(&ok, 21_000, 0).is_ok());
+    }
+    #[test]
+    fn first_send_abandon_rolls_back_full_ownership() {
+        // H-R9-061: a first-send socket error after Recovery admission must
+        // roll back complete ownership — packet removed, Reno/packets_sent
+        // reversed, committed watermark restored, pn not ACK-valid.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.on_packet_sent(1, 1_000, 400, FrameId(10), b"a").unwrap();
+        // Committed send 2, then a socket failure aborts it.
+        rt.on_packet_sent(2, 2_000, 400, FrameId(11), b"b").unwrap();
+        assert_eq!(rt.in_flight(), 2);
+        let ps = rt.packets_sent();
+        assert!(rt.abandon_sent(2));
+        // Full rollback: in_flight back to 1, packets_sent reversed.
+        assert_eq!(rt.in_flight(), 1);
+        assert!(rt.packets_sent() < ps);
+        // Aborted pn is not ACK-valid — the never-sent identity is rejected.
+        let mut a = AckRanges::new(8).unwrap();
+        a.insert(2).unwrap();
+        assert!(rt.apply_ack(&a, 10_000, 0).is_err());
+        // Success control: fresh legal pn emits positive evidence and ACKs.
+        rt.on_packet_sent(3, 3_000, 400, FrameId(12), b"c").unwrap();
+        let mut ok = AckRanges::new(8).unwrap();
+        ok.insert(3).unwrap();
+        assert!(rt.apply_ack(&ok, 11_000, 0).is_ok());
     }
     #[test]
     fn abandon_restores_committed_watermark_not_max_outstanding() {

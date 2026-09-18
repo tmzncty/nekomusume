@@ -2511,19 +2511,37 @@ fn failover_client(args: &[String]) {
             &udp_record.data,
         )
         .unwrap_or_else(|_| fail("r9 record send"));
+        // H-R9-061: first-send socket-outcome transaction — positive sent
+        // evidence is committed only on real socket success; a socket error
+        // rolls back exactly that packet's Recovery ownership.
+        match u.send_to(&encrypted, target) {
+            Ok(_) => {
+                emit_diagnostic(
+                    args,
+                    "client",
+                    "udp_datagram_sent",
+                    1,
+                    &format!(
+                        ",\"ciphertext_bytes\":{},\"record_payload_bytes\":{}",
+                        encrypted.len(),
+                        udp_record.data.len()
+                    ),
+                );
+            }
+            Err(_) => {
+                rt.abandon_sent(pn);
+                emit_diagnostic(
+                    args,
+                    "client",
+                    "udp_datagram_send_failed",
+                    0,
+                    &format!(",\"packet_number\":{}", pn),
+                );
+            }
+        }
+    } else {
+        u.send_to(&encrypted, target).unwrap();
     }
-    u.send_to(&encrypted, target).unwrap();
-    emit_diagnostic(
-        args,
-        "client",
-        "udp_datagram_sent",
-        1,
-        &format!(
-            ",\"ciphertext_bytes\":{},\"record_payload_bytes\":{}",
-            encrypted.len(),
-            udp_record.data.len()
-        ),
-    );
     // R9: under --reliable-udp, a second offered record also rides the
     // reliable-UDP transport (cwnd admission + on_packet_sent + send) to prove
     // multi-record once-delivery; the remaining records keep their existing
@@ -2550,14 +2568,30 @@ fn failover_client(args: &[String]) {
             &rec.data,
         )
         .unwrap_or_else(|_| fail("r9 record send"));
-        u.send_to(&e2, target).unwrap();
-        emit_diagnostic(
-            args,
-            "client",
-            "r9_udp_record_sent",
-            0,
-            &format!(",\"offset\":{}", rec.offset),
-        );
+        // H-R9-061: first-send socket-outcome transaction — positive sent
+        // evidence only on real socket success; a socket error rolls back
+        // exactly that packet's Recovery ownership.
+        match u.send_to(&e2, target) {
+            Ok(_) => {
+                emit_diagnostic(
+                    args,
+                    "client",
+                    "r9_udp_record_sent",
+                    0,
+                    &format!(",\"offset\":{}", rec.offset),
+                );
+            }
+            Err(_) => {
+                rt.abandon_sent(pn);
+                emit_diagnostic(
+                    args,
+                    "client",
+                    "r9_udp_record_send_failed",
+                    0,
+                    &format!(",\"packet_number\":{}", pn),
+                );
+            }
+        }
     }
     let application_deadline = Instant::now() + Duration::from_secs(secs);
     let mut admission_diagnostic = |reason| {
@@ -3609,16 +3643,6 @@ fn failover_client(args: &[String]) {
                 &post_record.data,
             )
             .unwrap_or_else(|_| fail("r9 post-return record send"));
-            emit_diagnostic(
-                args,
-                "client",
-                "r9_udp_post_return_sent",
-                0,
-                &format!(
-                    ",\"stream\":{},\"offset\":{},\"packet_number\":{}",
-                    post_record.stream.0, post_record.offset, pn
-                ),
-            );
         }
         // R9-3: suppress exactly one reliable-owned Data after congestion
         // admission and Recovery ownership commit. The packet was sent to
@@ -3626,9 +3650,53 @@ fn failover_client(args: &[String]) {
         // tests data-loss recovery, not an unowned unsent record.
         let drop_r9_data = args.iter().any(|a| a == "--drop-r9-data");
         if drop_r9_data {
+            // H-R9-061: the dropped packet is recovery-owned (positive sent
+            // evidence reflects the committed ownership); the wire send is
+            // controlled-suppressed, not a socket error.
+            emit_diagnostic(
+                args,
+                "client",
+                "r9_udp_post_return_sent",
+                0,
+                &format!(
+                    ",\"stream\":{},\"offset\":{},\"packet_number\":{}",
+                    post_record.stream.0, post_record.offset, post_pn_client
+                ),
+            );
             emit_diagnostic(args, "client", "r9_udp_post_return_data_dropped", 0, "");
         }
-        if !drop_r9_data {
+        if !drop_r9_data && rt.is_some() {
+            // H-R9-061: first-send socket-outcome transaction — the positive
+            // sent diagnostic is committed ONLY on real socket success; a
+            // socket error rolls back exactly that packet's Recovery ownership
+            // and emits no sent evidence.
+            match u.send_to(&sealed, target) {
+                Ok(_) => {
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "r9_udp_post_return_sent",
+                        0,
+                        &format!(
+                            ",\"stream\":{},\"offset\":{},\"packet_number\":{}",
+                            post_record.stream.0, post_record.offset, post_pn_client
+                        ),
+                    );
+                }
+                Err(_) => {
+                    if let Some(r) = rt.as_mut() {
+                        r.abandon_sent(post_pn_client);
+                    }
+                    emit_diagnostic(
+                        args,
+                        "client",
+                        "r9_udp_post_return_send_failed",
+                        0,
+                        &format!(",\"packet_number\":{}", post_pn_client),
+                    );
+                }
+            }
+        } else if !drop_r9_data {
             u.send_to(&sealed, target).unwrap();
         }
         // H-R9-015: under --reliable-udp the post-return receive owner waits for
