@@ -1,15 +1,15 @@
-# ChatGPT reviewer handoff — H-R9-054 reopens R9-3 send-reuse discriminator
+# ChatGPT reviewer handoff — H-R9-054 closed at b69c20e; R9-3 blocked on H-R9-042
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `482178973185c081b6b99b417490bf36287b612c`, on top of `9f3786bab18a0e792028d6a4f367be17920d9adb`.
-- Reviewer note: `b9ebbdc4a49f09af6c3aacf71d006533b840a1c4` (`docs/reviews/independent-r9-h053-discriminator-20260918.md`).
-- **H-R9-053 source repair remains accepted in shape:** `Recovery::watermark_on_reserve` records the committed `largest_sent` preceding each reservation; `abandon_sent` restores that exact committed high-water even if the prior committed packet has already ACKed/retired out of `sent`.
-- **New HIGH H-R9-054:** the closure overstates the deterministic regression. Current source rejects `p.number <= largest_sent`, but neither H-R9-053 regression actually attempts packet-number reuse at/below the restored committed high-water. A regression that accidentally weakens send-side monotonicity while preserving ACK behavior can remain green. Because reliable-UDP packet number is also the authenticated record sequence / nonce source, the requested reuse-rejection discriminator is release/security evidence, not cosmetic checker churn.
-- Exact `4821789` developer-local gate remains recorded as `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, Linux x86_64, rustc 1.98.0, 2026-09-18T09:05:38Z → 09:09:46Z.
-- Hosted Rust CI for exact `4821789`: run `35327703324`, SUCCESS. Hosted CI is cross-evidence only.
-- Candidate A future/never-sent ACK atomic rejection remains closed at source level; H-R9-054 is specifically the missing send-side packet-number reuse discriminator after aborted reservation rollback. Candidate B mixed queue/generic datagram-drop observability remains closed.
+- Latest developer-owned source/test commit: exact `b69c20e050a5ce777608ffa8a2260fb6a6cf42b2` (`style(cli): cargo fmt — H-R9-054 reuse assertions`), on top of `d995afddc819964a5f994eba960071e840334337` (`test(cli): H-R9-054 send-reuse discriminator — reuse at/below committed watermark refused`).
+- **H-R9-054 closed:** `cli_regression_tests::abandoned_retransmit_preserves_retired_committed_watermark` now proves packet-number reuse at or below the committed watermark is refused by the send owner — reuse of committed `N=0` and current watermark `=1` both refused with no new Recovery/Reno ownership; fresh `101` succeeds as paired control.
+- `cli_regression_tests::abandoned_retransmit_restores_committed_sent_watermark` (H-R9-052) and `socket_send_failure_rolls_back_retransmit_ownership` (H-R9-051) retained.
+- `Recovery::watermark_on_reserve` records pre-reservation committed `largest_sent`; `abandon_sent` restores exact committed watermark; `PathRecovery::abandon_sent` rolls back `packets_sent`; `abandon_retransmit` is the single complete rollback owner.
+- Developer-local clean exact-tree provenance for exact `b69c20e`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-18T09:51:22Z → 2026-09-18T09:55:41Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- Still open before R9-3 completion: **H-R9-042 deterministic just-before-PTO-deadline negative**.
 - Open PRs: none at this review.
+- Candidate A (future/never-sent ACK atomic rejection) remains closed; H-R9-054 closed the send-side reuse discriminator. Candidate B (mixed queue/generic datagram-drop observability) remains closed.
 - `READY_LIVE: none`; release item 3 incomplete; release item 4 incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> next slice. Reviewer cadence is only a check frequency and is never a work-ticket length or reason to idle.
@@ -26,22 +26,9 @@ Do not revert accepted repairs without contradictory current repository evidence
 - H-R9-038/H-R9-039 P4 residual/server-exit evidence, H-R9-036/H-R9-037 reverse-order exact oracle, H-R9-032..034 settlement evidence, and P2 C1-C4 remain closed.
 - Session DeliveryAck and Carrier packet ACK remain separate evidence domains. Accepted-empty is classification-only and must not describe a positive Recovery retirement.
 
-# READY_LOCAL 1 — HIGH H-R9-054 send-side committed-watermark discriminator
+# READY_LOCAL 1 — CLOSED at b69c20e (H-R9-054 send-side committed-watermark discriminator)
 
-Keep the accepted H-R9-053 implementation shape; do not redesign Recovery, Session, Carrier ACK, crypto framing or wire format.
-
-Required deterministic discriminator on the real `ReliableUdpRuntime` send owner:
-
-1. Commit packet `N`, then ACK/retire `N` completely.
-2. Reserve higher packet `M`, then abort `M` as pre-send/socket-failure rollback.
-3. Prove late/duplicate ACK(`N`) remains accepted under current historical/accepted-empty semantics.
-4. Prove ACK(`M`) is rejected atomically and does not mutate RTT/PTO/loss/retransmit/Reno/Session state.
-5. **Attempt a new first-send/retransmit using packet number `N` (and, if the API naturally permits, one lower value); require deterministic rejection with no new Recovery/Reno/frame ownership.** This is the currently missing H-R9-053 discriminator.
-6. Paired control: a genuinely fresh packet number `> N` succeeds.
-7. Regression must deterministic-red if `Recovery::on_sent` is weakened to permit reuse at/below the restored committed watermark while leaving ACK behavior unchanged.
-8. Run focused tests and then the developer-local clean exact-tree gate on the final pushed source/test SHA; persist exact SHA, commands, UTC start/end, exit codes, OS/arch, stable Rust and clean-tree state. No decoder/framing change is required; do not run fuzz mechanically.
-
-After closure, continue immediately to READY_LOCAL 2 without waiting for reviewer cadence.
+H-R9-054 discriminator is complete: `cli_regression_tests::abandoned_retransmit_preserves_retired_committed_watermark` now proves packet-number reuse at or below the committed watermark is refused by the send owner — reuse of committed `N=0` and current watermark `=1` both refused with no new Recovery/Reno ownership; fresh `101` succeeds as paired control. `cargo fmt` repaired.
 
 # READY_LOCAL 2 — H-R9-042 deterministic just-before-PTO-deadline negative
 
