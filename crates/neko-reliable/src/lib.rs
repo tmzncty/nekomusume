@@ -282,15 +282,19 @@ impl Recovery {
         self.sent.insert(p.number, p);
         Ok(())
     }
-    /// H-R9-051: roll back a packet that was sent to the socket but whose
-    /// socket call failed — remove only that packet's sent entry and reverse
-    /// its outstanding-frame copies. The retained retransmit plaintext and
-    /// `largest_sent` monotonicity are untouched so a later retry is legal.
-    /// Returns the removed packet's bytes so the caller can uncharge Reno.
+    /// H-R9-051/052: roll back a packet reserved for the socket but whose
+    /// send failed — remove only that packet's sent entry and reverse its
+    /// outstanding-frame copies. `largest_sent` is the committed-to-socket
+    /// high-water: if the aborted packet WAS the current watermark, restore
+    /// the previous committed maximum so a never-sent ACK against it is
+    /// rejected. Retained plaintext is untouched for a later retry.
     pub fn abandon_sent(&mut self, number: u64) -> Option<SentPacket> {
         let p = self.sent.remove(&number)?;
         for f in &p.frames {
             Self::release_frame(&mut self.outstanding_frames, *f);
+        }
+        if self.largest_sent == Some(number) {
+            self.largest_sent = self.sent.keys().next_back().copied();
         }
         Some(p)
     }

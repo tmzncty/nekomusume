@@ -4159,6 +4159,9 @@ impl PathRecovery {
             // ssthresh are congestion state, not affected by a socket failure.
             self.reno.bytes_in_flight = self.reno.bytes_in_flight.saturating_sub(charge);
         }
+        // packets_sent counts committed socket sends — an aborted reservation
+        // was never committed, so the counter rolls back too.
+        self.packets_sent = self.packets_sent.saturating_sub(1);
         true
     }
 
@@ -4257,12 +4260,6 @@ impl PathRecovery {
     /// projection (`neko_observe::record_recovery_ack`/`record_pto`).
     pub fn recovery(&self) -> &neko_reliable::Recovery {
         &self.recovery
-    }
-    /// H-R9-051: mutable access for transactional rollback — socket-send
-    /// failure must reverse the new packet copy's Recovery charge without
-    /// touching retained plaintext or largest_sent monotonicity.
-    pub fn recovery_mut(&mut self) -> &mut neko_reliable::Recovery {
-        &mut self.recovery
     }
 
     pub fn path(&self) -> PathId {
@@ -4768,13 +4765,6 @@ impl ReliableUdpRuntime {
     /// Read-only recovery engine for observability projection.
     pub fn recovery_engine(&self) -> &neko_reliable::Recovery {
         self.recovery.recovery()
-    }
-    /// H-R9-051: roll back a packet that was sent to the socket but whose
-    /// socket call failed — remove only that packet's Recovery charge and
-    /// reverse its outstanding-frame copies. Retained plaintext and
-    /// largest_sent monotonicity are untouched so a later retry is legal.
-    pub fn abandon_sent(&mut self, number: u64) -> Option<neko_reliable::SentPacket> {
-        self.recovery.recovery_mut().abandon_sent(number)
     }
     pub fn in_flight(&self) -> usize {
         self.recovery.in_flight()
@@ -5383,6 +5373,36 @@ mod path_recovery_tests {
         assert!(rt.can_send(400), "ACK opens cwnd admission");
     }
 
+    #[test]
+    fn abandoned_reservation_is_not_ack_valid_watermark() {
+        // H-R9-052: a packet reserved for the socket but whose send failed is
+        // a never-sent identity — an ACK whose largest is the aborted number
+        // must be rejected atomically, not used as packet-threshold largest to
+        // fabricate loss over real in-flight packets.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        // Real committed sends 1..=3 still in flight.
+        for n in 1..=3u64 {
+            rt.on_packet_sent(n, n * 1000, 400, FrameId(2000 + n), b"x")
+                .unwrap();
+        }
+        // Reserve packet 4, then abort as socket failure.
+        rt.on_retransmit_sent(4, 4_000, 400, FrameId(2001)).unwrap();
+        assert!(rt.abandon_retransmit(4));
+        // An ACK claiming largest=4 (the aborted/never-sent identity) must be
+        // rejected atomically — not silently accepted and not used to declare
+        // real packets 1..3 lost.
+        let mut a = AckRanges::new(8).unwrap();
+        a.insert(4).unwrap();
+        let res = rt.apply_ack(&a, 20_000, 0);
+        assert!(res.is_err(), "aborted number must not be ACK-valid");
+        // Real in-flight state unchanged — no fabricated loss/retransmit.
+        assert_eq!(rt.in_flight(), 3, "packets 1..3 still outstanding");
+        // Committed high-water restored to 3: a later legitimate ACK for 1..3
+        // is still accepted.
+        let mut ok = AckRanges::new(8).unwrap();
+        ok.insert(3).unwrap();
+        assert!(rt.apply_ack(&ok, 21_000, 0).is_ok());
+    }
     #[test]
     fn retransmit_admission_refuses_on_exact_wire_bytes_and_recovers() {
         // H-R9-041: the retransmit path checks congestion admission on the
