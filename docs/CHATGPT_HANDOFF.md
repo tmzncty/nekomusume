@@ -1,9 +1,10 @@
-# ChatGPT reviewer handoff — H-R9-049 closed at 5f2baf2; R9-3 blocked on H-R9-041/042 negatives
+# ChatGPT reviewer handoff — H-R9-041 closed at 4a6f52d; R9-3 blocked on H-R9-042 negative
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `5f2baf2a29962521e4060697a063138dcaa7b9cb` (`fix(cli): H-R9-049 projection discriminator — carrier_retired_fields helper emits every retired packet`).
-- `5f2baf2` closes H-R9-049: the post-return Carrier projection is extracted into `carrier_retired_fields(acked_packets)` — one evidence field per retired packet identity, never a representative `.last()` collapse. The unit test proves a 3-element typed set produces 3 distinct positive fields; the singleton stays a singleton.
+- Latest developer-owned source/test commit: exact `4a6f52dc0388f901e4da29f7b9e63c19f8cd291d` (`test(carrier): H-R9-041 exact-wire retransmit-admission refusal regression`).
+- `4a6f52d` closes H-R9-041: when cwnd is full, the retransmit path's congestion admission on the exact encoded wire byte count refuses — no `on_retransmit_sent` ownership commit (in_flight unchanged), while a normal admitted control proceeds after an ACK frees bytes-in-flight.
+- `5f2baf2` remains accepted for H-R9-049: `carrier_retired_fields(acked_packets)` emits one evidence field per retired packet identity, never a `.last()` collapse.
 - `a92d076` remains accepted as supporting evidence: one canonical ACK range can retire multiple packet identities in one `Recovery::on_ack` transition, and the complete `acked_packets` vector is exposed.
 - `1c3bf1d` remains accepted for the projection repair: when `recv_udp_delivery_ack` returns nonempty typed `acked_packets`, the post-return projection loops over every retired packet identity and emits one positive `r9_udp_return_packet_ack` for each.
 - `d2478ad` remains accepted for H-R9-047: `retired` means Recovery actually retired packet copies (`acked_packets` nonempty), not merely the latest `post_pn_client`.
@@ -12,8 +13,8 @@
 - `68e364a` remains accepted for ordering: the single `remaining_in_flight=0` settlement follows the exact Session confirmation and the value-identified emitted positive Carrier retirement.
 - `9a113f2` remains the H-R9-040 lifecycle-pruning repair plus the H-R9-041 exact encoded-wire retransmit-admission implementation repair. `c1a22e5` added the server Carrier-ACK packet-number diagnostic used by R9-3 three-way evidence.
 - H-R9-043 remains accepted: bounded repeated PTO before the first actual lifecycle-resolving positive Carrier retirement is legal while sibling packet copies remain outstanding; Session DeliveryAck is a separate evidence domain and must not suppress Carrier recovery.
-- Still open before R9-3 completion: H-R9-041 discriminating exact-wire refusal regression and H-R9-042 deterministic just-before-PTO-deadline negative.
-- Developer-local clean exact-tree provenance for exact `5f2baf2`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-18T02:53:12Z → 2026-09-18T02:57:30Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
+- Still open before R9-3 completion: H-R9-042 deterministic just-before-PTO-deadline negative.
+- Developer-local clean exact-tree provenance for exact `4a6f52d`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-18T04:48:41Z → 2026-09-18T04:53:01Z, Linux x86_64, rustc 1.98.0 (88d9e12ae 2026-08-18).
 - GitHub-hosted Rust CI for exact `a92d076`, run `35296911606`, completed successfully. Hosted CI is cross-evidence only and does not replace developer-local provenance.
 - Open PRs at review time: none.
 - Candidate A (future/never-sent ACK atomic rejection) remains closed. Candidate B (mixed generic/queue datagram-drop observability) remains closed.
@@ -47,9 +48,9 @@ Do not revert these repairs without contradictory repository evidence:
 
 H-R9-049 projection discriminator is repaired at `5f2baf2`: `carrier_retired_fields(acked_packets)` emits one evidence field per retired packet identity — never a representative `.last()` collapse. The unit test proves a 3-element typed set produces 3 distinct positive fields; the singleton stays a singleton.
 
-# READY_LOCAL 2 — H-R9-041 exact-wire refusal regression
+# READY_LOCAL 2 — CLOSED at 4a6f52d
 
-Using existing congestion/accounting values, construct a deterministic case where remaining send budget admits retained plaintext length but rejects the larger encoded/sealed retransmission length. Prove exact-wire admission refusal commits no retransmission packet ownership, performs no socket send, emits no `r9_udp_retransmit_sent`, and fabricates no Session delivery state; paired admitted control commits/sends normally. Do not invent a new cwnd/capacity/security policy value.
+H-R9-041 exact-wire refusal regression is repaired at `4a6f52d`: when cwnd is full, the retransmit path's congestion admission on the exact encoded wire byte count refuses — no `on_retransmit_sent` ownership commit (in_flight unchanged), while a normal admitted control proceeds after an ACK frees bytes-in-flight.
 
 # READY_LOCAL 3 — H-R9-042 deterministic pre-deadline negative
 
