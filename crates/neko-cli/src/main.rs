@@ -157,6 +157,23 @@ fn carrier_retired_fields(acked_packets: &[u64]) -> Vec<String> {
         })
         .collect()
 }
+// H-R9-050: the single retransmit admission gate used by the executable
+// callers — congestion admission and Recovery ownership accounting BOTH use
+// the exact encoded/sealed wire byte count, never the retained plaintext
+// length. Returns true only when the caller may send the datagram.
+fn admit_retransmit(
+    rt: &mut neko_carrier::ReliableUdpRuntime,
+    pn: u64,
+    now_us: u64,
+    wire: &[u8],
+    frame: neko_reliable::FrameId,
+) -> bool {
+    if !rt.can_send(wire.len() as u64) {
+        return false;
+    }
+    rt.on_retransmit_sent(pn, now_us, wire.len() as u64, frame)
+        .is_ok()
+}
 fn emit_diagnostic(args: &[String], role: &str, event: &str, seq: usize, fields: &str) {
     if diagnostic_mode(args) {
         println!(
@@ -3591,14 +3608,8 @@ fn failover_client(args: &[String]) {
                         let Ok(re_sealed) = us.seal_unreliable(&re_msg) else {
                             continue;
                         };
-                        if !rt.can_send(re_sealed.len() as u64) {
-                            continue;
-                        }
                         let rpn = u64::from_be_bytes(re_sealed[..8].try_into().unwrap_or([0u8; 8]));
-                        if rt
-                            .on_retransmit_sent(rpn, now_us, re_sealed.len() as u64, frame)
-                            .is_err()
-                        {
+                        if !admit_retransmit(rt, rpn, now_us, &re_sealed, frame) {
                             continue;
                         }
                         let _ = u.send_to(&re_sealed, target);
@@ -4715,15 +4726,9 @@ fn lab_pump(
                     Err(_) => continue,
                 };
                 // H-R9-041: admission on exact encoded wire bytes.
-                if !rt.can_send(sealed.len() as u64) {
-                    st.c.retransmit_refused += 1;
-                    continue;
-                }
                 let rpn = u64::from_be_bytes(sealed[..8].try_into().expect("sequence prefix"));
-                if rt
-                    .on_retransmit_sent(rpn, st.now_us, sealed.len() as u64, frame)
-                    .is_err()
-                {
+                if !admit_retransmit(rt, rpn, st.now_us, &sealed, frame) {
+                    st.c.retransmit_refused += 1;
                     continue;
                 }
                 if sock.send(&sealed).is_ok() {
@@ -5604,6 +5609,40 @@ fn main() {
 #[cfg(test)]
 mod cli_regression_tests {
     use super::*;
+    #[test]
+    fn admit_retransmit_uses_encoded_wire_bytes_not_plaintext() {
+        // H-R9-050: the admission gate must be driven by the exact encoded
+        // wire length — a budget that admits the plaintext length but not the
+        // larger encoded length must refuse, and commit no ownership.
+        let mut rt = neko_carrier::ReliableUdpRuntime::new(1, 1200).unwrap();
+        // Outstanding frame whose plaintext is retained for retransmit.
+        rt.on_packet_sent(0, 0, 400, neko_reliable::FrameId(9), b"p")
+            .unwrap();
+        // Fill cwnd to leave a budget smaller than the encoded wire size but
+        // larger than the retained plaintext: plaintext_len=400 fits in the
+        // remaining 800B window, encoded_len=1200 does not.
+        let mut n = 1u64;
+        while rt.can_send(400) && rt.in_flight() < 28 {
+            rt.on_packet_sent(n, n * 1000, 400, neko_reliable::FrameId(3000 + n), b"x")
+                .unwrap();
+            n += 1;
+        }
+        // in_flight bytes = 29*400 = 11600; remaining 400 — encoded 1200B
+        // retransmit exceeds it even though the 400B plaintext would fit.
+        assert!(rt.can_send(400));
+        assert!(!rt.can_send(1200));
+        let before = rt.in_flight();
+        let wire = vec![0u8; 1200]; // simulated encoded datagram, len > plaintext
+        let frame = neko_reliable::FrameId(9);
+        assert!(
+            !admit_retransmit(&mut rt, 100, 1_000_000, &wire, frame),
+            "encoded wire bytes must be refused at the budget boundary"
+        );
+        assert_eq!(rt.in_flight(), before, "refusal commits no ownership");
+        // Paired control: same helper admits a wire size that fits.
+        let small = vec![0u8; 400];
+        assert!(admit_retransmit(&mut rt, 101, 1_000_000, &small, frame));
+    }
     #[test]
     fn carrier_retired_fields_projects_every_retired_packet() {
         // H-R9-049 projection discriminator: a multi-retirement typed result
