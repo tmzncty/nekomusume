@@ -3924,6 +3924,32 @@ fn reliable_udp_ack_loss_delayed_original_reorder_settles() {
         .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_sent\""))
         .collect();
     assert!(srv_ack_ev.len() >= 2, "{server_log}");
+    // H-R9-060: every positive client Carrier retirement names an actually
+    // transmitted Recovery-owned identity — the server-emitted packet_number
+    // set must cover every client r9_udp_return_packet_ack packet_number.
+    let srv_acked_pns: std::collections::BTreeSet<String> = srv_ack_ev
+        .iter()
+        .filter_map(|l| {
+            l.split("\"packet_number\":")
+                .nth(1)
+                .and_then(|v| v.split(',').next())
+                .map(|v| v.trim_end_matches('}').trim().to_string())
+        })
+        .collect();
+    let cli_retired_pns: Vec<String> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"r9_udp_return_packet_ack\""))
+        .filter_map(|l| {
+            l.split("\"packet_number\":")
+                .nth(1)
+                .and_then(|v| v.split(',').next())
+                .map(|v| v.trim_end_matches('}').trim().to_string())
+        })
+        .collect();
+    assert!(
+        cli_retired_pns.iter().all(|pn| srv_acked_pns.contains(pn)),
+        "client retired packet_number must be in server ACK set: {cli_retired_pns:?} vs {srv_acked_pns:?} {client_log} {server_log}"
+    );
     // Terminal: exactly one zero-in-flight settlement.
     let settled: Vec<&str> = client_log
         .lines()
