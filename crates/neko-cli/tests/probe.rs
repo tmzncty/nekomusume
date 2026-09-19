@@ -4308,7 +4308,9 @@ fn reliable_udp_carrier_ack_send_failure_is_typed_not_sent() {
         !server_log.contains("\"event\":\"udp_return_packet_ack_sent\""),
         "{server_log}"
     );
-    // The failed send's packet identity binds the client's post-return pn.
+    // The failed send's packet identity binds the client's post-return pn —
+    // fail-closed: missing event or malformed field is a hard test failure,
+    // never a skipped assertion or sentinel substitute.
     let failed_pn = srv_failed[0]
         .split("\"packet_number\":")
         .nth(1)
@@ -4317,25 +4319,30 @@ fn reliable_udp_carrier_ack_send_failure_is_typed_not_sent() {
                 .parse::<u64>()
                 .ok()
         })
-        .unwrap_or(u64::MAX);
-    if let Some(sent_ev) = client_log
+        .unwrap_or_else(|| panic!("failed ACK missing packet_number: {}", srv_failed[0]));
+    let sent_ev = client_log
         .lines()
         .find(|l| l.contains("\"event\":\"r9_udp_post_return_sent\""))
-    {
-        let client_pn = sent_ev
-            .split("\"packet_number\":")
-            .nth(1)
-            .and_then(|v| {
-                v.trim_end_matches(|c: char| !c.is_ascii_digit())
-                    .parse::<u64>()
-                    .ok()
-            })
-            .unwrap_or(0);
-        assert_eq!(
-            failed_pn, client_pn,
-            "failed post-return ACK targets the real sent packet"
-        );
-    }
+        .unwrap_or_else(|| panic!("client emitted no r9_udp_post_return_sent: {client_log}"));
+    let client_pn = sent_ev
+        .split("\"packet_number\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or_else(|| panic!("post_return_sent missing packet_number: {sent_ev}"));
+    assert_eq!(
+        failed_pn, client_pn,
+        "failed post-return ACK targets the real sent packet"
+    );
+    // Session DeliveryAck is an independent feedback domain — the server
+    // still emits it; only the Carrier half fails.
+    assert!(
+        server_log.contains("\"event\":\"udp_return_delivery_ack_sent\""),
+        "Session DeliveryAck domain independent: {server_log}"
+    );
     // The client saw no Carrier packet-ACK application for the failed send.
     assert!(
         !client_log.contains("\"event\":\"r9_udp_return_packet_ack_applied\""),
