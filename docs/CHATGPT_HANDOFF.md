@@ -1,12 +1,13 @@
-# ChatGPT reviewer handoff — sampler determinism closed at e021b27; R9-11 is front
+# ChatGPT reviewer handoff — sampler handshake code accepted at e021b27; exact-tree provenance HIGH is front
 
 ## Current repository truth
 
 - Latest developer-owned source/test commit reviewed: exact `e021b27cffe4a87de185757a8d47b8685f462bb6` (`fix(bench): sampler positive-fixture real observation handshake`).
 - Latest developer bounded review support reviewed: exact `15c0d9f1f15fcbc2f40039d7622bfdce9a33fb26`, `docs/reviews/dev-r9-10c-replay-cleanup-20260919.md`.
-- Latest independent reviewer support: exact `1442ef0230bad225c68f3609a01da7fb7ca095ed`, `docs/reviews/independent-process-resource-sampler-handshake-gap-5d860dc-20260920.md`.
-- **HIGH evidence/review-truth finding CLOSED:** `5d860dc`'s `child.ready` marker was not consumed by the sampler before observation — the test checked `ready.exists()` only after the synchronous sampler returned, and the child merely slept `1.4s` instead of `.25s`. No happens-before relation proved the sampler observed the resource-owning state. `e021b27` adds `--release-on-observed`/`--release-fd-min`: the sampler writes a release marker only after actually observing >=FD_MIN fds and an owned socket; the child waits on that marker (bounded by `max-seconds`) instead of a fixed sleep — a true happens-before, not a longer window.
-- The docs-only closure `df02bd0da7356fdb5708148d5d1e714b33e429cb` is superseded by the independent finding above; do not treat sampler determinism as closed until a real bounded observation/release handshake lands and passes exact-tree provenance.
+- Latest independent reviewer support: exact `d56ed28fe65127698b0fe850c0037e7eeccef621`, `docs/reviews/independent-process-resource-sampler-observation-handshake-e021b27-20260920.md`.
+- **Sampler code-level HIGH finding CLOSED / provenance HIGH remains OPEN:** the previous `5d860dc` timing-only fixture was not deterministic. Exact `e021b27` repairs the seam: the child owns five `/dev/null` FDs plus the loopback listener before readiness, then waits for `sampler.release`; the sampler writes that marker only after real `/proc` observation reaches the requested FD minimum and observes an owned socket. The independent bounded review found no code defect in that repaired synchronization seam.
+- **First-class closure evidence is still missing for exact `e021b27`.** Repository search found no persistent developer-local clean exact-tree provenance record containing `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean-tree state, exact pushed SHA, UTC start/end, exit codes, OS/arch and stable Rust version. GitHub-hosted Rust CI push run `35459239845` completed `success`, but hosted CI is supplemental and must not substitute for the required developer-local gate.
+- The earlier docs-only closure `df02bd0da7356fdb5708148d5d1e714b33e429cb` remains superseded. The source/test synchronization repair is now accepted; only its required exact-tree developer-local provenance remains before this evidence HIGH can be fully closed.
 - **R9-10B remains closed** at source/test exact `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4`: automatic-health TCP replay constructs each replay record from the authoritative retained `(DataId, bytes)` returned by `FailoverController::tcp_resend()` rather than an equal-count positional slice.
 - **R9-10C remains independently bounded no-finding closed** at reviewer exact `a1de16f5568951fdc5e99846436f918ed8d99ed2` over source/test exact `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4`. Full lifecycle/resource terminalization remains R9-11.
 - Repository truth for duplicate semantics: a repeated `FailoverController::confirm` is typed `NotFound`; exact duplicate **receive** is the idempotent `Ok(false)` case.
@@ -23,32 +24,30 @@
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency and is never a ticket length or reason to idle.
 
-## READY_LOCAL 1 — FRONT HIGH: sampler observation/release handshake
+## READY_LOCAL 1 — FRONT HIGH: persist exact-tree local provenance for sampler repair
 
-Independent finding: `1442ef0230bad225c68f3609a01da7fb7ca095ed`, `docs/reviews/independent-process-resource-sampler-handshake-gap-5d860dc-20260920.md`.
+Independent review: `d56ed28fe65127698b0fe850c0037e7eeccef621`, `docs/reviews/independent-process-resource-sampler-observation-handshake-e021b27-20260920.md`.
 
-The exact `5d860dc` marker-plus-`sleep(1.4)` repair does **not** satisfy the previous synchronization contract. Repair the test synchronization seam, not transport/runtime semantics.
+Do **not** re-implement the sampler handshake unless the gate finds a real regression. The code-level synchronization finding is accepted at exact `e021b27`; the remaining blocker is evidence truth.
 
-Required repair:
-
-1. preserve child readiness only after all expected `/dev/null` FDs and the loopback listener exist;
-2. add a real bounded two-sided observation/release condition: the child must remain resource-owning until a parent/sampler-controlled condition that is causally downstream of sampler observation, or an equivalently strong deterministic handshake;
-3. the positive oracle must fail if the observation/release handshake never occurs;
-4. keep real `/proc` sampling; do not inject fake FD/socket metrics or bypass the sampler;
-5. preserve the separate exit-race fixture's truthful `null` semantics;
-6. preserve sampler-owned process-group termination/reaping and listener cleanup;
-7. do not solve this by increasing `1.4` again, by polling a readiness file only after completion, or by another fixed wall-clock hope;
-8. prefer a fixture/test-only synchronization shape; change production sampler behavior only if the smallest explicit test seam is genuinely necessary, and do not change capacity/performance policy values.
-
-Add/strengthen a deterministic regression. On the final pushed source/test SHA run and record:
+On a safe clean checkout/worktree of the exact final pushed source/test SHA containing the `e021b27` repair, run and persist:
 
 `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`
 
 `git diff --check`
 
-plus clean tree, exact GitHub-resolvable SHA, UTC start/end, exit codes, Linux/arch and stable Rust version. No decoder/parser/crypto framing change is expected, so fuzz is not mechanically required.
+and record:
 
-After commit/push/gate, proceed immediately to R9-11; do not wait for reviewer cadence.
+- exact GitHub-resolvable pushed SHA;
+- UTC start/end;
+- exit code of each command;
+- clean-tree state after the gate;
+- OS/arch;
+- stable Rust version.
+
+If the source/test tree is still exact `e021b27`, provenance must name that SHA. If a later developer source/test commit supersedes it before the gate, first re-review the relevant diff and gate the new final source/test SHA. No decoder/parser/crypto framing change is present in `e021b27`, so fuzz is not mechanically required.
+
+Once the developer-local exact-tree gate/provenance is persisted and green, close this evidence HIGH and proceed immediately to R9-11 without waiting for reviewer cadence.
 
 ## READY_LOCAL 2 — R9-11 lifecycle / terminal resource closure
 
