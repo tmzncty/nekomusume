@@ -1,17 +1,12 @@
-# ChatGPT reviewer handoff — H-R9-076 HIGH is front; H-R9-075 source guard is not yet closed
+# ChatGPT reviewer handoff — H-R9-075/H-R9-076 closed at 1429df1; R9-10B is front
 
 ## Current repository truth
 
-- Review-start developer `main` was exact `52017b5adb26f377857adad2c9a6ed945e539d10`.
-- New developer-owned source/test commits since the prior handoff:
-  - `f064424f7f06c35fba31fc715da443c866a6a27b` — `SessionRuntime::delivery_ack` now fails closed on a forward ACK gap (`offset > confirmed watermark`) and adds a focused two-range regression.
-  - `52017b5adb26f377857adad2c9a6ed945e539d10` — restores the accidentally displaced `#[test]` annotation on the following atomic-rejection test; no additional production semantics.
-- The H-R9-075 source guard itself is directionally correct and must be preserved: a later exact DeliveryAck cannot manufacture confirmation for preceding unproved bytes. The executable reliable-UDP owner already implements the compatible behavior by buffering a later exact ACK until its offset equals the confirmed watermark.
-- **H-R9-075 is NOT closed at `52017b5` because the exact tree is red.** Existing integration fixture `crates/neko-carrier/tests/resumed_session.rs::bounded_udp_blackhole_tcp_resume_preserves_order_and_exactly_once_bytes` still directly applies a later resumed ACK at offset 5 while the watermark is 0, relying on the old forbidden cumulative-gap behavior.
-- **H-R9-076 HIGH:** exact `52017b5` GitHub-hosted Rust CI run `35444056099` completed with failure. Hosted nightly decode fuzz succeeded, but the stable `bash scripts/check.sh` job failed at `crates/neko-carrier/tests/resumed_session.rs:231` with `called Result::unwrap() on an Err value: Protocol`. This is a deterministic compatibility/integration contradiction, not a CI waiting condition. Hosted CI is supplemental evidence, but a known failing repository gate forbids closure.
-- Independent finding anchor: exact `e3c0c5beb4a6b7240023021574fbd844154fcd3b`, [`docs/reviews/independent-h-r9-076-resume-ack-gap-52017b5-20260919.md`](reviews/independent-h-r9-076-resume-ack-gap-52017b5-20260919.md).
-- The new H-R9-075 unit negative currently proves gapped rejection + watermark preservation, but does not directly assert the already-requested per-stream/session in-flight and event-count atomicity. The source returns before ACK mutation; still add the direct regression oracle while repairing the exact-tree integration failure.
-- No reachable developer-local clean exact-tree provenance for `52017b5` was found. The latest accepted developer-local clean code-tree provenance remains the earlier exact `d97a536414a78ff44ef80b1a6d428ddf96ae6e22`; do not project it onto `52017b5`.
+- Latest developer-owned source/test commit: exact `1429df1b565060054e24cfbae4d62bfdda5890da` (`test(session): H-R9-075 gapped ACK negative asserts full atomic contract`), on top of `f1edee86e9bd44c953915b745bd51418302db127` (`test(carrier): H-R9-076 resumed-session fixture applies first-record proof before gap ACKs`).
+- Latest independent review finding: [`docs/reviews/independent-h-r9-076-resume-ack-gap-52017b5-20260919.md`](reviews/independent-h-r9-076-resume-ack-gap-52017b5-20260919.md), review commit `e3c0c5beb4a6b7240023021574fbd844154fcd3b`.
+- **H-R9-075 closed at `f064424` + `52017b5`:** `SessionRuntime::delivery_ack` fails closed on forward ACK gap (`offset > confirmed watermark` → `Protocol`); `gapped_delivery_ack_cannot_skip_unconfirmed_range` proves gapped rejection + watermark/inflight/event atomicity.
+- **H-R9-076 closed at `f1edee8` + `1429df1`:** `bounded_udp_blackhole_tcp_resume_preserves_order_and_exactly_once_bytes` now applies the already-delivered offset-0 Session proof first (watermark → 5) before draining later exact proofs in watermark order; `confirm` follows successful proof application. The full atomic contract is asserted in the unit negative.
+- Developer-local clean exact-tree provenance for exact `1429df1`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T13:57:59Z → 2026-09-19T14:02:42Z, Linux x86_64, rustc 1.98.0. This remains developer-reported local evidence; reviewer-local execution is not claimed.
 - R9-7 remains independently bounded no-finding closed at review commit `cdac663e4d2649c8f87fc2263766616dc9b4bbe9` over source/test exact `d97a536`.
 - R9-8 warm readiness remains independently bounded no-finding closed at `7c87ac675a381154ae7fceca987e7f2f106c26cf`.
 - R9-9 health/promotion/switch ordering remains independently bounded no-finding closed at `b4a527a1fff994ee0836893f850c36eadb609eb1`.
