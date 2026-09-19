@@ -1,17 +1,18 @@
-# ChatGPT reviewer handoff — H-R9-074 Carrier ACK binding / dual-feedback oracle — FRONT HIGH
+# ChatGPT reviewer handoff — H-R9-074 closed at d97a536; R9-7 blocked on reviewer closure
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `3130c914b3fe2c8722a5802a4728e509b6ad27d5` (`fix(cli): H-R9-073 post-return Carrier ACK target oracle — --fail-r9-return-ack + pn bind`).
+- Latest developer-owned source/test commit: exact `d97a536414a78ff44ef80b1a6d428ddf96ae6e22` (`test(cli): H-R9-074 mandatory initial ACK control — udp_packet_ack_sent asserted`), on top of `65d30dc8a70a9af0da23042f54147a87241123e7`.
 - Latest independent review finding: [`docs/reviews/independent-r9-7-carrier-ack-binding-oracle-3130c91-20260919.md`](reviews/independent-r9-7-carrier-ack-binding-oracle-3130c91-20260919.md), review commit `cd2675521b1e4f94471f8c99d6a4dd2c805195c8`.
 - H-R9-068 source repair remains accepted at the currently reviewed owner: only exact ordinary `UDP delivery acknowledgement timeout` continues into PTO/delayed-ACK progress; malformed-bound exhaustion and receive/socket failure are terminal.
 - H-R9-069 remains narrowly closed at exact `d8b5ade`: the flood seam sends exactly the existing malformed budget (`3`), the client regression requires exactly three `unexpected_logical_ack` events, and terminal cause is explicitly `UDP delivery acknowledgement malformed bound exceeded`.
 - H-R9-070 remains narrowly closed at exact `fd41ea9`: `reliable_udp_post_return_malformed_bound_is_terminal` requires BOTH post-flood feedback domains — Session `udp_return_delivery_ack_sent` and Carrier `udp_return_packet_ack_sent`.
 - H-R9-071 source-side socket-outcome defect remains repaired: inspected Carrier ACK owners project `UdpSocket::send_to` truthfully (`Ok` -> positive `*_sent`, `Err` -> typed `*_send_failed`).
 - H-R9-072 remains useful process-oracle progress: `reliable_udp_carrier_ack_send_failure_is_typed_not_sent` exercises a real executable server/client path and the delayed/reordered fresh ACK owner.
-- H-R9-073 source seam is materially repaired at exact `3130c91`: dedicated `--fail-r9-return-ack` is consumed by post-return Carrier ACK owners while the initial owner keeps the old global selector. **Do not treat the full H-R9-073 closure as accepted yet:** the regression still has a vacuous packet-binding branch and does not require the independent Session-side positive control.
+- **H-R9-073 closed at 3130c91:** dedicated `--fail-r9-return-ack` targets ONLY post-return Carrier ACK owners; initial pre-migration ACKs still succeed.
+- **H-R9-074 closed:** `reliable_udp_carrier_ack_send_failure_is_typed_not_sent` now requires `r9_udp_post_return_sent` with fail-closed `packet_number` parse (panic on missing/malformed), asserts `udp_return_delivery_ack_sent` (Session domain independent), and requires initial `udp_packet_ack_sent` — the post-return-only selector cannot silently widen back into an early-owner fault.
 - R9-4 / H-R9-060 remain independently closed. R9-5 remains bounded no-finding closed. R9-6 remains independently closed. H-R9-067 remains closed.
-- Developer-local clean exact-tree provenance for exact `3130c91`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T07:50:19Z → 2026-09-19T07:55:17Z, Linux x86_64, rustc 1.98.0. This remains developer-reported local evidence; reviewer-local execution is not claimed.
+- Developer-local clean exact-tree provenance for exact `d97a536`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T08:50:25Z → 2026-09-19T08:55:13Z, Linux x86_64, rustc 1.98.0. This remains developer-reported local evidence; reviewer-local execution is not claimed.
 - GitHub-hosted Rust CI for exact `3130c91`: run `35430362590`, completed `success` on 2026-09-19. Hosted CI is cross-evidence only and cannot make a vacuous process oracle discriminating.
 - Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 through H-R9-071 subject to the explicit current R9-7 attribution gaps.
 - `READY_LIVE: none`; release item 3 remains incomplete; release item 4 remains incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
