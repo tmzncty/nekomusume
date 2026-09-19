@@ -1639,7 +1639,15 @@ fn failover_server(args: &[String]) {
                                         } else {
                                             // H-R9-071: positive *_sent only
                                             // on real socket success.
-                                            let ev = match udp.send_to(&sealed_ack, peer) {
+                                            let fail_ack =
+                                                args.iter().any(|a| a == "--fail-r9-ack");
+                                            let ev = match if fail_ack {
+                                                Err(std::io::Error::other(
+                                                    "injected initial carrier ACK failure",
+                                                ))
+                                            } else {
+                                                udp.send_to(&sealed_ack, peer)
+                                            } {
                                                 Ok(_) => "udp_packet_ack_sent",
                                                 Err(_) => "udp_packet_ack_send_failed",
                                             };
@@ -1672,7 +1680,14 @@ fn failover_server(args: &[String]) {
                                     udp.send_to(b"malformed", peer).unwrap();
                                     udp.send_to(b"malformed", peer).unwrap();
                                     if let Some(pack) = pending_p3_carrier_ack.take() {
-                                        let ev = match udp.send_to(&pack, peer) {
+                                        let fail_ack = args.iter().any(|a| a == "--fail-r9-ack");
+                                        let ev = match if fail_ack {
+                                            Err(std::io::Error::other(
+                                                "injected p3 carrier ACK failure",
+                                            ))
+                                        } else {
+                                            udp.send_to(&pack, peer)
+                                        } {
                                             Ok(_) => "udp_packet_ack_sent",
                                             Err(_) => "udp_packet_ack_send_failed",
                                         };
@@ -2157,7 +2172,8 @@ fn failover_server(args: &[String]) {
                                     // the production Carrier ACK owner.
                                     if let Some(pack) = &post_ack_pack {
                                         if let Ok(sealed_pack) = udp_session.seal_unreliable(pack) {
-                                            let fail_ack = args.iter().any(|a| a == "--fail-r9-ack");
+                                            let fail_ack =
+                                                args.iter().any(|a| a == "--fail-r9-ack");
                                             let ev = match if fail_ack {
                                                 Err(std::io::Error::other(
                                                     "injected carrier ACK failure",
@@ -2251,7 +2267,14 @@ fn failover_server(args: &[String]) {
                                     } else {
                                         delay_reorder_done = true;
                                         let (delayed, dpn) = delayed_post_ack.take().unwrap();
-                                        let ev = match udp.send_to(&delayed, post_source) {
+                                        let fail_ack = args.iter().any(|a| a == "--fail-r9-ack");
+                                        let ev = match if fail_ack {
+                                            Err(std::io::Error::other(
+                                                "injected delayed carrier ACK failure",
+                                            ))
+                                        } else {
+                                            udp.send_to(&delayed, post_source)
+                                        } {
                                             Ok(_) => "udp_return_packet_ack_sent",
                                             Err(_) => "udp_return_packet_ack_send_failed",
                                         };
@@ -2285,7 +2308,15 @@ fn failover_server(args: &[String]) {
                                 } else if reliable_udp && !seam_active && !suppress_pack {
                                     if let Some(pack) = &post_ack_pack {
                                         if let Ok(sealed_pack) = udp_session.seal_unreliable(pack) {
-                                            let ev = match udp.send_to(&sealed_pack, post_source) {
+                                            let fail_ack =
+                                                args.iter().any(|a| a == "--fail-r9-ack");
+                                            let ev = match if fail_ack {
+                                                Err(std::io::Error::other(
+                                                    "injected normal carrier ACK failure",
+                                                ))
+                                            } else {
+                                                udp.send_to(&sealed_pack, post_source)
+                                            } {
                                                 Ok(_) => "udp_return_packet_ack_sent",
                                                 Err(_) => "udp_return_packet_ack_send_failed",
                                             };
