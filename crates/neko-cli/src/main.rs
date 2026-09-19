@@ -2182,7 +2182,9 @@ fn failover_server(args: &[String]) {
                                 // range) to cross the bounded malformed
                                 // budget on the post-return owner.
                                 if args.iter().any(|a| a == "--flood-r9-ack") {
-                                    for _ in 0..=3 {
+                                    // Exactly the existing bounded malformed
+                                    // budget — pins the bound, never relaxes.
+                                    for _ in 0..3 {
                                         let bad = ProcessMessage::DeliveryAck {
                                             session: SessionId(7001),
                                             stream: StreamId(1),

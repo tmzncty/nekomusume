@@ -4164,13 +4164,33 @@ fn reliable_udp_post_return_malformed_bound_is_terminal() {
         ])
         .output()
         .unwrap();
-    let (srv_status, _server_log) = finish_server(server);
+    let (srv_status, server_log) = finish_server(server);
     let client_log = String::from_utf8_lossy(&out.stdout);
+    let client_err = String::from_utf8_lossy(&out.stderr);
     let _ = srv_status;
-    // Unadmitted feedback classifications are emitted as evidence.
+    // H-R9-069: exactly the bounded malformed budget of unadmitted ACKs is
+    // emitted as typed classifications.
+    let unexpected: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"unexpected_logical_ack\""))
+        .collect();
+    assert_eq!(
+        unexpected.len(),
+        3,
+        "exactly MAX_POST_HANDSHAKE_MALFORMED unadmitted ACKs: {client_log}"
+    );
+    // Terminal cause is the malformed bound, not an unrelated failure.
     assert!(
-        client_log.contains("\"event\":\"unexpected_logical_ack\""),
-        "{client_log}"
+        client_err.contains("UDP delivery acknowledgement malformed bound exceeded")
+            || client_log.contains("malformed bound exceeded"),
+        "terminal cause is malformed bound: {client_log} {client_err}"
+    );
+    // The server really proceeded to emit the otherwise-valid post-flood
+    // Session DeliveryAck — the bound-crossing cannot be rescued by it.
+    assert!(
+        server_log.contains("\"event\":\"udp_return_delivery_ack_sent\"")
+            || server_log.contains("\"event\":\"udp_return_packet_ack_sent\""),
+        "server emitted post-flood valid feedback: {server_log}"
     );
     // Terminal: nonzero exit, no settled/success/final-summary evidence.
     assert!(
