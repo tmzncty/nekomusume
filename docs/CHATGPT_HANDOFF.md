@@ -1,13 +1,15 @@
-# ChatGPT reviewer handoff — H-R9-079 terminal stream/timer ownership HIGH; R9-11 lifecycle continues
+# ChatGPT reviewer handoff — H-R9-080 terminal cleanup regression coverage HIGH; R9-11 lifecycle continues
 
 ## Current repository truth
 
-- Current reviewer anchor before this handoff: reachable `main` exact `26462bb31617486b793ee7d90e8dcf5176552bc9`; latest developer-owned source/test commit reviewed is exact `442a8058e4ae27f867bd27db632494a945ec30f2`, on top of `dd7afc6a1af69f5722250fa475fef805fd330c31` and `e3dca29babfaf330931f26aa3697aa3cd3c98545`.
-- Latest independent reviewer support: exact `26462bb31617486b793ee7d90e8dcf5176552bc9`, `docs/reviews/independent-r9-11-session-terminal-stream-timer-ownership-ee62338-20260920.md`.
+- Current reviewer anchor before this handoff: reachable `main` exact `4f426a2ddda0a36fc4cf691b7766e87e35b2e5d2`; latest developer-owned source/test commit reviewed is exact `271e512c01cefcfc40745aa41725bbd3e2585bb6`; its developer handoff closure is exact `a23baa6e451de99b40556b137abba27146b29ad0`.
+- Latest independent reviewer support: exact `4f426a2ddda0a36fc4cf691b7766e87e35b2e5d2`, `docs/reviews/independent-r9-11-session-terminal-coverage-a23baa6-20260920.md`.
+- **H-R9-079 source repair is accepted** at exact `271e512`: `SessionRuntime::clear_runtime_state()` now clears `streams` and disarms `close_deadline_ms`. The existing idle-timeout and close-deadline regressions assert those two ownership surfaces are released.
+- **H-R9-080 is OPEN HIGH (release-gate evidence/closure truth):** the explicit H-R9-079 accepted contract required deterministic cleanup regressions for cancel/Error, remote close, idle timeout and graceful-close deadline. Exact `271e512` added the ownership oracle only to idle timeout and close deadline. Current cancel tests do not prove the first cancel released stream/timer/queue/dedup/watermark/window ownership, and there is no focused remote-close cleanup/evidence regression. This does not claim the shared source repair is currently wrong; it means the repository closed the finding before all required mutation-sensitive path oracles existed.
+- Developer-local clean exact-tree provenance for exact `271e512` is recorded as `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-19T21:50:56Z → 2026-09-19T21:55:52Z, Linux x86_64, rustc 1.98.0. GitHub-hosted Rust CI run `35471440603` for exact `271e512` completed successfully; hosted CI is supplemental and does not repair the missing oracle.
 - **H-R9-077 remains CLOSED** at exact `e3dca29`: `ReliableUdpRuntime::teardown()` releases receiver ACK ownership as well as sender-side recovery state.
-- **H-R9-078 remains CLOSED** at exact `442a805`: repeated `SessionRuntime::cancel()` on terminal `Error` is idempotent and the focused regression is an active `#[test]`. Developer-local clean exact-tree provenance for exact `442a805` is recorded as `scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-19T20:57:46Z → 2026-09-19T21:02:29Z, Linux x86_64, rustc 1.98.0. GitHub-hosted Rust CI run `35468597623` for exact `442a805` completed successfully; hosted CI remains supplemental.
-- **H-R9-079 is CLOSED** at exact `271e512c01cefcfc40745aa41725bbd3e2585bb6`: `clear_runtime_state()` now clears `streams` (per-stream mutable state/next_send/next_receive) and disarms `close_deadline_ms` — live-session ownership does not survive terminalization. `idle_timeout_releases_all_runtime_owned_state` and `close_deadline_releases_all_runtime_owned_state` now assert `streams.is_empty()` and `close_deadline_ms.is_none()`. Developer-local clean exact-tree provenance for exact `271e512`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-19T21:50:56Z → 2026-09-19T21:55:52Z, Linux x86_64, rustc 1.98.0.
-- **Sampler determinism HIGH remains CLOSED** at exact `e021b27cffe4a87de185757a8d47b8685f462bb6` with a real bounded release-after-observation handshake and persisted exact-tree provenance.
+- **H-R9-078 remains CLOSED** at exact `442a805`: repeated `SessionRuntime::cancel()` on terminal `Error` is idempotent and its focused regression is active.
+- **Sampler determinism HIGH remains CLOSED** at exact `e021b27cffe4a87de185757a8d47b8685f462bb6` with a bounded release-after-observation handshake and persisted exact-tree provenance.
 - **R9-10B remains closed** at exact `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4`; **R9-10C remains independently bounded no-finding closed** at reviewer exact `a1de16f5568951fdc5e99846436f918ed8d99ed2`.
 - **H-R9-075/H-R9-076 remain closed**: SessionRuntime rejects forward-gap DeliveryAck atomically, and resumed-session fixtures apply earlier logical proof before later proof/confirm.
 - R9-7 remains independently bounded no-finding closed at `cdac663e4d2649c8f87fc2263766616dc9b4bbe9`; R9-8 at `7c87ac675a381154ae7fceca987e7f2f106c26cf`; R9-9 at `b4a527a1fff994ee0836893f850c36eadb609eb1`.
@@ -16,32 +18,32 @@
 - Release item 3 and item 4 remain incomplete. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - No reviewer-local test execution is claimed for this pass. Repository/source truth came from the GitHub repository API/connector. Developer-local exact-tree gates remain first-class; hosted CI is supplemental.
 
-The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency. **H-R9-079 is the front correctness/resource-lifecycle HIGH; close it before widening downstream review.** After closing it, continue immediately through the preserved queue below without waiting for another reviewer pass.
+The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency. **H-R9-080 is the front HIGH; close the missing terminal-path oracles before widening R9-11.** The shared source repair at `271e512` is already correct in shape; do not redesign lifecycle semantics merely to satisfy review.
 
-## READY_LOCAL 1 — FRONT HIGH: H-R9-079 SessionRuntime terminal stream/timer ownership
+## READY_LOCAL 1 — FRONT HIGH: H-R9-080 missing cancel/remote-close cleanup oracles
 
-Independent finding: exact `26462bb31617486b793ee7d90e8dcf5176552bc9`, `docs/reviews/independent-r9-11-session-terminal-stream-timer-ownership-ee62338-20260920.md`.
+Independent finding: exact `4f426a2ddda0a36fc4cf691b7766e87e35b2e5d2`, `docs/reviews/independent-r9-11-session-terminal-coverage-a23baa6-20260920.md`.
 
 Exact-current owner facts:
 
-- `clear_runtime_state()` clears send/recv queues, receive dedup, confirmed watermarks, per-stream/session window accounting and queued bytes;
-- it does **not** clear `streams: BTreeMap<StreamId, RuntimeStream>` or `close_deadline_ms: Option<u64>`;
-- the function comment says every runtime-owned in-progress state is released and explicitly names only `total_bytes`, `last_activity_ms`, `events`, `next_event`, and `cancelled` as intentional lifetime/cumulative survivors;
-- `idle_timeout_releases_all_runtime_owned_state`, `close_deadline_releases_all_runtime_owned_state`, and the cancel regression do not assert stream/timer release.
+- `clear_runtime_state()` now clears queues, receive dedup, confirmation watermarks, per-stream/session window accounting, queued bytes, `streams`, and `close_deadline_ms`;
+- idle-timeout and graceful-close-deadline regressions now challenge stream/timer release;
+- `repeated_cancel_is_idempotent_no_new_error_events` proves only the repeat-call idempotence/evidence count and does not prove the first cancel released the full owned state;
+- `queue_limits_and_cancel_are_atomic_terminal_operations` checks terminal/fail-closed behavior but not stream/timer/full ownership cleanup;
+- current SessionRuntime tests do not contain a focused `close_remote()` cleanup/evidence oracle matching the accepted four-path contract.
 
 Smallest accepted repair:
 
-1. release stream ownership and disarm the close deadline on terminalization (`streams.clear()` and `close_deadline_ms = None`, or the smallest equivalent preserving committed semantics);
-2. focused deterministic regressions must cover cancel/Error, remote close, idle timeout, and graceful-close deadline, with a stream populated before terminalization and an armed deadline proven before expiry on the deadline path;
-3. after terminalization prove streams empty, deadline absent, existing queue/dedup/watermark/window cleanup still true, intended lifetime facts still survive, and only the expected terminal evidence appears;
-4. preserve H-R9-078 idempotence and ordinary post-terminal fail-closed behavior; do not invent a new error code or select a `SessionRuntime.events` capacity/TTL/LRU/history policy;
-5. focused `neko-session` tests, then final pushed-SHA developer-local exact-tree gate: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree, persisted exact GitHub-resolvable SHA + UTC start/end + exit codes + OS/arch + stable Rust. No decoder/parser/crypto-framing change => no mechanical fuzz requirement.
+1. add a focused cancel/Error regression (or the smallest table-driven equivalent): populate stream/runtime-owned state, optionally arm a close deadline before cancel to exercise timer ownership, call the first `cancel()`, then prove streams empty, deadline absent, send/recv queues, dedup, watermarks, window/inflight counters and queued bytes cleared, intended lifetime facts retained, exactly one Error terminal evidence, and H-R9-078 repeated-cancel idempotence still holds;
+2. add a focused remote-close regression: populate the same owned surfaces, call `close_remote()`, prove equivalent cleanup plus exactly the expected SessionClosed evidence; repeated close remains idempotent and post-terminal mutators cannot append fresh success/delivery/window evidence;
+3. keep the existing idle-timeout and close-deadline positive controls green; do not add an error code or choose a `SessionRuntime.events` retention cap/TTL/LRU/history value;
+4. focused `neko-session` tests, then final pushed source/test SHA developer-local exact-tree gate: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree, exact GitHub-resolvable SHA + UTC start/end + exit codes + OS/arch + stable Rust. No decoder/parser/crypto-framing change => no mechanical fuzz requirement.
 
-After repair/provenance, continue directly to R9-11A remainder.
+After repair/provenance, continue directly to R9-11A remainder without waiting for reviewer cadence.
 
 ## READY_LOCAL 2 — R9-11A SessionRuntime terminal cleanup remainder
 
-On the repaired exact tree, independently re-challenge remote close, cancel, idle timeout and graceful-close deadline as separate terminal paths:
+On the repaired exact tree, independently challenge remote close, cancel, idle timeout and graceful-close deadline as separate terminal paths:
 
 - every post-Closed/post-Error mutating API is fail-closed or explicitly idempotent by committed semantics;
 - rejected post-terminal calls append no false success/delivery/window evidence;
