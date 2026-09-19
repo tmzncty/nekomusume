@@ -1,33 +1,36 @@
-# ChatGPT reviewer handoff — H-R9-067 closed at b5e3bcb; R9-7 blocked on reviewer closure
+# ChatGPT reviewer handoff — H-R9-067 closed; H-R9-068 post-return malformed-bound continuation is FRONT HIGH
 
 ## Current repository truth
 
 - Latest developer-owned source/test commit: exact `b5e3bcbc63edab6ecf049573ce08a54fe31d6686` (`test(cli): H-R9-067 terminal-result oracle — nonzero exit + no success evidence`), on top of `788a4dcbb4ab802f1444991d7898ec48ed7a9030`.
-- Current independent reviewer anchor: [`docs/reviews/independent-r9-7-process-truth-788a4dc-20260919.md`](reviews/independent-r9-7-process-truth-788a4dc-20260919.md), added by exact `76d3e9e61c293d768e30925aa04aee7b0bebf96a`.
-- **R9-6 remaining ownership/resource-boundedness review is CLOSED, bounded no-finding** at source/test anchor `788a4dc`, persisted by [`docs/reviews/independent-r9-6-ownership-boundedness-788a4dc-20260919.md`](reviews/independent-r9-6-ownership-boundedness-788a4dc-20260919.md), review commit `5450e9651855e1309bd7e09868f58b078fbce4a6`.
-- **H-R9-067 closed:** `reliable_udp_first_send_socket_failure_rolls_back` now requires a nonzero client exit (`!status.success()`) and forbids `failover_client_ok`/`summary`/`ordered_records_complete` — a regression that emits residual evidence but then reports success turns red. Production `--fail-r9-first-send` path unchanged.
+- Current independent reviewer finding: [`docs/reviews/independent-r9-7-post-return-malformed-bound-b5e3bcb-20260919.md`](reviews/independent-r9-7-post-return-malformed-bound-b5e3bcb-20260919.md), review commit `dd957a5b4cce661b2a9e72334f0f1e3f2f151616`.
+- **H-R9-067 independently CLOSED at exact `b5e3bcb`:** the production `--fail-r9-first-send` regression now directly requires nonzero exit and forbids `failover_client_ok`, final client `summary`, `ordered_records_complete`, and `r9_udp_post_return_settled`, while retaining first-send rollback / no-PTO / no-retransmit evidence checks.
+- **H-R9-068 OPEN — HIGH:** the post-return dual-settlement caller collapses every `recv_udp_delivery_ack` error into the continuation intended only for an ordinary receive timeout. Therefore `UDP delivery acknowledgement malformed bound exceeded` and socket/receive failure are downgraded to residual/timeout diagnostics and the loop may later consume valid feedback and reach final success after already crossing the explicit operation-wide malformed bound.
+- R9-6 remaining ownership/resource-boundedness review remains CLOSED, bounded no-finding at source/test anchor `788a4dc`, persisted by [`docs/reviews/independent-r9-6-ownership-boundedness-788a4dc-20260919.md`](reviews/independent-r9-6-ownership-boundedness-788a4dc-20260919.md), review commit `5450e9651855e1309bd7e09868f58b078fbce4a6`.
 - Developer-local clean exact-tree provenance for exact `b5e3bcb`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T01:49:33Z → 2026-09-19T01:54:19Z, Linux x86_64, rustc 1.98.0.
-- GitHub-hosted Rust CI for exact `788a4dc` is run `35410930506`, completed `success`. Hosted CI is cross-evidence only and cannot repair the H-R9-067 oracle.
+- GitHub-hosted Rust CI for exact `b5e3bcb` is run `35413664812`, completed `success` on 2026-09-19. Hosted CI is cross-evidence only and does not cover H-R9-068's missing post-return terminal-error discriminator.
 - Reviewer-local execution is not claimed in this pass.
-- Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 exact-wire retransmit admission; H-R9-051 retransmit socket rollback; H-R9-052/H-R9-053 committed watermark restoration; H-R9-054 committed-watermark reuse discriminator; H-R9-055 executable PTO deadline owner; H-R9-057 one-shot ACK-delay/reorder; H-R9-058 exact Session ACK witness; H-R9-059 operation-owned bounded witness; H-R9-060 typed duplicate-Session-ACK evidence; H-R9-061 first-send socket transaction; H-R9-062 production-owner injection; H-R9-063 retained-plaintext first-send abort cleanup; H-R9-064 live-owner teardown; H-R9-065 terminal packet/recovery guard; H-R9-066 history/control-plane closure.
-- R9-4 / H-R9-060 remain independently closed; R9-5 remains bounded no-finding closed; R9-6 is now independently closed.
+- Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 exact-wire retransmit admission; H-R9-051 retransmit socket rollback; H-R9-052/H-R9-053 committed watermark restoration; H-R9-054 committed-watermark reuse discriminator; H-R9-055 executable PTO deadline owner; H-R9-057 one-shot ACK-delay/reorder; H-R9-058 exact Session ACK witness; H-R9-059 operation-owned bounded witness; H-R9-060 typed duplicate-Session-ACK evidence; H-R9-061 first-send socket transaction; H-R9-062 production-owner injection; H-R9-063 retained-plaintext first-send abort cleanup; H-R9-064 live-owner teardown; H-R9-065 terminal packet/recovery guard; H-R9-066 history/control-plane closure; H-R9-067 terminal process-result oracle.
+- R9-4 / H-R9-060 remain independently closed; R9-5 remains bounded no-finding closed; R9-6 remains independently closed.
 - `READY_LIVE: none`; release item 3 remains incomplete; release item 4 remains incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency and is never a work-ticket length or reason to idle.
 
-# READY_LOCAL 1 — H-R9-067 / R9-7 first-send terminal-result oracle — FRONT HIGH
+# READY_LOCAL 1 — H-R9-068 post-return malformed-bound terminality — FRONT HIGH
 
-Close the concrete process-oracle gap without changing transport semantics.
+Close the concrete executable-owner fail-closed defect before broadening R9-7.
+
+Current counterexample: `recv_udp_delivery_ack` owns a persistent operation-wide malformed budget and returns `Err("UDP delivery acknowledgement malformed bound exceeded")` on exhaustion, but the post-return dual-settlement caller currently uses catch-all `Err(_)` arms intended for a non-terminal receive timeout. Under the ordinary path it emits `r9_udp_post_return_residual` and continues; under `--drop-r9-data` it emits `r9_udp_post_return_recv_timeout` and continues. A peer can therefore exhaust the bound, then send otherwise valid Session/Carrier feedback and potentially reach settlement/final success.
 
 Required contract:
 
-1. Keep the real executable `--fail-r9-first-send` production-owner injection after Recovery/Reno/plaintext admission; do not replace it with a helper-only test.
-2. In `reliable_udp_first_send_socket_failure_rolls_back`, explicitly assert the client exits nonzero. Pin code 2 only if the existing CLI exit contract already intentionally requires it; otherwise `!status.success()` is sufficient and avoids inventing policy.
-3. Explicitly assert the failed run cannot emit final success/result evidence: no `failover_client_ok`, no final client `summary`, no `ordered_records_complete`, no `r9_udp_post_return_settled`.
-4. Retain the existing ownership/evidence assertions: one typed `r9_udp_post_return_send_failed` for the failed production first send, no positive `r9_udp_post_return_sent`, no PTO/retransmit for the aborted copy, and zero Recovery in-flight in residual evidence when present.
-5. Keep a production positive control using the same post-return owner: ordinary socket-success -> Session DeliveryAck + Carrier retirement -> exactly one settled event -> final process success. Existing positive migration-back/post-return tests may satisfy this if the closure note names the exact discriminator.
-6. Do not weaken `--drop-r9-data`: that seam intentionally commits Recovery ownership and may legitimately drive PTO/retransmission to success.
-7. This should normally be a tests-only/process-oracle repair. Do not add a generic result checker/schema/framework or redesign Session/Carrier/ACK/crypto/wire behavior merely to close the finding.
+1. Keep `MAX_POST_HANDSHAKE_MALFORMED` and the helper's existing bounded semantics exactly; no new numeric policy.
+2. In the real post-return executable owner, distinguish ordinary `UDP delivery acknowledgement timeout` from terminal helper errors. Only an actual timeout may follow the current PTO / delayed-ACK continuation. `malformed bound exceeded` and receive/socket failure must terminate fail-closed.
+3. Under `--drop-r9-data`, do not label arbitrary helper errors as `r9_udp_post_return_recv_timeout`; that diagnostic is only truthful for an actual timeout.
+4. Add a deterministic **process-level production-owner** negative. After migration-back/post-return Data, inject exactly the existing malformed budget worth of **fresh authenticated but semantically unadmitted** Session DeliveryAcks before otherwise valid settlement feedback. Re-seal each one independently so crypto replay rejection is not the reason for termination.
+5. Prove the negative exits nonzero, reaches the existing malformed/unexpected bound, emits no `r9_udp_post_return_settled`, no `failover_client_ok`, no final client `summary`, and no `ordered_records_complete`; later valid feedback must not resurrect success.
+6. Preserve positive controls: ordinary post-return success, one-shot ACK-delay/reorder, and controlled `--drop-r9-data` may treat only an actual receive timeout as intermediate and must still converge when valid feedback arrives within their bounded windows.
+7. Smallest repair only. Do not redesign Session/Carrier/ACK/crypto/wire architecture, invent a capacity threshold, or add checker/schema/framework filler.
 8. On the final pushed repair SHA run and persist:
 
 ```text
@@ -35,7 +38,7 @@ PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
 git diff --check
 ```
 
-Record exact reachable pushed SHA, UTC start/end, exit codes, OS/arch, stable Rust version and clean-tree state. Fuzz is not mechanically required unless wire decoder/parser/crypto framing actually changes.
+Record exact reachable pushed SHA, UTC start/end, exit codes, OS/arch, stable Rust version and clean-tree state. Fuzz is not mechanically required unless decoder/parser/crypto framing actually changes.
 
 After closure, continue immediately to READY_LOCAL 2 without waiting for reviewer cadence.
 
@@ -56,10 +59,10 @@ Independently challenge that structured diagnostics correspond to the typed stat
 - retained-ownership release vs packet-copy retirement vs terminal teardown;
 - historical terminal diagnostic snapshot vs current live-owner zero;
 - readiness/warm/active/promotion control evidence;
-- residual/intermediate timeout classification;
-- terminal process success/failure and final settlement/result.
+- residual/intermediate **timeout-only** classification;
+- terminal helper error vs terminal process success/failure and final settlement/result.
 
-H-R9-062 through H-R9-067 production socket-success/failure, retained ownership, terminal history/control and process-result boundaries must be included. Test or source mutations should turn the appropriate oracle red; do not generate schema/checker filler. If a concrete defect appears, smallest repair + discriminating regression + exact-tree gate. If no further defect appears, persist a scope-exact bounded no-finding note and continue immediately.
+H-R9-062 through H-R9-068 production socket-success/failure, retained ownership, terminal history/control, bounded malformed feedback and process-result boundaries must be included. Test or source mutations should turn the appropriate oracle red; do not generate schema/checker filler. If a concrete defect appears, smallest repair + discriminating regression + exact-tree gate. If no further defect appears, persist a scope-exact bounded no-finding note and continue immediately.
 
 # READY_LOCAL 3 — R9 mid-slice factual reconciliation
 
@@ -116,6 +119,7 @@ Close remaining lifecycle and terminal invariants for the cross-process reliable
 
 - exactly one terminal success/failure classification per bounded operation;
 - intermediate timeout/residual diagnostics are not terminal success/failure;
+- malformed-bound/socket/receive terminal errors cannot be downgraded into timeout continuation;
 - no post-terminal retransmit, delivery confirmation, Carrier ACK emission, readiness mutation, health-driven promotion or new Data ownership;
 - listener/socket/session/recovery/Reno/ACK-tracker/retained-plaintext state is deterministically cleaned on normal and error exits;
 - cleanup observations do not rewrite historical failure/recovery evidence.
@@ -173,7 +177,7 @@ Repository-wide `queue exhausted` is permitted only when this broad inventory fi
 
 ## VPS opportunity
 
-**Not READY. `READY_LIVE: none`.** Standing authorization remains valid, but H-R9-067 and the current R9 queue are deterministic local correctness/evidence work and create no unresolved real-network question that loopback/process evidence cannot answer. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
+**Not READY. `READY_LIVE: none`.** Standing authorization remains valid, but H-R9-068 and the current R9 queue are deterministic local correctness/evidence work and create no unresolved real-network question that loopback/process evidence cannot answer. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
 
 Only create a new READY_LIVE row if later code/instrumentation/hypothesis/path conditions produce a concrete unresolved real-network question and the run remains inside `docs/standing-vps-lab-authorization.md`.
 
