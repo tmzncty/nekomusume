@@ -1,40 +1,49 @@
-# ChatGPT reviewer handoff — H-R9-069 closed at d8b5ade; R9-7 blocked on reviewer closure
+# ChatGPT reviewer handoff — H-R9-070 open HIGH; R9-7 remains blocked
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `d8b5adefc0309923be8540c928e4d435b85e1a52` (`test(cli): H-R9-069 pin exact malformed bound + terminal cause + post-flood evidence`), on top of `a3a27617819c8ca9d8a061b5f78f1a76db0c066d`.
-- Current reachable reviewer finding: [`docs/reviews/independent-r9-7-malformed-bound-oracle-a3a2761-20260919.md`](reviews/independent-r9-7-malformed-bound-oracle-a3a2761-20260919.md), review commit `628f0011f5c0ac4a30e6400479e487009e5c86eb`.
-- **H-R9-068 source repair is provisionally accepted.** The executable client now lets only the exact ordinary `UDP delivery acknowledgement timeout` continue into PTO/delayed-ACK progress; malformed-bound exhaustion and receive/socket failure call terminal `fail(e)`.
-- **H-R9-069 closed:** `--flood-r9-ack` now sends exactly `MAX_POST_HANDSHAKE_MALFORMED` (3) unadmitted DeliveryAcks — an off-by-one relaxation fails. `reliable_udp_post_return_malformed_bound_is_terminal` requires exactly 3 `unexpected_logical_ack` events, `UDP delivery acknowledgement malformed bound exceeded` terminal cause (not unrelated socket/timeout), server post-flood `udp_return_delivery_ack_sent`/`udp_return_packet_ack_sent` evidence, nonzero exit, and no `r9_udp_post_return_settled`/`failover_client_ok`/`summary`/`ordered_records_complete`.
-- R9-4 / H-R9-060 remain independently closed. R9-5 remains bounded no-finding closed. R9-6 remains independently closed. H-R9-067 remains closed at exact `b5e3bcb`.
-- Developer-local clean exact-tree provenance for exact `d8b5ade`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T03:49:50Z → 2026-09-19T03:54:50Z, Linux x86_64, rustc 1.98.0.
-- GitHub-hosted Rust CI for exact `a3a2761`: run `35416808659`, completed `success` on 2026-09-19; stable `bash scripts/check.sh` green and nightly pinned decode fuzz smoke green. Hosted CI is cross-evidence only and does not close H-R9-069 because the current process oracle is under-discriminating.
-- Reviewer-local execution is not claimed. A clean public clone was attempted, but the current reviewer sandbox could not resolve `github.com`; no local command result is being fabricated.
-- Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 exact-wire retransmit admission; H-R9-051 retransmit socket rollback; H-R9-052/H-R9-053 committed watermark restoration; H-R9-054 committed-watermark reuse discriminator; H-R9-055 executable PTO deadline owner; H-R9-057 one-shot ACK-delay/reorder; H-R9-058 exact Session ACK witness; H-R9-059 operation-owned bounded witness; H-R9-060 typed duplicate-Session-ACK evidence; H-R9-061 first-send socket transaction; H-R9-062 production-owner injection; H-R9-063 retained-plaintext abort cleanup; H-R9-064 live-owner teardown; H-R9-065 terminal packet/recovery guard; H-R9-066 lifetime-history/control-plane closure; H-R9-067 terminal result oracle.
+- Latest developer-owned source/test commit: exact `d8b5adefc0309923be8540c928e4d435b85e1a52` (`test(cli): H-R9-069 pin exact malformed bound + terminal cause + post-flood evidence`).
+- Current independent review finding: [`docs/reviews/independent-r9-7-postflood-dual-feedback-oracle-d8b5ade-20260919.md`](reviews/independent-r9-7-postflood-dual-feedback-oracle-d8b5ade-20260919.md), review commit `98a1aaa9af8b9f87bbd463be09256719eb403e85`.
+- H-R9-068 source repair remains provisionally accepted: only the exact ordinary `UDP delivery acknowledgement timeout` continues into PTO/delayed-ACK progress; malformed-bound exhaustion and receive/socket failure are terminal.
+- H-R9-069 is narrowly closed at exact `d8b5ade`: the flood seam now sends exactly the existing malformed budget (`3`), the client regression requires exactly three `unexpected_logical_ack` events, and terminal cause is explicitly `UDP delivery acknowledgement malformed bound exceeded`.
+- **H-R9-070 OPEN HIGH:** the same regression claims to prove that complete post-flood valid feedback cannot resurrect success, but it only requires `udp_return_delivery_ack_sent || udp_return_packet_ack_sent` and discards `srv_status`. Settlement requires both Session logical confirmation and Carrier packet retirement. Suppressing either post-flood feedback domain can leave the test green while making the resurrection challenge vacuous.
+- R9-4 / H-R9-060 remain independently closed. R9-5 remains bounded no-finding closed. R9-6 remains independently closed. H-R9-067 remains closed.
+- Developer-local clean exact-tree provenance recorded for exact `d8b5ade`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T03:49:50Z → 2026-09-19T03:54:50Z, Linux x86_64, rustc 1.98.0.
+- GitHub-hosted Rust CI for exact `d8b5ade`: run `35419496058`, completed `success`; stable `bash scripts/check.sh` and pinned nightly decode fuzz smoke both green. Hosted CI is cross-evidence only and does not close H-R9-070 because the process oracle is under-discriminating.
+- Reviewer-local execution is not claimed.
+- Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 through H-R9-069 except the newly opened H-R9-070 boundary as described above.
 - `READY_LIVE: none`; release item 3 remains incomplete; release item 4 remains incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency and is never a ticket length or reason to idle.
 
-# READY_LOCAL 1 — H-R9-069 malformed-bound terminal discriminator — FRONT HIGH
+# READY_LOCAL 1 — H-R9-070 post-flood dual-feedback discriminator — FRONT HIGH
 
-Repair the current process/evidence oracle before claiming H-R9-068 / R9-7 closure.
+Repair the R9-7 process/evidence oracle before claiming complete malformed-terminality closure.
 
 Current concrete counterexample:
 
-1. `MAX_POST_HANDSHAKE_MALFORMED == 3`, but the server seam uses `for _ in 0..=3`, sending four fresh bad DeliveryAcks. This does not pin the existing bound exactly and could remain green after an accidental off-by-one relaxation.
-2. `reliable_udp_post_return_malformed_bound_is_terminal` only checks at least one `unexpected_logical_ack`, nonzero client exit, and absence of success evidence. It does not require the terminal cause `UDP delivery acknowledgement malformed bound exceeded` or the existing malformed count.
-3. The test discards `srv_status` and `server_log`. It therefore does not prove the server progressed past the bad flood and actually emitted the later legitimate `udp_return_delivery_ack_sent` and `udp_return_packet_ack_sent` feedback whose inability to resurrect success is the whole claim.
+- On the exact `--flood-r9-ack` path, `seam_active == false`; source order is: three bad Session DeliveryAcks -> legitimate Session DeliveryAck -> legitimate Carrier packet ACK.
+- The regression requires only `udp_return_delivery_ack_sent || udp_return_packet_ack_sent`.
+- Therefore either of these source/test mutations can remain green:
+  1. suppress the post-flood Session DeliveryAck but keep the Carrier ACK;
+  2. suppress the post-flood Carrier ACK but keep the Session DeliveryAck;
+  3. let the server fail after only one valid-feedback event, because `srv_status` is discarded.
+- In those cases the client still terminates on the malformed bound and emits no final success, but the later feedback was never complete enough to settle the two-domain operation. The claimed “later valid feedback cannot resurrect success” challenge is therefore vacuous.
 
-Required contract:
+Required smallest repair:
 
-- Keep the existing malformed bound exactly; no numeric policy change.
-- Make the flood seam send exactly `MAX_POST_HANDSHAKE_MALFORMED` independently sealed authenticated-but-unadmitted DeliveryAcks.
-- Strengthen the real process test so the client reaches the malformed budget, exits nonzero, and proves the terminal cause is `UDP delivery acknowledgement malformed bound exceeded`, not an unrelated timeout/socket/server failure.
-- Require no `r9_udp_post_return_settled`, no `failover_client_ok`, no final client `summary`, and no `ordered_records_complete`.
-- Prove the server itself reached the post-flood valid-feedback phase: require the existing legitimate Session DeliveryAck and Carrier ACK sent evidence, and a truthful server terminal result if that is deterministic. Prefer existing diagnostics; add only the smallest typed seam observation if needed.
-- Preserve R9-3 actual-timeout PTO continuation and R9-4 one-shot ACK-delay/reorder success.
-- Treat this as a test/seam/oracle repair unless a new source defect is found. Do not redesign Session/Carrier/ACK/crypto/wire semantics.
-- On final pushed repair SHA run and persist:
+1. Keep `MAX_POST_HANDSHAKE_MALFORMED` and all policy values unchanged.
+2. Keep exactly three independently sealed authenticated-but-unadmitted DeliveryAcks and the explicit malformed-bound terminal cause.
+3. Require **both** existing valid-feedback domains for the same bounded post-return operation:
+   - Session `udp_return_delivery_ack_sent` for the exact stream/offset/len;
+   - Carrier `udp_return_packet_ack_sent` for the exact packet identity.
+4. Make post-flood ordering mutation-sensitive. Prefer one minimal seam-only typed `malformed_flood_complete` (or equally explicit existing discriminator) after the third bad ACK, then require both valid-feedback events after it. Do not infer the claim from a generic summary.
+5. If the current server result is deterministic, require truthful `srv_status` instead of discarding it; do not allow a crash after only one feedback domain to pass.
+6. Preserve client nonzero exit, exact malformed terminal cause, zero `r9_udp_post_return_settled`, zero `failover_client_ok`, zero final client `summary`, and zero `ordered_records_complete`.
+7. Preserve ordinary timeout/PTO continuation and R9-4 delayed/reordered ACK success.
+8. Treat this as a test/seam/evidence repair unless a new source defect appears. No Session/Carrier/ACK/crypto/wire redesign and no retention/capacity policy invention.
+
+On the final pushed repair SHA run and persist:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
@@ -58,10 +67,10 @@ Independently challenge that each structured diagnostic corresponds to the typed
 - retained-ownership release vs packet-copy retirement vs terminal teardown;
 - terminal lifetime-history snapshot vs current live-owner zero;
 - readiness/warm/active/promotion control evidence;
-- residual/intermediate **timeout-only** classification;
+- residual/intermediate timeout-only classification;
 - malformed-bound/socket/receive terminal error vs final process success/failure.
 
-Re-challenge H-R9-062 through H-R9-069 together at current exact owner paths. Source/test mutation should turn the appropriate oracle red. If no further defect appears, persist a scope-exact bounded no-finding note with exact inspected owners, challenged invariants, focused tests/commands, exclusions, reachable anchor, and evidence class, then continue immediately.
+Re-challenge H-R9-062 through H-R9-070 together at current exact owner paths. Source/test mutation should turn the appropriate oracle red. If no further defect appears, persist a scope-exact bounded no-finding note with exact inspected owners, challenged invariants, focused tests/commands, exclusions, reachable anchor, and evidence class, then continue immediately.
 
 # READY_LOCAL 3 — R9 mid-slice factual reconciliation
 
@@ -77,7 +86,7 @@ Check only current facts:
 
 # READY_LOCAL 4 — R9-8 warm TCP readiness
 
-Challenge D064 single-active / multi-ready semantics on the new cross-process integration:
+Challenge D064 single-active / multi-ready semantics on the cross-process integration:
 
 - authenticated resume-bound warm standby carries readiness/control only;
 - no application Data is owned/sent on TCP before promotion;
@@ -176,7 +185,7 @@ Repository-wide `queue exhausted` is permitted only when this broad inventory fi
 
 ## VPS opportunity
 
-**Not READY. `READY_LIVE: none`.** Standing authorization remains valid, but H-R9-069 and the current R9 queue are deterministic local correctness/evidence work and create no unresolved real-network question that loopback/process evidence cannot answer. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
+**Not READY. `READY_LIVE: none`.** Standing authorization remains valid, but H-R9-070 and the current R9 queue are deterministic local correctness/evidence work and create no unresolved real-network question that loopback/process evidence cannot answer. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
 
 Only create a new READY_LIVE row if later code/instrumentation/hypothesis/path conditions produce a concrete unresolved real-network question inside `docs/standing-vps-lab-authorization.md`.
 
