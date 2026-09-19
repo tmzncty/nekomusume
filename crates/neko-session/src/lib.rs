@@ -1555,7 +1555,10 @@ impl SessionRuntime {
         Ok(())
     }
     pub fn cancel(&mut self, now_ms: u64) -> Result<(), RuntimeError> {
-        if self.state == RuntimeState::Closed {
+        // H-R9-078: terminal states are idempotent — a repeated cancel on an
+        // already-Error runtime is a no-op, never a second terminal Error
+        // event or re-clearing.
+        if self.state == RuntimeState::Closed || self.state == RuntimeState::Error {
             return Ok(());
         }
         self.cancelled = true;
@@ -2096,6 +2099,29 @@ mod runtime_tests {
     }
 
     #[test]
+    #[test]
+    fn repeated_cancel_is_idempotent_no_new_error_events() {
+        // H-R9-078: cancel on an already-Error runtime is a no-op — exactly
+        // one terminal Error event, no retained-state growth, state stays
+        // Error and owned runtime surfaces remain cleared.
+        let mut r = SessionRuntime::new(SessionId(9), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 1).unwrap();
+        r.queue_send(StreamId(1), b"aa", 0).unwrap();
+        let base = r.observable_events().count();
+        r.cancel(5).unwrap();
+        assert_eq!(r.state(), RuntimeState::Error);
+        assert_eq!(r.observable_events().count(), base + 1);
+        let after_first = r.observable_events().count();
+        for t in [6, 7, 8] {
+            assert!(r.cancel(t).is_ok(), "repeated cancel stays Ok");
+            assert_eq!(
+                r.observable_events().count(),
+                after_first,
+                "no new Error event on repeated cancel"
+            );
+            assert_eq!(r.state(), RuntimeState::Error);
+        }
+    }
     fn delivery_ack_rejects_unknown_stream_and_missing_inflight_atomically() {
         let mut r = SessionRuntime::new(SessionId(13), limits(), 0).unwrap();
         r.open_stream(StreamId(1), 1).unwrap();
