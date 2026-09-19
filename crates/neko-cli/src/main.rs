@@ -1637,14 +1637,13 @@ fn failover_server(args: &[String]) {
                                             // malformed.
                                             pending_p3_carrier_ack = Some(sealed_ack);
                                         } else {
-                                            let _ = udp.send_to(&sealed_ack, peer);
-                                            emit_diagnostic(
-                                                args,
-                                                "server",
-                                                "udp_packet_ack_sent",
-                                                0,
-                                                "",
-                                            );
+                                            // H-R9-071: positive *_sent only
+                                            // on real socket success.
+                                            let ev = match udp.send_to(&sealed_ack, peer) {
+                                                Ok(_) => "udp_packet_ack_sent",
+                                                Err(_) => "udp_packet_ack_send_failed",
+                                            };
+                                            emit_diagnostic(args, "server", ev, 0, "");
                                         }
                                     }
                                 }
@@ -1673,14 +1672,11 @@ fn failover_server(args: &[String]) {
                                     udp.send_to(b"malformed", peer).unwrap();
                                     udp.send_to(b"malformed", peer).unwrap();
                                     if let Some(pack) = pending_p3_carrier_ack.take() {
-                                        let _ = udp.send_to(&pack, peer);
-                                        emit_diagnostic(
-                                            args,
-                                            "server",
-                                            "udp_packet_ack_sent",
-                                            0,
-                                            "",
-                                        );
+                                        let ev = match udp.send_to(&pack, peer) {
+                                            Ok(_) => "udp_packet_ack_sent",
+                                            Err(_) => "udp_packet_ack_send_failed",
+                                        };
+                                        emit_diagnostic(args, "server", ev, 0, "");
                                     }
                                 }
                                 udp.send_to(&ack, peer).unwrap();
@@ -2154,13 +2150,28 @@ fn failover_server(args: &[String]) {
                                         }
                                     }
                                     // Legitimate current Carrier ACK first.
+                                    // H-R9-071: the positive *_sent event is
+                                    // committed ONLY on real socket success;
+                                    // a socket Err is a typed send_failed.
+                                    // --fail-r9-ack injects a socket Err on
+                                    // the production Carrier ACK owner.
                                     if let Some(pack) = &post_ack_pack {
                                         if let Ok(sealed_pack) = udp_session.seal_unreliable(pack) {
-                                            let _ = udp.send_to(&sealed_pack, post_source);
+                                            let fail_ack = args.iter().any(|a| a == "--fail-r9-ack");
+                                            let ev = match if fail_ack {
+                                                Err(std::io::Error::other(
+                                                    "injected carrier ACK failure",
+                                                ))
+                                            } else {
+                                                udp.send_to(&sealed_pack, post_source)
+                                            } {
+                                                Ok(_) => "udp_return_packet_ack_sent",
+                                                Err(_) => "udp_return_packet_ack_send_failed",
+                                            };
                                             emit_diagnostic(
                                                 args,
                                                 "server",
-                                                "udp_return_packet_ack_sent",
+                                                ev,
                                                 0,
                                                 &format!(",\"packet_number\":{}", post_pn),
                                             );
@@ -2240,11 +2251,14 @@ fn failover_server(args: &[String]) {
                                     } else {
                                         delay_reorder_done = true;
                                         let (delayed, dpn) = delayed_post_ack.take().unwrap();
-                                        let _ = udp.send_to(&delayed, post_source);
+                                        let ev = match udp.send_to(&delayed, post_source) {
+                                            Ok(_) => "udp_return_packet_ack_sent",
+                                            Err(_) => "udp_return_packet_ack_send_failed",
+                                        };
                                         emit_diagnostic(
                                             args,
                                             "server",
-                                            "udp_return_packet_ack_sent",
+                                            ev,
                                             0,
                                             &format!(",\"packet_number\":{}", dpn),
                                         );
@@ -2252,11 +2266,16 @@ fn failover_server(args: &[String]) {
                                             if let Ok(sealed_pack) =
                                                 udp_session.seal_unreliable(pack)
                                             {
-                                                let _ = udp.send_to(&sealed_pack, post_source);
+                                                let ev = match udp
+                                                    .send_to(&sealed_pack, post_source)
+                                                {
+                                                    Ok(_) => "udp_return_packet_ack_sent",
+                                                    Err(_) => "udp_return_packet_ack_send_failed",
+                                                };
                                                 emit_diagnostic(
                                                     args,
                                                     "server",
-                                                    "udp_return_packet_ack_sent",
+                                                    ev,
                                                     0,
                                                     &format!(",\"packet_number\":{}", post_pn),
                                                 );
@@ -2266,11 +2285,14 @@ fn failover_server(args: &[String]) {
                                 } else if reliable_udp && !seam_active && !suppress_pack {
                                     if let Some(pack) = &post_ack_pack {
                                         if let Ok(sealed_pack) = udp_session.seal_unreliable(pack) {
-                                            let _ = udp.send_to(&sealed_pack, post_source);
+                                            let ev = match udp.send_to(&sealed_pack, post_source) {
+                                                Ok(_) => "udp_return_packet_ack_sent",
+                                                Err(_) => "udp_return_packet_ack_send_failed",
+                                            };
                                             emit_diagnostic(
                                                 args,
                                                 "server",
-                                                "udp_return_packet_ack_sent",
+                                                ev,
                                                 0,
                                                 &format!(",\"packet_number\":{}", post_pn),
                                             );
