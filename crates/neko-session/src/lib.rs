@@ -2111,21 +2111,50 @@ mod runtime_tests {
         assert_eq!(rt.confirmed_watermark(StreamId(1)), 4);
     }
 
-    #[test]
-    fn repeated_cancel_is_idempotent_no_new_error_events() {
-        // H-R9-078: cancel on an already-Error runtime is a no-op — exactly
-        // one terminal Error event, no retained-state growth, state stays
-        // Error and owned runtime surfaces remain cleared.
+    /// Populate every runtime-owned surface before a terminalization path:
+    /// streams, send queue, receive window, dedup, confirmed watermark,
+    /// session accounting, queued bytes, and an armed close deadline.
+    fn populated_runtime() -> SessionRuntime {
         let mut r = SessionRuntime::new(SessionId(9), limits(), 0).unwrap();
         r.open_stream(StreamId(1), 1).unwrap();
-        r.queue_send(StreamId(1), b"aa", 0).unwrap();
+        r.queue_send(StreamId(1), b"aa", 1).unwrap();
+        r.receive(
+            InboundRecord {
+                stream: StreamId(1),
+                offset: 0,
+                data: b"zz".to_vec(),
+            },
+            1,
+        )
+        .unwrap();
+        r.delivery_ack(StreamId(1), 0, 2, 1).unwrap();
+        r.close_graceful(2).unwrap();
+        // Preconditions are non-empty/non-zero so cleanup assertions are not
+        // vacuous — every owned surface is populated before terminalization.
+        assert!(!r.streams.is_empty());
+        assert!(r.close_deadline_ms.is_some());
+        assert!(!r.send.is_empty() || !r.recv.is_empty() || !r.received.is_empty());
+        assert!(!r.confirmed.is_empty());
+        assert!(!r.send_inflight.is_empty() || !r.recv_window_used.is_empty());
+        r
+    }
+
+    #[test]
+    fn repeated_cancel_is_idempotent_no_new_error_events() {
+        // H-R9-078/080: cancel on an already-Error runtime is a no-op — one
+        // terminal Error event, every owned surface cleared, no growth.
+        let mut r = populated_runtime();
         let base = r.observable_events().count();
         r.cancel(5).unwrap();
         assert_eq!(r.state(), RuntimeState::Error);
-        // H-R9-080: first cancel released stream/timer ownership too.
+        // First cancel released every owned surface — not vacuous.
         assert!(r.streams.is_empty() && r.close_deadline_ms.is_none());
         assert!(r.send.is_empty() && r.recv.is_empty() && r.received.is_empty());
         assert!(r.confirmed.is_empty() && r.send_inflight.is_empty());
+        assert!(r.recv_window_used.is_empty());
+        assert_eq!(r.session_send_inflight, 0);
+        assert_eq!(r.session_recv_window_used, 0);
+        assert_eq!(r.queued_bytes(), 0);
         assert_eq!(r.observable_events().count(), base + 1);
         let after_first = r.observable_events().count();
         for t in [6, 7, 8] {
@@ -2140,17 +2169,20 @@ mod runtime_tests {
     }
     #[test]
     fn remote_close_releases_stream_and_timer_ownership() {
-        // H-R9-080: close_remote releases the same owned state — streams,
-        // close_deadline_ms, queues, dedup, watermarks, window counters.
-        let mut r = SessionRuntime::new(SessionId(9), limits(), 0).unwrap();
-        r.open_stream(StreamId(1), 1).unwrap();
-        r.queue_send(StreamId(1), b"aa", 0).unwrap();
+        // H-R9-080: close_remote releases every owned surface populated in
+        // the shared precondition — streams, deadline, queues, dedup,
+        // watermarks, window/session counters.
+        let mut r = populated_runtime();
         let base = r.observable_events().count();
         r.close_remote(5).unwrap();
         assert_eq!(r.state(), RuntimeState::Closed);
         assert!(r.streams.is_empty() && r.close_deadline_ms.is_none());
         assert!(r.send.is_empty() && r.recv.is_empty() && r.received.is_empty());
         assert!(r.confirmed.is_empty() && r.send_inflight.is_empty());
+        assert!(r.recv_window_used.is_empty());
+        assert_eq!(r.session_send_inflight, 0);
+        assert_eq!(r.session_recv_window_used, 0);
+        assert_eq!(r.queued_bytes(), 0);
         // Exactly one SessionClosed event; lifetime facts survive.
         let events: Vec<_> = r.observable_events().collect();
         assert_eq!(events.len(), base + 1);
@@ -2158,9 +2190,14 @@ mod runtime_tests {
             events.last().map(|e| e.kind),
             Some(RuntimeEventKind::SessionClosed)
         );
-        // Repeated close is idempotent; post-terminal mutator fails closed.
+        // Repeated close is idempotent — unchanged observable-event count.
+        let before_repeat = r.observable_events().count();
         r.close_remote(6).unwrap();
+        assert_eq!(r.observable_events().count(), before_repeat);
+        // Post-terminal mutator fails closed and appends no fresh evidence.
+        let before_mut = r.observable_events().count();
         assert!(r.queue_send(StreamId(1), b"x", 7).is_err());
+        assert_eq!(r.observable_events().count(), before_mut);
     }
     #[test]
     fn delivery_ack_rejects_unknown_stream_and_missing_inflight_atomically() {
