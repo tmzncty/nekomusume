@@ -1,15 +1,15 @@
-# ChatGPT reviewer handoff — H-R9-071 Carrier ACK socket-outcome evidence HIGH; R9-7 blocked
+# ChatGPT reviewer handoff — H-R9-071 closed at 20863a4; R9-7 blocked on reviewer closure
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `fd41ea9ff9ec772951c61fb4ed5162fbc1977d95` (`test(cli): H-R9-070 require BOTH post-flood feedback channels`), on top of `d8b5adefc0309923be8540c928e4d435b85e1a52`.
+- Latest developer-owned source/test commit: exact `20863a4cf392dc0d6d978d424c5d21cd2fba4a57` (`fix(cli): H-R9-071 Carrier ACK send-evidence truth — positive *_sent only on socket Ok`), on top of `fd41ea9ff9ec772951c61fb4ed5162fbc1977d95`.
 - Current independent review finding: [`docs/reviews/independent-r9-7-carrier-ack-send-evidence-fd41ea9-20260919.md`](reviews/independent-r9-7-carrier-ack-send-evidence-fd41ea9-20260919.md), review commit `8eeccfb364f5da8156ae628468a3ba66d11fb964`.
 - H-R9-068 source repair remains accepted at the currently reviewed owner: only exact ordinary `UDP delivery acknowledgement timeout` continues into PTO/delayed-ACK progress; malformed-bound exhaustion and receive/socket failure are terminal.
 - H-R9-069 remains narrowly closed at exact `d8b5ade`: the flood seam sends exactly the existing malformed budget (`3`), the client regression requires exactly three `unexpected_logical_ack` events, and terminal cause is explicitly `UDP delivery acknowledgement malformed bound exceeded`.
 - H-R9-070 remains narrowly closed at exact `fd41ea9`: `reliable_udp_post_return_malformed_bound_is_terminal` requires BOTH post-flood feedback domains — Session `udp_return_delivery_ack_sent` and Carrier `udp_return_packet_ack_sent` — so one channel alone no longer satisfies the oracle.
-- **New HIGH H-R9-071:** the executable server still discards `UdpSocket::send_to` results for several Carrier packet-ACK paths and emits positive `udp_packet_ack_sent` / `udp_return_packet_ack_sent` diagnostics unconditionally afterward. A socket `Err` can therefore be projected as `*_sent`. This directly weakens H-R9-070 because its Carrier-side “valid feedback actually sent” premise trusts `udp_return_packet_ack_sent`.
+- **H-R9-071 closed:** all Carrier ACK send owners (initial `udp_packet_ack_sent`, post-return `udp_return_packet_ack_sent` on normal/delayed/reordered branches) now match `send_to` outcome — `Ok` emits positive `*_sent`, `Err` emits typed `*_send_failed`. `--fail-r9-ack` injects socket `Err` on the real executable Carrier ACK owners.
 - R9-4 / H-R9-060 remain independently closed. R9-5 remains bounded no-finding closed. R9-6 remains independently closed. H-R9-067 remains closed.
-- Developer-local clean exact-tree provenance for exact `fd41ea9`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T04:50:01Z → 2026-09-19T04:55:00Z, Linux x86_64, rustc 1.98.0.
+- Developer-local clean exact-tree provenance for exact `20863a4`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T05:56:27Z → 2026-09-19T06:01:22Z, Linux x86_64, rustc 1.98.0.
 - GitHub-hosted Rust CI for exact `fd41ea9`: run `35422199161`, completed `success` on 2026-09-19. Hosted CI is cross-evidence only; it does not exercise an injected server Carrier-ACK socket failure and therefore cannot close H-R9-071.
 - Reviewer-local execution is not claimed.
 - Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 through H-R9-070 except the newly opened H-R9-071 boundary described here.
