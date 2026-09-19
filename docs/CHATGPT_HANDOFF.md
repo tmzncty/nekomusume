@@ -1,47 +1,48 @@
-# ChatGPT reviewer handoff — H-R9-070 closed at fd41ea9; R9-7 blocked on reviewer closure
+# ChatGPT reviewer handoff — H-R9-071 Carrier ACK socket-outcome evidence HIGH; R9-7 blocked
 
 ## Current repository truth
 
 - Latest developer-owned source/test commit: exact `fd41ea9ff9ec772951c61fb4ed5162fbc1977d95` (`test(cli): H-R9-070 require BOTH post-flood feedback channels`), on top of `d8b5adefc0309923be8540c928e4d435b85e1a52`.
-- Current independent review finding: [`docs/reviews/independent-r9-7-postflood-dual-feedback-oracle-d8b5ade-20260919.md`](reviews/independent-r9-7-postflood-dual-feedback-oracle-d8b5ade-20260919.md), review commit `98a1aaa9af8b9f87bbd463be09256719eb403e85`.
-- H-R9-068 source repair remains provisionally accepted: only the exact ordinary `UDP delivery acknowledgement timeout` continues into PTO/delayed-ACK progress; malformed-bound exhaustion and receive/socket failure are terminal.
-- H-R9-069 is narrowly closed at exact `d8b5ade`: the flood seam now sends exactly the existing malformed budget (`3`), the client regression requires exactly three `unexpected_logical_ack` events, and terminal cause is explicitly `UDP delivery acknowledgement malformed bound exceeded`.
-- **H-R9-070 closed:** `reliable_udp_post_return_malformed_bound_is_terminal` now requires BOTH `udp_return_delivery_ack_sent` (Session) AND `udp_return_packet_ack_sent` (Carrier) — neither channel alone can satisfy the oracle, and the bound-crossing cannot be rescued by either.
+- Current independent review finding: [`docs/reviews/independent-r9-7-carrier-ack-send-evidence-fd41ea9-20260919.md`](reviews/independent-r9-7-carrier-ack-send-evidence-fd41ea9-20260919.md), review commit `8eeccfb364f5da8156ae628468a3ba66d11fb964`.
+- H-R9-068 source repair remains accepted at the currently reviewed owner: only exact ordinary `UDP delivery acknowledgement timeout` continues into PTO/delayed-ACK progress; malformed-bound exhaustion and receive/socket failure are terminal.
+- H-R9-069 remains narrowly closed at exact `d8b5ade`: the flood seam sends exactly the existing malformed budget (`3`), the client regression requires exactly three `unexpected_logical_ack` events, and terminal cause is explicitly `UDP delivery acknowledgement malformed bound exceeded`.
+- H-R9-070 remains narrowly closed at exact `fd41ea9`: `reliable_udp_post_return_malformed_bound_is_terminal` requires BOTH post-flood feedback domains — Session `udp_return_delivery_ack_sent` and Carrier `udp_return_packet_ack_sent` — so one channel alone no longer satisfies the oracle.
+- **New HIGH H-R9-071:** the executable server still discards `UdpSocket::send_to` results for several Carrier packet-ACK paths and emits positive `udp_packet_ack_sent` / `udp_return_packet_ack_sent` diagnostics unconditionally afterward. A socket `Err` can therefore be projected as `*_sent`. This directly weakens H-R9-070 because its Carrier-side “valid feedback actually sent” premise trusts `udp_return_packet_ack_sent`.
 - R9-4 / H-R9-060 remain independently closed. R9-5 remains bounded no-finding closed. R9-6 remains independently closed. H-R9-067 remains closed.
 - Developer-local clean exact-tree provenance for exact `fd41ea9`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T04:50:01Z → 2026-09-19T04:55:00Z, Linux x86_64, rustc 1.98.0.
-- GitHub-hosted Rust CI for exact `d8b5ade`: run `35419496058`, completed `success`; stable `bash scripts/check.sh` and pinned nightly decode fuzz smoke both green. Hosted CI is cross-evidence only and does not close H-R9-070 because the process oracle is under-discriminating.
+- GitHub-hosted Rust CI for exact `fd41ea9`: run `35422199161`, completed `success` on 2026-09-19. Hosted CI is cross-evidence only; it does not exercise an injected server Carrier-ACK socket failure and therefore cannot close H-R9-071.
 - Reviewer-local execution is not claimed.
-- Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 through H-R9-069 except the newly opened H-R9-070 boundary as described above.
+- Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 through H-R9-070 except the newly opened H-R9-071 boundary described here.
 - `READY_LIVE: none`; release item 3 remains incomplete; release item 4 remains incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency and is never a ticket length or reason to idle.
 
-# READY_LOCAL 1 — H-R9-070 post-flood dual-feedback discriminator — FRONT HIGH
+# READY_LOCAL 1 — H-R9-071 Carrier ACK socket-outcome evidence truth — FRONT HIGH
 
-Repair the R9-7 process/evidence oracle before claiming complete malformed-terminality closure.
+Repair the R9-7 process/evidence owner before claiming complete malformed-terminality closure.
 
 Current concrete counterexample:
 
-- On the exact `--flood-r9-ack` path, `seam_active == false`; source order is: three bad Session DeliveryAcks -> legitimate Session DeliveryAck -> legitimate Carrier packet ACK.
-- The regression requires only `udp_return_delivery_ack_sent || udp_return_packet_ack_sent`.
-- Therefore either of these source/test mutations can remain green:
-  1. suppress the post-flood Session DeliveryAck but keep the Carrier ACK;
-  2. suppress the post-flood Carrier ACK but keep the Session DeliveryAck;
-  3. let the server fail after only one valid-feedback event, because `srv_status` is discarded.
-- In those cases the client still terminates on the malformed bound and emits no final success, but the later feedback was never complete enough to settle the two-domain operation. The claimed “later valid feedback cannot resurrect success” challenge is therefore vacuous.
+- Multiple executable server Carrier packet-ACK owners use the shape `let _ = udp.send_to(...); emit_diagnostic(..., "*_packet_ack_sent", ...)`.
+- Because the socket result is discarded, `Err` still emits a positive `sent` event.
+- The affected surface includes the initial reliable-UDP `udp_packet_ack_sent` owner and normal / delayed-reorder post-return `udp_return_packet_ack_sent` owners.
+- The post-return Session DeliveryAck positive event is not the same defect: its ordinary owner requires the socket send before emitting `udp_return_delivery_ack_sent`.
+- H-R9-070 now correctly requires both feedback-domain event names, but the Carrier half can still be false-positive if the socket rejected the ACK datagram.
 
 Required smallest repair:
 
-1. Keep `MAX_POST_HANDSHAKE_MALFORMED` and all policy values unchanged.
-2. Keep exactly three independently sealed authenticated-but-unadmitted DeliveryAcks and the explicit malformed-bound terminal cause.
-3. Require **both** existing valid-feedback domains for the same bounded post-return operation:
-   - Session `udp_return_delivery_ack_sent` for the exact stream/offset/len;
-   - Carrier `udp_return_packet_ack_sent` for the exact packet identity.
-4. Make post-flood ordering mutation-sensitive. Prefer one minimal seam-only typed `malformed_flood_complete` (or equally explicit existing discriminator) after the third bad ACK, then require both valid-feedback events after it. Do not infer the claim from a generic summary.
-5. If the current server result is deterministic, require truthful `srv_status` instead of discarding it; do not allow a crash after only one feedback domain to pass.
-6. Preserve client nonzero exit, exact malformed terminal cause, zero `r9_udp_post_return_settled`, zero `failover_client_ok`, zero final client `summary`, and zero `ordered_records_complete`.
-7. Preserve ordinary timeout/PTO continuation and R9-4 delayed/reordered ACK success.
-8. Treat this as a test/seam/evidence repair unless a new source defect appears. No Session/Carrier/ACK/crypto/wire redesign and no retention/capacity policy invention.
+1. Audit every executable server Carrier packet-ACK send owner that can emit `udp_packet_ack_sent` or `udp_return_packet_ack_sent`.
+2. Emit positive `*_sent` only after `UdpSocket::send_to` returns `Ok`.
+3. On `Err`, emit a typed failure classification such as `udp_packet_ack_send_failed` / `udp_return_packet_ack_send_failed`, or an equally precise existing event. Never relabel the failed attempt as sent.
+4. Preserve current ACK ranges, Recovery, Session delivery, crypto/wire, D064, malformed budget and policy values. Do not redesign whether a later fresh packet/ACK opportunity may recover; this finding is about truthful socket-outcome projection unless the deterministic process regression exposes a separate concrete correctness defect.
+5. Add a deterministic failure seam on the **real executable post-return Carrier ACK owner** after ACK construction/sealing, so tests can force a send `Err`. Do not rely on random OS failure and do not satisfy this with helper-only unit coverage.
+6. The negative process regression must prove for the injected target ACK:
+   - typed ACK-send failure exists;
+   - no positive `udp_return_packet_ack_sent` exists for the failed send / packet identity;
+   - H-R9-070 cannot infer complete dual feedback from the failed Carrier channel;
+   - no final client success/settlement is fabricated solely from the failed ACK attempt.
+7. Preserve a paired normal-path positive control proving successful ACK send still emits the positive event and ordinary settlement remains green.
+8. Cover the same evidence rule for initial `udp_packet_ack_sent` and delayed/reordered post-return ACK owners in this coherent repair. A minimal shared outcome helper is acceptable if it reduces duplicated error-prone logic; do not create checker/schema/framework filler.
 
 On the final pushed repair SHA run and persist:
 
@@ -70,7 +71,7 @@ Independently challenge that each structured diagnostic corresponds to the typed
 - residual/intermediate timeout-only classification;
 - malformed-bound/socket/receive terminal error vs final process success/failure.
 
-Re-challenge H-R9-062 through H-R9-070 together at current exact owner paths. Source/test mutation should turn the appropriate oracle red. If no further defect appears, persist a scope-exact bounded no-finding note with exact inspected owners, challenged invariants, focused tests/commands, exclusions, reachable anchor, and evidence class, then continue immediately.
+Re-challenge H-R9-062 through H-R9-071 together at current exact owner paths. Mutation of any source/test success projection should turn the appropriate oracle red. If no further defect appears, persist a scope-exact bounded no-finding note with exact inspected owners, challenged invariants, focused tests/commands, exclusions, reachable anchor and evidence class, then continue immediately.
 
 # READY_LOCAL 3 — R9 mid-slice factual reconciliation
 
@@ -185,7 +186,7 @@ Repository-wide `queue exhausted` is permitted only when this broad inventory fi
 
 ## VPS opportunity
 
-**Not READY. `READY_LIVE: none`.** Standing authorization remains valid, but H-R9-070 and the current R9 queue are deterministic local correctness/evidence work and create no unresolved real-network question that loopback/process evidence cannot answer. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
+**Not READY. `READY_LIVE: none`.** Standing authorization remains valid, but H-R9-071 and the current R9 queue are deterministic local correctness/evidence work and create no unresolved real-network question that loopback/process evidence cannot answer. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
 
 Only create a new READY_LIVE row if later code/instrumentation/hypothesis/path conditions produce a concrete unresolved real-network question inside `docs/standing-vps-lab-authorization.md`.
 
