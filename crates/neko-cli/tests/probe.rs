@@ -4185,12 +4185,16 @@ fn reliable_udp_post_return_malformed_bound_is_terminal() {
             || client_log.contains("malformed bound exceeded"),
         "terminal cause is malformed bound: {client_log} {client_err}"
     );
-    // The server really proceeded to emit the otherwise-valid post-flood
-    // Session DeliveryAck — the bound-crossing cannot be rescued by it.
+    // The server really proceeded to emit BOTH post-flood valid feedback
+    // channels — Session DeliveryAck AND Carrier packet ACK — so the bound
+    // crossing cannot be rescued by either.
     assert!(
-        server_log.contains("\"event\":\"udp_return_delivery_ack_sent\"")
-            || server_log.contains("\"event\":\"udp_return_packet_ack_sent\""),
-        "server emitted post-flood valid feedback: {server_log}"
+        server_log.contains("\"event\":\"udp_return_delivery_ack_sent\""),
+        "server emitted post-flood Session DeliveryAck: {server_log}"
+    );
+    assert!(
+        server_log.contains("\"event\":\"udp_return_packet_ack_sent\""),
+        "server emitted post-flood Carrier packet ACK: {server_log}"
     );
     // Terminal: nonzero exit, no settled/success/final-summary evidence.
     assert!(
