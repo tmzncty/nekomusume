@@ -4840,6 +4840,10 @@ impl ReliableUdpRuntime {
         // diagnostic history — a terminal summary stays distinguishable from
         // "never happened".
         self.recovery.quiesce();
+        // H-R9-077: release receiver-side ACK ownership too — observed
+        // ranges, largest_observed and the pending ACK obligation do not
+        // survive terminalization for this generation.
+        self.acks = PacketAckTracker::new(self.generation);
         // H-R9-065: mark the runtime terminal — every data/feedback mutator
         // is fail-closed or observationally inert from here on.
         self.torn_down = true;
@@ -5487,6 +5491,12 @@ mod path_recovery_tests {
         );
         assert!(rt.pto_probe().is_empty());
         assert!(matches!(rt.poll_health(100), RuntimeEvent::Idle));
+        // H-R9-077: receiver ACK ownership is quiesced too — no observed
+        // ranges, no largest_observed, no pending obligation survive.
+        assert!(
+            rt.acks.largest_observed.is_none() && !rt.acks.pending_ack,
+            "receiver ACK tracker emptied on teardown"
+        );
     }
 
     #[test]
