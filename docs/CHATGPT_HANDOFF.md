@@ -1,14 +1,14 @@
-# ChatGPT reviewer handoff — H-R9-070 open HIGH; R9-7 remains blocked
+# ChatGPT reviewer handoff — H-R9-070 closed at fd41ea9; R9-7 blocked on reviewer closure
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `d8b5adefc0309923be8540c928e4d435b85e1a52` (`test(cli): H-R9-069 pin exact malformed bound + terminal cause + post-flood evidence`).
+- Latest developer-owned source/test commit: exact `fd41ea9ff9ec772951c61fb4ed5162fbc1977d95` (`test(cli): H-R9-070 require BOTH post-flood feedback channels`), on top of `d8b5adefc0309923be8540c928e4d435b85e1a52`.
 - Current independent review finding: [`docs/reviews/independent-r9-7-postflood-dual-feedback-oracle-d8b5ade-20260919.md`](reviews/independent-r9-7-postflood-dual-feedback-oracle-d8b5ade-20260919.md), review commit `98a1aaa9af8b9f87bbd463be09256719eb403e85`.
 - H-R9-068 source repair remains provisionally accepted: only the exact ordinary `UDP delivery acknowledgement timeout` continues into PTO/delayed-ACK progress; malformed-bound exhaustion and receive/socket failure are terminal.
 - H-R9-069 is narrowly closed at exact `d8b5ade`: the flood seam now sends exactly the existing malformed budget (`3`), the client regression requires exactly three `unexpected_logical_ack` events, and terminal cause is explicitly `UDP delivery acknowledgement malformed bound exceeded`.
-- **H-R9-070 OPEN HIGH:** the same regression claims to prove that complete post-flood valid feedback cannot resurrect success, but it only requires `udp_return_delivery_ack_sent || udp_return_packet_ack_sent` and discards `srv_status`. Settlement requires both Session logical confirmation and Carrier packet retirement. Suppressing either post-flood feedback domain can leave the test green while making the resurrection challenge vacuous.
+- **H-R9-070 closed:** `reliable_udp_post_return_malformed_bound_is_terminal` now requires BOTH `udp_return_delivery_ack_sent` (Session) AND `udp_return_packet_ack_sent` (Carrier) — neither channel alone can satisfy the oracle, and the bound-crossing cannot be rescued by either.
 - R9-4 / H-R9-060 remain independently closed. R9-5 remains bounded no-finding closed. R9-6 remains independently closed. H-R9-067 remains closed.
-- Developer-local clean exact-tree provenance recorded for exact `d8b5ade`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T03:49:50Z → 2026-09-19T03:54:50Z, Linux x86_64, rustc 1.98.0.
+- Developer-local clean exact-tree provenance for exact `fd41ea9`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T04:50:01Z → 2026-09-19T04:55:00Z, Linux x86_64, rustc 1.98.0.
 - GitHub-hosted Rust CI for exact `d8b5ade`: run `35419496058`, completed `success`; stable `bash scripts/check.sh` and pinned nightly decode fuzz smoke both green. Hosted CI is cross-evidence only and does not close H-R9-070 because the process oracle is under-discriminating.
 - Reviewer-local execution is not claimed.
 - Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 through H-R9-069 except the newly opened H-R9-070 boundary as described above.
