@@ -1,16 +1,16 @@
-# ChatGPT reviewer handoff — R9-10B independently closed; R9-10C is front
+# ChatGPT reviewer handoff — R9-10C independently closed; sampler determinism is front
 
 ## Current repository truth
 
 - Latest developer-owned source/test commit reviewed: exact `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4` (`fix(cli): R9-10B TCP replay bytes/identity from authoritative retained set`).
-- Latest independent bounded review support: `586148eb15e049226a1999808d6174023a361814`, `docs/reviews/independent-r9-10b-executable-replay-70e87f0-20260919.md`.
-- **R9-10B is closed at exact source/test `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4`.** Automatic-health TCP replay now constructs each replayed `OutboundRecord` directly from the authoritative retained `(DataId, bytes)` returned by `FailoverController::tcp_resend()`, rather than using retained count plus a positional slice. Per-record authenticated TCP Session DeliveryAck is applied to `SessionRuntime` before the exact retained identity is removed by `confirm`.
-- The previous handoff spelled the full `70e87f0` SHA incorrectly. The GitHub-resolvable pushed commit is `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4`; use this exact SHA for shared provenance/evidence references.
-- Developer-local clean exact-tree provenance recorded for short SHA `70e87f0` remains: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-19T15:00:05Z → 2026-09-19T15:04:57Z, Linux x86_64, rustc 1.98.0. This remains developer-reported local evidence; reviewer-local execution is not claimed. The unique pushed `70e87f0` prefix resolves to the exact SHA above.
-- GitHub combined status for exact `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4` currently has no status contexts. Hosted CI is supplemental and is not a wait condition.
-- **H-R9-075 remains closed.** `SessionRuntime::delivery_ack` rejects forward gaps (`offset > confirmed watermark`) before any watermark/in-flight/event mutation; the strengthened negative proves atomic rejection, and ordered exact proofs still advance.
-- **H-R9-076 remains closed.** The resumed-session fixture applies the already-delivered offset-0 Session proof before later resumed proofs and only calls `confirm` after successful proof application.
-- The independent process-resource sampler finding remains open as a package/evidence-reliability lane: `43bad9d5cfd91333b2f6df513d58aa29cfac1c55`. It is not a transport correctness blocker and must be repaired with deterministic synchronization, not a longer arbitrary sleep.
+- Latest developer bounded review support reviewed: exact `15c0d9f1f15fcbc2f40039d7622bfdce9a33fb26`, `docs/reviews/dev-r9-10c-replay-cleanup-20260919.md`.
+- Latest independent reviewer support: exact `a1de16f5568951fdc5e99846436f918ed8d99ed2`, `docs/reviews/independent-r9-10c-replay-cleanup-15c0d9f-20260920.md`.
+- **R9-10B remains closed** at source/test exact `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4`: automatic-health TCP replay constructs each replay record from the authoritative retained `(DataId, bytes)` returned by `FailoverController::tcp_resend()` rather than an equal-count positional slice.
+- **R9-10C is independently bounded no-finding closed** at reviewer exact `a1de16f5568951fdc5e99846436f918ed8d99ed2` over source/test exact `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4`. The challenge covered failed-promotion ownership preservation, write/read/auth/Session-proof ordering, exact retained identity deletion only after Session proof, partial replay retention, Session-vs-Carrier evidence separation, and migration-back ordering. Full lifecycle/resource terminalization is deliberately excluded and remains R9-11.
+- Repository truth for duplicate semantics: a repeated `FailoverController::confirm` is typed `NotFound`; exact duplicate **receive** is the idempotent `Ok(false)` case. Do not preserve any stale prose that calls duplicate confirm `Ok`.
+- **H-R9-075 remains closed.** `SessionRuntime::delivery_ack` rejects a forward gap before watermark/in-flight/event mutation, and the strengthened negative proves atomic rejection.
+- **H-R9-076 remains closed.** The resumed-session fixture applies the already-delivered offset-0 Session proof before later resumed proofs and confirms retained identity only after successful proof application.
+- **The process-resource sampler positive-fixture determinism finding remains OPEN** at exact `43bad9d5cfd91333b2f6df513d58aa29cfac1c55`. Current `scripts/bench/process-resource-sampler-test.py` still gives `known_child.py` only `time.sleep(.25)` after opening five `/dev/null` FDs and one listener; there is still no readiness/release synchronization barrier. This is a test/evidence-reliability defect, not a transport correctness blocker, but it can create false repository-gate failures and is now the first dependency-ready concrete repair.
 - R9-7 remains independently bounded no-finding closed at `cdac663e4d2649c8f87fc2263766616dc9b4bbe9` over source/test exact `d97a536`.
 - R9-8 warm readiness remains independently bounded no-finding closed at `7c87ac675a381154ae7fceca987e7f2f106c26cf`.
 - R9-9 health/promotion/switch ordering remains independently bounded no-finding closed at `b4a527a1fff994ee0836893f850c36eadb609eb1`.
@@ -21,44 +21,65 @@
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency and is never a ticket length or reason to idle.
 
-## READY_LOCAL 1 — FRONT: R9-10C replay cleanup / partial-promotion negatives
-
-Challenge exact-current executable and policy-core cleanup/failure atomicity around UDP -> TCP promotion and partial replay.
-
-Owners to inspect:
-
-- `crates/neko-cli/src/main.rs` automatic-health promotion + TCP replay loop;
-- `FailoverController::{apply_manager_decision,tcp_resend,confirm,receive,apply_migration_back}`;
-- `ConcurrentCarrierManager::{mark_owner_uncertain,replay_uncertain,finish_drain,confirm}` where applicable;
-- current process tests and D005/D064/Session v0 evidence boundaries.
-
-Required invariants:
-
-1. failed authentication/readiness/promotion cannot consume retained uncertain ownership or emit success evidence;
-2. a TCP write/read/auth/DeliveryAck failure before `confirm` cannot fabricate Session confirmation or remove the unsatisfied retained identity;
-3. successful authenticated Session proof removes exactly that proved identity once; exact duplicate confirmation/receive is idempotent or typed-rejected according to the existing API, never double-counted;
-4. partial replay cannot silently drop a later unsent/unconfirmed identity; if the operation terminates, final success/settled evidence must remain impossible;
-5. Carrier packet feedback cannot substitute for Session proof, and TCP must not acquire a duplicate UDP packet-ACK ownership layer;
-6. migration-back must not bypass unresolved replay ownership or turn a failed partial replay into success;
-7. terminal cleanup releases live replay/socket/runtime ownership while preserving only already-approved bounded diagnostic history semantics.
-
-Prefer focused deterministic existing fixtures plus smallest new negative only if a real oracle gap is found. Do not add soak/capacity pressure, invent policy numbers, redesign DataId/ACK/wire/crypto, or alter D019/D064.
-
-If no concrete defect is found, commit a scope-precise independent bounded no-finding note with exact inspected owners/tests/exclusions and proceed immediately.
-
-## READY_LOCAL 2 — process-resource sampler positive-fixture determinism
+## READY_LOCAL 1 — FRONT: process-resource sampler positive-fixture determinism
 
 Independent finding: `43bad9d5cfd91333b2f6df513d58aa29cfac1c55`, `docs/reviews/independent-process-resource-sampler-flake-6f4a61c-20260919.md`.
 
-Repair the test synchronization contract only. Replace the `known_child.py` short fixed lifetime race with a bounded readiness/release handshake (or equivalently deterministic synchronization) that proves the expected FDs/listener exist before the positive oracle requires them to be sampled. Preserve real `/proc` observation, truthful `null` exit-race semantics, process-group cleanup and existing sampler production behavior. Do not simply lengthen an arbitrary sleep. Run the normal exact-tree local gate.
+Repair the **test synchronization contract only** unless source inspection reveals a separate production sampler defect.
 
-## READY_LOCAL 3 — R9-11 lifecycle / terminal resource closure
+Current failing shape to replace:
 
-Bounded independent challenge of the full failover/migration lifecycle after R9-10: socket/Session/Recovery/CarrierManager/replay ownership on success, failure, timeout, shutdown and post-return paths. Reuse existing deterministic process fixtures; do not add soak/capacity pressure. Terminal state must fail closed on further mutators while approved diagnostic history may remain.
+- `known_child.py` opens five `/dev/null` FDs and one loopback listener;
+- it then relies on a fixed `time.sleep(.25)` lifetime;
+- the sampler starts separately and may observe pre-exec/pre-resource state or miss the short resource-owning interval under scheduler load.
 
-## READY_LOCAL 4 — R9-12 final exact-tree provenance
+Required repair:
 
-After the coherent R9 repair/review group is stable, run and persist developer-local provenance for the final pushed developer SHA:
+1. add a bounded deterministic readiness/release handshake: the child must signal only after all expected FDs/listener exist, and remain alive until the parent/sampler-positive oracle has had a bounded opportunity to observe them;
+2. preserve **real `/proc` sampling** — do not inject fake metrics or bypass the sampler;
+3. preserve truthful `null` semantics for the separate exit-race case;
+4. preserve sampler-owned process-group termination/reaping and listener cleanup;
+5. do not solve this by merely making `.25` a larger arbitrary sleep;
+6. do not change capacity/performance policy numbers or production sampler semantics without a new concrete defect.
+
+Add/strengthen a deterministic regression so the positive fixture cannot pass unless the readiness state existed before sampling. Then run on the final pushed source/test SHA:
+
+`PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`
+
+`git diff --check`
+
+and record exact GitHub-resolvable SHA, UTC start/end, exit codes, Linux/arch, stable Rust version, and clean-tree state. Hosted CI is supplemental only.
+
+After commit/push/gate, proceed immediately to R9-11; do not wait for reviewer cadence.
+
+## READY_LOCAL 2 — R9-11 lifecycle / terminal resource closure
+
+Bounded independent challenge of the full failover/migration lifecycle after R9-10. Read exact-current owners and challenge **live ownership release plus terminal mutator behavior**, not merely event labels.
+
+Owners/surfaces:
+
+- executable automatic-health failover and migration-back process path;
+- `SessionRuntime` close/cancel/idle/close-deadline cleanup and post-terminal mutators;
+- `PathRecovery` / `ReliableUdpRuntime` live sent/retransmit/Reno/ACK ownership and `quiesce` behavior;
+- `FailoverController` retained replay ownership and migration-back state;
+- `ConcurrentCarrierManager` active/draining/failed generations, retained ranges and replay ownership;
+- TCP/UDP socket/process cleanup fixtures and existing lifecycle regressions.
+
+Required invariants:
+
+1. success, explicit failure, timeout, shutdown and post-return terminal paths release live socket/runtime/recovery/replay ownership they no longer own;
+2. Session terminal states fail closed on later state-mutating APIs while approved lifetime diagnostics/history may remain;
+3. a failed/retired **path generation** cannot be reactivated or receive new ownership without a fresh legal generation/transition;
+4. quiescing Recovery may preserve lifetime diagnostic facts, but no stale in-flight/charged/retransmit ownership may survive as live state;
+5. unresolved retained Session replay ownership must not be silently erased merely because a Carrier/path terminates;
+6. resource cleanup evidence must not be inferred from process success alone — use existing deterministic socket/process or owner-state oracles;
+7. do not invent a new global terminal API or lifecycle architecture unless a concrete invariant requires it; distinguish per-path terminality, Session terminality and process teardown.
+
+If a concrete defect is found and current committed semantics decide the answer, smallest repair -> positive/negative regression -> exact-tree gate -> provenance -> continue. If no defect is found, commit a scope-precise independent bounded no-finding note with inspected owners/tests/exclusions and continue immediately.
+
+## READY_LOCAL 3 — R9-12 final exact-tree provenance
+
+After the coherent R9 repair/review group is stable, run and persist developer-local provenance for the final pushed developer source/test SHA:
 
 - `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`
 - `git diff --check`
@@ -67,27 +88,43 @@ After the coherent R9 repair/review group is stable, run and persist developer-l
 
 Run pinned decoder fuzz only if the coherent group actually touched wire decoder/parser/crypto framing; otherwise do not mechanically repeat it. Hosted CI remains supplemental cross-evidence.
 
-## READY_LOCAL 5 — dedicated final independent R9 bounded review
+## READY_LOCAL 4 — dedicated final independent R9 bounded review
 
-On the final R9 exact tree, independently re-challenge the combined invariants across Recovery, Session logical proof, Carrier readiness/promotion, uncertain retention, TCP replay/dedup, migration-back and terminal cleanup. A no-finding bounded review is valid item-4 support. If a concrete defect appears, immediately convert to the smallest repair lane and do not claim R9 closure first.
+On the final R9 exact source/test tree, independently re-challenge the combined invariants across Recovery, Session logical proof, Carrier readiness/promotion, uncertain retention, TCP replay/dedup, migration-back, process result truth and terminal cleanup. Include the repaired sampler only as evidence-reliability support, not transport semantics. A no-finding bounded review is valid item-4 support. If a concrete defect appears, immediately convert to the smallest repair lane and do not claim R9 closure first.
 
-## READY_LOCAL 6 — Q10 factual reconciliation
+## READY_LOCAL 5 — Q10 factual reconciliation
 
-Reconcile release packet/status claims against exact reachable R9 review/provenance anchors. Update only factual indexes/boundaries that actually changed; do not mark release item 4 complete and do not promote local evidence into WAN/security/release claims.
+Reconcile release packet/status claims against exact reachable R9 review/provenance anchors. Update only factual indexes/boundaries that actually changed. Do not mark release item 4 complete, and do not promote local evidence into WAN/security/release claims.
 
-## READY_LOCAL 7 — Q11 release-evidence boundary reconciliation
+## READY_LOCAL 6 — Q11 release-evidence boundary reconciliation
 
-Recheck release item 3 / WAN rows, historical negative classifications, and `READY_LIVE`. Current authoritative classification remains `READY_LIVE: none`; only a newly created concrete unresolved real-network question may open a live lane.
+Recheck release item 3 / WAN rows, historical negative classifications, and `READY_LIVE`. Current authoritative classification remains `READY_LIVE: none`; only a newly created concrete unresolved real-network question may open a live lane. VPS rental priority does not justify repeating a closed/blocked same-class experiment.
 
-## READY_LOCAL 8 — Q12 governance/release-state reconciliation
+## READY_LOCAL 7 — Q12 governance/release-state reconciliation
 
-Confirm D019 and other policy/value gates remain separated, and that RC/production/freeze/release authority has not been inferred from engineering completion. No policy numbers, signing/key-custody/SBOM/publication policy, destructive migration, or release authority change may be made here.
+Confirm D019 and other policy/value gates remain separated, and that RC/production/freeze/release authority has not been inferred from engineering completion. Do not set policy numbers, signing/key-custody/SBOM/publication policy, destructive migration, or release authority here.
 
-## READY_LOCAL 9 — repository-wide item-4 refill
+## READY_LOCAL 8 — repository-wide item-4 refill
 
-Item 4 remains incomplete, so repeat the broad core-surface inventory rather than declaring queue exhaustion from R9. Prefer any implemented core surface that lacks a dedicated reachable independent bounded challenge: reliable recovery; CarrierState; concurrent manager/health/migration-back; scheduler/flow-control; Memory/UDP/TCP adapters; SessionRuntime; observability; package/reproducibility/operator scripts; dependency/build/native hooks/unsafe inheritance; cross-platform CLI/process semantics; CLI JSON/human/exit contracts; algorithmic boundedness; release-packet factual consistency. No-finding independent review is valid support; concrete defects become repair lanes.
+Item 4 remains incomplete, so repeat the broad core-surface inventory rather than declaring queue exhaustion from R9. Prefer any implemented core surface that lacks a **dedicated reachable independent bounded challenge on the current/relevant tree** or whose semantics changed since its last review:
 
-## READY_LOCAL 10 — conditional live question only
+1. `neko-reliable` ACK range / future-unsent / loss-retransmit / RTT-PTO / persistent congestion / Reno / fault simulation;
+2. `CarrierState` generation / validation / hysteresis / single-active / drain-fail-activate;
+3. concurrent manager / health / migration-back;
+4. FairScheduler / multi-stream / Session+stream flow-control accounting;
+5. Memory/UDP/TCP carrier close/error/resource semantics;
+6. SessionRuntime lifecycle/resource/window/DeliveryAck accounting;
+7. observability event/counter/high-water projection;
+8. package/reproducibility/operator scripts;
+9. Cargo manifests/lock/features/build/native hooks/unsafe inheritance;
+10. cross-platform CLI/process-test semantics;
+11. CLI exit-code / JSON / human-output contract;
+12. algorithmic resource boundedness without capacity-pressure benchmarking or invented policy numbers;
+13. release-packet factual consistency/evidence boundaries.
+
+Do not count a narrow no-finding as repository-wide exhaustion. No-finding independent review is valid item-4 support; concrete defects become repair lanes.
+
+## READY_LOCAL 9 — conditional live question only
 
 Only if new code/instrumentation/hypothesis/path condition creates a specific unresolved self-owned real-network question, classify it against `docs/standing-vps-lab-authorization.md` and `docs/vps-rental-window-priority.md`. Ordinary bounded self-owned TCP/UDP work inside standing authorization does not need per-run approval. Do not manufacture live work merely because the VPS is rented.
 
