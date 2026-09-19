@@ -411,7 +411,7 @@ fn runtime_event_loop_recovers_loss_and_drives_degradation_only_on_new_evidence(
         let _ = client
             .rt
             .manager_mut()
-            .observe_readiness(UDP, true, true, i);
+            .map(|m| m.observe_readiness(UDP, true, true, i));
     }
     client.rt.activate_udp(2);
 
@@ -573,7 +573,10 @@ fn session_layer_suppresses_exact_duplicates_and_fails_closed_on_conflict() {
 fn activate_with_ready_standby(peer: &mut ReliableUdpPeer) {
     peer.rt.ready_standby(0);
     for i in 0..3 {
-        let _ = peer.rt.manager_mut().observe_readiness(UDP, true, true, i);
+        let _ = peer
+            .rt
+            .manager_mut()
+            .map(|m| m.observe_readiness(UDP, true, true, i));
     }
     peer.rt.activate_udp(2);
 }
@@ -805,7 +808,7 @@ fn scenario_invalid_standby_never_produces_a_false_switch() {
         let _ = client
             .rt
             .manager_mut()
-            .observe_readiness(UDP, true, true, i);
+            .map(|m| m.observe_readiness(UDP, true, true, i));
     }
     client.rt.activate_udp(2);
 

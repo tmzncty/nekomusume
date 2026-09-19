@@ -436,6 +436,17 @@ impl Recovery {
     }
     /// PTO schedules at most `max_probe_frames` oldest outstanding frames. It
     /// does not declare packets lost and does not create Session delivery evidence.
+    /// H-R9-066: quiesce only the LIVE ownership — sent map, outstanding-frame
+    /// copies, ACKed-frame set, high-water reservations. Historical facts
+    /// (rtt, pto_count, persistent-congestion events) remain truthful history,
+    /// not reset to a fresh-zero past.
+    pub fn quiesce(&mut self) {
+        self.sent.clear();
+        self.outstanding_frames.clear();
+        self.acked_frames.clear();
+        self.largest_sent = None;
+        self.watermark_on_reserve.clear();
+    }
     pub fn on_pto(&mut self, max_probe_frames: usize) -> Result<Vec<FrameId>, Error> {
         if max_probe_frames == 0 {
             return Err(Error::InvalidLimit);

@@ -4237,6 +4237,16 @@ impl PathRecovery {
         Ok(frames)
     }
 
+    /// H-R9-066: quiesce LIVE ownership only — Recovery sent/outstanding/ACK
+    /// history, Reno bytes-in-flight, and the per-packet charge map all
+    /// reconcile to zero; lifetime diagnostic facts (packets_sent/lost, rtt,
+    /// pto_count, outcome/resolved counters, cwnd/ssthresh history) remain.
+    pub fn quiesce(&mut self) {
+        self.recovery.quiesce();
+        self.reno.bytes_in_flight = 0;
+        self.charged.clear();
+        self.health_epoch = None;
+    }
     /// Whether `bytes` more may be sent under the Reno congestion window.
     pub fn can_send(&self, bytes: u64) -> bool {
         self.reno.can_send(bytes)
@@ -4472,9 +4482,6 @@ pub struct ReliableUdpRuntime {
     path: ConcurrentPathKey,
     tcp: ConcurrentPathKey,
     generation: u64,
-    // H-R9-064: retained so teardown can quiesce Recovery into a fresh owner
-    // for this path/generation without a divergent cleanup implementation.
-    mss: u64,
     recovery: PathRecovery,
     acks: PacketAckTracker,
     retransmit: RetransmitBuffer,
@@ -4526,7 +4533,6 @@ impl ReliableUdpRuntime {
             path: udp,
             tcp,
             generation: path_generation,
-            mss,
             recovery: PathRecovery::new(PathId(1), path_generation, mss)?,
             acks: PacketAckTracker::new(path_generation),
             retransmit: RetransmitBuffer::new(64, 8192)
@@ -4541,6 +4547,10 @@ impl ReliableUdpRuntime {
 
     /// Mark TCP standby ready so a degradation can promote it.
     pub fn ready_standby(&mut self, now_ms: u64) {
+        // H-R9-066: a torn-down runtime records no new readiness control state.
+        if self.torn_down {
+            return;
+        }
         for i in 0..3 {
             let _ = self
                 .manager
@@ -4549,6 +4559,10 @@ impl ReliableUdpRuntime {
     }
     /// Activate UDP as the active path (caller drives admission order).
     pub fn activate_udp(&mut self, now_ms: u64) {
+        // H-R9-066: a torn-down runtime performs no activation transition.
+        if self.torn_down {
+            return;
+        }
         let _ = self
             .manager
             .activate(self.path, SwitchReason::OperatorRequest, now_ms, false);
@@ -4822,9 +4836,10 @@ impl ReliableUdpRuntime {
     pub fn teardown(&mut self) {
         self.packet_frames.clear();
         self.retransmit.clear();
-        if let Ok(fresh) = PathRecovery::new(self.path.path, self.generation, self.mss) {
-            self.recovery = fresh;
-        }
+        // H-R9-066: quiesce LIVE Recovery ownership while keeping lifetime
+        // diagnostic history — a terminal summary stays distinguishable from
+        // "never happened".
+        self.recovery.quiesce();
         // H-R9-065: mark the runtime terminal — every data/feedback mutator
         // is fail-closed or observationally inert from here on.
         self.torn_down = true;
@@ -4834,8 +4849,14 @@ impl ReliableUdpRuntime {
         &self.manager
     }
     /// Mutable manager access for readiness/admission wiring by the harness.
-    pub fn manager_mut(&mut self) -> &mut ConcurrentCarrierManager {
-        &mut self.manager
+    /// H-R9-066: mutable control-plane access is terminal-gated — a torn-down
+    /// runtime exposes no mutable manager through which new readiness/
+    /// activation/switch state could be manufactured.
+    pub fn manager_mut(&mut self) -> Option<&mut ConcurrentCarrierManager> {
+        if self.torn_down {
+            return None;
+        }
+        Some(&mut self.manager)
     }
     /// Read-only recovery engine for observability projection.
     pub fn recovery_engine(&self) -> &neko_reliable::Recovery {
@@ -5466,6 +5487,66 @@ mod path_recovery_tests {
         );
         assert!(rt.pto_probe().is_empty());
         assert!(matches!(rt.poll_health(100), RuntimeEvent::Idle));
+    }
+
+    #[test]
+    fn teardown_preserves_lifetime_history_and_gates_control_plane() {
+        // H-R9-066: terminal teardown separates live ownership (zero) from
+        // lifetime diagnostic facts (preserved) and gates the control plane.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.on_packet_sent(0, 0, 400, FrameId(9), b"x").unwrap();
+        rt.on_packet_sent(1, 1_000, 400, FrameId(10), b"y").unwrap();
+        rt.ready_standby(0);
+        let sent_before = rt.packets_sent();
+        assert!(sent_before > 0, "nonzero lifetime history before teardown");
+        rt.teardown();
+        // Live ownership zero.
+        assert_eq!(rt.in_flight(), 0);
+        assert_eq!(rt.recovery_bytes_in_flight(), 0);
+        // Lifetime history preserved — a terminal summary is not "never
+        // happened".
+        assert_eq!(rt.packets_sent(), sent_before, "lifetime sent history kept");
+        // Control plane gated: no mutable manager, no readiness/activation.
+        assert!(
+            rt.manager_mut().is_none(),
+            "terminal exposes no mutable manager"
+        );
+        rt.ready_standby(50);
+        rt.activate_udp(50);
+        // Idempotent teardown does not rewrite history again.
+        rt.teardown();
+        assert_eq!(rt.packets_sent(), sent_before);
+    }
+
+    #[test]
+    fn teardown_preserves_lifetime_history_and_gates_control_plane() {
+        // H-R9-066: terminal teardown quiesces LIVE ownership while lifetime
+        // diagnostic facts remain truthful history — a terminal summary is
+        // distinguishable from "never happened". Carrier-manager control
+        // mutators are also terminal-gated.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.on_packet_sent(0, 0, 400, FrameId(9), b"x").unwrap();
+        rt.on_packet_sent(1, 1_000, 400, FrameId(10), b"y").unwrap();
+        let sent_before = rt.packets_sent();
+        let lost_before = rt.packets_lost();
+        assert!(sent_before > 0, "nonzero lifetime history before teardown");
+        // Manager control state before teardown: standby readiness observed.
+        rt.ready_standby(100);
+        rt.teardown();
+        // Live ownership zero; lifetime facts preserved.
+        assert_eq!(rt.in_flight(), 0);
+        assert_eq!(rt.recovery_bytes_in_flight(), 0);
+        assert_eq!(rt.retained_frames(), 0);
+        assert_eq!(rt.packets_sent(), sent_before, "lifetime sent preserved");
+        assert_eq!(rt.packets_lost(), lost_before, "lifetime lost preserved");
+        // Post-teardown control mutators are inert.
+        rt.ready_standby(200);
+        rt.activate_udp(200);
+        assert!(rt.manager_mut().is_none(), "manager_mut terminal-gated");
+        // No new packet/recovery evidence escapes.
+        assert!(rt.on_packet_sent(2, 2_000, 400, FrameId(11), b"z").is_err());
+        assert!(rt.pto_probe().is_empty());
+        assert!(matches!(rt.poll_health(200), RuntimeEvent::Idle));
     }
 
     #[test]

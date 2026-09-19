@@ -5129,7 +5129,9 @@ fn lab_reliable_udp(args: &[String], json: bool) {
         generation: PathGeneration(1),
     };
     for i in 0..3u64 {
-        let _ = rt.manager_mut().observe_readiness(udp_key, true, true, i);
+        let _ = rt
+            .manager_mut()
+            .map(|m| m.observe_readiness(udp_key, true, true, i));
     }
     rt.activate_udp(2);
 
