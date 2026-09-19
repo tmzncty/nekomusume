@@ -4210,6 +4210,111 @@ fn reliable_udp_post_return_malformed_bound_is_terminal() {
     );
 }
 #[test]
+fn reliable_udp_carrier_ack_send_failure_is_typed_not_sent() {
+    // H-R9-072: inject a socket Err on the real post-return Carrier ACK owner
+    // — the positive sent event must not escape; a typed send_failed is
+    // observable and the client sees no Carrier ACK evidence for that send.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-aksf-server");
+    let cp = tmp("r9-aksf-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "15",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--fail-r9-ack",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-aksf-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-aksf-cli",
+        ])
+        .output()
+        .unwrap();
+    let (srv_status, server_log) = finish_server(server);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let _ = srv_status;
+    // Typed send-failure emitted (initial or post-return owner); the
+    // positive sent event for a failed send must not escape.
+    assert!(
+        server_log.contains("\"event\":\"udp_packet_ack_send_failed\"")
+            || server_log.contains("\"event\":\"udp_return_packet_ack_send_failed\""),
+        "{server_log}"
+    );
+    assert!(
+        !server_log.contains("\"event\":\"udp_packet_ack_sent\"")
+            && !server_log.contains("\"event\":\"udp_return_packet_ack_sent\""),
+        "{server_log}"
+    );
+    // The client saw no Carrier packet-ACK application for the failed send.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_return_packet_ack_applied\""),
+        "{client_log}"
+    );
+    // No false complete-dual-feedback premise / settled / final success.
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_post_return_settled\"")
+            && !client_log.contains("\"event\":\"failover_client_ok\""),
+        "{client_log}"
+    );
+}
+#[test]
 fn reliable_udp_post_return_reversed_ack_order_settles() {
     // READY_LOCAL 2: pure order challenge — Carrier packet ACK arrives BEFORE
     // the Session DeliveryAck on the post-return owner. Settlement still

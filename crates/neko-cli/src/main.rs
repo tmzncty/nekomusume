@@ -2289,9 +2289,15 @@ fn failover_server(args: &[String]) {
                                             if let Ok(sealed_pack) =
                                                 udp_session.seal_unreliable(pack)
                                             {
-                                                let ev = match udp
-                                                    .send_to(&sealed_pack, post_source)
-                                                {
+                                                // --fail-r9-ack covers this
+                                                // delayed-branch fresh ACK too.
+                                                let ev = match if fail_ack {
+                                                    Err(std::io::Error::other(
+                                                        "injected reorder-fresh carrier ACK failure",
+                                                    ))
+                                                } else {
+                                                    udp.send_to(&sealed_pack, post_source)
+                                                } {
                                                     Ok(_) => "udp_return_packet_ack_sent",
                                                     Err(_) => "udp_return_packet_ack_send_failed",
                                                 };
