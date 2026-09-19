@@ -3460,12 +3460,31 @@ fn failover_client(args: &[String]) {
     // H-R9-020: track whether the post-return reliable record actually ran so
     // the final accounting counts it once (Option is consumed by unwrap below).
     let mut post_return_ran = false;
-    // H-R9-019: TCP replay identity follows the same ownership partition — the
-    // replayed records start at `uncertain_start`, not positionally at index 1.
-    // Under --reliable-udp the uncertain set begins after the reliable-owned
-    // records, so an equal count must not replay an already reliable-owned
-    // offset across the Carrier boundary.
-    for record in records.into_iter().skip(uncertain_start).take(tcp_records) {
+    // H-R9-019/R9-10B: TCP replay identity and bytes come from the
+    // authoritative retained replay set (FailoverController::tcp_resend), not
+    // merely an equal positional slice — each replayed record is built from
+    // the retained (DataId, bytes) so a wrong-offset or wrong-bytes replay
+    // cannot hide behind a matching count.
+    let replay_source: Vec<OutboundRecord> = if automatic_health_failover {
+        failover
+            .tcp_resend()
+            .unwrap()
+            .into_iter()
+            .map(|(id, bytes)| OutboundRecord {
+                stream: StreamId(1),
+                offset: id.0,
+                data: bytes,
+            })
+            .collect()
+    } else {
+        records
+            .iter()
+            .skip(uncertain_start)
+            .take(tcp_records)
+            .cloned()
+            .collect()
+    };
+    for record in replay_source {
         let logical = ProcessMessage::Data {
             session: SessionId(7001),
             record: record.clone(),
