@@ -4249,7 +4249,7 @@ fn reliable_udp_carrier_ack_send_failure_is_typed_not_sent() {
             "--reliable-udp",
             "--automatic-health-failover",
             "--migration-back",
-            "--fail-r9-ack",
+            "--fail-r9-return-ack",
             "--diagnostic",
             "--experiment-id",
             "r9-aksf-srv",
@@ -4290,18 +4290,52 @@ fn reliable_udp_carrier_ack_send_failure_is_typed_not_sent() {
     let (srv_status, server_log) = finish_server(server);
     let client_log = String::from_utf8_lossy(&out.stdout);
     let _ = srv_status;
-    // Typed send-failure emitted (initial or post-return owner); the
-    // positive sent event for a failed send must not escape.
+    // H-R9-073: the injected failure must reach the POST-RETURN Carrier ACK
+    // owner — initial pre-migration ACKs still succeeded (udp_packet_ack_sent
+    // present), proving the seam targets the return owner specifically.
+    let srv_failed: Vec<&str> = server_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_send_failed\""))
+        .collect();
+    // At least one post-return send failure; the FIRST is the original
+    // post-return packet's ACK (later entries are retransmit ACKs after the
+    // client's PTO-driven retransmission of the still-unacked packet).
     assert!(
-        server_log.contains("\"event\":\"udp_packet_ack_send_failed\"")
-            || server_log.contains("\"event\":\"udp_return_packet_ack_send_failed\""),
-        "{server_log}"
+        !srv_failed.is_empty(),
+        "post-return send failure emitted: {server_log}"
     );
     assert!(
-        !server_log.contains("\"event\":\"udp_packet_ack_sent\"")
-            && !server_log.contains("\"event\":\"udp_return_packet_ack_sent\""),
+        !server_log.contains("\"event\":\"udp_return_packet_ack_sent\""),
         "{server_log}"
     );
+    // The failed send's packet identity binds the client's post-return pn.
+    let failed_pn = srv_failed[0]
+        .split("\"packet_number\":")
+        .nth(1)
+        .and_then(|v| {
+            v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(u64::MAX);
+    if let Some(sent_ev) = client_log
+        .lines()
+        .find(|l| l.contains("\"event\":\"r9_udp_post_return_sent\""))
+    {
+        let client_pn = sent_ev
+            .split("\"packet_number\":")
+            .nth(1)
+            .and_then(|v| {
+                v.trim_end_matches(|c: char| !c.is_ascii_digit())
+                    .parse::<u64>()
+                    .ok()
+            })
+            .unwrap_or(0);
+        assert_eq!(
+            failed_pn, client_pn,
+            "failed post-return ACK targets the real sent packet"
+        );
+    }
     // The client saw no Carrier packet-ACK application for the failed send.
     assert!(
         !client_log.contains("\"event\":\"r9_udp_return_packet_ack_applied\""),

@@ -2172,8 +2172,9 @@ fn failover_server(args: &[String]) {
                                     // the production Carrier ACK owner.
                                     if let Some(pack) = &post_ack_pack {
                                         if let Ok(sealed_pack) = udp_session.seal_unreliable(pack) {
-                                            let fail_ack =
-                                                args.iter().any(|a| a == "--fail-r9-ack");
+                                            let fail_ack = args.iter().any(|a| {
+                                                a == "--fail-r9-ack" || a == "--fail-r9-return-ack"
+                                            });
                                             let ev = match if fail_ack {
                                                 Err(std::io::Error::other(
                                                     "injected carrier ACK failure",
@@ -2267,7 +2268,9 @@ fn failover_server(args: &[String]) {
                                     } else {
                                         delay_reorder_done = true;
                                         let (delayed, dpn) = delayed_post_ack.take().unwrap();
-                                        let fail_ack = args.iter().any(|a| a == "--fail-r9-ack");
+                                        let fail_ack = args.iter().any(|a| {
+                                            a == "--fail-r9-ack" || a == "--fail-r9-return-ack"
+                                        });
                                         let ev = match if fail_ack {
                                             Err(std::io::Error::other(
                                                 "injected delayed carrier ACK failure",
@@ -2314,8 +2317,9 @@ fn failover_server(args: &[String]) {
                                 } else if reliable_udp && !seam_active && !suppress_pack {
                                     if let Some(pack) = &post_ack_pack {
                                         if let Ok(sealed_pack) = udp_session.seal_unreliable(pack) {
-                                            let fail_ack =
-                                                args.iter().any(|a| a == "--fail-r9-ack");
+                                            let fail_ack = args.iter().any(|a| {
+                                                a == "--fail-r9-ack" || a == "--fail-r9-return-ack"
+                                            });
                                             let ev = match if fail_ack {
                                                 Err(std::io::Error::other(
                                                     "injected normal carrier ACK failure",
