@@ -23,16 +23,24 @@ with tempfile.TemporaryDirectory() as td_raw:
     child.write_text(textwrap.dedent("""\
         import os, socket, sys, time
         port=int(sys.argv[1])
+        ready=sys.argv[2]
         files=[open('/dev/null','rb') for _ in range(5)]
         listener=socket.socket(); listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
         listener.bind(('127.0.0.1',port)); listener.listen(1)
-        time.sleep(.25)
+        # H-sampler: signal readiness ONLY after all expected FDs and the
+        # listener exist, then stay alive long enough for the sampler to
+        # observe the resource-owning state under scheduler load (bounded,
+        # below the sampler's own --max-seconds window).
+        with open(ready,'w') as f: f.write('ready')
+        time.sleep(1.4)
         sys.exit(7)
     """))
     probe=socket.socket(); probe.bind(("127.0.0.1",0)); port=probe.getsockname()[1]; probe.close()
-    sample=td/"sample.json"
-    cp=run(sys.executable, str(SAMPLER), "--experiment-id", "fixture.known-fd", "--implementation", "fixture", "--role", "server", "--identity", "binary:fixture-v1", "--application-bytes", "1234", "--owned-port", str(port), "--interval-ms", "10", "--max-seconds", "2", "--output", str(sample), "--", sys.executable, str(child), str(port), check=False)
+    sample=td/"sample.json"; ready=td/"child.ready"
+    cp=run(sys.executable, str(SAMPLER), "--experiment-id", "fixture.known-fd", "--implementation", "fixture", "--role", "server", "--identity", "binary:fixture-v1", "--application-bytes", "1234", "--owned-port", str(port), "--interval-ms", "10", "--max-seconds", "2", "--output", str(sample), "--", sys.executable, str(child), str(port), str(ready), check=False)
     assert cp.returncode == 7, (cp.returncode, cp.stderr)
+    # Readiness barrier: the child signalled after its FDs/listener existed.
+    assert ready.exists(), "child readiness marker was written"
     d=json.loads(sample.read_text())
     assert d["exit"] == {"code": 7, "signal": None, "timed_out": False}
     assert d["fd"]["peak_count"] >= 9, d["fd"]
