@@ -1602,6 +1602,13 @@ impl SessionRuntime {
         self.session_send_inflight = 0;
         self.session_recv_window_used = 0;
         self.queued_bytes = 0;
+        // H-R9-079: release remaining live-session ownership — the stream map
+        // (per-stream mutable state/next_send/next_receive) and the armed
+        // graceful-close deadline do not survive terminalization. Only the
+        // documented lifetime facts (events, total_bytes, last_activity_ms,
+        // cancelled) are retained.
+        self.streams.clear();
+        self.close_deadline_ms = None;
     }
     fn check(&mut self, now_ms: u64) -> Result<(), RuntimeError> {
         if self.cancelled || self.state == RuntimeState::Error {
@@ -1975,6 +1982,9 @@ mod runtime_tests {
         assert_eq!(r.session_send_inflight, 0);
         assert_eq!(r.session_recv_window_used, 0);
         assert_eq!(r.queued_bytes(), 0);
+        // H-R9-079: stream map and close deadline are released too.
+        assert!(r.streams.is_empty());
+        assert!(r.close_deadline_ms.is_none());
         // Cumulative lifetime facts survive terminalization.
         assert!(r.total_bytes() > 0);
     }
@@ -1999,6 +2009,9 @@ mod runtime_tests {
         assert_eq!(r.state(), RuntimeState::Closed);
         assert!(r.received.is_empty() && r.confirmed.is_empty());
         assert!(r.send_inflight.is_empty() && r.recv_window_used.is_empty());
+        // H-R9-079: stream ownership and the armed deadline are released.
+        assert!(r.streams.is_empty());
+        assert!(r.close_deadline_ms.is_none());
         assert_eq!(r.session_send_inflight, 0);
         assert_eq!(r.session_recv_window_used, 0);
     }
