@@ -5491,35 +5491,6 @@ mod path_recovery_tests {
 
     #[test]
     fn teardown_preserves_lifetime_history_and_gates_control_plane() {
-        // H-R9-066: terminal teardown separates live ownership (zero) from
-        // lifetime diagnostic facts (preserved) and gates the control plane.
-        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
-        rt.on_packet_sent(0, 0, 400, FrameId(9), b"x").unwrap();
-        rt.on_packet_sent(1, 1_000, 400, FrameId(10), b"y").unwrap();
-        rt.ready_standby(0);
-        let sent_before = rt.packets_sent();
-        assert!(sent_before > 0, "nonzero lifetime history before teardown");
-        rt.teardown();
-        // Live ownership zero.
-        assert_eq!(rt.in_flight(), 0);
-        assert_eq!(rt.recovery_bytes_in_flight(), 0);
-        // Lifetime history preserved — a terminal summary is not "never
-        // happened".
-        assert_eq!(rt.packets_sent(), sent_before, "lifetime sent history kept");
-        // Control plane gated: no mutable manager, no readiness/activation.
-        assert!(
-            rt.manager_mut().is_none(),
-            "terminal exposes no mutable manager"
-        );
-        rt.ready_standby(50);
-        rt.activate_udp(50);
-        // Idempotent teardown does not rewrite history again.
-        rt.teardown();
-        assert_eq!(rt.packets_sent(), sent_before);
-    }
-
-    #[test]
-    fn teardown_preserves_lifetime_history_and_gates_control_plane() {
         // H-R9-066: terminal teardown quiesces LIVE ownership while lifetime
         // diagnostic facts remain truthful history — a terminal summary is
         // distinguishable from "never happened". Carrier-manager control
