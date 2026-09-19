@@ -2099,7 +2099,6 @@ mod runtime_tests {
     }
 
     #[test]
-    #[test]
     fn repeated_cancel_is_idempotent_no_new_error_events() {
         // H-R9-078: cancel on an already-Error runtime is a no-op — exactly
         // one terminal Error event, no retained-state growth, state stays
@@ -2122,6 +2121,7 @@ mod runtime_tests {
             assert_eq!(r.state(), RuntimeState::Error);
         }
     }
+    #[test]
     fn delivery_ack_rejects_unknown_stream_and_missing_inflight_atomically() {
         let mut r = SessionRuntime::new(SessionId(13), limits(), 0).unwrap();
         r.open_stream(StreamId(1), 1).unwrap();
