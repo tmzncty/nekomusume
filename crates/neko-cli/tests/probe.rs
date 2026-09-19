@@ -4293,6 +4293,10 @@ fn reliable_udp_carrier_ack_send_failure_is_typed_not_sent() {
     // H-R9-073: the injected failure must reach the POST-RETURN Carrier ACK
     // owner — initial pre-migration ACKs still succeeded (udp_packet_ack_sent
     // present), proving the seam targets the return owner specifically.
+    assert!(
+        server_log.contains("\"event\":\"udp_packet_ack_sent\""),
+        "initial pre-migration Carrier ACK succeeded: {server_log}"
+    );
     let srv_failed: Vec<&str> = server_log
         .lines()
         .filter(|l| l.contains("\"event\":\"udp_return_packet_ack_send_failed\""))
