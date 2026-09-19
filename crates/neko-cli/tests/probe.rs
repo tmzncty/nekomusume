@@ -4059,15 +4059,21 @@ fn reliable_udp_first_send_socket_failure_rolls_back() {
         !client_log.contains("\"event\":\"r9_udp_post_return_settled\""),
         "{client_log}"
     );
-    // The run terminates through the residual/timeout path, not success; the
-    // residual shows zero Recovery in-flight for the aborted copy and no
-    // PTO/retransmit ever fired for it.
+    // H-R9-067: the production owner must be terminal-failed — a nonzero
+    // client exit, never a misclassified final success. A regression that
+    // emits residual evidence but then reports success must turn red here.
     assert!(
-        client_log.contains("r9_udp_post_return_residual")
-            || client_log.contains("acknowledgement")
-            || !out.status.success(),
-        "{client_log}"
+        !out.status.success(),
+        "client must not exit 0 after first-send socket failure: {client_log}"
     );
+    assert!(
+        !client_log.contains("\"event\":\"failover_client_ok\"")
+            && !client_log.contains("\"event\":\"summary\"")
+            && !client_log.contains("ordered_records_complete"),
+        "no final success evidence: {client_log}"
+    );
+    // The residual shows zero Recovery in-flight for the aborted copy and no
+    // PTO/retransmit ever fired for it.
     assert!(
         !client_log.contains("\"event\":\"r9_udp_retransmit_sent\"")
             && !client_log.contains("\"event\":\"r9_udp_pto_fired\""),
