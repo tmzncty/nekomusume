@@ -2122,6 +2122,10 @@ mod runtime_tests {
         let base = r.observable_events().count();
         r.cancel(5).unwrap();
         assert_eq!(r.state(), RuntimeState::Error);
+        // H-R9-080: first cancel released stream/timer ownership too.
+        assert!(r.streams.is_empty() && r.close_deadline_ms.is_none());
+        assert!(r.send.is_empty() && r.recv.is_empty() && r.received.is_empty());
+        assert!(r.confirmed.is_empty() && r.send_inflight.is_empty());
         assert_eq!(r.observable_events().count(), base + 1);
         let after_first = r.observable_events().count();
         for t in [6, 7, 8] {
@@ -2135,6 +2139,30 @@ mod runtime_tests {
         }
     }
     #[test]
+    #[test]
+    fn remote_close_releases_stream_and_timer_ownership() {
+        // H-R9-080: close_remote releases the same owned state — streams,
+        // close_deadline_ms, queues, dedup, watermarks, window counters.
+        let mut r = SessionRuntime::new(SessionId(9), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 1).unwrap();
+        r.queue_send(StreamId(1), b"aa", 0).unwrap();
+        let base = r.observable_events().count();
+        r.close_remote(5).unwrap();
+        assert_eq!(r.state(), RuntimeState::Closed);
+        assert!(r.streams.is_empty() && r.close_deadline_ms.is_none());
+        assert!(r.send.is_empty() && r.recv.is_empty() && r.received.is_empty());
+        assert!(r.confirmed.is_empty() && r.send_inflight.is_empty());
+        // Exactly one SessionClosed event; lifetime facts survive.
+        let events: Vec<_> = r.observable_events().collect();
+        assert_eq!(events.len(), base + 1);
+        assert_eq!(
+            events.last().map(|e| e.kind),
+            Some(RuntimeEventKind::SessionClosed)
+        );
+        // Repeated close is idempotent; post-terminal mutator fails closed.
+        r.close_remote(6).unwrap();
+        assert!(r.queue_send(StreamId(1), b"x", 7).is_err());
+    }
     fn delivery_ack_rejects_unknown_stream_and_missing_inflight_atomically() {
         let mut r = SessionRuntime::new(SessionId(13), limits(), 0).unwrap();
         r.open_stream(StreamId(1), 1).unwrap();
