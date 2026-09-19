@@ -2062,6 +2062,9 @@ mod runtime_tests {
         rt.queue_send(StreamId(1), b"bb", 0).unwrap();
         // watermark = 0. ACK [2,4) gapped — must NOT advance watermark to 4.
         let before = rt.confirmed_watermark(StreamId(1));
+        let inflight_before = *rt.send_inflight.get(&StreamId(1)).unwrap();
+        let session_inflight_before = rt.session_send_inflight;
+        let events_before = rt.observable_events().count();
         assert!(
             rt.delivery_ack(StreamId(1), 2, 2, 0).is_err(),
             "gapped ACK must not skip unconfirmed [0,2)"
@@ -2070,6 +2073,20 @@ mod runtime_tests {
             rt.confirmed_watermark(StreamId(1)),
             before,
             "watermark unchanged after gapped ACK"
+        );
+        assert_eq!(
+            *rt.send_inflight.get(&StreamId(1)).unwrap(),
+            inflight_before,
+            "per-stream inflight unchanged"
+        );
+        assert_eq!(
+            rt.session_send_inflight, session_inflight_before,
+            "session inflight unchanged"
+        );
+        assert_eq!(
+            rt.observable_events().count(),
+            events_before,
+            "no new observable event emitted"
         );
         // Ordered ACKs still advance correctly.
         rt.delivery_ack(StreamId(1), 0, 2, 0).unwrap();
