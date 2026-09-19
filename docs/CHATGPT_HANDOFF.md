@@ -1,4 +1,4 @@
-# ChatGPT reviewer handoff — R9-10C independently closed; sampler determinism is front
+# ChatGPT reviewer handoff — R9-10C independently closed; sampler determinism closed at 5d860dc
 
 ## Current repository truth
 
@@ -10,7 +10,7 @@
 - Repository truth for duplicate semantics: a repeated `FailoverController::confirm` is typed `NotFound`; exact duplicate **receive** is the idempotent `Ok(false)` case. Do not preserve any stale prose that calls duplicate confirm `Ok`.
 - **H-R9-075 remains closed.** `SessionRuntime::delivery_ack` rejects a forward gap before watermark/in-flight/event mutation, and the strengthened negative proves atomic rejection.
 - **H-R9-076 remains closed.** The resumed-session fixture applies the already-delivered offset-0 Session proof before later resumed proofs and confirms retained identity only after successful proof application.
-- **The process-resource sampler positive-fixture determinism finding remains OPEN** at exact `43bad9d5cfd91333b2f6df513d58aa29cfac1c55`. Current `scripts/bench/process-resource-sampler-test.py` still gives `known_child.py` only `time.sleep(.25)` after opening five `/dev/null` FDs and one listener; there is still no readiness/release synchronization barrier. This is a test/evidence-reliability defect, not a transport correctness blocker, but it can create false repository-gate failures and is now the first dependency-ready concrete repair.
+- **The process-resource sampler positive-fixture determinism finding is closed** at exact `5d860dce3959e90aa771fa0ca9387568efd52076`. `known_child.py` now signals a readiness marker only after all 5 FDs and the listener exist, then stays alive 1.4s (bounded, below `--max-seconds 2`) so the sampler deterministically observes the resource-owning state under scheduler load. The regression asserts the marker was written.
 - R9-7 remains independently bounded no-finding closed at `cdac663e4d2649c8f87fc2263766616dc9b4bbe9` over source/test exact `d97a536`.
 - R9-8 warm readiness remains independently bounded no-finding closed at `7c87ac675a381154ae7fceca987e7f2f106c26cf`.
 - R9-9 health/promotion/switch ordering remains independently bounded no-finding closed at `b4a527a1fff994ee0836893f850c36eadb609eb1`.
