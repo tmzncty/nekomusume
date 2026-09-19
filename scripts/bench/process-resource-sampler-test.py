@@ -24,23 +24,28 @@ with tempfile.TemporaryDirectory() as td_raw:
         import os, socket, sys, time
         port=int(sys.argv[1])
         ready=sys.argv[2]
+        release=sys.argv[3]
         files=[open('/dev/null','rb') for _ in range(5)]
         listener=socket.socket(); listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
         listener.bind(('127.0.0.1',port)); listener.listen(1)
-        # H-sampler: signal readiness ONLY after all expected FDs and the
-        # listener exist, then stay alive long enough for the sampler to
-        # observe the resource-owning state under scheduler load (bounded,
-        # below the sampler's own --max-seconds window).
+        # Readiness marker after resources exist; the child then stays alive
+        # until the sampler's observation-release marker appears — a real
+        # happens-before handshake, not a fixed sleep. Bounded by the
+        # sampler's own --max-seconds deadline.
         with open(ready,'w') as f: f.write('ready')
-        time.sleep(1.4)
+        deadline=time.monotonic()+3.0
+        while not os.path.exists(release) and time.monotonic()<deadline:
+            time.sleep(0.02)
         sys.exit(7)
     """))
     probe=socket.socket(); probe.bind(("127.0.0.1",0)); port=probe.getsockname()[1]; probe.close()
-    sample=td/"sample.json"; ready=td/"child.ready"
-    cp=run(sys.executable, str(SAMPLER), "--experiment-id", "fixture.known-fd", "--implementation", "fixture", "--role", "server", "--identity", "binary:fixture-v1", "--application-bytes", "1234", "--owned-port", str(port), "--interval-ms", "10", "--max-seconds", "2", "--output", str(sample), "--", sys.executable, str(child), str(port), str(ready), check=False)
+    sample=td/"sample.json"; ready=td/"child.ready"; release=td/"sampler.release"
+    cp=run(sys.executable, str(SAMPLER), "--experiment-id", "fixture.known-fd", "--implementation", "fixture", "--role", "server", "--identity", "binary:fixture-v1", "--application-bytes", "1234", "--owned-port", str(port), "--interval-ms", "10", "--max-seconds", "2", "--release-on-observed", str(release), "--release-fd-min", "9", "--output", str(sample), "--", sys.executable, str(child), str(port), str(ready), str(release), check=False)
     assert cp.returncode == 7, (cp.returncode, cp.stderr)
-    # Readiness barrier: the child signalled after its FDs/listener existed.
+    # Handshake: child signalled after resources existed AND the sampler's
+    # observation-release marker appeared before the child exited.
     assert ready.exists(), "child readiness marker was written"
+    assert release.exists(), "sampler observed >=9 fds + socket and released"
     d=json.loads(sample.read_text())
     assert d["exit"] == {"code": 7, "signal": None, "timed_out": False}
     assert d["fd"]["peak_count"] >= 9, d["fd"]

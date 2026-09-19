@@ -139,6 +139,9 @@ def parse_args():
     p.add_argument("--owned-port", action="append", type=int, default=[])
     p.add_argument("--interval-ms", type=int, default=50)
     p.add_argument("--max-seconds", type=float, default=30.0)
+    p.add_argument("--release-on-observed", default=None,
+                   help="test-only: write this file once FD_MIN fds + an owned socket are observed")
+    p.add_argument("--release-fd-min", type=int, default=None)
     p.add_argument("--output", required=True)
     p.add_argument("command", nargs=argparse.REMAINDER)
     a = p.parse_args()
@@ -217,6 +220,18 @@ def main():
         for key, value in sources.items():
             if value is not None: last_sources[key] = value
         peak_rss, peak_fd, peak_socket = maximum(peak_rss, rss), maximum(peak_fd, fds), maximum(peak_socket, sockets)
+        # Synchronization seam (test-only): --release-on-observed PATH FD_MIN
+        # writes a release marker once the sampler has actually observed
+        # FD_MIN FDs and >=1 owned socket — a real observation handshake, not
+        # a fixed sleep.
+        if a.release_on_observed and a.release_fd_min is not None:
+            if (fds is not None and fds >= a.release_fd_min
+                    and sockets is not None and sockets >= 1):
+                try:
+                    Path(a.release_on_observed).write_text("observed")
+                    a.release_on_observed = None
+                except OSError:
+                    pass
         waited, raw_status, rusage = os.wait4(pid, os.WNOHANG)
         if waited == pid:
             status, usage = raw_status, rusage
