@@ -1,15 +1,16 @@
-# ChatGPT reviewer handoff — R9-10B is front; H-R9-075/H-R9-076 remain closed
+# ChatGPT reviewer handoff — R9-10B closed at 70e87f0; R9-10C is front
 
 ## Current repository truth
 
-- Review-start `main` was exact `6f4a61ce81844d61018fc763908259d6b4c421cd`; this handoff follows reviewer note commit `43bad9d5cfd91333b2f6df513d58aa29cfac1c55`.
+- Latest developer-owned source/test commit: exact `70e87f0d6cf2e5ac4cf3d4378880b5fa1d90ec1d` (`fix(cli): R9-10B TCP replay bytes/identity from authoritative retained set`).
 - New developer-owned source/test commits since the prior reviewer handoff were reviewed:
   - `f064424f7f06c35fba31fc715da443c866a6a27b` / `52017b5adb26f377857adad2c9a6ed945e539d10` — H-R9-075 SessionRuntime gapped DeliveryAck repair and test restoration;
   - `f1edee86e9bd44c953915b745bd51418302db127` — resumed-session integration fixture applies the first contiguous Session proof before later resumed proofs;
-  - `1429df1b565060054e24cfbae4d62bfdda5890da` — gapped-ACK negative now asserts confirmed watermark, per-stream/session send-inflight and event-count atomicity.
+  - `1429df1b565060054e24cfbae4d62bfdda5890da` — gapped-ACK negative now asserts confirmed watermark, per-stream/session send-inflight and event-count atomicity;
+  - `70e87f0d6cf2e5ac4cf3d4378880b5fa1d90ec1d` — R9-10B TCP replay now builds each record from the authoritative retained `(DataId, bytes)` set (`FailoverController::tcp_resend`), not a positional slice — a wrong-offset or wrong-bytes replay cannot hide behind a matching count.
 - **H-R9-075 remains closed.** `SessionRuntime::delivery_ack` now rejects a forward gap (`offset > confirmed watermark`) before delivery accounting mutation; ordered contiguous ACKs still advance normally.
 - **H-R9-076 remains closed.** The resumed-session fixture no longer relies on the forbidden cumulative-gap behavior; successful proof application precedes `confirm`.
-- Developer-local clean exact-tree provenance for exact `1429df1` remains recorded as `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0 and clean worktree on Linux x86_64 / rustc 1.98.0. This is developer-reported local evidence; reviewer-local execution is not claimed.
+- Developer-local clean exact-tree provenance for exact `70e87f0`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T15:00:05Z → 2026-09-19T15:04:57Z, Linux x86_64, rustc 1.98.0. This remains developer-reported local evidence; reviewer-local execution is not claimed.
 - Hosted evidence is separate. Exact `1429df1` Rust CI run `35447262812` had nightly decode fuzz success but stable `scripts/check.sh` failed late in `scripts/bench/process-resource-sampler-test.py` because `fd.peak_count` was 3 rather than the fixture's expected >=9. The unchanged source/test code on docs-only descendant exact `6f4a61c` passed hosted Rust CI run `35447630498` completely. Independent bounded review `43bad9d5` records this as a deterministic-fixture scheduling flaw, not a transport correctness failure and not a reason to invalidate the accepted developer-local gate.
 - R9-7 remains independently bounded no-finding closed at `cdac663e4d2649c8f87fc2263766616dc9b4bbe9` over source/test exact `d97a536`.
 - R9-8 warm readiness remains independently bounded no-finding closed at `7c87ac675a381154ae7fceca987e7f2f106c26cf`.
