@@ -1,16 +1,17 @@
-# ChatGPT reviewer handoff — R9-10C independently closed; sampler determinism closed at 5d860dc
+# ChatGPT reviewer handoff — sampler determinism REOPENED at 5d860dc; R9-11 queued behind HIGH
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit reviewed: exact `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4` (`fix(cli): R9-10B TCP replay bytes/identity from authoritative retained set`).
+- Latest developer-owned source/test commit reviewed: exact `5d860dce3959e90aa771fa0ca9387568efd52076` (`test(bench): sampler positive-fixture readiness barrier + bounded alive window`).
 - Latest developer bounded review support reviewed: exact `15c0d9f1f15fcbc2f40039d7622bfdce9a33fb26`, `docs/reviews/dev-r9-10c-replay-cleanup-20260919.md`.
-- Latest independent reviewer support: exact `a1de16f5568951fdc5e99846436f918ed8d99ed2`, `docs/reviews/independent-r9-10c-replay-cleanup-15c0d9f-20260920.md`.
+- Latest independent reviewer support: exact `1442ef0230bad225c68f3609a01da7fb7ca095ed`, `docs/reviews/independent-process-resource-sampler-handshake-gap-5d860dc-20260920.md`.
+- **HIGH evidence/review-truth finding OPEN:** the process-resource sampler positive fixture is **not deterministically synchronized** at `5d860dc`. The child writes `child.ready` only after its 5 FDs/listener exist, but neither the sampler nor a concurrent parent consumes that marker before observation. The test checks `ready.exists()` only after the synchronous sampler process has already returned. The child then merely sleeps `1.4s` instead of the old `.25s`. Therefore no happens-before relation proves that the sampler observed the resource-owning state; the old scheduling flake remains possible with a longer timing window. The prior repair contract explicitly forbade closing this by making the sleep larger.
+- The docs-only closure `df02bd0da7356fdb5708148d5d1e714b33e429cb` is superseded by the independent finding above; do not treat sampler determinism as closed until a real bounded observation/release handshake lands and passes exact-tree provenance.
 - **R9-10B remains closed** at source/test exact `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4`: automatic-health TCP replay constructs each replay record from the authoritative retained `(DataId, bytes)` returned by `FailoverController::tcp_resend()` rather than an equal-count positional slice.
-- **R9-10C is independently bounded no-finding closed** at reviewer exact `a1de16f5568951fdc5e99846436f918ed8d99ed2` over source/test exact `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4`. The challenge covered failed-promotion ownership preservation, write/read/auth/Session-proof ordering, exact retained identity deletion only after Session proof, partial replay retention, Session-vs-Carrier evidence separation, and migration-back ordering. Full lifecycle/resource terminalization is deliberately excluded and remains R9-11.
-- Repository truth for duplicate semantics: a repeated `FailoverController::confirm` is typed `NotFound`; exact duplicate **receive** is the idempotent `Ok(false)` case. Do not preserve any stale prose that calls duplicate confirm `Ok`.
+- **R9-10C remains independently bounded no-finding closed** at reviewer exact `a1de16f5568951fdc5e99846436f918ed8d99ed2` over source/test exact `70e87f086b0bbd2d13cd9bae073cb1cdb4c5abd4`. Full lifecycle/resource terminalization remains R9-11.
+- Repository truth for duplicate semantics: a repeated `FailoverController::confirm` is typed `NotFound`; exact duplicate **receive** is the idempotent `Ok(false)` case.
 - **H-R9-075 remains closed.** `SessionRuntime::delivery_ack` rejects a forward gap before watermark/in-flight/event mutation, and the strengthened negative proves atomic rejection.
 - **H-R9-076 remains closed.** The resumed-session fixture applies the already-delivered offset-0 Session proof before later resumed proofs and confirms retained identity only after successful proof application.
-- **The process-resource sampler positive-fixture determinism finding is closed** at exact `5d860dce3959e90aa771fa0ca9387568efd52076`. `known_child.py` now signals a readiness marker only after all 5 FDs and the listener exist, then stays alive 1.4s (bounded, below `--max-seconds 2`) so the sampler deterministically observes the resource-owning state under scheduler load. The regression asserts the marker was written.
 - R9-7 remains independently bounded no-finding closed at `cdac663e4d2649c8f87fc2263766616dc9b4bbe9` over source/test exact `d97a536`.
 - R9-8 warm readiness remains independently bounded no-finding closed at `7c87ac675a381154ae7fceca987e7f2f106c26cf`.
 - R9-9 health/promotion/switch ordering remains independently bounded no-finding closed at `b4a527a1fff994ee0836893f850c36eadb609eb1`.
@@ -18,37 +19,34 @@
 - Candidate B (`record_datagrams` mixed queue/terminal drop projection) remains closed by current mixed-delta regressions and separate reason projection.
 - `READY_LIVE: none`. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD, or Experimental Track without a new code/instrumentation/hypothesis/path condition that creates a concrete unresolved real-network question.
 - Release item 3 and item 4 remain incomplete. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
+- No reviewer-local test execution is claimed for this pass. GitHub-hosted CI is supplemental; the accepted first-class gate remains a developer-local clean exact-tree gate on the final pushed source/test SHA.
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency and is never a ticket length or reason to idle.
 
-## READY_LOCAL 1 — FRONT: process-resource sampler positive-fixture determinism
+## READY_LOCAL 1 — FRONT HIGH: sampler observation/release handshake
 
-Independent finding: `43bad9d5cfd91333b2f6df513d58aa29cfac1c55`, `docs/reviews/independent-process-resource-sampler-flake-6f4a61c-20260919.md`.
+Independent finding: `1442ef0230bad225c68f3609a01da7fb7ca095ed`, `docs/reviews/independent-process-resource-sampler-handshake-gap-5d860dc-20260920.md`.
 
-Repair the **test synchronization contract only** unless source inspection reveals a separate production sampler defect.
-
-Current failing shape to replace:
-
-- `known_child.py` opens five `/dev/null` FDs and one loopback listener;
-- it then relies on a fixed `time.sleep(.25)` lifetime;
-- the sampler starts separately and may observe pre-exec/pre-resource state or miss the short resource-owning interval under scheduler load.
+The exact `5d860dc` marker-plus-`sleep(1.4)` repair does **not** satisfy the previous synchronization contract. Repair the test synchronization seam, not transport/runtime semantics.
 
 Required repair:
 
-1. add a bounded deterministic readiness/release handshake: the child must signal only after all expected FDs/listener exist, and remain alive until the parent/sampler-positive oracle has had a bounded opportunity to observe them;
-2. preserve **real `/proc` sampling** — do not inject fake metrics or bypass the sampler;
-3. preserve truthful `null` semantics for the separate exit-race case;
-4. preserve sampler-owned process-group termination/reaping and listener cleanup;
-5. do not solve this by merely making `.25` a larger arbitrary sleep;
-6. do not change capacity/performance policy numbers or production sampler semantics without a new concrete defect.
+1. preserve child readiness only after all expected `/dev/null` FDs and the loopback listener exist;
+2. add a real bounded two-sided observation/release condition: the child must remain resource-owning until a parent/sampler-controlled condition that is causally downstream of sampler observation, or an equivalently strong deterministic handshake;
+3. the positive oracle must fail if the observation/release handshake never occurs;
+4. keep real `/proc` sampling; do not inject fake FD/socket metrics or bypass the sampler;
+5. preserve the separate exit-race fixture's truthful `null` semantics;
+6. preserve sampler-owned process-group termination/reaping and listener cleanup;
+7. do not solve this by increasing `1.4` again, by polling a readiness file only after completion, or by another fixed wall-clock hope;
+8. prefer a fixture/test-only synchronization shape; change production sampler behavior only if the smallest explicit test seam is genuinely necessary, and do not change capacity/performance policy values.
 
-Add/strengthen a deterministic regression so the positive fixture cannot pass unless the readiness state existed before sampling. Then run on the final pushed source/test SHA:
+Add/strengthen a deterministic regression. On the final pushed source/test SHA run and record:
 
 `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`
 
 `git diff --check`
 
-and record exact GitHub-resolvable SHA, UTC start/end, exit codes, Linux/arch, stable Rust version, and clean-tree state. Hosted CI is supplemental only.
+plus clean tree, exact GitHub-resolvable SHA, UTC start/end, exit codes, Linux/arch and stable Rust version. No decoder/parser/crypto framing change is expected, so fuzz is not mechanically required.
 
 After commit/push/gate, proceed immediately to R9-11; do not wait for reviewer cadence.
 
