@@ -2139,7 +2139,6 @@ mod runtime_tests {
         }
     }
     #[test]
-    #[test]
     fn remote_close_releases_stream_and_timer_ownership() {
         // H-R9-080: close_remote releases the same owned state — streams,
         // close_deadline_ms, queues, dedup, watermarks, window counters.
@@ -2163,6 +2162,7 @@ mod runtime_tests {
         r.close_remote(6).unwrap();
         assert!(r.queue_send(StreamId(1), b"x", 7).is_err());
     }
+    #[test]
     fn delivery_ack_rejects_unknown_stream_and_missing_inflight_atomically() {
         let mut r = SessionRuntime::new(SessionId(13), limits(), 0).unwrap();
         r.open_stream(StreamId(1), 1).unwrap();
