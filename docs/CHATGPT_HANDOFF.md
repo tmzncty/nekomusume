@@ -1,15 +1,13 @@
-# ChatGPT reviewer handoff — H-R9-066 terminal history/control-plane HIGH; R9-6 blocked
+# ChatGPT reviewer handoff — H-R9-066 closed at 788a4dc; R9-6 blocked on reviewer closure
 
 ## Current repository truth
 
-- Default branch was re-read at exact `86981addcb1799dbf77369a9dfb06ac55dfbde43`; reviewer finding commit `602e6a55cd14f1ac66dbf6329c9e47c31389473b` is now reachable on `main`.
-- Latest developer-owned source/test commit: exact `b5e7bc90599adca19c1f40e7e7be87b0728c8980` (`fix(carrier): H-R9-065 teardown is terminal — every mutator fail-closed/inert`), on top of exact `dcbcf55160e918180c3a5e96259bffcefef34e44`.
+- Latest developer-owned source/test commit: exact `788a4dcbb4ab802f1444991d7898ec48ed7a9030` (`fix(carrier): H-R9-066 terminal teardown preserves history + gates control plane`), on top of `b5e7bc90599adca19c1f40e7e7be87b0728c8980`.
 - Current independent reviewer anchor: [`docs/reviews/independent-r9-6-terminal-history-control-20260919.md`](reviews/independent-r9-6-terminal-history-control-20260919.md), added by exact `602e6a55cd14f1ac66dbf6329c9e47c31389473b`.
 - **H-R9-064 remains closed at exact `dcbcf55`:** terminal cleanup reconciles sender Recovery in-flight / Reno bytes / packet->frame / retained plaintext to zero and post-cleanup PTO is inert.
 - **H-R9-065 narrow packet/recovery guard is accepted at exact `b5e7bc9`:** `torn_down` blocks the reviewed data/feedback methods (`can_send`, send/retransmit admission, receive ACK obligation, outgoing ACK, recovery ACK, PTO/health mutation).
-- **H-R9-066 is FRONT HIGH:** H-R9-065 closure is incomplete because `teardown()` still replaces `PathRecovery` with a fresh owner, silently zeroing public lifetime diagnostic history (`packets_sent`, `packets_lost`, RTT/PTO/recovery observability) instead of separating history from live ownership; the same torn-down runtime also leaves Carrier-manager control mutations reachable through ungated `ready_standby`, `activate_udp`, and `manager_mut`.
-- The H-R9-065 regression does not capture pre-teardown lifetime diagnostics and does not challenge manager/readiness/activation mutation after teardown, so exact `b5e7bc9` can pass while terminal evidence/control invariants remain false.
-- Developer-persisted local exact-tree provenance for exact `b5e7bc9` reports `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean pushed tree, Linux x86_64, rustc 1.98.0.
+- **H-R9-066 closed:** `Recovery::quiesce`/`PathRecovery::quiesce` clears only LIVE ownership (sent/outstanding/acked/reservations/reno bytes/charge) while lifetime diagnostics (`packets_sent`/`lost`, `rtt`, `pto_count`, resolved counters, cwnd history) stay truthful — terminal summary is not "never happened". `ready_standby`/`activate_udp` are no-ops and `manager_mut` returns `None` after teardown — no new readiness/activation/switch control state escapes. `teardown_preserves_lifetime_history_and_gates_control_plane` proves `packets_sent`/`lost` preserved after teardown and control mutators inert.
+- Developer-local clean exact-tree provenance for exact `788a4dc`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T00:55:55Z → 2026-09-19T01:00:41Z, Linux x86_64, rustc 1.98.0.
 - GitHub-hosted Rust CI run `35407172293` for exact `b5e7bc9` completed successfully: stable checks and nightly pinned decode fuzz smoke both green. Hosted CI is cross-evidence only and does not contain the H-R9-066 discriminator.
 - Reviewer-local execution is not claimed in this pass; the finding is source/test/spec review plus persisted developer/hosted evidence separation.
 - **R9-4 / H-R9-060 remain independently closed** at source/test tree `95d9388`; **R9-5 remains closed no-finding** at `b9f0dc5467771f2398d06f2f6a66ebb3a36c1111`.
