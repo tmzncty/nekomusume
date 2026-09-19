@@ -1,48 +1,48 @@
-# ChatGPT reviewer handoff — H-R9-071 closed at 20863a4; R9-7 blocked on reviewer closure
+# ChatGPT reviewer handoff — H-R9-072 Carrier ACK failure-oracle HIGH; R9-7 blocked
 
 ## Current repository truth
 
-- Latest developer-owned source/test commit: exact `20863a4cf392dc0d6d978d424c5d21cd2fba4a57` (`fix(cli): H-R9-071 Carrier ACK send-evidence truth — positive *_sent only on socket Ok`), on top of `fd41ea9ff9ec772951c61fb4ed5162fbc1977d95`.
-- Current independent review finding: [`docs/reviews/independent-r9-7-carrier-ack-send-evidence-fd41ea9-20260919.md`](reviews/independent-r9-7-carrier-ack-send-evidence-fd41ea9-20260919.md), review commit `8eeccfb364f5da8156ae628468a3ba66d11fb964`.
+- Latest developer-owned source/test commit: exact `20863a4cf392dc0d6d978d424c5d21cd2fba4a57` (`fix(cli): H-R9-071 Carrier ACK send-evidence truth — positive *_sent only on socket Ok`), on top of `31ef45aa94f08ea1f5b4a373a978cee47dedd097` and `fd41ea9ff9ec772951c61fb4ed5162fbc1977d95`.
+- Current independent review finding: [`docs/reviews/independent-r9-7-carrier-ack-failure-oracle-20863a4-20260919.md`](reviews/independent-r9-7-carrier-ack-failure-oracle-20863a4-20260919.md), review commit `45450e083c4655e698a668328376956ecd2ae675`.
 - H-R9-068 source repair remains accepted at the currently reviewed owner: only exact ordinary `UDP delivery acknowledgement timeout` continues into PTO/delayed-ACK progress; malformed-bound exhaustion and receive/socket failure are terminal.
 - H-R9-069 remains narrowly closed at exact `d8b5ade`: the flood seam sends exactly the existing malformed budget (`3`), the client regression requires exactly three `unexpected_logical_ack` events, and terminal cause is explicitly `UDP delivery acknowledgement malformed bound exceeded`.
 - H-R9-070 remains narrowly closed at exact `fd41ea9`: `reliable_udp_post_return_malformed_bound_is_terminal` requires BOTH post-flood feedback domains — Session `udp_return_delivery_ack_sent` and Carrier `udp_return_packet_ack_sent` — so one channel alone no longer satisfies the oracle.
-- **H-R9-071 closed:** all Carrier ACK send owners (initial `udp_packet_ack_sent`, post-return `udp_return_packet_ack_sent` on normal/delayed/reordered branches) now match `send_to` outcome — `Ok` emits positive `*_sent`, `Err` emits typed `*_send_failed`. `--fail-r9-ack` injects socket `Err` on the real executable Carrier ACK owners.
+- **H-R9-071 source-side defect is repaired:** the inspected Carrier ACK owners now project `UdpSocket::send_to` truthfully (`Ok` -> positive `*_sent`, `Err` -> typed `*_send_failed`).
+- **New HIGH H-R9-072:** the required production-owner injected-failure process regression was not added. Comparing the pre-repair handoff `59b5983` to the current developer closure changes only `crates/neko-cli/src/main.rs` plus handoff docs; `crates/neko-cli/tests/probe.rs` is unchanged. The new `--fail-r9-ack` seam is therefore not repository-enforced by the required negative oracle. In the delayed/reordered branch, the delayed ACK honors the seam but the fresh current ACK immediately sent afterward still uses the real socket directly, so deterministic failure coverage is also not complete across the claimed owner set.
 - R9-4 / H-R9-060 remain independently closed. R9-5 remains bounded no-finding closed. R9-6 remains independently closed. H-R9-067 remains closed.
-- Developer-local clean exact-tree provenance for exact `20863a4`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T05:56:27Z → 2026-09-19T06:01:22Z, Linux x86_64, rustc 1.98.0.
-- GitHub-hosted Rust CI for exact `fd41ea9`: run `35422199161`, completed `success` on 2026-09-19. Hosted CI is cross-evidence only; it does not exercise an injected server Carrier-ACK socket failure and therefore cannot close H-R9-071.
-- Reviewer-local execution is not claimed.
-- Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 through H-R9-070 except the newly opened H-R9-071 boundary described here.
+- Developer-local clean exact-tree provenance for exact `20863a4`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree at pushed SHA, 2026-09-19T05:56:27Z → 2026-09-19T06:01:22Z, Linux x86_64, rustc 1.98.0. This remains developer-reported local evidence; reviewer-local execution is not claimed.
+- GitHub-hosted Rust CI for exact `fd41ea9`: run `35422199161`, completed `success` on 2026-09-19. Hosted CI is cross-evidence only and does not close the new owner-level failure-oracle gap.
+- Earlier accepted findings remain closed absent contradictory current evidence: Candidate A future/never-sent ACK guard; Candidate B mixed datagram-drop observability; H-R9-050 through H-R9-070 subject to the explicit H-R9-071 source-side / H-R9-072 oracle distinction above.
 - `READY_LIVE: none`; release item 3 remains incomplete; release item 4 remains incomplete; `RELEASE_CANDIDATE=false`; `PRODUCTION_READY=false`; `FREEZE=false`; `RELEASED=false`.
 
 The external coding agent must synchronize to current `main` and continuously execute every dependency-ready slice below: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency and is never a ticket length or reason to idle.
 
-# READY_LOCAL 1 — H-R9-071 Carrier ACK socket-outcome evidence truth — FRONT HIGH
+# READY_LOCAL 1 — H-R9-072 Carrier ACK production-owner failure oracle — FRONT HIGH
 
-Repair the R9-7 process/evidence owner before claiming complete malformed-terminality closure.
+Close the acceptance-oracle gap without redesigning transport semantics.
 
-Current concrete counterexample:
+Current exact facts:
 
-- Multiple executable server Carrier packet-ACK owners use the shape `let _ = udp.send_to(...); emit_diagnostic(..., "*_packet_ack_sent", ...)`.
-- Because the socket result is discarded, `Err` still emits a positive `sent` event.
-- The affected surface includes the initial reliable-UDP `udp_packet_ack_sent` owner and normal / delayed-reorder post-return `udp_return_packet_ack_sent` owners.
-- The post-return Session DeliveryAck positive event is not the same defect: its ordinary owner requires the socket send before emitting `udp_return_delivery_ack_sent`.
-- H-R9-070 now correctly requires both feedback-domain event names, but the Carrier half can still be false-positive if the socket rejected the ACK datagram.
+- The H-R9-071 source repair is materially correct at inspected owners: positive Carrier ACK `*_sent` is emitted only on socket `Ok`; socket `Err` emits typed `*_send_failed`.
+- The prior review required a deterministic **process regression** on the real executable post-return Carrier ACK owner plus paired normal-path control.
+- Between pre-repair `59b5983` and current closure `5965b52`, only `crates/neko-cli/src/main.rs` and handoff docs changed; `crates/neko-cli/tests/probe.rs` did not. Therefore no new regression invokes and discriminates the `--fail-r9-ack` seam.
+- The global `--fail-r9-ack` seam also applies to earlier initial reliable-UDP Carrier ACK owners, which may poison unrelated earlier ACKs before the intended post-return target. Do not accept a negative test whose failure is attributable only to an earlier ACK or unrelated timeout.
+- In the delayed/reordered post-return branch, the delayed original ACK has injected-failure support, but the fresh current ACK immediately sent afterward still uses the real socket directly. Its event is truthful on real socket outcome, but deterministic seam coverage is incomplete.
 
 Required smallest repair:
 
-1. Audit every executable server Carrier packet-ACK send owner that can emit `udp_packet_ack_sent` or `udp_return_packet_ack_sent`.
-2. Emit positive `*_sent` only after `UdpSocket::send_to` returns `Ok`.
-3. On `Err`, emit a typed failure classification such as `udp_packet_ack_send_failed` / `udp_return_packet_ack_send_failed`, or an equally precise existing event. Never relabel the failed attempt as sent.
-4. Preserve current ACK ranges, Recovery, Session delivery, crypto/wire, D064, malformed budget and policy values. Do not redesign whether a later fresh packet/ACK opportunity may recover; this finding is about truthful socket-outcome projection unless the deterministic process regression exposes a separate concrete correctness defect.
-5. Add a deterministic failure seam on the **real executable post-return Carrier ACK owner** after ACK construction/sealing, so tests can force a send `Err`. Do not rely on random OS failure and do not satisfy this with helper-only unit coverage.
-6. The negative process regression must prove for the injected target ACK:
-   - typed ACK-send failure exists;
-   - no positive `udp_return_packet_ack_sent` exists for the failed send / packet identity;
-   - H-R9-070 cannot infer complete dual feedback from the failed Carrier channel;
-   - no final client success/settlement is fabricated solely from the failed ACK attempt.
-7. Preserve a paired normal-path positive control proving successful ACK send still emits the positive event and ordinary settlement remains green.
-8. Cover the same evidence rule for initial `udp_packet_ack_sent` and delayed/reordered post-return ACK owners in this coherent repair. A minimal shared outcome helper is acceptable if it reduces duplicated error-prone logic; do not create checker/schema/framework filler.
+1. Preserve the current socket-outcome source rule and all current ACK ranges, Recovery, Session, crypto/wire, D064, malformed budget and policy values.
+2. Add a deterministic process regression that reaches the **real post-return Carrier ACK owner** and forces a send `Err` after ACK construction/sealing.
+3. Bind the injected failed ACK by packet identity and prove:
+   - typed `udp_return_packet_ack_send_failed` exists for that target;
+   - no positive `udp_return_packet_ack_sent` exists for that same target;
+   - Session DeliveryAck evidence alone does not satisfy H-R9-070 complete dual feedback;
+   - no `r9_udp_post_return_settled`, `failover_client_ok`, final `summary`, or `ordered_records_complete` is fabricated solely from the failed Carrier ACK attempt;
+   - if current semantics make the injected operation terminal, assert the nonzero/terminal cause explicitly rather than accepting an unrelated socket/timeout failure.
+4. Preserve a paired ordinary positive control proving successful post-return Carrier ACK send emits `udp_return_packet_ack_sent`, binds the same packet identity as client send/retirement, and normal settlement stays green.
+5. Make the deterministic seam reach the delayed/reordered post-return ACK owners as well. A minimal one-shot/stage selector is acceptable if needed to avoid failing unrelated earlier ACKs; do not build a general fault-injection framework.
+6. Cover initial `udp_packet_ack_sent` evidence truth with focused mutation-sensitive deterministic coverage if it is not already enforced; avoid duplicating large fixtures for line coverage.
+7. Do not satisfy this with helper-only tests or random OS socket failure.
 
 On the final pushed repair SHA run and persist:
 
@@ -71,7 +71,7 @@ Independently challenge that each structured diagnostic corresponds to the typed
 - residual/intermediate timeout-only classification;
 - malformed-bound/socket/receive terminal error vs final process success/failure.
 
-Re-challenge H-R9-062 through H-R9-071 together at current exact owner paths. Mutation of any source/test success projection should turn the appropriate oracle red. If no further defect appears, persist a scope-exact bounded no-finding note with exact inspected owners, challenged invariants, focused tests/commands, exclusions, reachable anchor and evidence class, then continue immediately.
+Re-challenge H-R9-062 through H-R9-072 together at current exact owner paths. Mutation of any source/test success projection should turn the appropriate oracle red. If no further defect appears, persist a scope-exact bounded no-finding note with exact inspected owners, challenged invariants, focused tests/commands, exclusions, reachable anchor and evidence class, then continue immediately.
 
 # READY_LOCAL 3 — R9 mid-slice factual reconciliation
 
@@ -186,7 +186,7 @@ Repository-wide `queue exhausted` is permitted only when this broad inventory fi
 
 ## VPS opportunity
 
-**Not READY. `READY_LIVE: none`.** Standing authorization remains valid, but H-R9-071 and the current R9 queue are deterministic local correctness/evidence work and create no unresolved real-network question that loopback/process evidence cannot answer. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
+**Not READY. `READY_LIVE: none`.** Standing authorization remains valid, but H-R9-072 and the current R9 queue are deterministic local correctness/evidence work and create no unresolved real-network question that loopback/process evidence cannot answer. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely because the VPS remains rented.
 
 Only create a new READY_LIVE row if later code/instrumentation/hypothesis/path conditions produce a concrete unresolved real-network question inside `docs/standing-vps-lab-authorization.md`.
 
