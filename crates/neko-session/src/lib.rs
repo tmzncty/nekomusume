@@ -1501,6 +1501,14 @@ impl SessionRuntime {
         if end < current {
             return Err(RuntimeError::Protocol);
         }
+        // H-R9-075: a positive-advancing ACK must not SKIP a gap — an exact
+        // ACK starting after the watermark (offset > current) with end >
+        // current would silently promote [current,offset) to confirmed.
+        // Only offset <= current (prefix already confirmed / exact start)
+        // may advance the watermark; a forward gap fails closed.
+        if offset > current {
+            return Err(RuntimeError::Protocol);
+        }
         let delta = usize::try_from(end - current).map_err(|_| RuntimeError::TotalLimit)?;
         let inflight = self
             .send_inflight
@@ -2045,6 +2053,30 @@ mod runtime_tests {
     }
 
     #[test]
+    fn gapped_delivery_ack_cannot_skip_unconfirmed_range() {
+        // H-R9-075: an ACK for a LATER range before an earlier one must not
+        // promote the skipped gap [current,offset) to confirmed.
+        let mut rt = SessionRuntime::new(SessionId(9), limits(), 0).unwrap();
+        rt.open_stream(StreamId(1), 1).unwrap();
+        rt.queue_send(StreamId(1), b"aa", 0).unwrap();
+        rt.queue_send(StreamId(1), b"bb", 0).unwrap();
+        // watermark = 0. ACK [2,4) gapped — must NOT advance watermark to 4.
+        let before = rt.confirmed_watermark(StreamId(1));
+        assert!(
+            rt.delivery_ack(StreamId(1), 2, 2, 0).is_err(),
+            "gapped ACK must not skip unconfirmed [0,2)"
+        );
+        assert_eq!(
+            rt.confirmed_watermark(StreamId(1)),
+            before,
+            "watermark unchanged after gapped ACK"
+        );
+        // Ordered ACKs still advance correctly.
+        rt.delivery_ack(StreamId(1), 0, 2, 0).unwrap();
+        assert_eq!(rt.confirmed_watermark(StreamId(1)), 2);
+        rt.delivery_ack(StreamId(1), 2, 2, 0).unwrap();
+        assert_eq!(rt.confirmed_watermark(StreamId(1)), 4);
+    }
     fn delivery_ack_rejects_unknown_stream_and_missing_inflight_atomically() {
         let mut r = SessionRuntime::new(SessionId(13), limits(), 0).unwrap();
         r.open_stream(StreamId(1), 1).unwrap();
