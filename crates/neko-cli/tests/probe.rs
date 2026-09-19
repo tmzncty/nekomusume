@@ -4087,6 +4087,105 @@ fn reliable_udp_first_send_socket_failure_rolls_back() {
     }
 }
 #[test]
+fn reliable_udp_post_return_malformed_bound_is_terminal() {
+    // H-R9-068: fresh authenticated but semantically UNADMITTED Session
+    // DeliveryAcks cross the bounded malformed budget on the post-return
+    // owner — terminal fail-closed, never a late-success resurrection.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("r9-mb-server");
+    let cp = tmp("r9-mb-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "15",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--flood-r9-ack",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-mb-srv",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = Command::new(bin)
+        .args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "4",
+            "--bytes",
+            "16",
+            "--duration",
+            "12",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--migration-back",
+            "--diagnostic",
+            "--experiment-id",
+            "r9-mb-cli",
+        ])
+        .output()
+        .unwrap();
+    let (srv_status, _server_log) = finish_server(server);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    let _ = srv_status;
+    // Unadmitted feedback classifications are emitted as evidence.
+    assert!(
+        client_log.contains("\"event\":\"unexpected_logical_ack\""),
+        "{client_log}"
+    );
+    // Terminal: nonzero exit, no settled/success/final-summary evidence.
+    assert!(
+        !out.status.success(),
+        "client must not exit 0 after malformed bound: {client_log}"
+    );
+    assert!(
+        !client_log.contains("\"event\":\"r9_udp_post_return_settled\"")
+            && !client_log.contains("\"event\":\"failover_client_ok\"")
+            && !client_log.contains("\"event\":\"summary\"")
+            && !client_log.contains("ordered_records_complete"),
+        "no resurrection after malformed bound: {client_log}"
+    );
+}
+#[test]
 fn reliable_udp_post_return_reversed_ack_order_settles() {
     // READY_LOCAL 2: pure order challenge — Carrier packet ACK arrives BEFORE
     // the Session DeliveryAck on the post-return owner. Settlement still

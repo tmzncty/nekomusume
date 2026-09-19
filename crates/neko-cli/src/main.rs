@@ -2176,6 +2176,26 @@ fn failover_server(args: &[String]) {
                                         }
                                     }
                                 }
+                                // H-R9-068: --flood-r9-ack floods the client
+                                // with fresh authenticated but semantically
+                                // unadmitted Session DeliveryAcks (wrong
+                                // range) to cross the bounded malformed
+                                // budget on the post-return owner.
+                                if args.iter().any(|a| a == "--flood-r9-ack") {
+                                    for _ in 0..=3 {
+                                        let bad = ProcessMessage::DeliveryAck {
+                                            session: SessionId(7001),
+                                            stream: StreamId(1),
+                                            offset: u64::MAX - 8,
+                                            len: 16,
+                                        }
+                                        .encode()
+                                        .unwrap();
+                                        if let Ok(sealed_bad) = udp_session.seal_unreliable(&bad) {
+                                            let _ = udp.send_to(&sealed_bad, post_source);
+                                        }
+                                    }
+                                }
                                 // P4 fault seam: --suppress-r9-dack withholds the post-return Session
                                 // DeliveryAck; the Carrier packet ACK is still sent.
                                 let suppress_dack = args.iter().any(|a| a == "--suppress-r9-dack");
@@ -3898,28 +3918,43 @@ fn failover_client(args: &[String]) {
                         );
                     }
                 }
-                Err(_) if drop_r9_data => {
-                    // R9-3: under the data-drop seam a receive timeout is not
-                    // terminal — fall through to the PTO/retransmission block
-                    // below before deciding bounded failure.
-                    emit_diagnostic(args, "client", "r9_udp_post_return_recv_timeout", 0, "");
-                }
-                Err(_) => {
-                    // R9-4: a receive timeout under ACK-delay/reorder is not
-                    // terminal — fall through to the PTO/retransmission block
-                    // on the next iteration before deciding bounded failure.
-                    // H-R9-038 residual evidence remains classification-only.
-                    emit_diagnostic(
-                        args,
-                        "client",
-                        "r9_udp_post_return_residual",
-                        0,
-                        &format!(
-                            ",\"session_outstanding\":{},\"remaining_in_flight\":{}",
-                            post_outstanding.len(),
-                            rt.as_ref().map(|r| r.in_flight()).unwrap_or(0)
-                        ),
-                    );
+                Err(e) => {
+                    // H-R9-068: only an ordinary bounded receive timeout is a
+                    // non-terminal continuation (PTO/delayed-ACK progress).
+                    // A malformed-bound exhaustion or a receive/socket failure
+                    // is terminal — the operation must fail closed before any
+                    // later valid feedback can resurrect success.
+                    if e == "UDP delivery acknowledgement timeout" {
+                        if drop_r9_data {
+                            // R9-3: under the data-drop seam a receive timeout
+                            // is not terminal — fall through to the PTO/
+                            // retransmission block below.
+                            emit_diagnostic(
+                                args,
+                                "client",
+                                "r9_udp_post_return_recv_timeout",
+                                0,
+                                "",
+                            );
+                        } else {
+                            // R9-4: a receive timeout under ACK-delay/reorder
+                            // is not terminal — fall through to PTO on the
+                            // next iteration before bounded failure.
+                            emit_diagnostic(
+                                args,
+                                "client",
+                                "r9_udp_post_return_residual",
+                                0,
+                                &format!(
+                                    ",\"session_outstanding\":{},\"remaining_in_flight\":{}",
+                                    post_outstanding.len(),
+                                    rt.as_ref().map(|r| r.in_flight()).unwrap_or(0)
+                                ),
+                            );
+                        }
+                    } else {
+                        fail(e);
+                    }
                 }
             }
         }
