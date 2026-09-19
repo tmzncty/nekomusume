@@ -211,6 +211,13 @@ fn bounded_udp_blackhole_tcp_resume_preserves_order_and_exactly_once_bytes() {
     for data in records {
         receiver_runtime.queue_send(StreamId(1), data, 5).unwrap();
     }
+    // H-R9-076: the first record was UDP-delivered before the blackhole —
+    // its Session delivery proof is applied FIRST so the watermark reaches
+    // offset 5 before later exact proofs; resumed later ACKs are never
+    // applied across the missing [0,5) gap.
+    receiver_runtime
+        .delivery_ack(StreamId(1), 0, records[0].len(), 5)
+        .unwrap();
     // A fresh Noise transport resends every uncertain logical record. The
     // receiver's Session is the sole ordering/deduplication authority.
     for (id, record) in ids.iter().skip(1) {
