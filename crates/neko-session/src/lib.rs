@@ -2077,6 +2077,8 @@ mod runtime_tests {
         rt.delivery_ack(StreamId(1), 2, 2, 0).unwrap();
         assert_eq!(rt.confirmed_watermark(StreamId(1)), 4);
     }
+
+    #[test]
     fn delivery_ack_rejects_unknown_stream_and_missing_inflight_atomically() {
         let mut r = SessionRuntime::new(SessionId(13), limits(), 0).unwrap();
         r.open_stream(StreamId(1), 1).unwrap();
