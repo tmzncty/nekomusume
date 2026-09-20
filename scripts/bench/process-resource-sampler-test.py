@@ -80,7 +80,8 @@ with tempfile.TemporaryDirectory() as td_raw:
         "sys.exit(0 if os.path.exists(ready) else 1)\n"
     )
     probe=socket.socket(); probe.bind(('127.0.0.1',0)); esc_port=probe.getsockname()[1]; probe.close()
-    run(sys.executable,str(SAMPLER),'--experiment-id','fixture.escaped-descendant','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(esc_port),'--interval-ms','10','--max-seconds','2','--output',str(esc_json),'--',sys.executable,str(esc),str(esc_port),str(esc_ready),str(esc_pid))
+    cp=run(sys.executable,str(SAMPLER),'--experiment-id','fixture.escaped-descendant','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(esc_port),'--interval-ms','10','--max-seconds','2','--output',str(esc_json),'--',sys.executable,str(esc),str(esc_port),str(esc_ready),str(esc_pid),check=False)
+    assert cp.returncode != 0, 'sampler must fail nonzero when cleanup unproven'
     # Wait for the escaped descendant to bind the owned listener before
     # asserting terminal cleanup — deterministic readiness handshake, not
     # scheduler luck.
@@ -124,7 +125,8 @@ with tempfile.TemporaryDirectory() as td_raw:
         "sys.exit(0 if os.path.exists(ready) else 1)\n"
     )
     probe=socket.socket(); probe.bind(('127.0.0.1',0)); escu_port=probe.getsockname()[1]; probe.close()
-    run(sys.executable,str(SAMPLER),'--experiment-id','fixture.escaped-udp','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(escu_port),'--interval-ms','10','--max-seconds','2','--output',str(escu_json),'--',sys.executable,str(escu),str(escu_port),str(escu_ready),str(escu_pid))
+    cp=run(sys.executable,str(SAMPLER),'--experiment-id','fixture.escaped-udp','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(escu_port),'--interval-ms','10','--max-seconds','2','--output',str(escu_json),'--',sys.executable,str(escu),str(escu_port),str(escu_ready),str(escu_pid),check=False)
+    assert cp.returncode != 0, 'sampler must fail nonzero when cleanup unproven'
     for _ in range(200):
         if escu_ready.exists():
             break
@@ -172,7 +174,8 @@ with tempfile.TemporaryDirectory() as td_raw:
     for n in ("tcp","tcp6","udp"):
         (pd/n).write_text(hdr)
     pdjson=td/"pd.json"
-    run(sys.executable,str(SAMPLER),'--experiment-id','fixture.partial-obs','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port','40002','--interval-ms','10','--max-seconds','1','--net-dir',str(pd),'--output',str(pdjson),'--','/bin/true')
+    cp=run(sys.executable,str(SAMPLER),'--experiment-id','fixture.partial-obs','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port','40002','--interval-ms','10','--max-seconds','1','--net-dir',str(pd),'--output',str(pdjson),'--','/bin/true',check=False)
+    assert cp.returncode != 0, 'sampler must fail nonzero on unknown cleanup'
     pj=json.loads(pdjson.read_text())
     assert pj['cleanup']['owned_sockets_after_exit'] is None, pj['cleanup']
     assert pj['cleanup']['complete'] is False, pj['cleanup']

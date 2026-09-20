@@ -345,8 +345,14 @@ def main():
     finally:
         try: tmp.unlink()
         except FileNotFoundError: pass
+    # H-R9-084: the sampler's own exit status must not certify success while
+    # terminal cleanup is unproven. Preserve the child's recorded exit fact
+    # inside result["exit"], but the wrapper returns nonzero whenever cleanup
+    # is not affirmatively complete.
     if interrupted_signal is not None:
         return 128 + interrupted_signal
+    if not cleanup_complete:
+        return 1
     return exit_code if exit_code >= 0 else 128 - exit_code
 
 if __name__ == "__main__":
