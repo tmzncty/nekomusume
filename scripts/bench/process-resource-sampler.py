@@ -114,8 +114,12 @@ def owned_port_sockets_present(owned_ports: set[int]):
             if local_port not in owned_ports:
                 continue
             if name.startswith("tcp"):
-                if fields[3] == "0A":  # LISTEN
-                    return True
+                try:
+                    if fields[3] == "0A":  # LISTEN
+                        return True
+                except IndexError:
+                    # Malformed/truncated row with owned port — unknown.
+                    return None
             else:
                 # A bound UDP socket on an owned port is owned — no LISTEN state.
                 return True
