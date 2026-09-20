@@ -1181,6 +1181,9 @@ pub struct SessionRuntime {
     recv: VecDeque<InboundRecord>,
     received: BTreeMap<(StreamId, u64), Vec<u8>>,
     confirmed: BTreeMap<StreamId, u64>,
+    /// Highest drained send end per stream — a byte range counts as sent only
+    /// once `pop_send` has drained it across the send-drain boundary.
+    sent: BTreeMap<StreamId, u64>,
     send_inflight: BTreeMap<StreamId, usize>,
     recv_window_used: BTreeMap<StreamId, usize>,
     session_send_inflight: usize,
@@ -1221,6 +1224,7 @@ impl SessionRuntime {
             recv: VecDeque::new(),
             received: BTreeMap::new(),
             confirmed: BTreeMap::new(),
+            sent: BTreeMap::new(),
             send_inflight: BTreeMap::new(),
             recv_window_used: BTreeMap::new(),
             session_send_inflight: 0,
@@ -1388,6 +1392,9 @@ impl SessionRuntime {
         let x = self.send.pop_front();
         if let Some(ref r) = x {
             self.queued_bytes -= r.data.len();
+            // Mark this byte range drained — only drained bytes may be
+            // confirmed by a later DeliveryAck.
+            self.sent.insert(r.stream, r.offset + r.data.len() as u64);
             self.touch(now_ms);
         }
         Ok(x)
@@ -1509,6 +1516,13 @@ impl SessionRuntime {
         if offset > current {
             return Err(RuntimeError::Protocol);
         }
+        // H-I4-086: a DeliveryAck may confirm only bytes that have crossed
+        // pop_send()'s drain boundary — it must not confirm still-queued
+        // (locally undrained) bytes merely because send_inflight counts them.
+        let sent = self.sent.get(&stream).copied().unwrap_or(0);
+        if end > sent {
+            return Err(RuntimeError::Protocol);
+        }
         let delta = usize::try_from(end - current).map_err(|_| RuntimeError::TotalLimit)?;
         let inflight = self
             .send_inflight
@@ -1597,6 +1611,9 @@ impl SessionRuntime {
         self.recv.clear();
         self.received.clear();
         self.confirmed.clear();
+        // H-I4-086: sent/drained bookkeeping is runtime-owned — release on
+        // terminal paths together with the other send-side state.
+        self.sent.clear();
         self.send_inflight.clear();
         self.recv_window_used.clear();
         self.session_send_inflight = 0;
@@ -1963,6 +1980,9 @@ mod runtime_tests {
             2,
         )
         .unwrap();
+        // Drain the queued record across the send-drain boundary so its
+        // DeliveryAck may confirm it — at t=2 so last_activity stays 2.
+        assert_eq!(r.pop_send(2).unwrap().unwrap().data, b"ab");
         r.delivery_ack(StreamId(1), 0, 2, 3).unwrap();
         // Sanity: runtime-owned state is populated before timeout.
         assert!(
@@ -1971,8 +1991,8 @@ mod runtime_tests {
                 || !r.received.is_empty()
                 || !r.confirmed.is_empty()
         );
-        // Last activity was receive() at t=2; idle_timeout=10 -> timeout at t>=12.
-        assert_eq!(r.tick(12), Err(RuntimeError::IdleTimeout));
+        // Last activity is delivery_ack() at t=3 (pop_send at t=2); idle_timeout=10 -> timeout at t>=13.
+        assert_eq!(r.tick(13), Err(RuntimeError::IdleTimeout));
         assert_eq!(r.state(), RuntimeState::Closed);
         // All bounded runtime-owned state released, not only send/recv.
         assert!(r.send.is_empty() && r.recv.is_empty());
@@ -2048,6 +2068,7 @@ mod runtime_tests {
         assert_eq!(r.receive(record, 3), Ok(()));
         assert_eq!(r.pop_receive(4).unwrap().unwrap().data, b"abc");
         assert!(r.pop_receive(5).unwrap().is_none());
+        assert_eq!(r.pop_send(6).unwrap().unwrap().data, b"abc");
         assert_eq!(r.delivery_ack(StreamId(1), 0, 3, 6), Ok(()));
         assert_eq!(r.confirmed_watermark(StreamId(1)), 3);
         assert_eq!(
@@ -2076,6 +2097,9 @@ mod runtime_tests {
         rt.open_stream(StreamId(1), 1).unwrap();
         rt.queue_send(StreamId(1), b"aa", 0).unwrap();
         rt.queue_send(StreamId(1), b"bb", 0).unwrap();
+        // Drain both records so their ranges may be confirmed.
+        rt.pop_send(0).unwrap();
+        rt.pop_send(0).unwrap();
         // watermark = 0. ACK [2,4) gapped — must NOT advance watermark to 4.
         let before = rt.confirmed_watermark(StreamId(1));
         let inflight_before = *rt.send_inflight.get(&StreamId(1)).unwrap();
@@ -2243,6 +2267,31 @@ mod runtime_tests {
         assert_eq!(r.observable_events().count(), events_before);
     }
 
+    #[test]
+    fn delivery_ack_cannot_confirm_undrained_queued_bytes() {
+        // H-I4-086: bytes counted in send_inflight but still queued (never
+        // pop_send()ed) must not be confirmed — a peer ACK cannot free
+        // flow-control credit for locally undrained bytes.
+        let mut r = SessionRuntime::new(SessionId(15), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 1).unwrap();
+        r.queue_send(StreamId(1), b"ab", 1).unwrap();
+        let inflight = *r.send_inflight.get(&StreamId(1)).unwrap();
+        let session_inflight = r.session_send_inflight;
+        let events = r.observable_events().count();
+        assert_eq!(
+            r.delivery_ack(StreamId(1), 0, 2, 2),
+            Err(RuntimeError::Protocol),
+            "ACK of still-queued bytes is rejected"
+        );
+        assert_eq!(r.confirmed_watermark(StreamId(1)), 0);
+        assert_eq!(*r.send_inflight.get(&StreamId(1)).unwrap(), inflight);
+        assert_eq!(r.session_send_inflight, session_inflight);
+        assert_eq!(r.observable_events().count(), events, "no event emitted");
+        // After draining across pop_send, the same ACK succeeds.
+        assert_eq!(r.pop_send(2).unwrap().unwrap().data, b"ab");
+        r.delivery_ack(StreamId(1), 0, 2, 2).unwrap();
+        assert_eq!(r.confirmed_watermark(StreamId(1)), 2);
+    }
     #[test]
     fn zero_length_delivery_ack_is_rejected_without_event() {
         let mut r = SessionRuntime::new(SessionId(14), limits(), 0).unwrap();
@@ -2503,6 +2552,9 @@ mod bounded_window_fixture_tests {
             Err(RuntimeError::QueueFull)
         );
         assert_eq!(r.queued_bytes(), 4);
+        // Drain abcd across the send-drain boundary before the ACK may
+        // confirm it.
+        assert_eq!(r.pop_send(3).unwrap().unwrap().data, b"abcd");
         assert_eq!(r.delivery_ack(StreamId(1), 0, 4, 3), Ok(()));
         assert_eq!(r.queue_send(StreamId(1), b"efgh", 4), Ok(4));
         let names: Vec<_> = r.observable_events().map(|e| e.kind.name()).collect();
