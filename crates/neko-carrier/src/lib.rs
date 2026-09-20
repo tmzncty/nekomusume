@@ -3241,13 +3241,25 @@ mod health_evidence_tests {
     }
 
     #[test]
-    #[test]
     fn quiesce_cannot_manufacture_fresh_health_from_pre_quiesce_outcome() {
         // H-R9-081: a resolved outcome before quiesce must not appear as a
         // fresh health sample merely because quiesce ran.
-        let mut r = PathRecovery::new(PathGeneration(7));
-        r.on_send(&[1, 2, 3], &[10], 0);
-        r.on_ack(3, &[1, 2, 3], 0, 5);
+        let mut r = PathRecovery::new(PathId(7), 7, 1400).unwrap();
+        for pn in 0..3u64 {
+            r.on_sent(neko_reliable::SentPacket {
+                number: pn,
+                sent_at_us: 0,
+                bytes: 100,
+                ack_eliciting: true,
+                frames: vec![neko_reliable::FrameId(pn)],
+            })
+            .unwrap();
+        }
+        let mut ack = neko_reliable::AckRanges::new(8).unwrap();
+        ack.insert(0).unwrap();
+        ack.insert(1).unwrap();
+        ack.insert(2).unwrap();
+        r.on_ack(7, &ack, 100, 0).unwrap();
         // Pre-quiesce resolved outcome exists but unconsumed.
         r.quiesce();
         assert!(
