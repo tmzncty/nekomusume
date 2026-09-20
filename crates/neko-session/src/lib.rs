@@ -1338,7 +1338,10 @@ impl SessionRuntime {
         if data.len() > self.limits.max_record_bytes {
             return Err(RuntimeError::RecordTooLarge);
         }
-        if self.send.len() >= self.limits.max_queue_records
+        // H-I4-087: max_queue_records is an aggregate cap over the whole
+        // runtime-owned queued-record surface (send + recv), not a
+        // per-direction cap.
+        if self.send.len() + self.recv.len() >= self.limits.max_queue_records
             || self
                 .queued_bytes
                 .checked_add(data.len())
@@ -1454,7 +1457,7 @@ impl SessionRuntime {
         {
             return Err(RuntimeError::QueueFull);
         }
-        if self.recv.len() >= self.limits.max_queue_records
+        if self.queued_records() >= self.limits.max_queue_records
             || self
                 .queued_bytes
                 .checked_add(record.data.len())
@@ -2291,6 +2294,48 @@ mod runtime_tests {
         assert_eq!(r.pop_send(2).unwrap().unwrap().data, b"ab");
         r.delivery_ack(StreamId(1), 0, 2, 2).unwrap();
         assert_eq!(r.confirmed_watermark(StreamId(1)), 2);
+    }
+    #[test]
+    fn aggregate_queue_record_cap_is_shared_across_send_and_recv() {
+        // H-I4-087: max_queue_records is ONE aggregate cap over send+recv —
+        // a full send queue must not leave recv free, and vice versa.
+        let lim = RuntimeLimits {
+            max_queue_records: 1,
+            ..limits()
+        };
+        let mut r = SessionRuntime::new(SessionId(16), lim, 0).unwrap();
+        r.open_stream(StreamId(1), 1).unwrap();
+        r.queue_send(StreamId(1), b"a", 1).unwrap();
+        // Aggregate slot full — receive must reject.
+        assert_eq!(
+            r.receive(
+                InboundRecord {
+                    stream: StreamId(1),
+                    offset: 0,
+                    data: b"b".to_vec()
+                },
+                1,
+            ),
+            Err(RuntimeError::QueueFull),
+            "aggregate record cap blocks receive"
+        );
+        // pop_send frees the aggregate slot — receive may then proceed.
+        r.pop_send(1).unwrap();
+        r.receive(
+            InboundRecord {
+                stream: StreamId(1),
+                offset: 0,
+                data: b"b".to_vec(),
+            },
+            1,
+        )
+        .unwrap();
+        // recv now fills the slot — send must reject.
+        assert_eq!(
+            r.queue_send(StreamId(1), b"c", 2),
+            Err(RuntimeError::QueueFull),
+            "aggregate record cap blocks send"
+        );
     }
     #[test]
     fn zero_length_delivery_ack_is_rejected_without_event() {
