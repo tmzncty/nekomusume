@@ -14,7 +14,7 @@
 
 The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: review/repair -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance where code/tests/evidence changed -> next slice. Reviewer cadence is only a check frequency. Do not wait for the next reviewer after closing a slice.
 
-## READY_LOCAL 1 — FRONT HIGH: H-I4-085 active transitive build/native-surface truth
+## READY_LOCAL 1 — CLOSED: H-I4-085 active transitive build/native-surface truth
 
 Read exact-current workspace/crate manifests, `Cargo.lock`, `docs/reviews/dev-i4-bld-dependency-build-surface-20260921.md`, the original finding `docs/reviews/reviewer-h-i4-085-dependency-evidence-truth-20260921.md`, and the continuation finding `docs/reviews/reviewer-h-i4-085-build-hook-reopen-20260921.md`.
 
