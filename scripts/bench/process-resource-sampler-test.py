@@ -77,7 +77,7 @@ with tempfile.TemporaryDirectory() as td_raw:
         "deadline=time.monotonic()+10\n"
         "while not os.path.exists(ready) and time.monotonic()<deadline:\n"
         "    time.sleep(0.02)\n"
-        "sys.exit(0)\n"
+        "sys.exit(0 if os.path.exists(ready) else 1)\n"
     )
     probe=socket.socket(); probe.bind(('127.0.0.1',0)); esc_port=probe.getsockname()[1]; probe.close()
     run(sys.executable,str(SAMPLER),'--experiment-id','fixture.escaped-descendant','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(esc_port),'--interval-ms','10','--max-seconds','2','--output',str(esc_json),'--',sys.executable,str(esc),str(esc_port),str(esc_ready),str(esc_pid))
@@ -104,10 +104,10 @@ with tempfile.TemporaryDirectory() as td_raw:
                 pid = int(esc_pid.read_text().strip())
                 os.kill(pid, signal.SIGKILL)
                 for _ in range(100):
-                    if not Path(f"/proc/{pid}").exists():
+                    if not pathlib.Path(f"/proc/{pid}").exists():
                         break
                     time.sleep(0.01)
-                assert not Path(f"/proc/{pid}").exists(), f"escaped helper {pid} still alive"
+                assert not pathlib.Path(f"/proc/{pid}").exists(), f"escaped helper {pid} still alive"
             except (OSError, ValueError):
                 pass
     # H-R9-083: a setsid-escaped descendant holding a bound UDP socket on the
@@ -121,7 +121,7 @@ with tempfile.TemporaryDirectory() as td_raw:
         "deadline=time.monotonic()+10\n"
         "while not os.path.exists(ready) and time.monotonic()<deadline:\n"
         "    time.sleep(0.02)\n"
-        "sys.exit(0)\n"
+        "sys.exit(0 if os.path.exists(ready) else 1)\n"
     )
     probe=socket.socket(); probe.bind(('127.0.0.1',0)); escu_port=probe.getsockname()[1]; probe.close()
     run(sys.executable,str(SAMPLER),'--experiment-id','fixture.escaped-udp','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(escu_port),'--interval-ms','10','--max-seconds','2','--output',str(escu_json),'--',sys.executable,str(escu),str(escu_port),str(escu_ready),str(escu_pid))
@@ -142,15 +142,12 @@ with tempfile.TemporaryDirectory() as td_raw:
                 pid = int(escu_pid.read_text().strip())
                 os.kill(pid, signal.SIGKILL)
                 for _ in range(100):
-                    if not Path(f"/proc/{pid}").exists():
+                    if not pathlib.Path(f"/proc/{pid}").exists():
                         break
                     time.sleep(0.01)
-                assert not Path(f"/proc/{pid}").exists(), f"escaped UDP helper {pid} still alive"
+                assert not pathlib.Path(f"/proc/{pid}").exists(), f"escaped UDP helper {pid} still alive"
             except (OSError, ValueError):
                 pass
-            dead=time.monotonic()+5
-            while pathlib.Path(f"/proc/{escu_pid.read_text().strip()}").exists() and time.monotonic()<dead:
-                time.sleep(0.05)
     # H-R9-083: a partial terminal /proc observation (a required table
     # unreadable, or an unparseable row) must yield unknown — never absent.
     netdir=td/"procnet"; netdir.mkdir()
@@ -167,6 +164,18 @@ with tempfile.TemporaryDirectory() as td_raw:
     # All four tables clean and no owned port -> absent.
     (netdir/"tcp").write_text(hdr+row)
     assert sampler.owned_port_sockets_present({40001}, net_dir=str(netdir)) is False
+    # Result-construction oracle: a partial terminal observation (net_dir
+    # missing a required table) must surface as owned_sockets_after_exit=None
+    # and complete=false in the sampler's result JSON — never promoted.
+    pd=td/"pdnet"; pd.mkdir()
+    hdr="  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+    for n in ("tcp","tcp6","udp"):
+        (pd/n).write_text(hdr)
+    pdjson=td/"pd.json"
+    run(sys.executable,str(SAMPLER),'--experiment-id','fixture.partial-obs','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port','40002','--interval-ms','10','--max-seconds','1','--net-dir',str(pd),'--output',str(pdjson),'--','/bin/true')
+    pj=json.loads(pdjson.read_text())
+    assert pj['cleanup']['owned_sockets_after_exit'] is None, pj['cleanup']
+    assert pj['cleanup']['complete'] is False, pj['cleanup']
     # Exit-race: a child that is gone before the first sleep still yields wait4
     # CPU/RSS and a truthful null sampled-FD metric rather than fake zero.
     short=td/"short.json"

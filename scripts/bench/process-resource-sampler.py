@@ -182,6 +182,8 @@ def parse_args():
     p.add_argument("--release-on-observed", default=None,
                    help="test-only: write this file once FD_MIN fds + an owned socket are observed")
     p.add_argument("--release-fd-min", type=int, default=None)
+    p.add_argument("--net-dir", default="/proc/net",
+                   help="test-only: directory containing the net tables")
     p.add_argument("--output", required=True)
     p.add_argument("command", nargs=argparse.REMAINDER)
     a = p.parse_args()
@@ -316,7 +318,7 @@ def main():
     # empty AND the terminal owned-port oracle affirmatively reports no owned
     # TCP/UDP socket bound anywhere. A present socket or an unknown/failed
     # observation is never promoted to success.
-    sockets_still_owned = owned_port_sockets_present(set(a.owned_port))
+    sockets_still_owned = owned_port_sockets_present(set(a.owned_port), net_dir=a.net_dir)
     owned_sockets_after_exit = 0 if (group_empty and sockets_still_owned is False) else None
     cleanup_complete = group_empty and sockets_still_owned is False
     result = {
