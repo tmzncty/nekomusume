@@ -207,9 +207,11 @@ fn bounded_udp_blackhole_tcp_resume_preserves_order_and_exactly_once_bytes() {
     let (peer, claim) = claim.unwrap();
     guard.attach(&peer, &claim, 2).unwrap();
     // Establish the receiver's corresponding send-inflight accounting before
-    // applying cumulative delivery ACKs for the resumed records.
+    // applying cumulative delivery ACKs for the resumed records. H-I4-086:
+    // the ACK-eligible ranges must first cross the send-drain boundary.
     for data in records {
         receiver_runtime.queue_send(StreamId(1), data, 5).unwrap();
+        receiver_runtime.pop_send(5).unwrap();
     }
     // H-R9-076: the first record was UDP-delivered before the blackhole —
     // its Session delivery proof is applied FIRST so the watermark reaches
