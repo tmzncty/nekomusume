@@ -2577,6 +2577,110 @@ mod bounded_window_fixture_tests {
 }
 
 #[cfg(test)]
+mod h_i4_086_tests {
+    use super::*;
+
+    fn limits() -> RuntimeLimits {
+        RuntimeLimits {
+            max_streams: 2,
+            max_queue_records: 8,
+            max_queue_bytes: 64,
+            max_total_bytes: 128,
+            max_record_bytes: 8,
+            max_session_window: 8,
+            max_stream_window: 4,
+            idle_timeout_ms: 100,
+            close_timeout_ms: 10,
+        }
+    }
+
+    /// H-I4-086 negative: a DeliveryAck must not confirm queued-but-undrained
+    /// bytes — the range only becomes ACK-eligible after pop_send drains it.
+    #[test]
+    fn ack_before_drain_is_rejected_without_state_change() {
+        let mut r = SessionRuntime::new(SessionId(9), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        assert_eq!(r.queue_send(StreamId(1), b"abcd", 0), Ok(0));
+        let events_before = r.observable_events().count();
+        assert_eq!(
+            r.delivery_ack(StreamId(1), 0, 4, 1),
+            Err(RuntimeError::Protocol),
+            "ACK before pop_send drain must be rejected"
+        );
+        assert_eq!(r.confirmed_watermark(StreamId(1)), 0);
+        assert_eq!(r.queued_bytes(), 4);
+        assert_eq!(
+            r.observable_events().count(),
+            events_before,
+            "rejected ACK must emit no event"
+        );
+        // Drain-then-ACK positive: the same ACK succeeds after pop_send.
+        assert_eq!(r.pop_send(1).unwrap().unwrap().data, b"abcd");
+        assert_eq!(r.delivery_ack(StreamId(1), 0, 4, 2), Ok(()));
+        assert_eq!(r.confirmed_watermark(StreamId(1)), 4);
+    }
+
+    /// H-I4-086 negative: draining only the first of two contiguous records
+    /// must not make the second's queued range ACK-eligible.
+    #[test]
+    fn mixed_prefix_ack_rejects_undrained_range() {
+        let mut r = SessionRuntime::new(SessionId(10), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        assert_eq!(r.queue_send(StreamId(1), b"aa", 0), Ok(0));
+        assert_eq!(r.queue_send(StreamId(1), b"bb", 0), Ok(2));
+        // Drain only the first record.
+        assert_eq!(r.pop_send(1).unwrap().unwrap().data, b"aa");
+        // ACK covering the still-queued second record must fail.
+        assert_eq!(
+            r.delivery_ack(StreamId(1), 0, 4, 2),
+            Err(RuntimeError::Protocol),
+            "ACK crossing into undrained range must be rejected"
+        );
+        // ACK covering exactly the drained first record is valid.
+        assert_eq!(r.delivery_ack(StreamId(1), 0, 2, 2), Ok(()));
+        assert_eq!(r.confirmed_watermark(StreamId(1)), 2);
+    }
+
+    /// H-I4-086: draining stream A must not make stream B's queued range
+    /// ACK-eligible.
+    #[test]
+    fn drain_isolation_across_streams() {
+        let mut r = SessionRuntime::new(SessionId(11), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        r.open_stream(StreamId(2), 0).unwrap();
+        assert_eq!(r.queue_send(StreamId(1), b"aa", 0), Ok(0));
+        assert_eq!(r.queue_send(StreamId(2), b"bb", 0), Ok(0));
+        // Drain only stream A.
+        assert_eq!(r.pop_send(1).unwrap().unwrap().stream, StreamId(1));
+        // Stream B's queued range is not ACK-eligible.
+        assert_eq!(
+            r.delivery_ack(StreamId(2), 0, 2, 2),
+            Err(RuntimeError::Protocol),
+            "stream B ACK must fail while its bytes are queued"
+        );
+        // Stream A's drained range is ACK-eligible.
+        assert_eq!(r.delivery_ack(StreamId(1), 0, 2, 2), Ok(()));
+        assert_eq!(r.confirmed_watermark(StreamId(1)), 2);
+        assert_eq!(r.confirmed_watermark(StreamId(2)), 0);
+    }
+
+    /// H-I4-086: terminal cleanup releases sent bookkeeping.
+    #[test]
+    fn terminal_cleanup_releases_sent_bookkeeping() {
+        let mut r = SessionRuntime::new(SessionId(12), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        assert_eq!(r.queue_send(StreamId(1), b"ab", 0), Ok(0));
+        r.pop_send(1).unwrap();
+        assert_eq!(r.delivery_ack(StreamId(1), 0, 2, 1), Ok(()));
+        // sent bookkeeping is populated.
+        assert!(!r.sent.is_empty());
+        r.close_remote(2).unwrap();
+        assert_eq!(r.state(), RuntimeState::Closed);
+        assert!(r.sent.is_empty());
+    }
+}
+
+#[cfg(test)]
 mod era4_resource_limit_tests {
     use super::*;
     #[test]
