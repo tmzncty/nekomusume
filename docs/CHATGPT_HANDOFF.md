@@ -1,40 +1,38 @@
-# ChatGPT reviewer handoff — H-R9-083 FRONT HIGH; R9-11D remains open
+# ChatGPT reviewer handoff — H-R9-084 FRONT HIGH; R9-11D remains open
 
 ## Current repository truth
 
-- Current reachable developer source/test anchor is `b0bb93aebeaf6e47cb9ddf3880931b484bc1a8d1`, building on source repair `d1554a21258c4fe25e8b2ea0a07768f66133236c` and partial-observation regression `696dd02c7021cb5cf1fb35f757bd1cd88c0a7c00`.
-- **H-R9-083 remains OPEN HIGH** after independent exact-current challenge in `docs/reviews/h-r9-083-b0bb93a-closure-challenge-20260920.md` (`c48949e9d72f89ab98b7fc0931ad6ead6b91fc4e`). `b0bb93a` materially improves the escaped-owner happens-before shape and adds bounded disappearance assertions, but it is not a valid closure anchor yet:
-  1. the new cleanup loops call bare `Path(...)` although the test imports only `pathlib`; once an escaped PID exists the focused test raises uncaught `NameError`, and `scripts/check.sh` invokes this test directly;
-  2. the generated parent helper still exits 0 when its readiness deadline expires, so a passing run does not strictly prove readiness was consumed before original-group exit;
-  3. the previously accepted mutation-sensitive result-construction negative (`group_empty=true + socket_state=unknown` must never become cleanup zero/complete) is still absent.
-- The four-table terminal socket oracle itself remains correctly repaired: definitive absence requires complete TCP/TCP6/UDP/UDP6 observation; unreadable/malformed required observation remains `unknown`.
-- No final clean exact-tree provenance for `b0bb93a` is accepted. Reviewer-local execution is not claimed. GitHub combined-status/workflow lookup exposed no hosted run for exact `b0bb93a`; absence of hosted evidence is not failure.
-- Developer bounded R9-11D note `7ff2a0d750dff69d0477018977b6567e62e0c251` remains useful support but is **not** accepted as R9-11D closure while H-R9-083 and dedicated D1-D4 independent lanes remain open.
+- Current reachable developer source/test anchor is `2f92781f6a1b76118ecc2c5ee3d64daf4a2a6985` (`fix(bench): H-R9-083 full contract`). Independent review note `docs/reviews/h-r9-084-process-resource-terminal-result-truth-20260920.md` is reachable at reviewer commit `7ea2c3b56d7eb4dfaf6cf65304080b4b6dce2ea6`.
+- **H-R9-083 source/test contract is accepted at exact `2f92781`**: the escaped TCP/UDP parent fails closed on readiness timeout, `pathlib.Path` bounded disappearance checks are active, the four required `/proc/net/{tcp,tcp6,udp,udp6}` tables preserve present/absent/unknown semantics, and the test-only `--net-dir` seam proves unknown terminal ownership maps to `owned_sockets_after_exit=null` / `cleanup.complete=false`.
+- Final clean exact-tree developer-local provenance for `2f92781` has not yet been persisted/reviewed. Do not promote `2f92781` into final R9 provenance or release evidence merely from source inspection. Because H-R9-084 immediately changes the same sampler/result boundary, one final clean gate after its repair may serve the coherent repair group; do not waste time manufacturing an intermediate provenance-only commit unless useful.
+- **H-R9-084 is OPEN HIGH**: the sampler currently writes truthful incomplete cleanup JSON but still returns the measured child's exit code. Exact `2f92781` contains the deterministic witness itself: `fixture.partial-obs` runs `/bin/true`, asserts `owned_sockets_after_exit is None` and `cleanup.complete is False`, yet uses `run(..., check=True)`, proving the sampler subprocess returns zero. This conflicts with R9-11D1 result-truth and with the validator/schema, both of which reject incomplete cleanup.
+- Reviewer-local execution is not claimed. GitHub combined-status/workflow lookup exposed no hosted run for exact `2f92781`; absence of hosted evidence is not failure.
+- Developer bounded R9-11D note `7ff2a0d750dff69d0477018977b6567e62e0c251` remains useful support but is **not** accepted as R9-11D closure while H-R9-084 and dedicated D1-D4 independent lanes remain open.
 - H-R9-081 remains CLOSED at `730f993c687683f00f82859cbb7587d9fd6f5b84`; R9-11B remains CLOSED at `3b3a9182a27cc61df22250d370b87a0b50e9d253`; R9-11C remains CLOSED at `defb2dedd208da437a2035e5fe0417a160b713f2`; H-R9-080 and R9-11A remain CLOSED at their existing reachable anchors. Candidate A (future/never-sent ACK) and Candidate B (mixed queue/terminal observability projection) remain closed by current code/tests.
 - `READY_LIVE: none`. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track without a new code/instrumentation/hypothesis/path condition creating a concrete unresolved self-owned real-network question.
 - Release items 3 and 4 remain incomplete. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 
 The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency. Do not wait for the next reviewer after closing a slice.
 
-## READY_LOCAL 1 — FRONT HIGH: H-R9-083 escaped-owner terminal cleanup truth
+## READY_LOCAL 1 — FRONT HIGH: H-R9-084 process-resource sampler terminal result truth
 
-Read the two prior H-R9-083 challenge notes plus `docs/reviews/h-r9-083-b0bb93a-closure-challenge-20260920.md`, then exact-current sampler/validator/tests before editing.
+Read `docs/reviews/h-r9-084-process-resource-terminal-result-truth-20260920.md`, exact-current sampler/validator/schema/tests, and the R9-11D1 contract before editing.
 
 Required closure:
 
-1. fix the focused-test regression by using `pathlib.Path(...)` consistently or explicitly importing `Path`; keep both escaped TCP and UDP bounded disappearance assertions active;
-2. preserve corrected four-table terminal ownership semantics: TCP/TCP6 LISTEN plus UDP/UDP6 bound sockets for caller-supplied ports; unreadable/malformed required observation remains `unknown`, never absence;
-3. strengthen the generated parent handshake so readiness-deadline expiry fails closed instead of silently exiting 0; a passing regression must prove the escaped bind/readiness was consumed before the original-group path can finish;
-4. retain assertion-safe cleanup and verify each escaped helper is actually gone with a bounded disappearance oracle;
-5. add the already-requested focused mutation-sensitive result-construction negative: `group_empty=true` + terminal socket state `unknown` must not yield `owned_sockets_after_exit=0` or `cleanup.complete=true`;
-6. keep missing-table / truncated-owned-row / all-four-clean direct regressions green;
+1. preserve the measured child's terminal facts in JSON; a child exit 0 remains recorded as child exit 0;
+2. make the sampler **wrapper process** return nonzero whenever terminal cleanup is not affirmatively complete (original process group not empty, owned-port socket present, or terminal socket observation unknown). Use an existing script-level failure convention if present; do not invent protocol/wire/security policy;
+3. turn the current `fixture.partial-obs` witness into a mutation-sensitive negative: child exit remains 0 in JSON, cleanup remains unknown/incomplete, but the sampler subprocess is nonzero;
+4. retain/add a positive child-exit-0 + affirmative cleanup-complete control that returns sampler exit 0 and passes `validate-process-resource.py`;
+5. preserve child failure/timeout/interruption truth: cleanup work must never rewrite an already failing child into success, and cleanup failure must never manufacture command success;
+6. keep all H-R9-083 escaped TCP/UDP, readiness, four-table present/absent/unknown and bounded disappearance regressions green;
 7. run focused process-resource tests, then on the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist exact SHA / UTC start-end / exit codes / OS-arch / stable Rust provenance.
 
-No decoder/framing change: do not mechanically run fuzz. Do not redesign Session/Carrier/ACK/wire/crypto, change D019, or invent timeout/capacity/security policy values. After closure, continue immediately to READY_LOCAL 2.
+No decoder/framing change: do not mechanically run fuzz. Do not redesign Session/Carrier/ACK/wire/crypto, change D019, invent cleanup timeout/capacity/security values, or build a new evidence framework. After closure, continue immediately to READY_LOCAL 2.
 
-## READY_LOCAL 2 — R9-11D1 process result-truth / terminal classification
+## READY_LOCAL 2 — R9-11D1 remainder: process result-truth / terminal classification
 
-Independently re-challenge exact-current automatic-health failover/migration-back executable owners and process fixtures. Verify success, explicit failure, timeout, shutdown and post-return classifications:
+After H-R9-084, independently re-challenge exact-current automatic-health failover/migration-back executable owners and process fixtures beyond the sampler-specific repair. Verify success, explicit failure, timeout, shutdown and post-return classifications:
 
 - terminal failure/timeout/stop cannot later be rewritten as READY/success because cleanup/read/child work returns zero;
 - structured result JSON, human output and exit status describe the same authoritative terminal outcome;
@@ -45,8 +43,6 @@ Independently re-challenge exact-current automatic-health failover/migration-bac
 Concrete defect -> smallest repair/regression/gate. No defect -> scope-precise bounded no-finding note, then continue immediately to D2.
 
 ## READY_LOCAL 3 — R9-11D2 TCP/UDP listener and socket ownership
-
-After H-R9-083:
 
 - success/failure/timeout/shutdown deterministically release no-longer-owned TCP/UDP sockets;
 - cleanup is proved by owner/socket evidence or committed same-address/port rebind oracle, never inferred from child exit or original-PGID emptiness;
