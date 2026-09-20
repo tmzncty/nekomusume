@@ -3271,6 +3271,75 @@ mod health_evidence_tests {
     }
 
     #[test]
+    fn quiesce_consumed_outcome_stays_consumed() {
+        // H-R9-081: a resolved outcome already consumed before quiesce must
+        // stay consumed — quiesce cannot re-fresh it.
+        let mut r = PathRecovery::new(PathId(7), 7, 1400).unwrap();
+        for pn in 0..3u64 {
+            r.on_sent(neko_reliable::SentPacket {
+                number: pn,
+                sent_at_us: 0,
+                bytes: 100,
+                ack_eliciting: true,
+                frames: vec![neko_reliable::FrameId(pn)],
+            })
+            .unwrap();
+        }
+        let mut ack = neko_reliable::AckRanges::new(8).unwrap();
+        ack.insert(0).unwrap();
+        r.on_ack(7, &ack, 100, 0).unwrap();
+        // Consume the pre-quiesce resolved outcome once.
+        assert!(r.fresh_health_sample().is_some());
+        r.quiesce();
+        assert!(
+            r.fresh_health_sample().is_none(),
+            "consumed pre-quiesce outcome must stay consumed"
+        );
+        assert!(r.diagnostics().0 > 0);
+    }
+
+    #[test]
+    fn post_quiesce_outcome_is_fresh_once_then_consumed() {
+        // H-R9-081: a strictly post-quiesce resolved outcome becomes fresh
+        // exactly once, then is consumed — interval deltas start at the
+        // quiescent boundary, never replaying pre-quiesce resolved loss.
+        let mut r = PathRecovery::new(PathId(7), 7, 1400).unwrap();
+        for pn in 0..2u64 {
+            r.on_sent(neko_reliable::SentPacket {
+                number: pn,
+                sent_at_us: 0,
+                bytes: 100,
+                ack_eliciting: true,
+                frames: vec![neko_reliable::FrameId(pn)],
+            })
+            .unwrap();
+        }
+        let mut ack = neko_reliable::AckRanges::new(8).unwrap();
+        ack.insert(0).unwrap();
+        r.on_ack(7, &ack, 100, 0).unwrap();
+        let _ = r.fresh_health_sample();
+        r.quiesce();
+        assert!(r.fresh_health_sample().is_none());
+        // Post-quiesce new resolved work -> exactly one fresh sample.
+        r.on_sent(neko_reliable::SentPacket {
+            number: 3,
+            sent_at_us: 200,
+            bytes: 100,
+            ack_eliciting: true,
+            frames: vec![neko_reliable::FrameId(3)],
+        })
+        .unwrap();
+        let mut ack2 = neko_reliable::AckRanges::new(8).unwrap();
+        ack2.insert(3).unwrap();
+        r.on_ack(7, &ack2, 300, 0).unwrap();
+        let s = r.fresh_health_sample();
+        assert!(s.is_some(), "post-quiesce outcome is fresh");
+        assert!(
+            r.fresh_health_sample().is_none(),
+            "post-quiesce sample consumed once"
+        );
+    }
+    #[test]
     fn d064_warm_readiness_is_prefailure_bounded_and_distinct() {
         let mut manager = active_manager();
         assert!(
