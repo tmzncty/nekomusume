@@ -3304,7 +3304,7 @@ mod health_evidence_tests {
         // exactly once, then is consumed — interval deltas start at the
         // quiescent boundary, never replaying pre-quiesce resolved loss.
         let mut r = PathRecovery::new(PathId(7), 7, 1400).unwrap();
-        for pn in 0..2u64 {
+        for pn in 0..8u64 {
             r.on_sent(neko_reliable::SentPacket {
                 number: pn,
                 sent_at_us: 0,
@@ -3314,30 +3314,43 @@ mod health_evidence_tests {
             })
             .unwrap();
         }
+        // ACK 0 and 7 — packets 1-6 fall below the reordering gap and are
+        // resolved as loss: a real pre-quiesce resolved loss.
         let mut ack = neko_reliable::AckRanges::new(8).unwrap();
         ack.insert(0).unwrap();
+        ack.insert(7).unwrap();
         r.on_ack(7, &ack, 100, 0).unwrap();
+        let pre_loss = r.diagnostics().1;
+        assert!(pre_loss > 0, "pre-quiesce resolved loss exists");
         let _ = r.fresh_health_sample();
         r.quiesce();
         assert!(r.fresh_health_sample().is_none());
-        // Post-quiesce new resolved work -> exactly one fresh sample.
+        // Post-quiesce clean packet -> exactly one fresh sample whose interval
+        // reports ZERO loss (pre-quiesce loss must not leak into the delta).
         r.on_sent(neko_reliable::SentPacket {
-            number: 3,
+            number: 4,
             sent_at_us: 200,
             bytes: 100,
             ack_eliciting: true,
-            frames: vec![neko_reliable::FrameId(3)],
+            frames: vec![neko_reliable::FrameId(4)],
         })
         .unwrap();
         let mut ack2 = neko_reliable::AckRanges::new(8).unwrap();
-        ack2.insert(3).unwrap();
+        ack2.insert(4).unwrap();
         r.on_ack(7, &ack2, 300, 0).unwrap();
-        let s = r.fresh_health_sample();
-        assert!(s.is_some(), "post-quiesce outcome is fresh");
+        let s = r
+            .fresh_health_sample()
+            .expect("post-quiesce outcome is fresh");
+        assert_eq!(
+            s.loss_per_mille, 0,
+            "clean post-quiesce interval must not replay pre-quiesce loss"
+        );
         assert!(
             r.fresh_health_sample().is_none(),
             "post-quiesce sample consumed once"
         );
+        // Lifetime diagnostics still carry the pre-quiesce loss.
+        assert!(r.diagnostics().1 >= pre_loss);
     }
     #[test]
     fn d064_warm_readiness_is_prefailure_bounded_and_distinct() {
