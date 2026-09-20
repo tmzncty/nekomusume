@@ -1,47 +1,46 @@
-# ChatGPT reviewer handoff — H-R9-081 FRONT HIGH; R9-11B not closed
+# ChatGPT reviewer handoff — H-R9-081 closure oracle HIGH; R9-11B remains open
 
 ## Current repository truth
 
-- Current reviewer repository anchor before this handoff update: reachable exact `eeb49e44788413a5287dc1660b9c31244c7f9745`, which records independent finding H-R9-081 in `docs/reviews/independent-r9-11b-pathrecovery-quiesce-health-freshness-6fe8ae8-20260920.md`.
-- Exact current source/test tree under review remains developer exact `052b6eab40f8e4257d4480866b21f64ce3e5230c`; commits `4f9dfff`, `a83b898`, `3adcbd1`, `6fe8ae8`, and `eeb49e4` are docs/review/handoff-only.
-- **H-R9-080 remains CLOSED** at exact `052b6ea`: the SessionRuntime terminal-cleanup regressions now cross the send-drain boundary, preserve documented lifetime survivor `total_bytes`, and include the required cancel post-terminal mutator negative. Developer-reported clean exact-tree provenance for exact `052b6ea`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-20T01:50:16Z -> 2026-09-20T01:55:23Z, Linux x86_64, rustc 1.98.0. Treat this as developer-local provenance, not reviewer-local execution.
-- **R9-11A SessionRuntime terminal cleanup remainder remains CLOSED as bounded no-finding review support** at exact `a83b89850b75d6ff405c004b8186856987f5cd9e`; `SessionRuntime.events` capacity remains `POLICY_BLOCKED_RESOURCE_BOUND` and no policy value was invented.
-- Developer exact `6fe8ae83f3e213e0978bed5cf2e723e739857c0f` added a docs-only R9-11B no-finding note. GitHub-hosted Rust CI run `35484901555` completed `success` on that exact SHA. **Do not treat the R9-11B no-finding note as closure:** H-R9-081 below falsifies one of its explicit quiesce/fresh-health claims on the same source/test tree.
-- **H-R9-081 is CLOSED** at exact `4f40b2df5772a7f6a8260576ed22c6c3e25095ec` + `18a67a7` + `320279601ed7a414dfef81e667aad6b30526907e`: `PathRecovery::quiesce()` now sets `health_epoch = Some(outcome_epoch)` and aligns `last_health_sent`/`last_health_lost` with the resolved counters — a pre-quiesce resolved delta cannot replay as fresh merely because quiesce happened. `quiesce_cannot_manufacture_fresh_health_from_pre_quiesce_outcome` proves the immediate post-quiesce `fresh_health_sample()` is `None` while lifetime diagnostics survive. Developer-local clean exact-tree provenance for exact `3202796`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-20T04:12:17Z → 2026-09-20T04:17:40Z, Linux x86_64, rustc 1.98.0.
-- Scope boundary for H-R9-081: exact-current outer `ReliableUdpRuntime::teardown()` still sets `torn_down`, and `ReliableUdpRuntime::poll_health()` returns `RuntimeEvent::Idle` before calling the recovery bridge. This finding does **not** establish a live/executable false fallback after outer teardown; it is a public `PathRecovery` freshness/correctness defect plus release-review closure-truth gap.
-- H-R9-079 source repair remains accepted at exact `271e512c01cefcfc40745aa41725bbd3e2585bb6`. H-R9-077/H-R9-078 and H-R9-075/H-R9-076 remain closed at their prior reachable anchors.
-- Candidate A (`Recovery::on_ack` future/never-sent largest) remains closed by the current pre-mutation guard/regressions. Candidate B (`record_datagrams` mixed queue/terminal projection) remains closed by current mixed-delta/reason regressions.
+- Current reachable reviewer anchor is exact `16a641394b49fd36cb406ea3f16b13ee2ae4da33`, which records the independent H-R9-081 closure-oracle finding in `docs/reviews/independent-r9-11b-h-r9-081-closure-gap-3202796-20260920.md`.
+- Current source/test repair tree is developer exact `320279601ed7a414dfef81e667aad6b30526907e` (`4f40b2d` source repair + `18a67a7` focused regression + `3202796` adjacent-test attribute restoration). Later commits through this handoff are review/handoff-only.
+- **H-R9-080 remains CLOSED** at exact `052b6eab40f8e4257d4480866b21f64ce3e5230c`: the SessionRuntime terminal-cleanup regressions cross the send-drain boundary, preserve documented `total_bytes`, and include the required cancel post-terminal mutator negative. Developer-local exact-tree provenance remains recorded as green; do not reinterpret it as reviewer-local execution.
+- **R9-11A remains CLOSED as bounded independent no-finding review support** at exact `a83b89850b75d6ff405c004b8186856987f5cd9e`; `SessionRuntime.events` remains `POLICY_BLOCKED_RESOURCE_BOUND`, and no cap/TTL/LRU/history value has been invented.
+- Developer exact `6fe8ae83f3e213e0978bed5cf2e723e739857c0f` added a docs-only R9-11B no-finding note, but it cannot itself close R9-11B because H-R9-081 falsified one of its explicit quiesce/fresh-health claims.
+- **H-R9-081 source correctness repair is accepted but closure is OPEN / HIGH on evidence coverage.** `PathRecovery::quiesce()` now unconditionally sets `health_epoch = Some(outcome_epoch)` and aligns `last_health_sent` / `last_health_lost` to the current resolved counters. The committed regression proves the **unconsumed** pre-quiesce outcome cannot become fresh after quiesce. However the accepted H-R9-081 contract also required a direct **already-consumed** pre-quiesce case and, because public `PathRecovery` remains reusable after quiesce, a post-quiesce fresh-outcome case proving interval baselines start at the quiescent boundary. Those mutation-sensitive regressions are still absent. Do not rewrite the source repair merely to satisfy the oracle; add the missing cases first and only change source if they expose a real defect.
+- GitHub-hosted Rust CI run `35488510885` completed `success` on exact `3202796`. Developer-local clean exact-tree provenance for exact `3202796` is recorded as `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-20T04:12:17Z -> 2026-09-20T04:17:40Z, Linux x86_64, rustc 1.98.0. Hosted CI is supplemental; no reviewer-local execution is claimed.
+- Outer `ReliableUdpRuntime::teardown()` still sets `torn_down`, and `poll_health()` returns `RuntimeEvent::Idle` before consulting `PathRecovery`; H-R9-081 does not establish an executable false fallback after teardown.
+- Candidate A (`Recovery::on_ack` future/never-sent largest) remains closed by the pre-mutation guard/regressions. Candidate B (`record_datagrams` mixed queue/terminal projection) remains closed by the current mixed-delta/reason regressions.
 - Sampler determinism HIGH remains closed at exact `e021b27cffe4a87de185757a8d47b8685f462bb6` with bounded release-after-observation synchronization and persisted provenance.
-- `READY_LIVE: none`. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track absent a new code/instrumentation/hypothesis/path condition producing a concrete unresolved self-owned real-network question.
+- `READY_LIVE: none`. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track without a new code/instrumentation/hypothesis/path condition creating a concrete unresolved self-owned real-network question.
 - Release item 3 and item 4 remain incomplete. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
-- No reviewer-local test execution is claimed for this pass. Repository/source truth came from GitHub; developer-local clean exact-tree gates remain first-class and hosted CI is supplemental.
 
 The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency. Do not wait for the next reviewer after closing a slice.
 
-## READY_LOCAL 1 — FRONT HIGH H-R9-081 PathRecovery quiesce / health freshness
+## READY_LOCAL 1 — FRONT HIGH H-R9-081 closure-oracle completion
 
-Read exact-current `PathRecovery::{quiesce,fresh_health_sample}` and the independent finding at `eeb49e4`.
+Read exact-current `PathRecovery::{on_sent,on_ack,on_pto,quiesce,fresh_health_sample}`, the original finding at `eeb49e4`, and the closure-gap note at `16a6413`.
 
-Repair contract:
+The source fix in `4f40b2d` is currently accepted. Complete the missing regression contract only:
 
-1. Add a focused deterministic direct-`PathRecovery` regression that creates a real resolved outcome, calls `quiesce()`, and requires the immediate `fresh_health_sample()` to be `None`.
-2. Cover both preconditions: the old health outcome was already consumed, and a pre-quiesce resolved delta remained unconsumed. Neither may become fresh merely because quiesce occurred.
-3. Preserve lifetime diagnostics (`packets_sent`, `packets_lost`, RTT/PTO and existing outcome/resolved history). Do not erase truthful history to make the test pass.
-4. If the public `PathRecovery` remains reusable after quiesce, a later strictly post-quiesce resolved outcome may become fresh, but its interval delta must start at the quiescent boundary and must not replay pre-quiesce resolved loss. Use the smallest repair consistent with exact-current semantics; marking the current outcome consumed and aligning interval-delta baselines at quiesce is an acceptable minimal shape if tests confirm it.
-5. Do not redesign Session/Carrier/ACK/crypto/wire architecture and do not change policy values.
-6. Run focused `neko-carrier` tests, then for the final pushed developer SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, and verify a clean tree with exact SHA, UTC start/end, exit codes, OS/arch, and stable Rust version. No decoder/framing change is involved, so do not mechanically run fuzz.
+1. Keep the existing **unconsumed** pre-quiesce outcome regression.
+2. Add an **already-consumed** case: create a real resolved outcome, consume it once with `fresh_health_sample()`, call `quiesce()`, and require the immediate next `fresh_health_sample()` to be `None`; lifetime diagnostics must remain unchanged.
+3. Add a **post-quiesce reuse** case: after the quiescent boundary, send and resolve genuinely new work; require exactly one fresh health sample for that new resolved outcome and `None` on repeated polling. The interval result must use only post-quiesce resolved deltas; pre-quiesce loss/history may survive diagnostically but must not leak into the new interval.
+4. Do not add a terminal flag or redesign Recovery/health, Session/Carrier/ACK/crypto/wire semantics. Do not change policy values.
+5. Run focused `neko-carrier` tests, then for the final pushed developer SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, and verify a clean tree with exact SHA, UTC start/end, exit codes, OS/arch, and stable Rust version. No decoder/framing change is involved, so do not mechanically run fuzz.
 
-After the repair is pushed and gated, continue immediately into R9-11B remainder; do not wait for reviewer cadence.
+After this is pushed and gated, continue immediately into R9-11B remainder; do not wait for reviewer cadence.
 
 ## READY_LOCAL 2 — R9-11B Recovery / reliable-UDP terminal ownership remainder
 
-Re-run the bounded independent challenge on the repaired exact tree. Keep the already-inspected ownership claims, but explicitly re-challenge the repaired quiesce/freshness seam instead of inheriting `6fe8ae8`'s no-finding conclusion.
+Re-run the bounded independent challenge on the repaired exact tree; do not inherit `6fe8ae8`'s no-finding conclusion without re-challenging H-R9-081.
 
 Challenge:
 
-- PathRecovery live sent map/outstanding copies/Reno charge/retransmit plaintext/packet-frame map/receiver ACK obligations are zero or explicitly terminal-inert after teardown;
-- quiesce preserves only documented lifetime diagnostics, never stale retransmission eligibility or a fresh health outcome;
-- post-teardown send/retransmit/receive/apply-ACK/PTO/health/control-plane mutators cannot manufacture fresh positive evidence;
+- PathRecovery sent map/outstanding copies/Reno charge/retransmit plaintext/packet-frame map/receiver ACK obligations are zero or explicitly terminal-inert after teardown;
+- quiesce preserves documented lifetime diagnostics but neither stale retransmission eligibility nor fresh pre-quiesce health evidence;
+- post-teardown send/retransmit/receive/apply-ACK/PTO/health/control-plane paths cannot manufacture fresh positive evidence;
+- `abandon_sent` / `abandon_retransmit` after teardown must remain observationally inert even though they are not separately `torn_down`-gated today; a concrete state/evidence mutation is a defect, mere absence of a redundant guard is not;
 - abort/teardown ordering cannot orphan retained plaintext or make aborted packets ACK-valid;
 - future/never-sent ACK remains fail-closed before RTT/loss/PTO mutation.
 
