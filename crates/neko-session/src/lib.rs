@@ -2117,10 +2117,12 @@ mod runtime_tests {
     fn populated_runtime() -> SessionRuntime {
         let mut r = SessionRuntime::new(SessionId(9), limits(), 0).unwrap();
         r.open_stream(StreamId(1), 1).unwrap();
-        // Two queued sends: ack only the first so confirmed is populated
-        // while the second remains an in-flight send-accounting ownership.
+        // Two queued sends: pop the first across the send-drain boundary,
+        // ACK only that sent range — confirmed is populated while the second
+        // queued record remains an in-flight send-accounting ownership.
         r.queue_send(StreamId(1), b"a", 1).unwrap();
         r.queue_send(StreamId(1), b"b", 1).unwrap();
+        let _ = r.pop_send(4).unwrap();
         r.receive(
             InboundRecord {
                 stream: StreamId(1),
@@ -2158,9 +2160,12 @@ mod runtime_tests {
         // H-R9-078/080: cancel on an already-Error runtime is a no-op — one
         // terminal Error event, every owned surface cleared, no growth.
         let mut r = populated_runtime();
+        let lifetime_bytes = r.total_bytes();
         let base = r.observable_events().count();
         r.cancel(5).unwrap();
         assert_eq!(r.state(), RuntimeState::Error);
+        // Documented lifetime survivor is preserved unchanged.
+        assert_eq!(r.total_bytes(), lifetime_bytes);
         // First cancel released every owned surface — not vacuous.
         assert!(r.streams.is_empty() && r.close_deadline_ms.is_none());
         assert!(r.send.is_empty() && r.recv.is_empty() && r.received.is_empty());
@@ -2180,6 +2185,12 @@ mod runtime_tests {
             );
             assert_eq!(r.state(), RuntimeState::Error);
         }
+        // Representative post-terminal mutator fails closed with no fresh
+        // success/delivery/window evidence.
+        let before_mut = r.observable_events().count();
+        assert!(r.queue_send(StreamId(1), b"x", 9).is_err());
+        assert!(r.open_stream(StreamId(2), 9).is_err());
+        assert_eq!(r.observable_events().count(), before_mut);
     }
     #[test]
     fn remote_close_releases_stream_and_timer_ownership() {
@@ -2187,9 +2198,11 @@ mod runtime_tests {
         // the shared precondition — streams, deadline, queues, dedup,
         // watermarks, window/session counters.
         let mut r = populated_runtime();
+        let lifetime_bytes = r.total_bytes();
         let base = r.observable_events().count();
         r.close_remote(5).unwrap();
         assert_eq!(r.state(), RuntimeState::Closed);
+        assert_eq!(r.total_bytes(), lifetime_bytes);
         assert!(r.streams.is_empty() && r.close_deadline_ms.is_none());
         assert!(r.send.is_empty() && r.recv.is_empty() && r.received.is_empty());
         assert!(r.confirmed.is_empty() && r.send_inflight.is_empty());
