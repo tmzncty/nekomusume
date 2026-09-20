@@ -15,11 +15,10 @@
 
 ## Reachable regressions named
 
-- `fair_scheduler_interactive_prefers_bounded_burst_then_bulk` — interactive
+- `interactive_burst_is_bounded_and_order_is_repeatable` — interactive
   burst then bulk rotation.
-- `fair_scheduler_rejects_limits_atomically` — enqueue reject-before-mutate
-  on stream/session limits.
-- `fair_scheduler_round_robins_and_reopens` — round-robin + idempotent open.
+- `flow_limits_are_atomic` — enqueue reject-before-mutate on stream/session
+  limits.
 
 ## Result
 
