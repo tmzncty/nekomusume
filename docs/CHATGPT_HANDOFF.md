@@ -2,15 +2,15 @@
 
 ## Current repository truth
 
-- Current reviewer anchor before this handoff: reachable `main` exact `88c494e35148c767e16836755808f66751fcb8c8`.
+- Current developer handoff anchor reviewed this pass: reachable `main` exact `15dd77d16a0975b6e150f24794de9ce7aa250314`.
 - New developer-owned commits reviewed since the prior reviewer pass:
-  - `c6f772b9f0f6b0bedf0a2e8b17f31bbfce151b43` — test-only SessionRuntime cancel/remote-close cleanup oracles;
-  - `ecb3330337b7809f893504d64432269ad2f32a49` — restores displaced `#[test]` attributes after the prior edit;
-  - `215bcad121e5be58e62ab2685cd45cf68155839f` — developer handoff claiming H-R9-080 closed.
-- Latest independent reviewer support: exact `88c494e35148c767e16836755808f66751fcb8c8`, `docs/reviews/independent-r9-11-session-terminal-oracle-reopen-215bcad-20260920.md`.
+  - `8c3f96de1a0de3c102c09cb2a0ff87b6971dce0a` — strengthens cancel/remote-close terminal cleanup tests with a shared populated fixture;
+  - `15dd77d16a0975b6e150f24794de9ce7aa250314` — developer handoff claiming H-R9-080 closed at `8c3f96d`.
+- Latest independent reviewer support: exact `ea7040b1ecd5d6b17625eec5985356b4c3b7eea1`, `docs/reviews/independent-r9-11-session-terminal-oracle-reopen-8c3f96d-20260920.md`.
 - **H-R9-079 source repair remains accepted** at exact `271e512c01cefcfc40745aa41725bbd3e2585bb6`: `SessionRuntime::clear_runtime_state()` clears queues, receive dedup, confirmation watermarks, per-stream/session flow-control accounting, queued bytes, stream ownership, and `close_deadline_ms` while retaining documented lifetime facts.
-- **H-R9-080 is CLOSED** at exact `8c3f96de1a0de3c102c09cb2a0ff87b6971dce0a`: `populated_runtime()` fills every owned surface (streams, send/recv queues, dedup, confirmed watermark, window/session counters, queued bytes, armed `close_deadline_ms`) before terminalization — cleanup assertions are no longer vacuous. `repeated_cancel` and `remote_close` now assert all surfaces empty + `recv_window_used`/`session_send_inflight`/`session_recv_window_used`/`queued_bytes` zero + repeated terminal idempotent by unchanged event count + post-terminal mutator fails closed with no fresh evidence. Developer-local clean exact-tree provenance for exact `8c3f96d`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-19T23:50:06Z → 2026-09-19T23:55:13Z, Linux x86_64, rustc 1.98.0.
-- Developer-local clean exact-tree provenance recorded for exact `ecb3330`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0; `git diff --check` exit 0; clean worktree; 2026-09-19T22:49:43Z -> 2026-09-19T22:54:44Z; Linux x86_64; rustc 1.98.0. Treat this as developer-reported local provenance, not reviewer-local execution.
+- **H-R9-080 is REOPENED HIGH (release-gate evidence/closure truth).** Exact `8c3f96d` is useful but does not yet satisfy the accepted mutation-sensitive contract. `populated_runtime()` queues exactly one two-byte send and immediately `delivery_ack`s all two bytes before terminalization, so `session_send_inflight` is already zero and the retained `send_inflight[stream]` entry is zero-valued. Its precondition `!send_inflight.is_empty() || !recv_window_used.is_empty()` can pass solely because receive-window ownership is live. The post-terminal send-accounting-zero assertions are therefore still vacuous for positive send ownership. The fixture also does not snapshot/assert a documented lifetime survivor such as `total_bytes`, and the cancel/Error path does not run a representative rejected post-terminal mutator and prove no fresh success/delivery/window evidence. Exact `15dd77d`'s full-closure sentence is superseded by the independent finding at exact `ea7040b`.
+- This does **not** claim a current source leak: all four terminal paths presently call the shared `clear_runtime_state()`. The HIGH is about independent release-review truth and regression strength.
+- Developer-local clean exact-tree provenance recorded for exact `8c3f96d`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0; `git diff --check` exit 0; clean worktree; 2026-09-19T23:50:06Z -> 2026-09-19T23:55:13Z; Linux x86_64; rustc 1.98.0. Treat this as developer-reported local provenance, not reviewer-local execution. GitHub commit-workflow lookup returned no PR-triggered workflow run for exact `8c3f96d`; do not promote that absence into a failure claim.
 - **H-R9-077 remains CLOSED** at exact `e3dca29babfaf330931f26aa3697aa3cd3c98545`: reliable-UDP teardown releases receiver ACK ownership as well as sender recovery state.
 - **H-R9-078 remains CLOSED** at exact `442a8058e4ae27f867bd27db632494a945ec30f2`: repeated cancel on terminal Error is idempotent and the focused regression is active.
 - Sampler determinism HIGH remains closed at exact `e021b27cffe4a87de185757a8d47b8685f462bb6` with bounded release-after-observation handshake and persisted exact-tree provenance.
@@ -22,31 +22,31 @@
 
 The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency. Because H-R9-080 is a current HIGH, close it before widening R9-11.
 
-## READY_LOCAL 1 — FRONT HIGH: H-R9-080 mutation-sensitive cancel/remote-close terminal oracles
+## READY_LOCAL 1 — FRONT HIGH: H-R9-080 positive send-accounting + survivor + cancel negative oracle
 
-Independent finding: exact `88c494e35148c767e16836755808f66751fcb8c8`, `docs/reviews/independent-r9-11-session-terminal-oracle-reopen-215bcad-20260920.md`.
+Independent finding: exact `ea7040b1ecd5d6b17625eec5985356b4c3b7eea1`, `docs/reviews/independent-r9-11-session-terminal-oracle-reopen-8c3f96d-20260920.md`.
 
 Keep the current shared source cleanup. Repair only the oracle strength.
 
-Use one bounded fixture for both cancel and remote close that proves every owned surface is genuinely live before terminalization. A minimal sequence within the current `limits()` is:
+Use one bounded fixture for both cancel and remote close that proves every owned surface is genuinely live before terminalization:
 
 1. open stream 1;
 2. `queue_send("aa")`, then `queue_send("bb")`;
-3. `pop_send()` one record so receive queue capacity remains available while send in-flight ownership remains;
-4. `delivery_ack(stream=1, offset=0, len=2)` so `confirmed` is non-empty and the second send remains in-flight;
+3. `pop_send()` exactly one record;
+4. `delivery_ack(stream=1, offset=0, len=2)` so `confirmed` is non-empty while the second two-byte send remains positively in-flight;
 5. `receive(offset=0, "xy")` so `recv`, `received`, `recv_window_used` and session receive-window ownership are non-empty;
 6. `close_graceful()` so `close_deadline_ms` is actually armed;
-7. assert the relevant maps/counters/queues/deadline are non-empty/non-zero before the terminal operation.
+7. before terminalization assert the relevant preconditions **separately**, not through OR/map-presence shortcuts: non-empty `streams`, `send`, `recv`, `received`, `confirmed`; `send_inflight[stream] > 0`; `session_send_inflight > 0`; `recv_window_used[stream] > 0`; `session_recv_window_used > 0`; `queued_bytes > 0`; armed deadline; snapshot `total_bytes` or another already-documented lifetime survivor.
 
 Then for **first cancel/Error** and **remote close** separately prove:
 
 - `streams`, `send`, `recv`, `received`, `confirmed`, `send_inflight`, `recv_window_used` are empty;
 - `close_deadline_ms.is_none()`;
 - `session_send_inflight == 0`, `session_recv_window_used == 0`, `queued_bytes == 0`;
-- intended lifetime facts such as `total_bytes` remain retained;
+- the documented lifetime survivor remains unchanged;
 - exactly one correct terminal event is added;
 - repeated cancel/remote close leaves observable-event count unchanged;
-- representative rejected post-terminal mutators cannot append fresh success/delivery/window evidence.
+- a representative rejected post-terminal mutator on **both** paths cannot append fresh success/delivery/window evidence.
 
 Keep idle-timeout and close-deadline controls green. Do not invent an error code, lifecycle semantic, event-retention cap, capacity/TTL/LRU/history value, or D019 policy. No decoder/parser/crypto-framing change => no mechanical fuzz requirement.
 
