@@ -785,7 +785,11 @@ impl Carrier for MemoryEndpoint {
         let total = state.queue_bytes[peer]
             .checked_add(message.len())
             .ok_or(CarrierError::BufferFull)?;
-        if total > limits.max_queue_bytes {
+        // H-I4-088: an empty message consumes no byte budget but still owns
+        // one queue element — the record count is bounded by the committed
+        // max_queue_bytes value so zero-length sends cannot grow the queue
+        // without bound.
+        if total > limits.max_queue_bytes || state.queues[peer].len() >= limits.max_queue_bytes {
             return Err(CarrierError::BufferFull);
         }
         state.queues[peer].push_back(message.to_vec());
@@ -841,6 +845,25 @@ mod memory_pair_tests {
         assert_eq!(a.recv().unwrap(), Some(b"ok".to_vec()));
     }
 
+    #[test]
+    fn empty_messages_are_bounded_by_record_count() {
+        // H-I4-088: zero-length sends cannot grow the peer queue unbounded —
+        // the record count is bounded by max_queue_bytes.
+        let (a, b) = pair();
+        // max_queue_bytes = 6 -> at most 6 queued records, even if empty.
+        for _ in 0..6 {
+            a.send(&[]).unwrap();
+        }
+        assert_eq!(
+            a.send(&[]),
+            Err(CarrierError::BufferFull),
+            "record cap bounds empty sends"
+        );
+        // Receiving one empty record releases a record slot.
+        assert_eq!(b.recv().unwrap(), Some(Vec::new()));
+        a.send(&[]).unwrap();
+        // Non-empty payloads still obey the byte cap exactly.
+    }
     #[test]
     fn limits_and_queue_full_are_atomic() {
         for limits in [
