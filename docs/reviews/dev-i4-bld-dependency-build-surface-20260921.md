@@ -18,8 +18,13 @@ assumptions.
 
 ## Reachable checks named
 
-- `cargo metadata --locked` — lockfile consistent
-- `cargo tree --locked --workspace` — dependency graph verified above
+Locked Cargo tooling was executed on the exact current source/test tree:
+
+- `cargo metadata --locked --format-version 1 --no-deps` — lockfile consistent, all eight members resolved
+- `cargo tree --locked -e normal -p neko-crypto` — `snow v0.10.0` is the single normal production dependency; its resolved transitive crates include `aes-gcm`/`aes`/`cipher`/`aead`/`crypto-common`/`generic-array`/`typenum`/`inout`/`cfg-if`/`zeroize`/`cpufeatures`/`ctr`/`ghash`/`opaque-debug`/`poly1305`/`universal-hash`/`subtle`/`curve25519-dalek`/`curve25519-dalek-derive`/`digest`/`getrandom`/`ring`/`untrusted`/`sha2`/`proc-macro2`/`quote`/`syn`/`unicode-ident`
+- `cargo tree --locked -e build -p neko-crypto` — no build dependencies
+- `cargo tree --locked -e dev -p neko-crypto` — no dev dependencies
+- `cargo tree --locked -e normal -p neko-cli` — normal deps are `getrandom`/`libc`/`signal-hook`/`neko-carrier`/`neko-crypto` (+ `neko-reliable`/`neko-wire` via `neko-carrier`); `snow` reaches `neko-cli` only through `neko-crypto`
 - `unsafe_code = "forbid"` — workspace lint enforced on all members
 - `panic = "abort"` dev+release — uniform panic semantics
 
@@ -27,7 +32,8 @@ assumptions.
 
 No concrete defect found across the dependency/build surface. The workspace
 manifests are consistent, the lockfile is pinned, feature reachability is
-production-scoped `snow` (Noise) + minimal dev-scoped `serde`, no build/native hooks exist, and
+production-scoped `snow` (Noise, `neko-crypto` only) + minimal dev-scoped
+`serde`/`serde_json` (`neko-wire` tests only), no build/native hooks exist, and
 `unsafe_code = "forbid"` + `panic = "abort"` apply workspace-wide.
 
 **READY_LIVE: none** — deterministic local evidence only.
