@@ -2142,7 +2142,10 @@ mod runtime_tests {
         assert!(!r.confirmed.is_empty());
         // Positive send-accounting AND receive-window ownership separately —
         // not OR/map-presence.
-        assert!(r.session_send_inflight > 0, "unacked send remains in-flight");
+        assert!(
+            r.session_send_inflight > 0,
+            "unacked send remains in-flight"
+        );
         assert!(*r.send_inflight.get(&StreamId(1)).unwrap_or(&0) > 0);
         assert!(r.session_recv_window_used > 0);
         assert!(*r.recv_window_used.get(&StreamId(1)).unwrap_or(&0) > 0);
