@@ -2,13 +2,15 @@
 
 ## Current repository truth
 
-- Current reachable developer source/test anchor is `696dd02c7021cb5cf1fb35f757bd1cd88c0a7c00`, building on source repair `d1554a21258c4fe25e8b2ea0a07768f66133236c`. `696dd02` adds a controlled `net_dir` seam plus direct partial-observation regressions; it is now the exact-current executable test/source tree for H-R9-083 review.
-- **H-R9-083 remains OPEN HIGH** after independent exact-current challenge in `docs/reviews/h-r9-083-696dd02-closure-challenge-20260920.md` (`814d230df3ac5fc5f3d04d695ac6e0922dc5147c`). The earlier missing-table and malformed-TCP-row counterexamples are repaired and now directly tested. The remaining blocker is narrower: escaped TCP/UDP ownership establishment is still not a deterministic pre-terminal happens-before handshake, because the fixture waits for/asserts the readiness marker only *after* the synchronous sampler invocation returns. The `finally` blocks also only send `SIGKILL` and do not verify bounded disappearance; the direct `None` helper regression does not yet mutation-test result construction (`unknown` must never become cleanup zero/complete).
-- H-R9-082 remains closed for the original process-group-empty / escaped-owner false cleanup inference. `d1554a2` preserves four-table TCP/TCP6/UDP/UDP6 present/absent/unknown terminal ownership semantics and assertion-safe `finally` cleanup attempts.
-- Developer-reported clean exact-tree provenance exists for exact `40cbc6a` (`PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, 2026-09-20T11:15:10Z → 2026-09-20T11:20:30Z, Linux x86_64, rustc 1.98.0). No final exact-tree provenance for `696dd02` is accepted yet. Reviewer-local execution is not claimed. GitHub combined-status/workflow lookup exposed no hosted run for exact `696dd02`; absence of hosted evidence is not failure.
+- Current reachable developer source/test anchor is `b0bb93aebeaf6e47cb9ddf3880931b484bc1a8d1`, building on source repair `d1554a21258c4fe25e8b2ea0a07768f66133236c` and partial-observation regression `696dd02c7021cb5cf1fb35f757bd1cd88c0a7c00`.
+- **H-R9-083 remains OPEN HIGH** after independent exact-current challenge in `docs/reviews/h-r9-083-b0bb93a-closure-challenge-20260920.md` (`c48949e9d72f89ab98b7fc0931ad6ead6b91fc4e`). `b0bb93a` materially improves the escaped-owner happens-before shape and adds bounded disappearance assertions, but it is not a valid closure anchor yet:
+  1. the new cleanup loops call bare `Path(...)` although the test imports only `pathlib`; once an escaped PID exists the focused test raises uncaught `NameError`, and `scripts/check.sh` invokes this test directly;
+  2. the generated parent helper still exits 0 when its readiness deadline expires, so a passing run does not strictly prove readiness was consumed before original-group exit;
+  3. the previously accepted mutation-sensitive result-construction negative (`group_empty=true + socket_state=unknown` must never become cleanup zero/complete) is still absent.
+- The four-table terminal socket oracle itself remains correctly repaired: definitive absence requires complete TCP/TCP6/UDP/UDP6 observation; unreadable/malformed required observation remains `unknown`.
+- No final clean exact-tree provenance for `b0bb93a` is accepted. Reviewer-local execution is not claimed. GitHub combined-status/workflow lookup exposed no hosted run for exact `b0bb93a`; absence of hosted evidence is not failure.
 - Developer bounded R9-11D note `7ff2a0d750dff69d0477018977b6567e62e0c251` remains useful support but is **not** accepted as R9-11D closure while H-R9-083 and dedicated D1-D4 independent lanes remain open.
 - H-R9-081 remains CLOSED at `730f993c687683f00f82859cbb7587d9fd6f5b84`; R9-11B remains CLOSED at `3b3a9182a27cc61df22250d370b87a0b50e9d253`; R9-11C remains CLOSED at `defb2dedd208da437a2035e5fe0417a160b713f2`; H-R9-080 and R9-11A remain CLOSED at their existing reachable anchors. Candidate A (future/never-sent ACK) and Candidate B (mixed queue/terminal observability projection) remain closed by current code/tests.
-- Sampler observation/release determinism HIGH for the ordinary owned child remains closed at `e021b27cffe4a87de185757a8d47b8685f462bb6`; H-R9-083 is specifically about terminal escaped-owner cleanup evidence.
 - `READY_LIVE: none`. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track without a new code/instrumentation/hypothesis/path condition creating a concrete unresolved self-owned real-network question.
 - Release items 3 and 4 remain incomplete. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 
@@ -16,16 +18,17 @@ The external coding agent must synchronize to current `main` and continuously ex
 
 ## READY_LOCAL 1 — FRONT HIGH: H-R9-083 escaped-owner terminal cleanup truth
 
-Read `docs/reviews/h-r9-083-d1554-closure-challenge-20260920.md` and `docs/reviews/h-r9-083-696dd02-closure-challenge-20260920.md`, then exact-current sampler/validator/tests before editing.
+Read the two prior H-R9-083 challenge notes plus `docs/reviews/h-r9-083-b0bb93a-closure-challenge-20260920.md`, then exact-current sampler/validator/tests before editing.
 
 Required closure:
 
-1. preserve the corrected four-table terminal ownership semantics: TCP/TCP6 LISTEN plus UDP/UDP6 bound sockets for caller-supplied ports; unreadable/malformed required observation remains `unknown`, never absence;
-2. replace the post-hoc escaped TCP/UDP readiness assertion with a **true pre-terminal happens-before handshake**: the original-group path must not be able to finish before the escaped descendant has bound and its readiness has been consumed. A larger fixed sleep is not an ownership oracle;
-3. retain assertion-safe cleanup and additionally verify each escaped helper is actually gone with a bounded disappearance/reap oracle; signal delivery alone is not cleanup proof;
-4. add one focused mutation-sensitive result-construction negative: `group_empty=true` + terminal socket state `unknown` must not yield `owned_sockets_after_exit=0` or `cleanup.complete=true`;
-5. keep the new missing-table / truncated-TCP-row / all-four-clean direct regressions green;
-6. run focused process-resource tests, then on the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist exact SHA / UTC start-end / exit codes / OS-arch / stable Rust provenance.
+1. fix the focused-test regression by using `pathlib.Path(...)` consistently or explicitly importing `Path`; keep both escaped TCP and UDP bounded disappearance assertions active;
+2. preserve corrected four-table terminal ownership semantics: TCP/TCP6 LISTEN plus UDP/UDP6 bound sockets for caller-supplied ports; unreadable/malformed required observation remains `unknown`, never absence;
+3. strengthen the generated parent handshake so readiness-deadline expiry fails closed instead of silently exiting 0; a passing regression must prove the escaped bind/readiness was consumed before the original-group path can finish;
+4. retain assertion-safe cleanup and verify each escaped helper is actually gone with a bounded disappearance oracle;
+5. add the already-requested focused mutation-sensitive result-construction negative: `group_empty=true` + terminal socket state `unknown` must not yield `owned_sockets_after_exit=0` or `cleanup.complete=true`;
+6. keep missing-table / truncated-owned-row / all-four-clean direct regressions green;
+7. run focused process-resource tests, then on the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist exact SHA / UTC start-end / exit codes / OS-arch / stable Rust provenance.
 
 No decoder/framing change: do not mechanically run fuzz. Do not redesign Session/Carrier/ACK/wire/crypto, change D019, or invent timeout/capacity/security policy values. After closure, continue immediately to READY_LOCAL 2.
 
