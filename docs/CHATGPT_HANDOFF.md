@@ -1,45 +1,44 @@
-# ChatGPT reviewer handoff — H-I4-086 Session ACK-before-drain HIGH front
+# ChatGPT reviewer handoff — H-I4-087 aggregate Session queued-record cap HIGH front
 
 ## Current repository truth
 
-- Current reachable `main` immediately before this handoff update is exact `28818d81428f40c106bd8bd331d69eefcd046b7a` (`docs(review): flag H-I4-086 Session ACK before outbound drain`).
-- The latest executable source/test change remains exact `8cbd9af39a600f4ddd5fbc50208791e8584c6d74` (`fix(bench): H-R9-084 sampler exit status follows terminal cleanup truth`). All commits reviewed from prior reviewer head `cee89bed3b02909e8e0e5bc9e29e43af7a081d89` through `d7b630f310c504ee439bbcb4bb4c5b9a42a51993` are documentation/review/evidence/provenance/navigation changes; no newer executable owner supersedes the current Session source inspected for H-I4-086.
-- **H-I4-085 is CLOSED.** The build/native classification is truthfully repaired in `docs/reviews/dev-i4-bld-dependency-build-surface-20260921.md`: `snow` is a normal production dependency; the transitive production closure includes `snow`'s `rustc_version` build script and active `ring 0.17.14` build/`links`/`cc` C/assembly surface. Developer-reported clean exact-tree provenance is anchored to reachable exact `38379b16ba98eb12188302169edbe9ab9ce02487` in `docs/notes/h-i4-085-provenance-38379b1-20260921.md`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0 on the second run after one recorded transient READY-timeout failure, `git diff --check` exit 0, clean worktree, 2026-09-20T19:50:16Z -> 20:02:30Z, Linux x86_64, rustc 1.98.0 stable. This is developer-reported local provenance, not reviewer-local or hosted CI.
-- **I4-FS1 FairScheduler remains independently CLOSED** at reachable exact `9e483618554acbd3fa3544e9a17e3ec6436b1a6a` by `docs/reviews/reviewer-i4-fs1-fair-scheduler-44a0073-20260921.md`. No close/terminal API exists in the scheduler; drained streams are scheduler-inert. The review found no defect in idempotent open, reject-before-mutate accounting, cursor/rotation, or bounded Interactive/Bulk preference.
-- **H-I4-086 is CLOSED** at `ca629d702cf832c12bf74bdfc5f9d07ebb77ab17` + `3acba049fee5f9297cc8a4c3867250635c255717`: `SessionRuntime` now tracks per-stream `sent` drained byte ends; `delivery_ack` rejects `end > sent` (`Protocol`), preserving confirmed watermark, window credit, queue contents, and events. `pop_send` marks ranges drained; `clear_runtime_state` releases `sent`. Four new tests cover ack-before-drain, mixed-prefix, cross-stream isolation, and terminal sent-bookkeeping release. Exact-tree provenance for `3acba04`: `docs/notes/h-i4-086-provenance-3acba04-20260921.md` — `check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-20T21:05:25Z → 21:11:30Z, Linux x86_64, rustc 1.98.0.
-- H-R9-080/081/082/083/084, Candidate A (future/never-sent reliable-UDP ACK) and Candidate B (mixed datagram drop observability), R9-11A/B/C/D1/D2/D3/D4, R9-12, final independent R9, Q10/Q11/Q12 remain closed at their reachable anchors unless repository truth changes.
+- Current reachable `main` immediately before this handoff update is exact `4ba6ea6a2a9eb766ff5b0170b33b94842d9c3030` (`docs(review): flag H-I4-087 aggregate Session queue-record cap`).
+- Developer source/test repair for H-I4-086 is exact `ca629d702cf832c12bf74bdfc5f9d07ebb77ab17` plus companion test-ordering/cleanup exact `3acba049fee5f9297cc8a4c3867250635c255717`. Later `8efb82b`/`6b24a16` are navigation updates; they do not supersede the executable owner.
+- **H-I4-086 is CLOSED.** `SessionRuntime` now tracks per-stream drained/sent ends; `delivery_ack` rejects `end > sent`, so queued-but-undrained bytes cannot release Session/stream send-window credit or advance confirmation evidence. Regressions cover ACK-before-drain, a mixed drained/queued prefix, cross-stream isolation, resumed-session drain-before-ACK ordering, and terminal cleanup of the new sent bookkeeping.
+- Developer-reported clean exact-tree provenance for H-I4-086 is anchored to reachable exact `3acba049fee5f9297cc8a4c3867250635c255717` in `docs/notes/h-i4-086-provenance-3acba04-20260921.md`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, UTC 2026-09-20T21:05:25Z -> 21:11:30Z, Linux x86_64, rustc 1.98.0 stable. This is developer-reported local provenance, not reviewer-local or hosted CI. No hosted status/workflow run was visible for exact `3acba04`; absence of hosted evidence is not a failure.
+- **H-I4-087 is OPEN/HIGH.** Exact-current `SessionRuntime` exposes one `max_queue_records` and `queued_records()` reports `send.len() + recv.len()`, but `queue_send` checks only `send.len()` while `receive` checks only `recv.len()`. With `max_queue_records=1`, one queued outbound plus one queued inbound record can both be admitted and produce `queued_records()==2`, violating the configured runtime record cap. Review note: `docs/reviews/reviewer-h-i4-087-session-aggregate-queue-record-cap-20260921.md`.
+- H-I4-085 and I4-FS1 remain closed at their reachable anchors. H-R9-080/081/082/083/084, Candidate A, Candidate B, R9-11A/B/C/D1/D2/D3/D4, R9-12, final independent R9, Q10/Q11/Q12 remain closed unless repository truth changes.
 - Release items 3 and 4 remain incomplete. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track without a new code/instrumentation/hypothesis/path condition creating a concrete unresolved self-owned real-network question.
 
-The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: review/repair -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance for changed source/test/evidence trees -> next slice. Reviewer cadence is only a check frequency; do not wait for the next reviewer once a slice is closed.
+The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance for changed source/test/evidence trees -> next slice. Reviewer cadence is only a check frequency; do not wait for the next reviewer once a slice is closed.
 
-## READY_LOCAL 1 — HIGH: H-I4-086 Session DeliveryAck must not confirm locally undrained bytes
+## READY_LOCAL 1 — HIGH: H-I4-087 aggregate queued-record cap
 
-Read exact-current `crates/neko-session/src/lib.rs`, `docs/specs/nekomusume-session-v0.md`, `docs/carrier-architecture.md`, developer I4-FS2 note `docs/reviews/dev-i4-fs2-multistream-flow-control-20260921.md`, and `docs/reviews/reviewer-h-i4-086-session-ack-before-drain-20260921.md`.
+Read exact-current `crates/neko-session/src/lib.rs`, `docs/specs/nekomusume-session-v0.md`, `SECURITY.md`, developer I4-FS2 note `docs/reviews/dev-i4-fs2-multistream-flow-control-20260921.md`, and `docs/reviews/reviewer-h-i4-087-session-aggregate-queue-record-cap-20260921.md`.
 
-Current counterexample is source-decided and auto-decidable:
+Current source-decided counterexample:
 
-1. `queue_send(stream, "abcd")` leaves `abcd` in `send` while incrementing the existing stream/session send-window ownership;
-2. before `pop_send()`, current `delivery_ack(stream, 0, 4)` succeeds because it only checks confirmed watermark plus `send_inflight` totals;
-3. it releases flow-control credit and advances confirmed evidence even though the local carrier has not drained the record;
-4. later `pop_send()` can still return bytes already represented as Session-confirmed.
+1. choose limits with `max_queue_records = 1` and byte/window limits large enough not to interfere;
+2. open one stream;
+3. `queue_send(stream, b"a", ...)` succeeds because it checks only `send.len()`;
+4. `receive(InboundRecord { stream, offset: 0, data: b"b" }, ...)` also succeeds because it checks only `recv.len()`;
+5. `queued_records()` is now 2 although the configured runtime cap is 1. The reverse admission order has the same defect.
 
 Required bounded repair/regressions:
 
-- ACK-before-drain fails closed with queue contents, confirmed watermark, stream/session accounting and events unchanged;
-- after `pop_send()` returns the range, the same ACK succeeds and releases the existing credit exactly once;
-- with two contiguous records queued and only the first drained, an ACK crossing into the still-queued second range fails atomically; ACKing exactly the drained prefix succeeds;
-- draining stream A does not make stream B queued bytes ACK-eligible;
-- any new sent/drained bookkeeping is cleared by the already-reviewed terminal cleanup paths;
-- queued plus sent-unacked bytes must continue to count against the existing stream/session window; `pop_send()` itself must not release delivery credit.
+- both `queue_send` and `receive` must reject **before mutation** when the aggregate queued-record count would exceed `max_queue_records`;
+- add both direction-order negatives: send-full then receive, and receive-full then send;
+- verify rejected admission leaves queues, `queued_bytes`, relevant send/receive window accounting, offsets/watermarks, and event state consistent with the already-documented rejection contract;
+- add a positive slot-release control: after `pop_send` or `pop_receive` removes one queued record, the opposite direction can consume the freed aggregate slot if all other limits permit it;
+- preserve current byte-window semantics: queued + sent-unacked outbound bytes still consume send credit; `pop_send` does not release delivery credit; `pop_receive` continues releasing receive-window credit;
+- do not invent separate send/recv record caps or any new policy value.
 
-Choose the smallest state/API change compatible with current Session/Carrier separation. Do not redesign ACK architecture, Session delivery semantics, wire/crypto, or invent capacity/TTL/history values. No decoder/parser/crypto-framing change is required, so do not mechanically run fuzz. After repair run focused deterministic tests, then final pushed SHA clean exact-tree gate (`PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree) and persist exact provenance.
-
-This HIGH is an auto-decidable correctness issue; do not escalate to maintainer policy unless the repair unexpectedly requires a core semantic choice forbidden by the repository contract.
+No decoder/parser/crypto-framing change is required, so do not mechanically run fuzz. After repair run focused deterministic tests, then final pushed SHA clean exact-tree gate (`PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree) and persist exact provenance. This HIGH is auto-decidable and should not be escalated unless the repair unexpectedly requires a forbidden architecture/policy choice.
 
 ## READY_LOCAL 2 — I4-FS2 independent reviewer re-challenge remainder
 
-After H-I4-086 lands and is green, re-read exact-current Session owner/tests and independently challenge the rest of I4-FS2: stream/session window interaction, queued/sent-unacked/released bytes, reject-before-mutate, duplicate/terminal behavior, cross-stream isolation, receive-window ownership, and Session-delivery versus Carrier-feedback separation. Treat developer note `051f588` as support only; supersede its pre-repair window-release claim. If no further defect exists, persist a scope-precise no-finding note anchored to the repaired reachable tree.
+After H-I4-087 lands and is green, re-read exact-current Session owner/tests and independently challenge the rest of I4-FS2: stream/session byte-window interaction, aggregate queue accounting, queued/sent-unacked/released ownership, reject-before-mutate, duplicate/terminal behavior, cross-stream isolation, receive-window ownership, and Session-delivery versus Carrier-feedback separation. Supersede the pre-H-I4-086/H-I4-087 parts of developer note `dev-i4-fs2-multistream-flow-control-20260921.md`. If no further defect exists, persist a scope-precise no-finding note anchored to the repaired reachable tree.
 
 ## READY_LOCAL 3 — I4-AD1 MemoryCarrier close/error/resource re-challenge
 
@@ -67,7 +66,7 @@ Re-check current Recovery/Carrier/Session/CLI loops, maps, queues, retained/live
 
 ## READY_LOCAL 9 — item-4 factual reconciliation after coherent closure group
 
-After H-I4-086 + repaired I4-FS2 + the next two coherent adapter/review lanes, reconcile item-4 coverage and release/evidence facts. Preserve valid no-finding notes, explicitly supersede false evidence text, and remove only lanes actually closed. Do not mark item 4 complete unless repository-wide independent-review truth supports it.
+After H-I4-087 + repaired I4-FS2 + the next two coherent adapter/review lanes, reconcile item-4 coverage and release/evidence facts. Preserve valid no-finding notes, explicitly supersede false evidence text, and remove only lanes actually closed. Do not mark item 4 complete unless repository-wide independent-review truth supports it.
 
 ## READY_LOCAL 10 — repository-wide refill / uncovered current owners
 
@@ -79,11 +78,11 @@ Only if new code/instrumentation/hypothesis/path condition creates a specific un
 
 ## Surfaces deliberately not duplicated unless repository truth changes
 
-- `neko-reliable` Recovery, `CarrierState`, Concurrent Carrier Manager/migration-back and the R9 SessionRuntime terminal/resource surfaces have fresh independent challenges on current/relevant owners; H-I4-086 is a distinct FS2 send-window/delivery-evidence seam.
+- `neko-reliable` Recovery, `CarrierState`, Concurrent Carrier Manager/migration-back and the R9 SessionRuntime terminal/resource surfaces have fresh independent challenges on current/relevant owners; H-I4-086/H-I4-087 are distinct I4-FS2 flow-control/resource-accounting seams.
 - `neko-observe` has no material post-review owner change; Candidate-B closure remains applicable.
 - `scripts/release` has no material post-review owner change requiring synthetic repetition; process-resource sampler was separately repaired/reviewed through H-R9-082/083/084 and R9-11D.
 - Release-packet factual/evidence boundaries were reconciled by Q10/Q11/Q12; revisit only after the next coherent closure group or material owner change.
 
 ## Stop / escalation conditions
 
-Continue review/repair -> tests -> commit -> push -> next dependency-ready slice without waiting for reviewer cadence. Stop/escalate only for an unresolved BLOCKER/HIGH that cannot be auto-decided, core Session/Carrier/ACK/crypto/wire architecture change, D019/policy-value choice, destructive/canonical migration, out-of-standing-authorization operation, third-party/production/new-credential permission, maintainer-selected adversarial-load/benchmark conditions, or entry into a genuinely new release stage. H-I4-086 as currently scoped is auto-decidable and should be repaired through the normal local workflow.
+Continue implementation/review -> tests -> commit -> push -> next dependency-ready slice without waiting for reviewer cadence. Stop/escalate only for an unresolved BLOCKER/HIGH that cannot be auto-decided, core Session/Carrier/ACK/crypto/wire architecture change, D019/policy-value choice, destructive/canonical migration, out-of-standing-authorization operation, third-party/production/new-credential permission, maintainer-selected adversarial-load/benchmark conditions, or entry into a genuinely new release stage. H-I4-087 as currently scoped is auto-decidable and should be repaired through the normal local workflow.
