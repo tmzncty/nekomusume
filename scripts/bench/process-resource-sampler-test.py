@@ -68,10 +68,16 @@ with tempfile.TemporaryDirectory() as td_raw:
     # empty — owned_sockets_after_exit must be None and complete false.
     esc=td/"esc.py"; esc_ready=td/"esc.ready"; esc_json=td/"esc.json"; esc_pid=td/"esc.pid"
     esc.write_text(
-        "import os,socket,subprocess,sys\n"
-        "port=int(sys.argv[1]); ready=sys.argv[2]\n"
+        "import os,socket,subprocess,sys,time\n"
+        "port=int(sys.argv[1]); ready=sys.argv[2]; pidf=sys.argv[3]\n"
         "code='import os,socket,sys,time; os.setsid(); s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind((\"127.0.0.1\",int(sys.argv[1]))); s.listen(); open(sys.argv[2],\"w\").write(\"r\"); open(sys.argv[3],\"w\").write(str(os.getpid())); time.sleep(30)'\n"
-        "subprocess.Popen([sys.executable,'-c',code,str(port),ready,sys.argv[3]])\n"
+        "subprocess.Popen([sys.executable,'-c',code,str(port),ready,pidf])\n"
+        "# Happens-before: wait for the escaped descendant to bind+signal ready\n"
+        "# before exiting, so the sampler cannot certify cleanup first.\n"
+        "deadline=time.monotonic()+10\n"
+        "while not os.path.exists(ready) and time.monotonic()<deadline:\n"
+        "    time.sleep(0.02)\n"
+        "sys.exit(0)\n"
     )
     probe=socket.socket(); probe.bind(('127.0.0.1',0)); esc_port=probe.getsockname()[1]; probe.close()
     run(sys.executable,str(SAMPLER),'--experiment-id','fixture.escaped-descendant','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(esc_port),'--interval-ms','10','--max-seconds','2','--output',str(esc_json),'--',sys.executable,str(esc),str(esc_port),str(esc_ready),str(esc_pid))
@@ -92,20 +98,30 @@ with tempfile.TemporaryDirectory() as td_raw:
         assert e['cleanup']['owned_sockets_after_exit'] is None, e['cleanup']
         assert e['cleanup']['complete'] is False, e['cleanup']
     finally:
-        # Bounded reaping even if an assertion fails.
+        # Bounded reaping even if an assertion fails — verify /proc/<pid> gone.
         if esc_pid.exists():
             try:
-                os.kill(int(esc_pid.read_text().strip()), signal.SIGKILL)
+                pid = int(esc_pid.read_text().strip())
+                os.kill(pid, signal.SIGKILL)
+                for _ in range(100):
+                    if not Path(f"/proc/{pid}").exists():
+                        break
+                    time.sleep(0.01)
+                assert not Path(f"/proc/{pid}").exists(), f"escaped helper {pid} still alive"
             except (OSError, ValueError):
                 pass
     # H-R9-083: a setsid-escaped descendant holding a bound UDP socket on the
     # owned port must also keep cleanup incomplete (UDP has no LISTEN state).
     escu=td/"escu.py"; escu_ready=td/"escu.ready"; escu_json=td/"escu.json"; escu_pid=td/"escu.pid"
     escu.write_text(
-        "import os,socket,subprocess,sys\n"
+        "import os,socket,subprocess,sys,time\n"
         "port=int(sys.argv[1]); ready=sys.argv[2]; pidf=sys.argv[3]\n"
         "code='import os,socket,sys,time; os.setsid(); s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.bind((\"127.0.0.1\",int(sys.argv[1]))); open(sys.argv[2],\"w\").write(\"r\"); open(sys.argv[3],\"w\").write(str(os.getpid())); time.sleep(30)'\n"
         "subprocess.Popen([sys.executable,'-c',code,str(port),ready,pidf])\n"
+        "deadline=time.monotonic()+10\n"
+        "while not os.path.exists(ready) and time.monotonic()<deadline:\n"
+        "    time.sleep(0.02)\n"
+        "sys.exit(0)\n"
     )
     probe=socket.socket(); probe.bind(('127.0.0.1',0)); escu_port=probe.getsockname()[1]; probe.close()
     run(sys.executable,str(SAMPLER),'--experiment-id','fixture.escaped-udp','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(escu_port),'--interval-ms','10','--max-seconds','2','--output',str(escu_json),'--',sys.executable,str(escu),str(escu_port),str(escu_ready),str(escu_pid))
@@ -123,9 +139,18 @@ with tempfile.TemporaryDirectory() as td_raw:
     finally:
         if escu_pid.exists():
             try:
-                os.kill(int(escu_pid.read_text().strip()), signal.SIGKILL)
+                pid = int(escu_pid.read_text().strip())
+                os.kill(pid, signal.SIGKILL)
+                for _ in range(100):
+                    if not Path(f"/proc/{pid}").exists():
+                        break
+                    time.sleep(0.01)
+                assert not Path(f"/proc/{pid}").exists(), f"escaped UDP helper {pid} still alive"
             except (OSError, ValueError):
                 pass
+            dead=time.monotonic()+5
+            while pathlib.Path(f"/proc/{escu_pid.read_text().strip()}").exists() and time.monotonic()<dead:
+                time.sleep(0.05)
     # H-R9-083: a partial terminal /proc observation (a required table
     # unreadable, or an unparseable row) must yield unknown — never absent.
     netdir=td/"procnet"; netdir.mkdir()
