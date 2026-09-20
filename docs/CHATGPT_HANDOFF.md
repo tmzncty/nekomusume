@@ -1,15 +1,16 @@
-# ChatGPT reviewer handoff — H-R9-080 REOPENED: mutation-sensitive SessionRuntime terminal oracles
+# ChatGPT reviewer handoff — H-R9-080 REOPENED: remaining SessionRuntime terminal-oracle contract
 
 ## Current repository truth
 
-- Current developer handoff anchor reviewed this pass: reachable `main` exact `15dd77d16a0975b6e150f24794de9ce7aa250314`.
+- Current developer handoff anchor reviewed this pass: reachable `main` exact `cbe8c8e75082416c9d7f0eead5892995651ee66e`.
 - New developer-owned commits reviewed since the prior reviewer pass:
-  - `8c3f96de1a0de3c102c09cb2a0ff87b6971dce0a` — strengthens cancel/remote-close terminal cleanup tests with a shared populated fixture;
-  - `15dd77d16a0975b6e150f24794de9ce7aa250314` — developer handoff claiming H-R9-080 closed at `8c3f96d`.
-- Latest independent reviewer support: exact `ea7040b1ecd5d6b17625eec5985356b4c3b7eea1`, `docs/reviews/independent-r9-11-session-terminal-oracle-reopen-8c3f96d-20260920.md`.
+  - `eeec59f5b2f877ebb1dc2b9b1b569d5fc513b324` — strengthens `populated_runtime()` so positive send and receive accounting coexist before terminalization;
+  - `fea90f4808c5de757b9a371a7e0465472035acb5` — formatting-only follow-up on the same test tree;
+  - `cbe8c8e75082416c9d7f0eead5892995651ee66e` — developer handoff claiming H-R9-080 fully closed at `fea90f4`.
+- Latest independent reviewer support: exact `99fcd04c632ab5e1ad18090172948505a2de99dd`, `docs/reviews/independent-r9-11-session-terminal-oracle-reopen-fea90f4-20260920.md`.
 - **H-R9-079 source repair remains accepted** at exact `271e512c01cefcfc40745aa41725bbd3e2585bb6`: `SessionRuntime::clear_runtime_state()` clears queues, receive dedup, confirmation watermarks, per-stream/session flow-control accounting, queued bytes, stream ownership, and `close_deadline_ms` while retaining documented lifetime facts.
-- **H-R9-080 is CLOSED** at exact `fea90f4808c5de757b9a371a7e0465472035acb5` (on top of `eeec59f5b2f877ebb1dc2b9b1b569d5fc513b324`): `populated_runtime()` queues two sends, ACKs only the first — `confirmed` is non-empty while the second remains positively in-flight. `session_send_inflight > 0`, `send_inflight[stream] > 0`, `session_recv_window_used > 0`, `recv_window_used[stream] > 0` are asserted separately (not OR/map-presence); `queued_bytes > 0`; `close_deadline_ms` armed. Repeated terminal calls are event-count idempotent; a rejected post-terminal mutator adds no fresh evidence. Developer-local clean exact-tree provenance for exact `fea90f4`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-20T00:51:06Z → 2026-09-20T00:56:05Z, Linux x86_64, rustc 1.98.0.
-- Developer-local clean exact-tree provenance recorded for exact `8c3f96d`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0; `git diff --check` exit 0; clean worktree; 2026-09-19T23:50:06Z -> 2026-09-19T23:55:13Z; Linux x86_64; rustc 1.98.0. Treat this as developer-reported local provenance, not reviewer-local execution. GitHub commit-workflow lookup returned no PR-triggered workflow run for exact `8c3f96d`; do not promote that absence into a failure claim.
+- **H-R9-080 is REOPENED HIGH (release-gate evidence/closure truth).** Exact `fea90f4` closes the positive send-accounting hole from the prior review, but it still does not satisfy the already-accepted mutation-sensitive contract: the shared fixture does not `pop_send()` the first range before acknowledging it; neither cancel nor remote-close snapshots/asserts a documented lifetime survivor such as `total_bytes`; and the cancel/Error regression proves repeated-cancel idempotence but never executes a representative rejected normal post-terminal mutator and proves no fresh positive evidence. This does **not** claim a current `clear_runtime_state()` source leak; it is a regression/closure-truth gap.
+- Developer-local clean exact-tree provenance reported for exact `fea90f4`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-20T00:51:06Z → 2026-09-20T00:56:05Z, Linux x86_64, rustc 1.98.0. Treat as developer-reported local provenance, not reviewer-local execution. GitHub commit-status/workflow lookup exposed no hosted status/run for exact `fea90f4`; absence is not a failure claim.
 - **H-R9-077 remains CLOSED** at exact `e3dca29babfaf330931f26aa3697aa3cd3c98545`: reliable-UDP teardown releases receiver ACK ownership as well as sender recovery state.
 - **H-R9-078 remains CLOSED** at exact `442a8058e4ae27f867bd27db632494a945ec30f2`: repeated cancel on terminal Error is idempotent and the focused regression is active.
 - Sampler determinism HIGH remains closed at exact `e021b27cffe4a87de185757a8d47b8685f462bb6` with bounded release-after-observation handshake and persisted exact-tree provenance.
@@ -17,37 +18,21 @@
 - Candidate A (`Recovery::on_ack` future/never-sent largest) remains closed by the current pre-mutation guard/regressions. Candidate B (`record_datagrams` mixed queue/terminal projection) remains closed by mixed-delta/reason regressions.
 - `READY_LIVE: none`. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD, or Experimental Track absent a new code/instrumentation/hypothesis/path condition producing a concrete unresolved real-network question.
 - Release item 3 and item 4 remain incomplete. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
-- No reviewer-local test execution is claimed for this pass. Repository/source truth came from the GitHub repository connector. Developer-local exact-tree gates remain first-class; hosted CI is supplemental.
+- No reviewer-local test execution is claimed for this pass. Repository/source truth came from the GitHub repository connector; the reviewer runtime did not have a materialized checkout. Developer-local exact-tree gates remain first-class; hosted CI is supplemental.
 
 The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency. Because H-R9-080 is a current HIGH, close it before widening R9-11.
 
-## READY_LOCAL 1 — FRONT HIGH: H-R9-080 positive send-accounting + survivor + cancel negative oracle
+## READY_LOCAL 1 — FRONT HIGH: finish H-R9-080 survivor + cancel-negative oracle
 
-Independent finding: exact `ea7040b1ecd5d6b17625eec5985356b4c3b7eea1`, `docs/reviews/independent-r9-11-session-terminal-oracle-reopen-8c3f96d-20260920.md`.
+Independent finding: exact `99fcd04c632ab5e1ad18090172948505a2de99dd`, `docs/reviews/independent-r9-11-session-terminal-oracle-reopen-fea90f4-20260920.md`.
 
-Keep the current shared source cleanup. Repair only the oracle strength.
+Keep the current shared source cleanup and the positive send/receive accounting assertions. Repair only the remaining oracle contract:
 
-Use one bounded fixture for both cancel and remote close that proves every owned surface is genuinely live before terminalization:
-
-1. open stream 1;
-2. `queue_send("aa")`, then `queue_send("bb")`;
-3. `pop_send()` exactly one record;
-4. `delivery_ack(stream=1, offset=0, len=2)` so `confirmed` is non-empty while the second two-byte send remains positively in-flight;
-5. `receive(offset=0, "xy")` so `recv`, `received`, `recv_window_used` and session receive-window ownership are non-empty;
-6. `close_graceful()` so `close_deadline_ms` is actually armed;
-7. before terminalization assert the relevant preconditions **separately**, not through OR/map-presence shortcuts: non-empty `streams`, `send`, `recv`, `received`, `confirmed`; `send_inflight[stream] > 0`; `session_send_inflight > 0`; `recv_window_used[stream] > 0`; `session_recv_window_used > 0`; `queued_bytes > 0`; armed deadline; snapshot `total_bytes` or another already-documented lifetime survivor.
-
-Then for **first cancel/Error** and **remote close** separately prove:
-
-- `streams`, `send`, `recv`, `received`, `confirmed`, `send_inflight`, `recv_window_used` are empty;
-- `close_deadline_ms.is_none()`;
-- `session_send_inflight == 0`, `session_recv_window_used == 0`, `queued_bytes == 0`;
-- the documented lifetime survivor remains unchanged;
-- exactly one correct terminal event is added;
-- repeated cancel/remote close leaves observable-event count unchanged;
-- a representative rejected post-terminal mutator on **both** paths cannot append fresh success/delivery/window evidence.
-
-Keep idle-timeout and close-deadline controls green. Do not invent an error code, lifecycle semantic, event-retention cap, capacity/TTL/LRU/history value, or D019 policy. No decoder/parser/crypto-framing change => no mechanical fuzz requirement.
+1. In `populated_runtime()`, queue two sends, `pop_send()` exactly the first, then `delivery_ack()` only that first range. Preserve separate positive assertions for remaining `session_send_inflight`, per-stream `send_inflight`, session/per-stream receive-window ownership, non-empty `send`/`recv`/`received`/`confirmed`/`streams`, positive `queued_bytes`, and an armed close deadline.
+2. Snapshot `total_bytes` (or another already-documented lifetime survivor) before terminalization. For first cancel/Error and remote close separately, assert runtime-owned mutable state clears while the survivor remains unchanged.
+3. On the cancel/Error path, after repeated-cancel event-count idempotence, invoke one representative ordinary mutator such as `queue_send` or `open_stream`; assert the current typed terminal failure and unchanged observable-event count. Do not invent a new error code.
+4. Keep the remote-close negative, idle-timeout and close-deadline controls green.
+5. Do not change `SessionRuntime.events` retention policy, D019, capacity/TTL/LRU/history/security values, or Session/Carrier/ACK/wire/crypto semantics. No decoder/parser/crypto-framing change => no mechanical fuzz requirement.
 
 Run focused `neko-session` tests, then final pushed source/test SHA developer-local exact-tree gate: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`; `git diff --check`; clean tree; exact reachable SHA; UTC start/end; exit codes; OS/arch; stable Rust.
 
