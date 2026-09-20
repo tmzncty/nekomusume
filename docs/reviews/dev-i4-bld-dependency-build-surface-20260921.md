@@ -11,7 +11,7 @@ assumptions.
 |---|---|
 | workspace/crate manifests are consistent | `resolver = "3"`, `edition = "2024"`, `license = "MIT OR Apache-2.0"`, `version = "0.1.0"` at workspace root; all eight members are path crates — no external neko-* source is resolved |
 | `Cargo.lock` is pinned and reachable | lockfile is committed and checked by `cargo metadata --locked`; no unpinned or floating version resolution |
-| feature/default-feature reachability is minimal | `snow` is a dev-dependency of `neko-crypto` only (default-features enabled for test Noise interop); `serde`/`serde_json` are dev-dependencies of `neko-wire` only (`features = ["derive"]`); no production crate depends on serde, snow, or tokio — production dependency surface is `blake2` + `aes-gcm`/`chacha20poly1305`/`curve25519-dalek`/`snow` only where cryptographically required |
+| feature/default-feature reachability is minimal | `snow` is a **normal production dependency** of `neko-crypto` (`[dependencies]`, `default-features = true`) — it provides the Noise handshake implementation; `serde`/`serde_json` are dev-dependencies of `neko-wire` only (`features = ["derive"]`); no production crate depends on serde or tokio — production dependency surface is `blake2` + `aes-gcm`/`chacha20poly1305`/`curve25519-dalek`/`snow` (Noise) plus their transitive crates |
 | build/native hooks are absent | no `build.rs` in any crate; no `links` declaration; no `build-dependencies` beyond `version_check`/`proc-macro2`/`quote`/`syn`/`unicode-ident` pulled transitively by `serde_derive`/`curve25519-dalek-derive` (proc-macro only, not production-linked) |
 | inherited unsafe assumptions | workspace `unsafe_code = "forbid"` applies to every member — no crate may use `unsafe`; `panic = "abort"` in dev and release profiles keeps panic semantics uniform |
 | no dependency added merely to exercise the lane | dependency set is unchanged from the reviewed baseline; `neko-reliable` integration into Carrier/CLI is internal workspace wiring, not a new external dep |
@@ -27,7 +27,7 @@ assumptions.
 
 No concrete defect found across the dependency/build surface. The workspace
 manifests are consistent, the lockfile is pinned, feature reachability is
-minimal and dev-scoped for `snow`/`serde`, no build/native hooks exist, and
+production-scoped `snow` (Noise) + minimal dev-scoped `serde`, no build/native hooks exist, and
 `unsafe_code = "forbid"` + `panic = "abort"` apply workspace-wide.
 
 **READY_LIVE: none** — deterministic local evidence only.
