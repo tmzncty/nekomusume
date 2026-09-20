@@ -85,6 +85,26 @@ with tempfile.TemporaryDirectory() as td_raw:
             os.kill(int(esc_pid.read_text().strip()), signal.SIGKILL)
         except (OSError, ValueError):
             pass
+    # H-R9-083: a setsid-escaped descendant holding a bound UDP socket on the
+    # owned port must also keep cleanup incomplete (UDP has no LISTEN state).
+    escu=td/"escu.py"; escu_ready=td/"escu.ready"; escu_json=td/"escu.json"; escu_pid=td/"escu.pid"
+    escu.write_text(
+        "import os,socket,subprocess,sys\n"
+        "port=int(sys.argv[1]); ready=sys.argv[2]; pidf=sys.argv[3]\n"
+        "code='import os,socket,sys,time; os.setsid(); s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.bind((\"127.0.0.1\",int(sys.argv[1]))); open(sys.argv[2],\"w\").write(\"r\"); open(sys.argv[3],\"w\").write(str(os.getpid())); time.sleep(30)'\n"
+        "subprocess.Popen([sys.executable,'-c',code,str(port),ready,pidf])\n"
+    )
+    probe=socket.socket(); probe.bind(('127.0.0.1',0)); escu_port=probe.getsockname()[1]; probe.close()
+    run(sys.executable,str(SAMPLER),'--experiment-id','fixture.escaped-udp','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(escu_port),'--interval-ms','10','--max-seconds','2','--output',str(escu_json),'--',sys.executable,str(escu),str(escu_port),str(escu_ready),str(escu_pid))
+    eu=json.loads(escu_json.read_text())
+    assert eu['cleanup']['process_group_empty'] is True, eu['cleanup']
+    assert eu['cleanup']['owned_sockets_after_exit'] is None, eu['cleanup']
+    assert eu['cleanup']['complete'] is False, eu['cleanup']
+    if escu_pid.exists():
+        try:
+            os.kill(int(escu_pid.read_text().strip()), signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
     # Exit-race: a child that is gone before the first sleep still yields wait4
     # CPU/RSS and a truthful null sampled-FD metric rather than fake zero.
     short=td/"short.json"

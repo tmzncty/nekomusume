@@ -87,25 +87,39 @@ def maximum(current, candidate):
     return candidate if current is None else current if candidate is None else max(current, candidate)
 
 
-def owned_port_listeners_present(owned_ports: set[int]) -> bool:
-    """Independent socket-ownership oracle: is any caller-owned port still
-    bound as a TCP listener anywhere, regardless of which process/group owns
-    it? A setsid()-escaped descendant that keeps the listener open leaves the
-    original process group but keeps this socket truth true — so cleanup must
-    not be certified from group emptiness alone."""
+def owned_port_sockets_present(owned_ports: set[int]):
+    """Independent socket-ownership oracle across the same protocol surface
+    as the sampler accounting: TCP/TCP6 LISTEN and UDP/UDP6 bound sockets for
+    the supplied ports, regardless of which process/group owns them.
+
+    Returns True (present), False (definitively absent), or None (unknown —
+    an incomplete /proc/net observation, never promoted to success)."""
     if not owned_ports:
         return False
-    try:
-        for name in ("tcp", "tcp6"):
-            for line in Path(f"/proc/net/{name}").read_text().splitlines()[1:]:
-                fields = line.split()
-                if fields[3] != "0A":  # LISTEN
-                    continue
-                if int(fields[1].rsplit(":", 1)[1], 16) in owned_ports:
+    files_read = 0
+    for name in ("tcp", "tcp6", "udp", "udp6"):
+        try:
+            lines = Path(f"/proc/net/{name}").read_text().splitlines()[1:]
+        except OSError:
+            continue
+        files_read += 1
+        for line in lines:
+            fields = line.split()
+            try:
+                local_port = int(fields[1].rsplit(":", 1)[1], 16)
+            except (ValueError, IndexError):
+                continue
+            if local_port not in owned_ports:
+                continue
+            if name.startswith("tcp"):
+                if fields[3] == "0A":  # LISTEN
                     return True
-    except (OSError, ValueError, IndexError):
-        pass
-    return False
+            else:
+                # A bound UDP socket on an owned port is owned — no LISTEN state.
+                return True
+    # Definitively absent only if we actually read at least one net table;
+    # a fully-failed observation is unknown, never success.
+    return False if files_read > 0 else None
 
 
 def process_group_members(pgid: int) -> set[int]:
@@ -293,13 +307,13 @@ def main():
         cpu_user, cpu_system = last_cpu
         cpu_source, rss_source = last_sources["cpu"], last_sources["rss"]
     exit_code = os.waitstatus_to_exitcode(status)
-    # H-R9-082: cleanup is complete only if the original process group is
-    # empty AND no caller-owned port is still bound as a listener by any
-    # surviving (possibly setsid-escaped) descendant. Group emptiness alone
-    # does not prove socket ownership was released.
-    sockets_still_owned = owned_port_listeners_present(set(a.owned_port))
-    owned_sockets_after_exit = 0 if (group_empty and not sockets_still_owned) else None
-    cleanup_complete = group_empty and not sockets_still_owned
+    # H-R9-082/083: cleanup is complete only if the original process group is
+    # empty AND the terminal owned-port oracle affirmatively reports no owned
+    # TCP/UDP socket bound anywhere. A present socket or an unknown/failed
+    # observation is never promoted to success.
+    sockets_still_owned = owned_port_sockets_present(set(a.owned_port))
+    owned_sockets_after_exit = 0 if (group_empty and sockets_still_owned is False) else None
+    cleanup_complete = group_empty and sockets_still_owned is False
     result = {
         "schema_version": SCHEMA_VERSION,
         "experiment_id": a.experiment_id,
