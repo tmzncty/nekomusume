@@ -63,6 +63,28 @@ with tempfile.TemporaryDirectory() as td_raw:
     with socket.socket() as check:
         assert check.connect_ex(('127.0.0.1',grand_port)) != 0
 
+    # H-R9-082: a setsid-escaped descendant holding the owned listener must NOT
+    # be certified as cleaned up merely because the original process group is
+    # empty — owned_sockets_after_exit must be None and complete false.
+    esc=td/"esc.py"; esc_ready=td/"esc.ready"; esc_json=td/"esc.json"; esc_pid=td/"esc.pid"
+    esc.write_text(
+        "import os,socket,subprocess,sys\n"
+        "port=int(sys.argv[1]); ready=sys.argv[2]\n"
+        "code='import os,socket,sys,time; os.setsid(); s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind((\"127.0.0.1\",int(sys.argv[1]))); s.listen(); open(sys.argv[2],\"w\").write(\"r\"); open(sys.argv[3],\"w\").write(str(os.getpid())); time.sleep(30)'\n"
+        "subprocess.Popen([sys.executable,'-c',code,str(port),ready,sys.argv[3]])\n"
+    )
+    probe=socket.socket(); probe.bind(('127.0.0.1',0)); esc_port=probe.getsockname()[1]; probe.close()
+    run(sys.executable,str(SAMPLER),'--experiment-id','fixture.escaped-descendant','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(esc_port),'--interval-ms','10','--max-seconds','2','--output',str(esc_json),'--',sys.executable,str(esc),str(esc_port),str(esc_ready),str(esc_pid))
+    e=json.loads(esc_json.read_text())
+    assert e['cleanup']['process_group_empty'] is True, e['cleanup']
+    assert e['cleanup']['owned_sockets_after_exit'] is None, e['cleanup']
+    assert e['cleanup']['complete'] is False, e['cleanup']
+    # Reap the escaped listener so the fixture does not leak.
+    if esc_pid.exists():
+        try:
+            os.kill(int(esc_pid.read_text().strip()), signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
     # Exit-race: a child that is gone before the first sleep still yields wait4
     # CPU/RSS and a truthful null sampled-FD metric rather than fake zero.
     short=td/"short.json"
