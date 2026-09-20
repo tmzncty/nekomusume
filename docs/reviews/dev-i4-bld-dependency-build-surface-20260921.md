@@ -22,7 +22,8 @@ Locked Cargo tooling was executed on the exact current source/test tree:
 
 - `cargo metadata --locked --format-version 1 --no-deps` — lockfile consistent, all eight members resolved
 - `cargo tree --locked -e normal -p neko-crypto` — `snow v0.10.0` is the single normal production dependency; its resolved transitive crates include `aes-gcm`/`aes`/`cipher`/`aead`/`crypto-common`/`generic-array`/`typenum`/`inout`/`cfg-if`/`zeroize`/`cpufeatures`/`ctr`/`ghash`/`opaque-debug`/`poly1305`/`universal-hash`/`subtle`/`curve25519-dalek`/`curve25519-dalek-derive`/`digest`/`getrandom`/`ring`/`untrusted`/`sha2`/`proc-macro2`/`quote`/`syn`/`unicode-ident`
-- `cargo tree --locked -e build -p neko-crypto` — no build dependencies
+- `cargo tree --locked -p neko-crypto -e normal,build` — transitive build edges: `snow 0.10.0` → `rustc_version 0.4.1` (build); `ring 0.17.14` → `cc 1.4.4` (build); `ring` carries `links = "ring_core_0_17_14_"`
+- `cargo tree --locked -p neko-crypto -e features,normal,build` — `snow feature "default"` → `default-resolver`/`default-resolver-crypto` → `use-aes-gcm`/`use-blake2`/`use-chacha20poly1305`/`use-curve25519`/`use-getrandom`/`use-ring`/`use-sha2`; `ring` features `default`/`alloc`/`dev_urandom_fallback` are active
 - `cargo tree --locked -e dev -p neko-crypto` — no dev dependencies
 - `cargo tree --locked -e normal -p neko-cli` — normal deps are `getrandom`/`libc`/`signal-hook`/`neko-carrier`/`neko-crypto` (+ `neko-reliable`/`neko-wire` via `neko-carrier`); `snow` reaches `neko-cli` only through `neko-crypto`
 - `unsafe_code = "forbid"` — workspace lint enforced on all members
