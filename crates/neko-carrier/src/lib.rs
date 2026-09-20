@@ -3241,6 +3241,22 @@ mod health_evidence_tests {
     }
 
     #[test]
+    #[test]
+    fn quiesce_cannot_manufacture_fresh_health_from_pre_quiesce_outcome() {
+        // H-R9-081: a resolved outcome before quiesce must not appear as a
+        // fresh health sample merely because quiesce ran.
+        let mut r = PathRecovery::new(PathGeneration(7));
+        r.on_send(&[1, 2, 3], &[10], 0);
+        r.on_ack(3, &[1, 2, 3], 0, 5);
+        // Pre-quiesce resolved outcome exists but unconsumed.
+        r.quiesce();
+        assert!(
+            r.fresh_health_sample().is_none(),
+            "pre-quiesce outcome must not be fresh after quiesce"
+        );
+        // Lifetime diagnostics survive quiesce.
+        assert!(r.diagnostics().0 > 0);
+    }
     fn d064_warm_readiness_is_prefailure_bounded_and_distinct() {
         let mut manager = active_manager();
         assert!(
@@ -4245,7 +4261,14 @@ impl PathRecovery {
         self.recovery.quiesce();
         self.reno.bytes_in_flight = 0;
         self.charged.clear();
-        self.health_epoch = None;
+        // H-R9-081: mark the current outcome as consumed and align the
+        // interval-delta baselines with the resolved counters — a pre-quiesce
+        // resolved delta must not replay as a fresh health sample merely
+        // because quiesce happened. Only a strictly post-quiesce resolved
+        // outcome may become fresh.
+        self.health_epoch = Some(self.outcome_epoch);
+        self.last_health_sent = self.resolved_packets;
+        self.last_health_lost = self.resolved_lost;
     }
     /// Whether `bytes` more may be sent under the Reno congestion window.
     pub fn can_send(&self, bytes: u64) -> bool {
