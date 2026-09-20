@@ -2726,6 +2726,114 @@ mod h_i4_086_tests {
 }
 
 #[cfg(test)]
+mod h_i4_087_tests {
+    use super::*;
+
+    fn limits() -> RuntimeLimits {
+        RuntimeLimits {
+            max_streams: 2,
+            max_queue_records: 1,
+            max_queue_bytes: 64,
+            max_total_bytes: 128,
+            max_record_bytes: 8,
+            max_session_window: 64,
+            max_stream_window: 64,
+            idle_timeout_ms: 100,
+            close_timeout_ms: 10,
+        }
+    }
+
+    /// H-I4-087 negative: send fills the single aggregate record slot, then
+    /// receive fails closed even though its own recv queue is empty.
+    #[test]
+    fn send_fills_aggregate_slot_then_receive_fails() {
+        let mut r = SessionRuntime::new(SessionId(20), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        assert_eq!(r.queue_send(StreamId(1), b"a", 0), Ok(0));
+        assert_eq!(r.queued_records(), 1);
+        let events_before = r.observable_events().count();
+        assert_eq!(
+            r.receive(
+                InboundRecord {
+                    stream: StreamId(1),
+                    offset: 0,
+                    data: b"b".to_vec(),
+                },
+                1,
+            ),
+            Err(RuntimeError::QueueFull),
+            "receive must reject when aggregate record cap is reached"
+        );
+        assert_eq!(r.queued_records(), 1);
+        assert_eq!(
+            r.observable_events().count(),
+            events_before,
+            "rejected receive must emit no event"
+        );
+    }
+
+    /// H-I4-087 negative: receive fills the single aggregate slot, then
+    /// send fails closed.
+    #[test]
+    fn receive_fills_aggregate_slot_then_send_fails() {
+        let mut r = SessionRuntime::new(SessionId(21), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        r.receive(
+            InboundRecord {
+                stream: StreamId(1),
+                offset: 0,
+                data: b"b".to_vec(),
+            },
+            1,
+        )
+        .unwrap();
+        assert_eq!(r.queued_records(), 1);
+        let events_before = r.observable_events().count();
+        assert_eq!(
+            r.queue_send(StreamId(1), b"a", 2),
+            Err(RuntimeError::QueueFull),
+            "queue_send must reject when aggregate record cap is reached"
+        );
+        assert_eq!(r.queued_records(), 1);
+        assert_eq!(
+            r.observable_events().count(),
+            events_before,
+            "rejected send must emit no event"
+        );
+    }
+
+    /// H-I4-087 positive: popping one queued record frees the aggregate slot
+    /// for the other direction.
+    #[test]
+    fn pop_frees_aggregate_slot_for_other_direction() {
+        let mut r = SessionRuntime::new(SessionId(22), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        assert_eq!(r.queue_send(StreamId(1), b"a", 0), Ok(0));
+        // Pop the send record, freeing the aggregate slot.
+        assert_eq!(r.pop_send(1).unwrap().unwrap().data, b"a");
+        assert_eq!(r.queued_records(), 0);
+        // Receive may now consume the freed slot.
+        r.receive(
+            InboundRecord {
+                stream: StreamId(1),
+                offset: 0,
+                data: b"b".to_vec(),
+            },
+            2,
+        )
+        .unwrap();
+        assert_eq!(r.queued_records(), 1);
+        // Pop the receive record, freeing the slot again.
+        assert_eq!(r.pop_receive(3).unwrap().unwrap().data, b"b");
+        assert_eq!(r.queued_records(), 0);
+        // Send may consume it — the returned offset is next_send, not the
+        // aggregate slot index.
+        assert_eq!(r.queue_send(StreamId(1), b"c", 4), Ok(1));
+        assert_eq!(r.queued_records(), 1);
+    }
+}
+
+#[cfg(test)]
 mod era4_resource_limit_tests {
     use super::*;
     #[test]
