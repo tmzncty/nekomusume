@@ -2117,7 +2117,10 @@ mod runtime_tests {
     fn populated_runtime() -> SessionRuntime {
         let mut r = SessionRuntime::new(SessionId(9), limits(), 0).unwrap();
         r.open_stream(StreamId(1), 1).unwrap();
-        r.queue_send(StreamId(1), b"aa", 1).unwrap();
+        // Two queued sends: ack only the first so confirmed is populated
+        // while the second remains an in-flight send-accounting ownership.
+        r.queue_send(StreamId(1), b"a", 1).unwrap();
+        r.queue_send(StreamId(1), b"b", 1).unwrap();
         r.receive(
             InboundRecord {
                 stream: StreamId(1),
@@ -2127,15 +2130,23 @@ mod runtime_tests {
             1,
         )
         .unwrap();
-        r.delivery_ack(StreamId(1), 0, 2, 1).unwrap();
+        r.delivery_ack(StreamId(1), 0, 1, 1).unwrap();
         r.close_graceful(2).unwrap();
         // Preconditions are non-empty/non-zero so cleanup assertions are not
         // vacuous — every owned surface is populated before terminalization.
         assert!(!r.streams.is_empty());
         assert!(r.close_deadline_ms.is_some());
-        assert!(!r.send.is_empty() || !r.recv.is_empty() || !r.received.is_empty());
+        assert!(!r.send.is_empty());
+        assert!(!r.recv.is_empty());
+        assert!(!r.received.is_empty());
         assert!(!r.confirmed.is_empty());
-        assert!(!r.send_inflight.is_empty() || !r.recv_window_used.is_empty());
+        // Positive send-accounting AND receive-window ownership separately —
+        // not OR/map-presence.
+        assert!(r.session_send_inflight > 0, "unacked send remains in-flight");
+        assert!(*r.send_inflight.get(&StreamId(1)).unwrap_or(&0) > 0);
+        assert!(r.session_recv_window_used > 0);
+        assert!(*r.recv_window_used.get(&StreamId(1)).unwrap_or(&0) > 0);
+        assert!(r.queued_bytes() > 0);
         r
     }
 
