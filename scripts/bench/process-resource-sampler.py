@@ -96,19 +96,21 @@ def owned_port_sockets_present(owned_ports: set[int]):
     an incomplete /proc/net observation, never promoted to success)."""
     if not owned_ports:
         return False
-    files_read = 0
+    # Definitively absent requires ALL four required tables to be read and
+    # fully parsed — any unreadable table or unparseable relevant row is an
+    # unknown observation, never promoted to absent/success.
     for name in ("tcp", "tcp6", "udp", "udp6"):
         try:
             lines = Path(f"/proc/net/{name}").read_text().splitlines()[1:]
         except OSError:
-            continue
-        files_read += 1
+            return None
         for line in lines:
             fields = line.split()
             try:
                 local_port = int(fields[1].rsplit(":", 1)[1], 16)
             except (ValueError, IndexError):
-                continue
+                # An unparseable row could carry the owned port — unknown.
+                return None
             if local_port not in owned_ports:
                 continue
             if name.startswith("tcp"):
@@ -117,9 +119,7 @@ def owned_port_sockets_present(owned_ports: set[int]):
             else:
                 # A bound UDP socket on an owned port is owned — no LISTEN state.
                 return True
-    # Definitively absent only if we actually read at least one net table;
-    # a fully-failed observation is unknown, never success.
-    return False if files_read > 0 else None
+    return False
 
 
 def process_group_members(pgid: int) -> set[int]:
