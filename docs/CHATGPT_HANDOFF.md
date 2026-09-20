@@ -1,4 +1,4 @@
-# ChatGPT reviewer handoff — R9-11D2 front; no open HIGH
+# ChatGPT reviewer handoff — R9-11 all lanes closed; final independent R9 review front
 
 ## Current repository truth
 
@@ -7,7 +7,11 @@
 - **H-R9-084 is CLOSED** at exact `8cbd9af39a600f4ddd5fbc50208791e8584c6d74`: sampler wrapper exit is nonzero whenever terminal cleanup is not affirmatively complete while the measured child's exit fact remains truthful in structured output. Positive cleanup-complete and child failure/timeout/interruption controls remain separated.
 - Developer-local clean exact-tree provenance for exact `8cbd9af`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-20T14:57:17Z → 2026-09-20T15:03:00Z, Linux x86_64, rustc 1.98.0. This is developer-reported local provenance, not reviewer-local execution or hosted CI.
 - **R9-11D1 is CLOSED / bounded no-finding** at reviewer note `6164fc45f21745f7e5afc2e2b2826ecc999a6f93` (`docs/reviews/reviewer-r9-11d1-result-truth-20260920.md`). Exact-current failover-client/server automatic-health + migration-back result owners and process fixtures were independently challenged for terminal failure/timeout/result-truth/post-return false-success at the D1 boundary. No concrete defect was found. This supports release item 4 only; it is not R9 or release closure.
-- Developer bounded R9-11D note `7ff2a0d750dff69d0477018977b6567e62e0c251` remains useful support but is **not** accepted as total R9-11D closure while dedicated D2-D4 independent lanes remain open.
+- **R9-11D2 is CLOSED** at dev bounded no-finding `dev-r9-11d2-socket-ownership-20260920.md` (`72c5e06`): TCP/UDP listener and socket ownership challenged across terminal paths — owned sockets released, cleanup evidenced by independent `/proc/net` oracle keyed to the exact `--owned-port` set, escaped/partial states never certified cleaned.
+- **R9-11D3 is CLOSED** at dev bounded no-finding `dev-r9-11d3-child-process-group-temp-runtime-20260920.md` (`5a4082c`): bounded TERM→KILL reap on every terminal path, setsid-escaped TCP/UDP holders not promoted, readiness handshakes deterministic, temporary output atomically replaced or truthfully unknown, no secrets/topology/paths in reporting.
+- **R9-11D4 is CLOSED** at dev bounded no-finding `dev-r9-11d4-shutdown-post-return-false-success-20260920.md` (`e51a630`): no post-shutdown READY/success/delivery, late completion cannot overwrite terminal outcome, cleanup/rebind evidence bound to exact run/owner, cleanup-only never promoted to success.
+- **R9-11A–D factual reconciliation** persisted at `docs/reviews/r9-11a-d-factual-reconciliation-20260920.md` (`ab5409c`) — all seven lanes closed at reachable anchors; R9-11 as a whole is not marked complete pending READY_LOCAL 4/5.
+- **R9-12 final exact-tree developer-local provenance** persisted at `docs/notes/r9-12-final-provenance-8cbd9af-20260920.md`: `8cbd9af` check.sh exit 0, diff --check exit 0, clean worktree, 2026-09-20T15:55:57Z → 16:01:40Z, Linux x86_64, rustc 1.98.0.
 - H-R9-081 remains CLOSED at `730f993c687683f00f82859cbb7587d9fd6f5b84`; R9-11B remains CLOSED at `3b3a9182a27cc61df22250d370b87a0b50e9d253`; R9-11C remains CLOSED at `defb2dedd208da437a2035e5fe0417a160b713f2`; H-R9-080 and R9-11A remain CLOSED at their existing reachable anchors. Candidate A (future/never-sent ACK) and Candidate B (mixed queue/terminal observability projection) remain closed by current code/tests.
 - Reviewer-local test execution is not claimed in the D1 closure. Absence of GitHub-hosted evidence is not failure.
 - `READY_LIVE: none`. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track without a new code/instrumentation/hypothesis/path condition creating a concrete unresolved self-owned real-network question.
@@ -15,50 +19,23 @@
 
 The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency. Do not wait for the next reviewer after closing a slice.
 
-## READY_LOCAL 1 — FRONT: R9-11D2 TCP/UDP listener and socket ownership
+## READY_LOCAL 1 — CLOSED: R9-11D2 TCP/UDP listener and socket ownership
 
-Independently challenge exact-current executable failover/migration-back, ordinary probe/server, and process-resource fixtures at the socket-ownership boundary. Read exact owners/tests plus the accepted H-R9-082/083/084 repairs before concluding.
+Closed at `72c5e06` — dev bounded no-finding `docs/reviews/dev-r9-11d2-socket-ownership-20260920.md`.
 
-Required challenge:
+## READY_LOCAL 2 — CLOSED: R9-11D3 child/process-group/temp-runtime cleanup
 
-- success/failure/timeout/shutdown deterministically release no-longer-owned TCP and UDP sockets;
-- cleanup is proved by owner/socket evidence or a committed same-address/port rebind oracle, never inferred merely from child exit or original-PGID emptiness;
-- escaped/reparented descendants cannot retain TCP or UDP ownership while cleanup reports zero;
-- partial setup failure cannot strand a bound listener while returning success/clean;
-- repeated close/shutdown is idempotent and creates no false-positive lifecycle evidence;
-- a positive rebind/absence observation must belong to the same exact run/owned port rather than a stale predecessor.
+Closed at `5a4082c` — dev bounded no-finding `docs/reviews/dev-r9-11d3-child-process-group-temp-runtime-20260920.md`.
 
-Concrete defect -> smallest repair + positive/negative regression + focused tests + exact-tree gate/provenance, then continue. No defect -> scope-precise independent bounded no-finding note, then continue immediately to D3. No decoder/framing change: do not mechanically run fuzz. Do not invent new timeout/capacity/security policy values.
+## READY_LOCAL 3 — CLOSED: R9-11D4 shutdown / post-return false-success negatives
 
-## READY_LOCAL 2 — R9-11D3 child/process-group/temp-runtime cleanup
+Closed at `e51a630` — dev bounded no-finding `docs/reviews/dev-r9-11d4-shutdown-post-return-false-success-20260920.md`. R9-11A-D factual reconciliation at `ab5409c`.
 
-Challenge process-owned resources independently of socket ownership:
+## READY_LOCAL 4 — CLOSED: R9-12 final exact-tree provenance
 
-- bounded reap/kill path on success, failure, timeout and interruption, including descendants that leave the original group;
-- readiness/observation handshakes remain deterministic and cannot succeed because the observer raced ahead;
-- temporary runtime paths are removed or truthfully reported unknown/failed; cleanup failure is never silently promoted;
-- cleanup reporting exposes no secrets/private topology/unnecessary absolute paths;
-- no new timeout/capacity/security policy values merely to satisfy tests.
+`docs/notes/r9-12-final-provenance-8cbd9af-20260920.md` — `8cbd9af` check.sh exit 0, diff --check exit 0, clean worktree, 2026-09-20T15:55:57Z → 16:01:40Z, Linux x86_64, rustc 1.98.0.
 
-Concrete defect -> repair/regression/gate; no defect -> bounded no-finding and continue immediately to D4.
-
-## READY_LOCAL 3 — R9-11D4 shutdown / post-return false-success negatives
-
-Adversarially cross-check executable failover/migration-back and probe/process fixtures:
-
-- shutdown during setup/traffic/recovery leaves no later READY/success/delivery event;
-- timeout followed by late child/socket completion cannot overwrite terminal outcome;
-- cleanup/rebind evidence belongs to the same exact run/process owner, not a stale predecessor;
-- application/session success proof plus truthful cleanup/result state is required; cleanup-only success is insufficient;
-- failure/unknown remains failure/unknown even if a later independent postcheck finds zero residue.
-
-Do not rewrite immutable historical artifacts. After D4, do one concise R9-11A-D factual reconciliation and continue.
-
-## READY_LOCAL 4 — R9-12 final exact-tree provenance
-
-After coherent R9-11 repair/review stabilizes, persist developer-local provenance for the final pushed developer source/test SHA: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`; `git diff --check`; clean tree; exact pushed SHA; UTC start/end; exit codes; OS/arch; stable Rust. Run pinned decode fuzz only if the coherent group actually touches wire decoder/parser/crypto framing. Hosted CI remains supplemental.
-
-## READY_LOCAL 5 — dedicated final independent R9 bounded review
+## READY_LOCAL 5 — FRONT: dedicated final independent R9 bounded review
 
 On the final R9 source/test tree, independently re-challenge Recovery, receiver ACK ownership, Session logical proof, Carrier readiness/promotion, uncertain retention, TCP replay/dedup, migration-back, process result truth and terminal cleanup. No-finding bounded review is valid item-4 support. Concrete defect converts immediately to repair.
 
