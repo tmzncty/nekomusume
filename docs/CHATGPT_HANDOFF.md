@@ -1,10 +1,11 @@
-# ChatGPT reviewer handoff — R9-11B closed; R9-11C retained replay / Carrier-generation terminality is front
+# ChatGPT reviewer handoff — R9-11C closed; R9-11D executable process/socket lifecycle is front
 
 ## Current repository truth
 
-- Exact developer source/test tree remains `730f993c687683f00f82859cbb7587d9fd6f5b84`.
-- **H-R9-081 is CLOSED** at `730f993`: the strengthened regression creates nonzero resolved pre-quiesce loss, then proves the first clean post-quiesce resolved interval reports `loss_per_mille == 0`, is fresh exactly once, and leaves lifetime loss diagnostics intact. Developer-local clean exact-tree provenance for exact `730f993`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-20T05:50:25Z -> 2026-09-20T05:55:22Z, Linux x86_64, rustc 1.98.0. No reviewer-local execution is claimed.
-- **R9-11B is CLOSED as bounded independent no-finding support** at reviewer anchor `3b3a9182a27cc61df22250d370b87a0b50e9d253`, reviewing exact `730f993`. The accepted review covers Recovery/PathRecovery/ReliableUdpRuntime teardown ownership, receiver ACK obligations, retransmit plaintext, Reno charge, post-teardown mutators, future/never-sent ACK fail-closed behavior, and H-R9-081's quiescent health boundary. It does not close retained Session replay / Carrier-generation terminality (R9-11C) or process/socket lifecycle (R9-11D).
+- Exact developer source/test tree remains `730f993c687683f00f82859cbb7587d9fd6f5b84`; commits after it through this handoff are review/navigation docs only.
+- **H-R9-081 is CLOSED** at `730f993`: the strengthened regression creates nonzero resolved pre-quiesce loss, then proves the first clean post-quiesce resolved interval reports `loss_per_mille == 0`, is fresh exactly once, and leaves lifetime loss diagnostics intact. Developer-local clean exact-tree provenance for exact `730f993`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-20T05:50:25Z -> 2026-09-20T05:55:22Z, Linux x86_64, rustc 1.98.0. No reviewer-local execution is claimed. Connected GitHub status/workflow endpoints expose no hosted run for this SHA; absence is not treated as failure.
+- **R9-11B is CLOSED as bounded independent no-finding support** at reviewer anchor `3b3a9182a27cc61df22250d370b87a0b50e9d253`, reviewing exact `730f993`. It covers Recovery/PathRecovery/ReliableUdpRuntime teardown ownership, receiver ACK obligations, retransmit plaintext, Reno charge, post-teardown mutators, future/never-sent ACK fail-closed behavior, and H-R9-081's quiescent health boundary.
+- **R9-11C is CLOSED as bounded independent no-finding support** at reviewer anchor `defb2dedd208da437a2035e5fe0417a160b713f2`, after challenging developer review `a2a1e6cf6b2890a836cc9d6271061897730585cb` against exact owner source. Retained replay identity/bytes survive UDP teardown; `FailoverController::tcp_resend()` is driven from retained `(DataId, bytes)` state; `ConcurrentCarrierManager` marks failed/draining-owner ranges uncertain before replay, replays stable `LogicalRangeId + bytes`, gates stale generations/readiness, and does not let migration-back bypass validation/health/hold. This closure does not replace executable caller/Session-proof checks from R9-10 or the final independent R9 review.
 - **H-R9-080 remains CLOSED** at exact `052b6eab40f8e4257d4480866b21f64ce3e5230c`. **R9-11A remains CLOSED** as bounded independent no-finding support at exact `a83b89850b75d6ff405c004b8186856987f5cd9e`; `SessionRuntime.events` remains `POLICY_BLOCKED_RESOURCE_BOUND` and no retention cap/TTL/LRU/history value has been invented.
 - Candidate A (`Recovery::on_ack` future/never-sent largest) remains closed by the pre-mutation guard/regressions. Candidate B (`record_datagrams` mixed queue/terminal projection) remains closed by the current mixed-delta/reason regressions.
 - Sampler determinism HIGH remains closed at exact `e021b27cffe4a87de185757a8d47b8685f462bb6` with bounded release-after-observation synchronization and persisted provenance.
@@ -13,56 +14,77 @@
 
 The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: implementation/review -> focused deterministic tests -> commit -> push -> clean exact-tree local gate/provenance -> next slice. Reviewer cadence is only a check frequency. Do not wait for the next reviewer after closing a slice.
 
-## READY_LOCAL 1 — FRONT: R9-11C retained Session replay / Carrier-generation terminality
+## READY_LOCAL 1 — FRONT: R9-11D1 process result-truth / terminal classification
 
-Challenge exact-current `FailoverController`, `ConcurrentCarrierManager`, retained `(DataId, bytes)` ownership and migration-back across failure/drain/terminalization. Read applicable Session/Carrier spec and the current R9 review chain before modifying code.
+Read the exact-current automatic-health failover/migration-back executable owners and their process fixtures before editing. Challenge success, explicit failure, timeout, shutdown and post-return terminal classifications as one bounded slice.
 
 Required invariants:
 
-1. unresolved Session replay is not erased merely because UDP/path recovery terminates;
-2. confirmed replay identities disappear only after the required Session logical delivery proof — Carrier packet feedback never substitutes for Session confirmation;
-3. failed/retired generations cannot become active, own replay ranges, or gain new readiness without a fresh legal transition/generation;
-4. migration-back cannot resurrect stale failed-generation ownership or bypass validation/health/hold gates;
-5. duplicate/conflicting replay identity behavior remains deterministic and bounded; no retained bytes are silently substituted from positional/original records when the retained replay-set identity differs;
-6. cleanup/partial-promotion negatives remain fail-closed and do not manufacture success/switch/delivery evidence.
+1. a terminal failure/timeout/stop cannot later be rewritten as READY/success merely because another cleanup/read/child step returns zero;
+2. structured result JSON, human output and process exit status describe the same terminal outcome;
+3. a missing/unknown cleanup observation stays failure/unknown rather than being inferred from a successful application result;
+4. post-return work cannot manufacture new delivery/switch/readiness success evidence after the authoritative result is already terminal;
+5. negative fixtures must prove the intended failure phase was actually entered rather than passing vacuously before the challenged seam.
 
-For each concrete defect: smallest exact-current-semantic repair -> positive/negative regression -> focused tests -> final pushed developer SHA clean exact-tree `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree and provenance. No decoder/framing fuzz unless this slice actually changes decoder/parser/crypto framing. No defect -> scope-precise bounded independent no-finding note and continue immediately to R9-11D.
+Concrete defect -> smallest settled-semantic repair + positive/negative regression + focused tests. No defect -> scope-precise bounded no-finding note and continue immediately to R9-11D2.
 
-Do not change D064 single-active/warm semantics, D019, replay-retention policy values, Session/Carrier/ACK/crypto/wire architecture, or any frozen/policy value.
+## READY_LOCAL 2 — R9-11D2 TCP/UDP listener and socket ownership
 
-## READY_LOCAL 2 — R9-11D executable process/socket lifecycle and result truth
+Challenge the exact-current TCP/UDP process fixtures and executable success/failure/shutdown paths for socket ownership:
 
-Challenge automatic-health failover/migration-back executable paths plus TCP/UDP process fixtures:
+- every listener/socket no longer owned after success, explicit failure, timeout or shutdown is deterministically closed;
+- cleanup is proved by owner/socket evidence or successful same-address/port rebind where that is the committed oracle, never inferred from child exit 0 alone;
+- partial setup failures cannot strand a listener while returning a successful/clean result;
+- repeated close/shutdown remains idempotent and cannot create false positive lifecycle events;
+- do not broaden into live WAN unless this review creates a genuinely real-network-only unresolved question.
 
-- success, explicit failure, timeout, shutdown and post-return terminal paths release sockets/process-owned resources no longer owned;
-- listener/process cleanup is proved by deterministic owner/socket/process evidence, not inferred from zero exit;
-- lifecycle transitions cannot create false READY/success after terminal failure/stop;
-- shutdown/result JSON/human output/exit status remain mutually consistent;
-- cleanup failure remains failure/unknown, never promoted to success.
+Repair concrete defects immediately; otherwise record bounded no-finding and continue to R9-11D3.
 
-Do not open a live lane unless this local review creates a new real-network-only question.
+## READY_LOCAL 3 — R9-11D3 child/process-group/temp-runtime cleanup
 
-## READY_LOCAL 3 — R9-12 final exact-tree provenance
+Challenge process-owned resources independently of socket ownership:
+
+- spawned helper/child/process-group ownership has a bounded reap/kill path on success, failure, timeout and interruption;
+- the sampler/readiness fixture handshake remains deterministic and cannot release the child before the observation used by the oracle;
+- temporary runtime paths created by the process fixture are removed or truthfully reported unknown/failed; cleanup failure is never silently promoted;
+- cleanup reporting must not expose secrets, private topology or unnecessary absolute paths;
+- do not introduce new timeout/capacity/security policy numbers merely to make cleanup tests pass.
+
+Concrete defect -> repair/regression/gate; no defect -> bounded no-finding and continue immediately to R9-11D4.
+
+## READY_LOCAL 4 — R9-11D4 shutdown / post-return false-success negatives
+
+Finish R9-11D with an adversarial local lifecycle cross-check across the executable failover/migration-back and probe/process fixtures:
+
+- shutdown while setup/traffic/recovery is in progress leaves no later READY/success/delivery event;
+- timeout followed by late child/socket completion cannot overwrite the terminal outcome;
+- cleanup and rebind evidence are attributed to the same exact run/process owner rather than a stale predecessor;
+- success requires the committed application/session proof plus truthful cleanup/result state; cleanup-only success is insufficient;
+- failure/unknown remains failure/unknown even if a later independent postcheck finds zero residue.
+
+Do not rewrite immutable historical artifacts to make their cleanup fields match later observations. After this slice, perform one concise R9-11A-D factual reconciliation rather than rewriting large release docs per micro-slice.
+
+## READY_LOCAL 5 — R9-12 final exact-tree provenance
 
 After coherent R9-11 repair/review stabilizes, persist developer-local provenance for the final pushed developer source/test SHA: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`; `git diff --check`; clean tree; exact pushed SHA; UTC start/end; exit codes; OS/arch; stable Rust. Run pinned decode fuzz only if the coherent group actually touches wire decoder/parser/crypto framing. Hosted CI remains supplemental.
 
-## READY_LOCAL 4 — dedicated final independent R9 bounded review
+## READY_LOCAL 6 — dedicated final independent R9 bounded review
 
 On the final R9 source/test tree, independently re-challenge Recovery, receiver ACK ownership, Session logical proof, Carrier readiness/promotion, uncertain retention, TCP replay/dedup, migration-back, process result truth and terminal cleanup. No-finding bounded review is valid item-4 support. Concrete defect converts immediately to repair; do not claim R9 closure first.
 
-## READY_LOCAL 5 — Q10 factual reconciliation
+## READY_LOCAL 7 — Q10 factual reconciliation
 
 Reconcile release packet/status claims against exact reachable R9 review/provenance anchors. Update only factual indexes/boundaries that changed. Do not mark item 4 complete or promote local evidence into WAN/security/release claims.
 
-## READY_LOCAL 6 — Q11 release-evidence boundary reconciliation
+## READY_LOCAL 8 — Q11 release-evidence boundary reconciliation
 
 Recheck item 3/WAN rows, historical negatives and `READY_LIVE`. Current authoritative classification remains `READY_LIVE: none`; only a new code/instrumentation/hypothesis/path condition creating a concrete unresolved self-owned real-network question may open a live lane.
 
-## READY_LOCAL 7 — Q12 governance/release-state reconciliation
+## READY_LOCAL 9 — Q12 governance/release-state reconciliation
 
 Confirm D019 and other policy/value gates remain separate and RC/production/freeze/release authority has not been inferred from engineering completion. Do not select TTL/LRU/history/capacity/security numbers, signing/key-custody/SBOM/publication policy, destructive migration, frozen-release policy or release authority.
 
-## READY_LOCAL 8 — repository-wide item-4 refill
+## READY_LOCAL 10 — repository-wide item-4 refill
 
 Item 4 remains incomplete. Repeat the broad core-surface inventory rather than declaring queue exhaustion from R9 alone. Prefer implemented core surfaces lacking a dedicated reachable independent bounded challenge on the current/relevant tree, or whose semantics changed since the prior challenge:
 
@@ -82,7 +104,7 @@ Item 4 remains incomplete. Repeat the broad core-surface inventory rather than d
 
 No-finding independent review is valid item-4 support. Do not count one narrow no-finding as repository-wide exhaustion.
 
-## READY_LOCAL 9 — conditional live question only
+## READY_LOCAL 11 — conditional live question only
 
 Only if new code/instrumentation/hypothesis/path condition creates a specific unresolved self-owned real-network question, classify it against `docs/standing-vps-lab-authorization.md` and `docs/vps-rental-window-priority.md`. Ordinary bounded self-owned TCP/UDP work inside standing authorization needs no per-run approval. Do not manufacture live work merely because the VPS is rented.
 
