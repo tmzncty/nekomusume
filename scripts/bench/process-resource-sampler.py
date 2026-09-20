@@ -87,7 +87,7 @@ def maximum(current, candidate):
     return candidate if current is None else current if candidate is None else max(current, candidate)
 
 
-def owned_port_sockets_present(owned_ports: set[int]):
+def owned_port_sockets_present(owned_ports: set[int], net_dir: str | None = None):
     """Independent socket-ownership oracle across the same protocol surface
     as the sampler accounting: TCP/TCP6 LISTEN and UDP/UDP6 bound sockets for
     the supplied ports, regardless of which process/group owns them.
@@ -96,12 +96,13 @@ def owned_port_sockets_present(owned_ports: set[int]):
     an incomplete /proc/net observation, never promoted to success)."""
     if not owned_ports:
         return False
+    net_dir = net_dir or "/proc/net"
     # Definitively absent requires ALL four required tables to be read and
     # fully parsed — any unreadable table or unparseable relevant row is an
     # unknown observation, never promoted to absent/success.
     for name in ("tcp", "tcp6", "udp", "udp6"):
         try:
-            lines = Path(f"/proc/net/{name}").read_text().splitlines()[1:]
+            lines = Path(net_dir, name).read_text().splitlines()[1:]
         except OSError:
             return None
         for line in lines:

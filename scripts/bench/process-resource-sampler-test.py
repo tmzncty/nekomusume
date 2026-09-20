@@ -75,7 +75,18 @@ with tempfile.TemporaryDirectory() as td_raw:
     )
     probe=socket.socket(); probe.bind(('127.0.0.1',0)); esc_port=probe.getsockname()[1]; probe.close()
     run(sys.executable,str(SAMPLER),'--experiment-id','fixture.escaped-descendant','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(esc_port),'--interval-ms','10','--max-seconds','2','--output',str(esc_json),'--',sys.executable,str(esc),str(esc_port),str(esc_ready),str(esc_pid))
+    # Wait for the escaped descendant to bind the owned listener before
+    # asserting terminal cleanup — deterministic readiness handshake, not
+    # scheduler luck.
+    for _ in range(200):
+        if esc_ready.exists():
+            break
+        time.sleep(0.01)
+    assert esc_ready.exists(), "escaped descendant did not bind listener"
     try:
+        # Readiness: the escaped owner demonstrably bound the listener before
+        # the sampler finished — the marker was written by the escaped child.
+        assert esc_ready.exists(), "escaped TCP listener signalled bound"
         e=json.loads(esc_json.read_text())
         assert e['cleanup']['process_group_empty'] is True, e['cleanup']
         assert e['cleanup']['owned_sockets_after_exit'] is None, e['cleanup']
@@ -98,7 +109,13 @@ with tempfile.TemporaryDirectory() as td_raw:
     )
     probe=socket.socket(); probe.bind(('127.0.0.1',0)); escu_port=probe.getsockname()[1]; probe.close()
     run(sys.executable,str(SAMPLER),'--experiment-id','fixture.escaped-udp','--implementation','fixture','--role','server','--identity','binary:fixture-v1','--application-bytes','0','--owned-port',str(escu_port),'--interval-ms','10','--max-seconds','2','--output',str(escu_json),'--',sys.executable,str(escu),str(escu_port),str(escu_ready),str(escu_pid))
+    for _ in range(200):
+        if escu_ready.exists():
+            break
+        time.sleep(0.01)
+    assert escu_ready.exists(), "escaped UDP descendant did not bind"
     try:
+        assert escu_ready.exists(), "escaped UDP socket signalled bound"
         eu=json.loads(escu_json.read_text())
         assert eu['cleanup']['process_group_empty'] is True, eu['cleanup']
         assert eu['cleanup']['owned_sockets_after_exit'] is None, eu['cleanup']
@@ -109,6 +126,22 @@ with tempfile.TemporaryDirectory() as td_raw:
                 os.kill(int(escu_pid.read_text().strip()), signal.SIGKILL)
             except (OSError, ValueError):
                 pass
+    # H-R9-083: a partial terminal /proc observation (a required table
+    # unreadable, or an unparseable row) must yield unknown — never absent.
+    netdir=td/"procnet"; netdir.mkdir()
+    hdr="  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+    row="   0: 0100007F:9C40 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 12345 1 0000000000000000 100 0 0 10 0\n"
+    for n in ("tcp","tcp6","udp"):
+        (netdir/n).write_text(hdr+row)
+    # udp6 table missing entirely -> unknown (40001 not present in any table).
+    assert sampler.owned_port_sockets_present({40001}, net_dir=str(netdir)) is None
+    # A truncated TCP row lacking the state field on the owned port -> unknown.
+    (netdir/"udp6").write_text(hdr)
+    (netdir/"tcp").write_text(hdr+"   0: 0100007F:9C41\n")
+    assert sampler.owned_port_sockets_present({40001}, net_dir=str(netdir)) is None
+    # All four tables clean and no owned port -> absent.
+    (netdir/"tcp").write_text(hdr+row)
+    assert sampler.owned_port_sockets_present({40001}, net_dir=str(netdir)) is False
     # Exit-race: a child that is gone before the first sleep still yields wait4
     # CPU/RSS and a truthful null sampled-FD metric rather than fake zero.
     short=td/"short.json"
