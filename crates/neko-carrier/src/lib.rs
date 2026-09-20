@@ -3269,6 +3269,8 @@ mod health_evidence_tests {
         // Lifetime diagnostics survive quiesce.
         assert!(r.diagnostics().0 > 0);
     }
+
+    #[test]
     fn d064_warm_readiness_is_prefailure_bounded_and_distinct() {
         let mut manager = active_manager();
         assert!(
