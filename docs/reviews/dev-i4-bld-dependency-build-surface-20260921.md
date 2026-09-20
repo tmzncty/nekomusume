@@ -33,7 +33,7 @@ Locked Cargo tooling was executed on the exact current source/test tree:
 No concrete defect found across the dependency/build surface. The workspace
 manifests are consistent, the lockfile is pinned, feature reachability is
 production-scoped `snow` (Noise, `neko-crypto` only) + minimal dev-scoped
-`serde`/`serde_json` (`neko-wire` tests only), no build/native hooks exist, and
+`serde`/`serde_json` (`neko-wire` tests only); workspace members ship no `build.rs`/`links`, while the transitive production closure includes `snow`'s `rustc_version` build script and `ring`'s `links`/`cc`/C-asm native surface; and
 `unsafe_code = "forbid"` + `panic = "abort"` apply workspace-wide.
 
 **READY_LIVE: none** — deterministic local evidence only.
