@@ -1504,8 +1504,14 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     let server = ready_failover_server(server);
     // H-I4-090: sample the pre-churn baseline BEFORE the malformed attack —
     // a baseline taken after the churn window cannot prove bounded growth.
+    // Mutation guard: the phase sentinel makes it a failure (not a silent
+    // false-negative) if this baseline is moved into the post-churn window.
+    let mut churn_phase = 0u8;
     #[cfg(target_os = "linux")]
-    let before = process_resource_snapshot(pid);
+    let before = {
+        assert_eq!(churn_phase, 0, "baseline must precede the churn");
+        process_resource_snapshot(pid)
+    };
     let malformed = [b'N', b'1', 1, 1, 0];
     const ATTEMPTS: usize = 8;
     let senders: Vec<_> = (0..ATTEMPTS)
@@ -1519,6 +1525,10 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     for sender in &senders {
         sender.send_to(&malformed, ("127.0.0.1", udp)).unwrap();
     }
+    churn_phase = 2;
+    // The baseline assert above required phase==0; reaching phase==2 proves
+    // the malformed sends completed — so `before` must already be captured.
+    assert_eq!(churn_phase, 2);
     thread::sleep(Duration::from_millis(100));
     // H-I4-089: /proc resource observation is Linux-only — on Linux the
     // snapshot must be affirmative, not silently skipped as a false-pass.
