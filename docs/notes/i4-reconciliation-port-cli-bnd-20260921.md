@@ -12,7 +12,7 @@
 
 ## Specific qualifications/supersessions
 
-- **CLI-H "parsed result" wording:** `failover_gate` emits `pass: 喵~！` only when the JSON artifact's `"reachable"` field parses to `true` — the wording is driven by the parsed machine result, not by an earlier stage or wrapper exit. The one-case schema remains unfalsified; no source repair is manufactured.
+- **CLI-H "parsed result" wording:** the current `matrix_probe` / reachability gate does **not** deserialize a typed semantic result at the final human/exit branch. It calls `reachability::run(...)` to obtain a JSON artifact string and then tests `artifact.contains("\"reachable\":true")` for both the human success/failure wording and process exit. On the current one-case `reachability-matrix.v1` producer this exact substring test was not falsified by the bounded review, but the stronger phrase “driven by the parsed result” is superseded here. A schema change, multiple cases, or another `reachable` occurrence is a re-review trigger; no source repair is manufactured solely to make the old prose true.
 - **H-I4-087 first-run flake:** `check.sh` at `d819d38` produced a transient `fixture.known-fd` `bind` race (`cp.returncode == 1`) on the first run; the second run passed all tests. The flake is timing/port-reuse, not a regression — truthfully recorded.
 - **H-I4-085 snow/ring build surface:** `snow` is a normal production dependency with a `rustc_version` build script; `ring` is reached via `snow` default features and carries `links`/`cc`/native surface. Workspace members ship no `build.rs`/`links`.
 - **Item-4 status:** remains **incomplete** — release items 3 and 4 are open; `RELEASE_CANDIDATE`/`PRODUCTION_READY`/`FREEZE`/`RELEASED` are unchanged; D019/policy gates remain maintainer-owned.
