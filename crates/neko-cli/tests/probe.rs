@@ -1529,10 +1529,31 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     for sender in &senders {
         sender.send_to(&malformed, ("127.0.0.1", udp)).unwrap();
     }
+    // H-I4-091: a deterministic server-side processing barrier — the post
+    // sample must be causally ordered after the server has received and
+    // classified all ATTEMPTS malformed datagrams, not merely after a sleep.
+    // The server emits a `malformed_or_unadmitted` diagnostic line for each;
+    // wait for ATTEMPTS of them (bounded) before taking the post snapshot.
+    let mut server = server;
+    let mut classified = 0usize;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while classified < ATTEMPTS {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "server did not classify all {ATTEMPTS} malformed datagrams in time"
+        );
+        let mut line = String::new();
+        let n = server.stdout.read_line(&mut line).expect("server stdout readable");
+        if n == 0 {
+            panic!("server stdout closed after {classified}/{ATTEMPTS} malformed classifications");
+        }
+        if line.contains("\"event\":\"malformed_or_unadmitted\"") {
+            classified += 1;
+        }
+    }
     // Reaching this point proves the sends completed — the baseline must
     // already be captured while churn_started was still false.
     assert!(churn_started);
-    thread::sleep(Duration::from_millis(100));
     // H-I4-089: /proc resource observation is Linux-only — on Linux the
     // snapshot must be affirmative, not silently skipped as a false-pass.
     #[cfg(target_os = "linux")]
