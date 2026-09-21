@@ -1,41 +1,38 @@
-# ChatGPT reviewer handoff — PORT owner inventory after H-I4-090 closure
+# ChatGPT reviewer handoff — repository-wide local queue exhaustion after PORT closure
 
 ## Current repository truth
 
-- Synchronize to current `main` before doing work. The latest independent bounded reviewer note is `1c8eacc256e5d27c56dbc971ba13b30926dca7c0` (`docs/reviews/reviewer-i4-port-res-post-0dbb931-20260921.md`).
-- **H-I4-090 remains CLOSED** at source/test repair `0dbb93145c4e1cc031ca30258b3c58a5c3155b51`. Exact-current inspection confirms the malformed-UDP Linux resource baseline is sampled after server readiness and **before** the first malformed datagram; the post sample is after churn + the existing settle point; unavailable Linux snapshots fail the resource assertion rather than becoming a skip/pass.
-- Developer-local exact-tree provenance for `0dbb931` is retained at `docs/notes/h-i4-090-provenance-0dbb931-20260921.md`: focused affected test, `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean worktree, Linux x86_64, stable Rust, UTC timestamps and exit codes. This is developer-local evidence, not reviewer-local or hosted CI.
-- A current GitHub combined-status query for `0dbb931` returned no hosted statuses. Absence is neither success nor failure.
-- The earlier H-I4-090 contract suggested a separate mutation-sensitive guard against re-moving the baseline. No separate checker/meta-test was added, but there is no exact-current counterexample: the executable test itself is ordered correctly and fail-closed. Treat extra mutation hardening as optional unless a concrete current defect appears; do not manufacture checker/framework churn merely to satisfy a stale suggestion.
-- **H-I4-089 remains CLOSED**: `/proc/<pid>` FD/RSS resource observation is Linux-only and affirmative on Linux; non-Linux Unix does not get fabricated `/proc` resource evidence.
-- H-I4-087, H-I4-088, H-I4-086, Candidate A/B, CarrierState/CarrierManager, FairScheduler/flow accounting, unchanged carrier adapters, observability, package/operator, dependency/build, CLI-M/CLI-H, and prior R9 process/result seams remain closed unless an exact-current owner materially changed or a new concrete counterexample falsifies the claim.
+- Synchronize to current `main` before doing work. The repository-wide refill decision immediately preceding this handoff is `4315a5cfbd89c362838844e5802f7c238a50869a` (`docs/notes/item4-refill-check-20260921.md`).
+- The latest executable source/test owner remains `0dbb93145c4e1cc031ca30258b3c58a5c3155b51` (`test(cli): H-I4-090 resource baseline sampled pre-churn, not after`). Commits after `0dbb931` through `4315a5c` are review/provenance/handoff/reconciliation documentation only.
+- **H-I4-090 is CLOSED** at `0dbb931`: the malformed-UDP Linux resource baseline is sampled after server readiness and before the first malformed datagram; the post sample follows churn plus the existing settle point; unavailable Linux `/proc` snapshots fail the resource assertion rather than becoming skip/pass.
+- Developer-local exact-tree provenance for `0dbb931` is retained at `docs/notes/h-i4-090-provenance-0dbb931-20260921.md`: focused affected testing, `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree, Linux x86_64, stable Rust, UTC timestamps and exit codes. This is developer-local evidence, not reviewer-local or hosted CI.
+- A GitHub combined-status query for `0dbb931` returned no hosted statuses. Absence is neither success nor failure.
+- H-I4-089 remains CLOSED. The follow-on I4-PORT resource, Linux `/proc` inventory, Unix/platform-boundary, process cleanup/signal, CLI machine/human owner-diff, boundedness owner-diff, release-packet consistency and PORT/item-4 reconciliation lanes have current bounded no-finding notes through `b6cffc44d20d9e1aa7341bae2f2f265b517f8845`.
+- The required repository-wide 13-surface refill check at `4315a5c` found every implemented core surface either currently independently challenged or unchanged under still-valid dedicated coverage. No exact-current concrete defect or missing dedicated bounded core review was identified.
+- Candidate A (future/unsent Recovery ACK), Candidate B (mixed datagram drop reasons), H-I4-085..090, prior R9 process/result seams, Session/Carrier/ACK separation, CarrierState/CarrierManager, FairScheduler/flow accounting, carrier adapters, observability, package/operator, dependency/build, portability, CLI machine/human contract and algorithmic boundedness remain closed unless a material owner change or new concrete counterexample falsifies them.
 - `SessionRuntime.events` retained-history capacity remains a maintainer/security policy gate. Do not invent a history-size/TTL/LRU/capacity value.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
-- **`READY_LIVE: none`.** Do not rerun prior HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track for freshness.
+- **`READY_LIVE: none`.** Do not rerun prior HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track merely for freshness.
 
-## Completed this reviewer slice — I4-PORT-RES
+## Queue state
 
-Independent exact-current source/diff challenge at `1c8eacc` found no defect in the repaired pre/post resource oracle. Reviewed owners and evidence boundaries are recorded in `docs/reviews/reviewer-i4-port-res-post-0dbb931-20260921.md`. No reviewer-local Rust test, full gate, fuzz, WAN, macOS/non-Linux execution, or performance run is claimed.
+**Repository-wide dependency-ready local review/repair queue is exhausted at this exact inventory.** This is a repository-wide conclusion, not a narrow PORT result: the required 13-surface refill was performed after H-I4-089/090, and no uncovered implemented core surface, concrete defect, READY review-support lane, or READY live question remains.
 
-Do **not** keep H-I4-090 at the front of the queue. The previous handoff contained both `CLOSED` and stale `FRONT HIGH` text; that stale repair block is superseded by this handoff.
+Do **not** manufacture checker/schema/framework/docs churn to keep the agent busy. Do **not** replay unchanged closed review lanes merely because item 4 is still unchecked. Item 4's remaining release/security decision is not equivalent to an uncovered local implementation surface.
 
-## Rolling queue — continue without waiting for reviewer cadence
+The coding/review agent should resume immediately, without waiting for reviewer cadence, when repository truth gains any real trigger such as:
 
-The coding/review agent must continue through dependency-ready slices while repository truth contains work. A no-finding bounded independent challenge is valid item-4 support; a concrete defect immediately becomes the smallest repair + positive/negative regression + pushed exact-tree gate/provenance before continuing.
+1. a new developer-owned source/test/build/operator-script commit or PR;
+2. a material change to a previously reviewed core owner or evidence claim;
+3. a new concrete counterexample against a closed invariant;
+4. a new instrumentation/code/configuration/path-condition hypothesis that creates a truthful `READY_LIVE` question inside standing authorization;
+5. an environment change that actually unblocks an item-3 row (for example owned IPv6 availability), rather than an unchanged retry;
+6. a maintainer decision on `SessionRuntime.events` retained-history capacity or another policy/value gate;
+7. a genuine transition into RC/freeze/release decision work authorized by the maintainer.
 
-1. **I4-PORT-LINUX `/proc` owner/callsite inventory — READY_LOCAL.** Inspect exact-current Rust tests plus Linux process-resource scripts for every `/proc`, `/proc/net`, FD/RSS/process-group helper and caller. Challenge hidden broad `cfg(unix)`, optional-observation false-pass, partial-table promotion, or unsupported-platform invocation. `scripts/bench/process-resource-sampler.py` is explicitly Linux-specific; distinguish that fact from portable CLI behavior and from Ubuntu-only hosted CI. Do not rewrite working portable `std::process` APIs.
-2. **I4-PORT-UNIX/platform-boundary challenge — READY_LOCAL after lane 1.** Verify Linux-only measurement, POSIX signal/process semantics, and genuinely portable socket/lifecycle behavior are not conflated. No macOS/non-Linux execution claim without actual evidence.
-3. **I4-PORT process cleanup/signal bounded challenge — READY_LOCAL.** Re-check exact-current child/process-group/listener cleanup and assertion/error paths touched by the PORT/resource evidence surface. Look for orphan/listener leakage, success before cleanup truth, or unbounded waits. Prior H-R9-082..084 seams stay closed unless a new exact counterexample exists.
-4. **Cross-platform CLI/process-test semantics owner-diff — READY_LOCAL.** Compare exact-current owners against the prior portability review and challenge only material changes or unreviewed platform seams. Keep first-RC/release policy facts distinct from portability claims.
-5. **CLI machine-contract owner-diff — READY_LOCAL.** Re-check exit-code/JSON/stderr contract only where exact-current owners changed or prior evidence is stale; do not replay unchanged closed rows for activity.
-6. **CLI human-output owner-diff — READY_LOCAL.** Re-check human output/prose reachability contract only for changed owners or stale claims; preserve the already reconciled `pass:`/`fail:` semantics unless falsified.
-7. **Algorithmic/resource boundedness owner-diff — READY_LOCAL.** Challenge current resource ownership/termination surfaces without capacity-pressure benchmarking and without choosing new numeric policy. `SessionRuntime.events` remains policy-gated, not a reason to stop unrelated review.
-8. **Release-packet factual-consistency challenge — READY_LOCAL.** Ensure current status/packet/review notes do not promote Linux-only resource observations into broader Unix, security-audit, capacity, hosted-CI, production, or release evidence. Repair prose only for concrete stale/falsified claims.
-9. **PORT + item-4 factual reconciliation — READY_LOCAL.** After lanes 1–8, update only actually stale indexes/status claims. Preserve exact evidence classes and release items/flags.
-10. **Repository-wide 13-surface refill check — REQUIRED before exhaustion.** Re-inventory all 13 core surfaces below. Reopen only for material owner change, missing dedicated independent bounded challenge, stale/falsified claim, or concrete counterexample. If real work exists, refill toward ~8–15 coherent slices and continue. A narrow clean PORT sweep is never queue exhaustion.
-11. **Conditional live.** Currently `READY_LIVE: none`. Reopen only if new code/instrumentation/hypothesis/path condition creates a concrete unresolved self-owned TCP/UDP question inside standing authorization.
+When such a trigger appears, refill toward roughly 8–15 coherent dependency-ordered slices when repository truth supports that depth. A BLOCKER/HIGH goes first and must close before widening the affected error surface.
 
-## Repository-wide refill inventory
+## Repository-wide refill inventory retained
 
 1. `neko-reliable` UDP recovery: ACK ranges, future/unsent ACK, loss/retransmit, RTT/PTO, persistent congestion, Reno, fault simulation;
 2. `neko-carrier` `CarrierState`: generation, validation, hysteresis, single-active, drain/fail/activate;
@@ -51,19 +48,29 @@ The coding/review agent must continue through dependency-ready slices while repo
 12. algorithmic resource boundedness, excluding capacity-pressure benchmark/new policy values;
 13. release-packet factual consistency/evidence boundary.
 
-Candidate A (future/unsent Recovery ACK) and Candidate B (mixed datagram drop reasons) remain closed unless current owner truth changes or a new counterexample appears. A prior no-finding note is not immunity from a new counterexample, but unchanged code alone is not a reason to replay every review.
+A future queue-exhaustion claim must repeat this broad inventory if any relevant owner/evidence changed. Unchanged owners with current dedicated independent bounded coverage do not need ritual re-review; changed owners or falsified claims do.
+
+## Release item 3 / live boundary
+
+Current classification remains `READY_LIVE: none`.
+
+- IPv6 remains environment-blocked unless a real owned IPv6 endpoint/path becomes available.
+- HY2 and repeated-warm-failover current lines remain frozen against same-class retry without a materially new hypothesis.
+- Periodic/soak, package lifecycle, migration-back, endpoint/key migration and already answered bounded live questions are not repeated for freshness.
+- Live PLPMTUD is not reopened without the separate required design/security gate or a new accepted path condition/instrumentation question.
+- Standing authorization continues to permit bounded self-owned client↔VPS TCP/UDP work when a genuine new question becomes READY; it does not authorize third-party targets, production changes, privileged/exotic-carrier work that the authorization file reserves, or pressure/adversarial-load experiments requiring maintainer choices.
 
 ## Review / repair and evidence contract retained
 
-For each bounded lane: read exact-current source/tests + applicable spec/ADR/status claim; state the invariant; try to falsify with source reasoning and focused deterministic tests. If a concrete defect exists and current semantics determine the answer, make the smallest repair, add positive/negative regression, commit/push, and on the final pushed developer SHA run in a safe clean checkout/worktree:
+For each future bounded lane: read exact-current source/tests + applicable spec/ADR/status claim; state the invariant; try to falsify it with source reasoning and focused deterministic tests. If a concrete defect exists and current semantics determine the answer, make the smallest repair, add positive/negative regression, commit/push, then on the final pushed developer SHA run in a safe clean checkout/worktree:
 
 - `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`
 - `git diff --check`
 - verify clean tree.
 
-Persist exact reachable pushed SHA, commands, UTC start/end, exit codes, OS/arch, Rust stable version and clean-tree state; do not record secrets/private topology/credentials/unnecessary absolute paths. Hosted CI is extra evidence, never a waiting condition. Run pinned decode fuzz only for decoder/parser/crypto-framing changes; none of the currently queued PORT lanes imply fuzz by themselves.
+Persist exact reachable pushed SHA, commands, UTC start/end, exit codes, OS/arch, Rust stable version and clean-tree state; do not record secrets/private topology/credentials/unnecessary absolute paths. Hosted CI is extra evidence, never a waiting condition. Run the pinned decode fuzz toolchain only for decoder/parser/crypto-framing changes.
 
-No-finding slices should produce a scope-precise independent bounded note naming inspected owners, tests/commands actually run, exclusions and exact reachable anchor; do not change code just to create churn.
+No-finding slices should produce a scope-precise bounded note naming inspected owners, commands/tests actually run, exclusions and exact reachable anchor; do not change code solely to create activity.
 
 ## Stop / escalation conditions
 
