@@ -21,7 +21,7 @@
 
 The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: independent review/challenge -> focused deterministic tests when applicable -> smallest repair if a concrete source-decided defect is found -> commit -> push -> clean exact-tree gate/provenance -> next slice. Reviewer cadence is only a check frequency; do not wait for the next reviewer once a slice is closed.
 
-## READY_LOCAL 1 — I4-PORT-01 process-test platform-scope repair
+## READY_LOCAL 1 — CLOSED: I4-PORT-01 process-test platform-scope repair
 
 Read exact-current `crates/neko-cli/tests/probe.rs`, the current I4-PORT developer note, `docs/reviews/independent-i4-port-followup-98978ee-20260921.md`, release-target statements, and only the platform/process owners needed for this seam.
 
