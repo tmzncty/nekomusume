@@ -1395,10 +1395,17 @@ fn failover_server(args: &[String]) {
                     let mut admission = match preauth.admit_carrier(preauth::CarrierKind::Udp, peer)
                     {
                         Ok(admission) => admission,
-                        Err(_) => continue,
+                        Err(_) => {
+                            // H-I4-091: admission-rejected datagrams are also
+                            // classified/rejected — emit so the barrier counts
+                            // them.
+                            emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                            continue;
+                        }
                     };
                     if preauth.charge_input(&mut admission, n, 64).is_err() {
                         preauth.release(admission);
+                        emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
                         continue;
                     }
                     let mut negotiation =
