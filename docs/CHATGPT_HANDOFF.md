@@ -1,49 +1,47 @@
-# ChatGPT reviewer handoff — H-I4-091 bounded post-cleanup barrier HIGH
+# ChatGPT reviewer handoff — H-I4-091 regression/provenance closure HIGH
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Code/tests/reachable pushed commits outrank this prose and older notes.
-- Reviewer observed `main = bb3d79625fcac568ea390aa531c8ed7df7b10961` before the review-note commit. The new reviewer finding is reachable at `94c858052498c4f5200c01b9f9cd997631a336f9`; re-read `main` because the coding agent may advance it immediately.
-- New developer-owned commits reviewed since the prior handoff:
-  - `9b6d90a145b8c13534591336345d2b37b2e13c25` — **implementation/test**: adds `malformed_or_unadmitted` server diagnostic and replaces the fixed 100 ms sleep with an `ATTEMPTS`-count stdout barrier.
-  - `91bf170991e3f5b7f480f25b9f47047792e059d8` — **test formatting only**.
-  - `bb3d79625fcac568ea390aa531c8ed7df7b10961` — **checker/inventory maintenance** for the changed pre-auth producer anchor.
+- Reviewer observed developer `main = 53e502ecbc38c349f61653cdd1a46739da0bbdfd`, reviewed that exact implementation/test tree, then committed the continuation review note at `2afe7ceda5ed7dcd2e8cc6253fd9fe76f2056cae`. Re-read `main` immediately because the coding agent may advance it without waiting for reviewer cadence.
+- New developer-owned commit reviewed since the prior handoff:
+  - `53e502ecbc38c349f61653cdd1a46739da0bbdfd` — **implementation/test**: moves `malformed_or_unadmitted` after `preauth.release(admission)` and replaces the direct blocking stdout barrier with an off-thread reader + bounded `recv_timeout`, killing/reaping the child on timeout.
+- **Accepted source-level repair:** the two concrete source defects from the prior H-I4-091 continuation are fixed in exact `53e502e`: the test-thread barrier no longer blocks directly in `read_line`, and the observable malformed classification is post-release.
+- **H-I4-091 nevertheless remains FRONT HIGH for evidence-oracle closure.** Exact `53e502e` does not add the two required mutation-sensitive regressions: (a) a focused insufficient/missing-classification case proving bounded failure rather than hang, and (b) an ordering oracle that deterministically fails if the Linux post-resource snapshot is moved before the post-cleanup barrier. Exact review note: `docs/reviews/reviewer-h-i4-091-regression-closure-20260922.md` at `2afe7ceda5ed7dcd2e8cc6253fd9fe76f2056cae`.
+- **Exact-tree provenance is also still open.** At review time there was no accepted developer-local clean exact-tree gate for final H-I4-091 source/test SHA. `53e502e` had no visible combined status or PR-triggered workflow run; absence of hosted evidence is not interpreted as failure.
 - **H-I4-090 remains closed:** affirmative Linux baseline is before `churn_started = true`, which flips before the first malformed `send_to`.
-- **H-I4-091 remains FRONT HIGH.** The new diagnostic-count idea is directionally correct, but exact-current test code is not a bounded fail-closed barrier: it checks a 5 s deadline and then calls blocking `BufRead::read_line` on child stdout. If the next diagnostic never arrives, that call can block beyond the deadline indefinitely. The same test file's `ready_failover_server` already documents this exact hazard and solves it with an off-thread reader plus `recv_timeout` and child kill/reap on timeout.
-- A second causal defect remains in exact-current `main.rs`: `malformed_or_unadmitted` is emitted **before** `preauth.release(admission)`. The test snapshots `/proc` immediately after observing the `ATTEMPTS`th diagnostic, so the resource oracle can race ahead of the final admission cleanup. Exact reviewer finding: `docs/reviews/reviewer-h-i4-091-bounded-barrier-continuation-20260922.md`.
-- No reviewer-local Rust/full-gate/fuzz/WAN/performance execution is claimed for this finding. Latest queried `bb3d796` had no visible hosted status/workflow evidence; absence of hosted evidence is not interpreted as failure.
-- Existing developer-local provenance for older `6911193` remains valid for that exact tree only. No final H-I4-091 source/test exact-tree provenance has yet been accepted.
 - Candidate A (future/unsent Recovery ACK), Candidate B (mixed datagram drop reasons), H-I4-085..090, prior R9 process/result seams, Session/Carrier/ACK separation, CarrierState/CarrierManager, FairScheduler/flow accounting, carrier adapters, observability, package/operator, dependency/build, and prior CLI machine/human contracts remain closed unless materially changed or falsified by a new concrete counterexample.
 - `SessionRuntime.events` retained-history capacity remains a maintainer/security policy gate; do not invent TTL/LRU/history-size/capacity values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD, or Experimental Track merely for freshness.
 
-## FRONT HIGH — H-I4-091 closure contract
+## FRONT HIGH — H-I4-091 remaining closure contract
 
-Repair the current barrier with the smallest repository-consistent shape:
+Do **not** redo the already-correct `53e502e` source repair unless a new concrete defect is found. Close the evidence-oracle contract with the smallest repository-consistent test shape:
 
 1. Keep H-I4-090's pre-churn baseline/mutation guard unchanged in meaning.
-2. Make the classification wait **actually bounded and fail closed**. A deadline check before blocking `read_line` is insufficient. Prefer the already-established off-thread stdout reader + bounded channel wait pattern (or an equivalent interruptible mechanism). On timeout, terminate/reap the test child so no reader/thread can remain stranded.
-3. Add a focused negative oracle proving that an insufficient/missing classification sequence exits within the bounded deadline rather than hanging.
-4. Move the observable barrier point to **after the malformed admission cleanup**. The `ATTEMPTS`th observable event must not become visible before the corresponding `preauth.release(admission)` cleanup point. An equivalent explicit post-cleanup event is acceptable. Do not promote the diagnostic into authentication, Session delivery, Carrier readiness, or packet-feedback evidence.
-5. Add an ordering oracle that fails if the Linux post snapshot is moved before the post-cleanup barrier.
+2. Preserve the current off-thread reader + `recv_timeout` bounded wait and timeout kill/reap semantics.
+3. Add a focused negative oracle that deliberately supplies an insufficient/missing classification sequence and proves the barrier exits within its bounded deadline rather than hanging. Prefer a small test helper/seam around the barrier; do not add a protocol/runtime feature.
+4. Preserve `preauth.release(admission)` before the observable `malformed_or_unadmitted` event.
+5. Add a mutation-sensitive ordering oracle so the Linux post snapshot is permitted only after the `ATTEMPTS`th post-release classification. Moving the post snapshot before that barrier must deterministically fail.
 6. Preserve Linux-only `/proc/<pid>/fd` + `/proc/<pid>/status` evidence, fail closed on unavailable pre/post observations, and preserve the existing FD/RSS margins unchanged.
 7. Preserve the non-Linux Unix portable lifecycle/socket path without claiming `/proc` evidence.
-8. Do not invent new capacity/security policy values and do not redesign Session/Carrier/ACK/wire/crypto semantics.
-9. No fuzz unless wire decoder/parser/crypto framing owners actually change.
-10. On the final pushed source/test SHA, run focused regression(s), then `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, and verify clean tree. Persist exact reachable SHA, UTC start/end, exit codes, OS/arch, Rust stable version, clean-tree state.
-11. After closure, continue immediately into the rolling queue; do not wait for reviewer cadence.
+8. Keep `malformed_or_unadmitted` diagnostic-only; do not promote it into authentication, Session delivery, Carrier readiness, packet ACK, wire, or release semantics.
+9. Do not invent new capacity/security/TTL/history policy values. If refactoring the reader/channel helper, prefer a bound derived from the already-needed event count or the repository's established one-item handoff pattern rather than adding an unexplained policy-like capacity.
+10. No fuzz unless wire decoder/parser/crypto framing owners actually change.
+11. Run the focused regression(s). Then on the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, and verify clean tree. Persist exact reachable SHA, UTC start/end, exit codes, OS/arch, Rust stable version, clean-tree state; do not record secrets/private addresses/topology/credentials/unnecessary absolute paths.
+12. After closure, continue immediately into the rolling queue; do not wait for reviewer cadence.
 
 ## Rolling queue — keep continuous after the HIGH
 
 Do not shrink this to one ticket. Proceed dependency-order until a real stop condition appears:
 
-1. **H-I4-091 repair + negative/ordering regressions + exact-tree provenance.**
+1. **H-I4-091 negative bounded-failure regression + post-cleanup ordering oracle + exact-tree provenance.**
 2. **I4-PORT-RES exact-current independent re-challenge.** Explicitly challenge both causal edges: `READY -> affirmative pre-churn snapshot -> first malformed send`, and `all bounded malformed inputs classified + cleanup-complete -> affirmative post-churn snapshot`.
-3. **Pre-auth malformed/rejection resource-accounting bounded challenge.** Inspect exact-current `admit_carrier` / `charge_input` / invalid-negotiation release path and prove the barrier itself does not retain unbounded state or promote rejection into authentication/delivery evidence. If no further defect exists, write a scope-precise no-finding note rather than manufacturing code churn.
+3. **Pre-auth malformed/rejection resource-accounting bounded challenge.** Inspect exact-current `admit_carrier` / `charge_input` / invalid-negotiation release path and prove the barrier itself does not retain unbounded state or promote rejection into authentication/delivery evidence. If no defect exists, write a scope-precise no-finding note rather than manufacturing code churn.
 4. **Cross-platform CLI/process-test semantics.** Challenge Linux-only `/proc` cfg boundaries; ensure the new barrier path is warning-clean and portable on non-Linux Unix at compile/contract level.
-5. **CLI diagnostic/machine-output boundary.** Challenge the new `malformed_or_unadmitted` diagnostic: exact scope, field/event stability, collision with normal JSON/human output, and guarantee that diagnostic-only evidence is not promoted into public protocol semantics.
-6. **Algorithmic/resource boundedness reconciliation.** Ensure the reader thread/channel/wait/counter has a bounded derivation and cleanup path and adds no new capacity/TTL/history/security policy number.
+5. **CLI diagnostic/machine-output boundary.** Challenge `malformed_or_unadmitted`: exact scope, field/event stability, collision with normal JSON/human output, and guarantee diagnostic-only evidence is not promoted into public protocol semantics.
+6. **Algorithmic/resource boundedness reconciliation.** Challenge reader-thread/channel/wait/counter lifetime and derivation, including timeout/EOF/disconnect cleanup and the test-local channel bound; do not add a new project capacity policy.
 7. **Item-4 + release-packet factual reconciliation.** Reconcile repaired resource evidence with `docs/release-security-review-packet.md`, `docs/status.md`, `IMPLEMENTATION_PLAN.md`, and current review notes. Do not promote local resource testing into WAN/performance/security approval.
 8. **Repository-wide 13-surface refill.** Re-apply the required broad inventory. Reuse prior dedicated reviews only for genuinely unchanged owners; materially changed owners require a fresh bounded challenge. Queue exhaustion may be re-declared only if broad inventory finds no concrete defect, no uncovered implemented core surface, no READY review-support, and no READY live question.
 9. **Conditional live.** Only if new code/instrumentation/hypothesis/path condition creates a specific unresolved real-network question under standing authorization. Otherwise keep `READY_LIVE: none`.
