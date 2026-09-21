@@ -185,6 +185,7 @@ fn ready_endpoint_rebind_server(mut child: Child) -> ReadyServer {
     }
 }
 
+#[cfg(unix)]
 fn signal_term(child: &Child) {
     let status = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
@@ -1410,6 +1411,7 @@ fn invalid_bind_never_emits_ready() {
 }
 
 #[test]
+#[cfg(unix)]
 fn sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
@@ -1454,6 +1456,7 @@ fn sigterm_after_ready_stops_and_releases_tcp_and_udp_bindings() {
 }
 
 #[test]
+#[cfg(unix)]
 fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
@@ -6550,6 +6553,7 @@ fn periodic_malformed_setup_fails_unauthenticated() {
 }
 
 #[test]
+#[cfg(unix)]
 fn periodic_server_signal_cleanup_is_bounded() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
@@ -6569,6 +6573,7 @@ fn periodic_server_signal_cleanup_is_bounded() {
 }
 
 #[test]
+#[cfg(unix)]
 fn endpoint_rebind_real_sockets_promote_new_source_and_reject_stale_old_source() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
@@ -6682,6 +6687,7 @@ fn endpoint_rebind_real_sockets_promote_new_source_and_reject_stale_old_source()
 }
 
 #[test]
+#[cfg(unix)]
 fn endpoint_rebind_wrong_challenge_fails_after_candidate_without_success() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
