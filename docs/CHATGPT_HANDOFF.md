@@ -1,56 +1,82 @@
-# ChatGPT reviewer handoff — repository-wide local technical queue exhausted after `f0013f7`
+# ChatGPT reviewer handoff — H-I4-089 fronts reopened I4-PORT queue
 
 ## Current repository truth
 
-- Synchronize to current `main`; the reviewer closure note is reachable at `f0013f72f3f15f8e35df53205e7740000afad2ab` (`docs/reviews/reviewer-item4-current-closure-314ae06-20260921.md`). Do not use the older `87b371d`/`cb893259` handoff state as an idle or duplicate-work reason.
-- The current executable/source-test tree remains exact `42be53917ee58359ad86532a6aab0136f75047b9`. Commits after it through the reviewer anchor are review/evidence/prose only; no decoder/parser/crypto-framing owner changed in this closure group.
-- **H-I4-086 CLOSED** at `ca629d702cf832c12bf74bdfc5f9d07ebb77ab17` + `3acba049fee5f9297cc8a4c3867250635c255717`: DeliveryAck cannot confirm queued-but-undrained bytes; sent/drained bookkeeping is terminal-owned and released.
-- **H-I4-087 CLOSED** at source repair `14e2f520a0fc9d41bcfcb1bd480758008a1dd4ea` with developer closure/provenance support through `d819d38559d60b6bd99df8a2453321809c046116`: `max_queue_records` is enforced over aggregate send+recv ownership. Preserve the provenance fact that one startup/socket timing flake preceded a clean rerun; do not promote it to hosted/reviewer CI.
-- **H-I4-088 CLOSED** at `26aa4e8036d61da7924d9fc5e587081d8a0f448f`: MemoryCarrier empty messages consume a finite queue-record slot derived from the existing committed queue bound; dequeue releases it. Do not invent a separate record-cap policy value.
-- **I4-FS2 CLOSED** by the current independent post-H-I4-086/087 review (`docs/reviews/independent-i4-fs2-session-flow-control-11cdb08-20260921.md`).
-- **I4-PORT-01 CLOSED in the bounded source-review scope**: `42be539` cfg-gates the affected POSIX `kill` / `/proc` / signal/process-lifecycle fixtures; exact-current reviewer source inspection found no remaining unguarded owner in that challenged surface. Developer focused Linux tests at `5e9b4b2` remain developer-local evidence; no non-Unix execution is claimed.
-- **I4-CLI-M remains CLOSED** at `docs/reviews/independent-i4-cli-machine-1b1b8c8-20260921.md`. Exact-current `matrix_probe` uses a literal `artifact.contains("\"reachable\":true")` predicate, not typed/schema parsing.
-- **I4-CLI-H factual drift `cb893259` is CLOSED** by docs-only reconciliation `5d8600eb01aa41ab2ddd0ea08ed98be0b885bd0d` plus current reviewer source/prose re-check. Complete human lines are `pass: 喵~！` / `fail: 喵呜呜呜呜…`; JSON mode remains separate; README/ROADMAP/carrier architecture/D007 now agree. `314ae06` is useful developer re-check input, not reviewer evidence merely because its message says “independent”.
-- **I4-BND automatic semantic lane is CLOSED** under existing committed limits. Recovery, Session queued/sent ownership and MemoryCarrier empty-record ownership have current bounded challenge support. `SessionRuntime.events` retained-history capacity remains a maintainer/security policy gate; no TTL/LRU/history/capacity value was invented and no adversarial-load suitability claim is made.
-- The current release/evidence-boundary spot-check found no stale promotion: item 3 and item 4 remain incomplete; developer-local evidence is not reviewer-local or hosted evidence; historical live negatives remain scope-limited; policy gates remain policy gates.
-- Candidate A/B, CarrierState/CarrierManager, unchanged observability, unchanged package/operator owners, H-I4-085 dependency/build truth, and closed R9 process/result seams remain closed unless exact-current owner truth changes or a new counterexample falsifies a claim.
+- Synchronize to current `main`. Reviewer finding **H-I4-089** is reachable at `78050ab4c4a66fed81b4e767f973d9a1921617a7` (`docs/reviews/reviewer-h-i4-089-macos-proc-false-pass-20260921.md`). It supersedes the immediately previous `f0013f7` / `cd82e7e` **queue-exhausted conclusion only where that conclusion depended on I4-PORT being closed**; it does not invalidate unrelated closed surfaces.
+- The current executable/source-test tree is still exact `42be53917ee58359ad86532a6aab0136f75047b9`. Commits after it through `78050ab` are review/evidence/prose only; no decoder/parser/crypto-framing owner changed in this interval.
+- **H-I4-089 OPEN HIGH — evidence / cross-platform process-test truth.** `crates/neko-cli/tests/probe.rs::process_resource_snapshot()` reads Linux `/proc/<pid>/fd` and `/proc/<pid>/status`, but its malformed-UDP/resource-growth caller is gated only by `#[cfg(unix)]`. `cfg(unix)` is true on macOS and other non-Linux Unix targets. On such a target the helper can return `None`, and the current `if let (Some(before), Some(after))` guard silently skips the FD/RSS assertions while allowing the test to continue as PASS. Therefore Linux `/proc` observation is currently being treated as broader Unix evidence, and missing observation can become false success.
+- The prior developer I4-PORT note at `5e9b4b22bbfe8d336026fee238cd5ae22c282f6e` contains the now-falsified statement that `#[cfg(unix)]` removes these fixtures on macOS. The prior reviewer closure at `f0013f72f3f15f8e35df53205e7740000afad2ab` likewise cannot support repository-wide PORT closure until H-I4-089 is repaired and re-challenged.
+- The narrower `signal_term()` seam is not itself the finding: external `kill -TERM` is a POSIX-shaped test seam. Do not broaden H-I4-089 into a rewrite of all process tests. The concrete defect is Linux-only `/proc` measurement + optional-`None` success semantics under the broader Unix cfg.
+- **H-I4-086 remains CLOSED** at `ca629d702cf832c12bf74bdfc5f9d07ebb77ab17` + `3acba049fee5f9297cc8a4c3867250635c255717`: DeliveryAck cannot confirm queued-but-undrained bytes; sent/drained bookkeeping is terminal-owned and released.
+- **H-I4-087 remains CLOSED** at source repair `14e2f520a0fc9d41bcfcb1bd480758008a1dd4ea` with developer closure/provenance support through `d819d38559d60b6bd99df8a2453321809c046116`: `max_queue_records` is aggregate over send+recv ownership. Preserve the provenance fact that one startup/socket timing flake preceded a clean rerun; do not promote it to hosted/reviewer CI.
+- **H-I4-088 remains CLOSED** at `26aa4e8036d61da7924d9fc5e587081d8a0f448f`: MemoryCarrier empty messages consume a finite queue-record slot derived from the already committed queue bound; dequeue releases it. Do not invent a separate record-cap policy value.
+- I4-FS2, Candidate A/B, CarrierState/CarrierManager, unchanged observability, unchanged package/operator owners, H-I4-085 dependency/build truth, CLI-M/CLI-H, and closed R9 process/result seams remain closed unless their exact-current owner changes or a new counterexample falsifies a claim.
+- `SessionRuntime.events` retained-history capacity remains a maintainer/security policy gate. Do not choose a history-size/TTL/LRU/capacity value while repairing this PORT finding.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
-- **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track merely because the VPS is still rented. Reopen live only for a new concrete unresolved network question created by new code/instrumentation/hypothesis/path condition.
+- **`READY_LIVE: none`.** H-I4-089 is entirely local/test/evidence truth. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track merely because the VPS is still rented.
 
-## Repository-wide item-4 inventory result
+## FRONT — H-I4-089 repair contract
 
-The reviewer repeated the full 13-surface inventory against exact-current owners after the post-`42be539` PORT repair, H-I4-086/087/088 repairs, BND synthesis, release-evidence reconciliation, and `5d8600e` CLI-H correction. No unresolved automatic BLOCKER/HIGH, unreviewed implemented core owner, legitimate dependency-ready local review-support lane, or concrete changed-hypothesis live question remains at the reviewer anchor.
+This HIGH is dependency-ready and automatically decidable from current committed semantics. It does **not** require maintainer policy input.
 
-Therefore the **local technical item-4 review-support queue is repository-wide exhausted** at this anchor. This is not the old narrow `87b371d` assertion: the later CLI-H contradiction was first surfaced, repaired, independently re-checked, and then the broad inventory was repeated.
+1. Keep Linux `/proc` resource observation explicitly Linux-scoped. Do not describe it as generic Unix/macOS coverage.
+2. On Linux, the resource snapshot used by the malformed-UDP/resource-growth regression must be affirmative. A failed/missing snapshot must fail/skip truthfully according to a deliberate test boundary; it must **not** silently become `None -> pass` for the resource-growth claim.
+3. On non-Linux Unix, choose the smallest truthful shape:
+   - either keep portable socket/lifecycle behavior under Unix and compile/execute only the `/proc` resource assertion on Linux; or
+   - gate the entire affected fixture to Linux if that fixture's committed purpose is intentionally Linux-only.
+   Do not add macOS/release-platform claims merely to close this finding.
+4. Add a deterministic/mutation-sensitive regression or source-level guard that locks the boundary: the Linux-only measurement path cannot silently degrade from unavailable observation to a successful resource claim.
+5. Preserve the existing portable `Child::kill()` / signal/lifecycle coverage where it is genuinely platform-independent or POSIX-wide; do not mechanically cfg-elide unrelated tests.
+6. Run the focused affected process/probe tests. Then, on the final pushed source/test SHA in a safe clean checkout/worktree, run:
+   - `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`
+   - `git diff --check`
+   - verify the tree is clean.
+   Record exact reachable pushed SHA, commands, UTC start/end, exit codes, OS/arch, Rust stable version and clean-tree state. Do not record secrets, private addresses/topology, credentials or unnecessary absolute paths.
+7. No fuzz is required unless the repair unexpectedly changes decoder/parser/crypto framing. H-I4-089 should not do so.
+8. Push the repair/provenance and continue immediately into the review queue below; do not wait for the next hourly reviewer cadence.
 
-Queue exhaustion **does not complete item 4** and does not authorize release. Remaining gates are intentionally non-automatic or external/policy/environment/authority-bound:
+## Rolling queue after the HIGH repair
 
-- D019 source-retention/no-reset policy;
-- `SessionRuntime.events` retained-history capacity policy;
-- adversarial-load/capacity suitability outside bounded semantic review;
-- cryptanalysis / full independent security-audit exclusions;
-- release item 3 environment/evidence dependencies and current-line blocked experiments;
-- maintainer RC/freeze/release/production authority.
+There are currently fewer legitimate independent owners than the earlier 8–15 steady-state target because the previous broad sweep closed unchanged surfaces. Do not manufacture filler merely to hit a number. The following **8 coherent lanes** are the current dependency-ordered queue; lanes 2–7 should collapse/skip themselves if exact-current facts make them redundant, but must not be silently replaced with `queue exhausted` before the broad refill check.
 
-Do not invent implementation work solely to keep the agent busy. If any exact-current owner changes, any prior claim is falsified, or a genuinely new dependency-ready question appears, refill the queue from the broad 13-surface inventory instead of mechanically replaying old reviews.
+1. **H-I4-089 repair + tests + exact-tree local provenance** — FRONT HIGH, contract above.
+2. **I4-PORT-LINUX independent bounded challenge** — inspect exact repaired `process_resource_snapshot` owner/caller and challenge the invariant that missing/failed Linux FD/RSS observation cannot be promoted to successful resource evidence. Use focused deterministic tests/source reasoning; if a concrete defect remains, repair it before continuing.
+3. **I4-PORT-UNIX/platform-boundary challenge** — verify Linux-only observation and Unix-wide process/lifecycle semantics are truthfully separated. Confirm no prose/test claims macOS execution merely because `cfg(unix)` is true. No non-Linux execution claim without actual evidence.
+4. **I4-PORT current callsite inventory** — bounded source sweep of `/proc`, external `kill`/signals, `setsid`/process-group and related process-resource helpers/callers in current CLI/process tests. The goal is to catch another Linux-only seam hidden behind broader cfg, not to rewrite working cross-platform `std::process` APIs.
+5. **I4-PORT closure reconciliation** — write one scope-precise independent no-finding note only after lanes 2–4 are clean, naming inspected owners, focused commands/tests, exclusions, and exact reachable source/test anchor. Do not label developer self-review as reviewer-local evidence.
+6. **Release/item-4 factual reconciliation for the changed PORT claim** — update only stale evidence/index/handoff claims that depended on the old PORT closure. Preserve item 3/4 as incomplete and all four governance flags as false. Do not rewrite unrelated historical evidence.
+7. **Repository-wide 13-surface owner-diff refill check** — compare exact-current owners against the prior broad inventory. Reopen a surface only for a material owner change, stale/falsified claim, concrete counterexample, or genuinely missing independent bounded challenge. If another real local lane exists, refill from it and continue; only after this broad inventory may repository-wide local technical queue exhaustion be asserted again.
+8. **Conditional live** — currently `READY_LIVE: none`. Reopen only if new code/instrumentation/hypothesis/path condition creates a concrete unresolved self-owned TCP/UDP question inside standing authorization. Do not rerun old live rows for freshness.
 
-## Conditional refill triggers — not duplicate work
+## Repository-wide refill rules retained
 
-- Reliable UDP / Candidate A: reopen only on Recovery ACK/loss owner change or a new future/unsent-ACK counterexample.
-- Observability / Candidate B: reopen only on `neko-observe` owner change or a new mixed-drop counterexample.
-- CarrierState / Manager / migration-back: reopen only on material owner change or a falsified independent-review claim.
-- Session / scheduler / flow-control: reopen on material source change, especially DeliveryAck/sent-drain/queue/window ownership.
-- Carrier adapters: reopen on Memory/UDP/TCP owner change or new close/error/resource counterexample.
-- Package/operator/reproducibility: reopen only on material owner change or provenance contradiction; do not rerun identical package/VPS scenarios for freshness.
-- Dependency/build/native: reopen on manifest/lock/feature/build-hook/native/unsafe owner change or falsification of H-I4-085 corrected truth.
-- PORT/CLI: reopen on relevant source/test/contract change; docs-only prose churn alone is not a reason to re-run executable gates.
-- Process-resource H-R9-082/083/084: do not restart without a new counterexample; current result/cleanup truth has already been challenged.
-- Live: reopen only for a new code/instrumentation/hypothesis/path condition that creates a concrete unresolved self-owned TCP/UDP question inside standing authorization.
+For the broad lane 7 inventory, continue to check all 13 core surfaces rather than making a narrow PORT-only exhaustion claim:
+
+1. `neko-reliable` UDP recovery: ACK ranges, future/unsent ACK, loss/retransmit, RTT/PTO, persistent congestion, Reno, fault simulation;
+2. `neko-carrier` `CarrierState`: generation, validation, hysteresis, single-active, drain/fail/activate;
+3. Concurrent Carrier Manager / health / migration-back;
+4. FairScheduler / multi-stream / Session+stream flow-control accounting;
+5. Carrier adapters: Memory/UDP/TCP close/error/resource semantics;
+6. `SessionRuntime` lifecycle/resource/window/DeliveryAck accounting;
+7. `neko-observe` projection/event/counter/high-water correctness;
+8. package/reproducibility/operator scripts;
+9. dependency/build: manifests/lock/features/build/native hooks/unsafe inheritance;
+10. cross-platform CLI/process-test semantics;
+11. CLI exit-code / JSON / human-output contract;
+12. algorithmic resource boundedness, excluding capacity-pressure benchmark/new policy values;
+13. release-packet factual consistency/evidence boundary.
+
+Candidate A (future/unsent Recovery ACK) and Candidate B (mixed datagram drop reasons) remain closed unless current owner truth changes or a new counterexample appears. A prior no-finding note is not immunity from a real new counterexample, but unchanged code alone is not a reason to replay every review.
 
 ## Evidence boundary
 
-The reviewer closure at `f0013f7` is source/spec/review-note inspection. **No reviewer-local tests were executed in that review.** Developer-reported focused tests and clean exact-tree gates remain separately labelled at their own reachable SHAs. No absent GitHub-hosted run is interpreted as success or failure. No fuzz run is claimed because the reviewed interval did not modify decoder/parser/crypto framing.
+- The H-I4-089 reviewer finding at `78050ab` is source/test/review-note inspection. **No reviewer-local tests were executed for that finding.**
+- Developer-reported focused tests and exact-tree gates remain developer-local evidence at their own reachable anchors; repository-persisted provenance is distinct again from GitHub-hosted CI.
+- An absent hosted run is neither success nor failure.
+- No live WAN result or performance conclusion is added by H-I4-089.
+- No fuzz claim is made for the finding because decoder/parser/crypto framing is unchanged.
+- The previous `f0013f7` broad review remains useful for unchanged surfaces, but its repository-wide exhaustion conclusion is temporarily superseded until the reopened PORT chain and broad refill lane are complete.
 
 ## Stop / escalation conditions
 
-With the local technical queue exhausted, do not manufacture filler. Resume continuous implementation/review only when a real conditional refill trigger becomes true. Escalate/notify only for an unresolved BLOCKER/HIGH that cannot be automatically decided, a core Session/Carrier/ACK/crypto/wire architecture change, D019 or another true policy/value choice, destructive/canonical migration, out-of-standing-authorization operation, third-party/production/new-credential permission, maintainer-selected adversarial-load/benchmark conditions, or entry into a genuinely new release stage.
+H-I4-089 itself is **not** a policy/architecture stop: coding agent should repair and continue without maintainer interaction. Escalate/notify only for an unresolved BLOCKER/HIGH that cannot be automatically decided, a core Session/Carrier/ACK/crypto/wire architecture change, D019 or another true policy/value choice, destructive/canonical migration, out-of-standing-authorization operation, third-party/production/new-credential permission, maintainer-selected adversarial-load/benchmark conditions, or entry into a genuinely new release stage.
