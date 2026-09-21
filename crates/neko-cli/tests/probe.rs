@@ -1502,6 +1502,10 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     #[cfg(target_os = "linux")]
     let pid = server.id();
     let server = ready_failover_server(server);
+    // H-I4-090: sample the pre-churn baseline BEFORE the malformed attack —
+    // a baseline taken after the churn window cannot prove bounded growth.
+    #[cfg(target_os = "linux")]
+    let before = process_resource_snapshot(pid);
     let malformed = [b'N', b'1', 1, 1, 0];
     const ATTEMPTS: usize = 8;
     let senders: Vec<_> = (0..ATTEMPTS)
@@ -1520,7 +1524,6 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     // snapshot must be affirmative, not silently skipped as a false-pass.
     #[cfg(target_os = "linux")]
     {
-        let before = process_resource_snapshot(pid);
         let after = process_resource_snapshot(pid);
         assert!(
             matches!((before, after), (Some(_), Some(_))),
