@@ -1,112 +1,97 @@
-# ChatGPT reviewer handoff — post-reconciliation item-4 independent gaps
+# ChatGPT reviewer handoff — current item-4 closure queue after `87b371d`
 
 ## Current repository truth
 
-- Current reachable reviewer anchor before this handoff update is exact `45c2890029c4bf46855dc8ea4df987d0cc335e64` (`docs(review): inventory current item-4 independent coverage gaps`). The exact executable/source-test tree remains `42be53917ee58359ad86532a6aab0136f75047b9`; later commits through `45c2890` are review/evidence/handoff documentation only.
-- The PORT/CLI/BND factual reconciliation landed at `588ca372827f7cbe00cdb9086cb0901ff7a11904`, but one reconciliation sentence incorrectly upgraded the current reachability gate into a typed parse. Reviewer repair `7197abf037988adf3a4ac097429dc047b5f52f33` corrects that factual claim: exact `matrix_probe` calls `reachability::run(...)` and then uses `artifact.contains("\"reachable\":true")` for both human wording and exit status. The current one-case `reachability-matrix.v1` shape has not been falsified as a concrete defect, but the stronger “parsed result” wording is superseded and a future schema/multi-case/alternate-`reachable` occurrence is a re-review trigger.
-- Repository-wide 13-surface inventory is recorded at `docs/reviews/reviewer-item4-13-surface-inventory-7197abf-20260921.md` / reachable `45c2890`. It is a source/spec/review-note inventory; **no reviewer-local commands/tests are claimed**.
-- **H-I4-086 is CLOSED** at executable source/test repair `ca629d702cf832c12bf74bdfc5f9d07ebb77ab17` + `3acba049fee5f9297cc8a4c3867250635c255717`: DeliveryAck cannot confirm queued-but-undrained bytes; terminal sent bookkeeping is released.
-- **H-I4-087 is CLOSED** at executable repair/provenance anchor `d819d38559d60b6bd99df8a2453321809c046116`: both Session admission directions enforce the same aggregate `send.len() + recv.len()` record cap before mutation. Preserve the provenance fact that the first full gate run saw one startup/socket timing flake and the second full run passed.
-- **H-I4-088 is CLOSED** at executable repair `26aa4e8036d61da7924d9fc5e587081d8a0f448f`: MemoryCarrier empty messages consume a finite record slot derived from the already-committed queue bound; receiving one record releases that slot. Current independent MemoryCarrier re-challenge is `docs/reviews/independent-i4-ad1-memorycarrier-rechallenge-d0f4c55-20260921.md`.
-- **I4-FS2 is CLOSED as a bounded current independent challenge** at `docs/reviews/independent-i4-fs2-session-flow-control-11cdb08-20260921.md`; it explicitly supersedes the falsified portions of the earlier developer no-finding note after H-I4-086/087.
-- **I4-PORT-01 executable repair is present** at `42be539`: `signal_term` and the affected SIGTERM/process-lifecycle/socket fixtures are explicitly `#[cfg(unix)]`. Developer-reported clean exact-tree provenance exists, but the independent follow-up at `98978ee` predates that repair and explicitly requested a post-repair closure. Therefore cross-platform/process-test surface 10 still has one genuine independent READY gap.
-- **I4-CLI-M is CLOSED with bounded independent no finding** at `docs/reviews/independent-i4-cli-machine-1b1b8c8-20260921.md`; that note explicitly excludes human wording and says to continue to an independent I4-CLI-H challenge. The later I4-CLI-H note at `536d59a` is developer-authored, so human-output/stderr surface 11 still has one genuine independent READY gap.
-- Current algorithmic boundedness is supported piecemeal by the developer I4-BND review (`89d249b`), reviewer Recovery completion (`031f7b8`), current independent Session FS2 and Memory AD1 reviews. A bounded cross-surface synthesis under **existing limits only** remains legitimate item-4 support; do not turn it into a capacity-pressure/adversarial benchmark and do not invent policy values.
-- The release packet reconciliation row landed at `dd166b3`; standalone reconciliation note landed at `588ca` and was corrected at `7197abf`. A dedicated independent post-reconciliation packet/status/plan evidence-boundary spot-check remains READY.
-- Candidate A/B, current CarrierState/CarrierManager, unchanged observability, unchanged package/operator owners, H-I4-085 dependency/build owner truth, and previously closed R9 seams remain closed unless exact-current owner truth changes or a new counterexample falsifies the claim.
-- The known `SessionRuntime.events` retained-history capacity question remains a maintainer/security policy gate. Do not invent history-size/TTL/LRU/capacity values. D019 source-retention/no-reset remains policy-frozen.
+- Reviewer re-read current `main` after the prior handoff at `c8bc0f5c4b85dd53b586f7ae3a1a958dfab29912`. The developer advanced by 36 commits through `87b371d0d28b7a3df2c105770f1420e61eb4c349`, then reviewer finding `cb893259e1f54230ed78d8a080d58563c6bc18a3` was added. **Synchronize to current `main`; do not use the older handoff anchor as an idle reason.**
+- The current executable/source-test tree is exact `42be53917ee58359ad86532a6aab0136f75047b9`. Later commits are review/evidence/reconciliation documentation only. No decoder/parser/crypto-framing owner changed in this closure group.
+- **H-I4-086 remains CLOSED** at `ca629d702cf832c12bf74bdfc5f9d07ebb77ab17` + `3acba049fee5f9297cc8a4c3867250635c255717`: `DeliveryAck` cannot confirm queued-but-undrained bytes; sent/drained bookkeeping is terminal-owned and released.
+- **H-I4-087 remains CLOSED** after exact-current source review. `queue_send()` and `receive()` both gate admission on aggregate `send.len() + recv.len()` before mutation; `pop_send()` / `pop_receive()` release queue ownership. The repair landed at `14e2f520a0fc9d41bcfcb1bd480758008a1dd4ea`; developer exact-tree provenance/closure is anchored by `d819d38559d60b6bd99df8a2453321809c046116`. Preserve the provenance fact that one startup/socket timing flake preceded a clean rerun; do not rewrite that as hosted/reviewer CI.
+- **H-I4-088 remains CLOSED** after exact-current source review at executable repair `26aa4e8036d61da7924d9fc5e587081d8a0f448f`: MemoryCarrier empty messages consume a finite queue-record slot derived from the already committed queue bound and dequeue releases it. `docs/reviews/independent-i4-ad1-memorycarrier-rechallenge-d0f4c55-20260921.md` remains the current independent bounded Memory owner review. Do not invent a new record-cap policy value merely to make the type prettier.
+- **I4-FS2 remains CLOSED** as a bounded current independent challenge at `docs/reviews/independent-i4-fs2-session-flow-control-11cdb08-20260921.md`, which supersedes the falsified pre-H-I4-086/087 developer claims.
+- **I4-PORT-01 executable repair is present** at `42be539`: POSIX `kill` and the affected `/proc`/signal/process-lifecycle fixtures are explicitly `#[cfg(unix)]`. Developer post-repair review `5e9b4b22bbfe8d336026fee238cd5ae22c282f6e` is useful input, but reviewer still owes one exact-current independent acceptance/challenge rather than accepting its self-description mechanically.
+- **I4-CLI-M remains CLOSED** at `docs/reviews/independent-i4-cli-machine-1b1b8c8-20260921.md`. Exact-current `matrix_probe` still uses the literal predicate `artifact.contains("\"reachable\":true")` for human branch and exit status; do not call this typed/schema parsing.
+- Developer subsequently produced I4-CLI-H (`e3522d1`), I4-BND synthesis (`f61b201`) and final 13-surface sweep (`87b371d`) no-finding notes. These are review inputs, not automatic reviewer acceptance.
+- **New current finding (non-HIGH): I4-CLI-H factual output-contract drift**, recorded at `docs/reviews/reviewer-i4-cli-h-output-contract-drift-20260921.md` / reachable `cb893259`. Current code and `ROADMAP.md` use complete human lines `pass: 喵~！` / `fail: 喵呜呜呜呜…`, while `README.md` says the human output is frozen but shows the bare cat strings, and `docs/carrier-architecture.md` / accepted D007 retain the older bare wording. Therefore the developer CLI-H “all prose matches emitted format” no-finding is not accepted yet. This is presently a factual/contract-doc inconsistency, not a demonstrated executable correctness defect.
+- Consequently the `87b371d` statement that the repository is genuinely queue-exhausted is **not accepted yet**. Queue exhaustion must be re-evaluated only after the current CLI-H inconsistency and the remaining independent acceptance lanes below are closed.
+- Candidate A/B, CarrierState/CarrierManager, unchanged observability, unchanged package/operator owners, H-I4-085 dependency/build truth, and the closed R9 process/result seams remain closed unless exact-current owner truth changes or a new counterexample falsifies a claim.
+- `SessionRuntime.events` retained-history capacity remains a maintainer/security policy gate. Do not invent history-size/TTL/LRU/capacity values. D019 source-retention/no-reset remains policy-frozen.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
-- **`READY_LIVE: none`.** Do not repeat HY2, warm-failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD, or Experimental Track merely because a VPS remains rented. Only new code/instrumentation/hypothesis/path condition creating a concrete unresolved real-network question may reopen a live lane.
+- **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track merely because the VPS is still rented. Reopen live only for a new concrete unresolved network question created by new code/instrumentation/hypothesis/path condition.
 
-The external coding agent must synchronize to current `main` and continuously execute dependency-ready work: exact-current independent challenge -> focused deterministic tests when applicable -> smallest repair if a source-decided defect is demonstrated -> commit -> push -> exact-tree local gate/provenance for executable changes -> next slice. Reviewer cadence is only a check frequency; do not wait for the next reviewer once a slice is closed.
+The external coding agent must continuously execute dependency-ready work: exact-current challenge -> focused deterministic tests when applicable -> smallest source-decided repair -> commit -> push -> clean exact-tree gate/provenance for executable changes -> next slice. Reviewer cadence is only a check frequency; do not wait for the next reviewer once a slice is closed.
 
-## READY_LOCAL 1 — I4-PORT post-`42be539` independent closure
+## READY_LOCAL 1 — I4-CLI-H exact output-contract reconciliation + independent re-check
 
-Read exact-current `crates/neko-cli/tests/probe.rs`, applicable portability/release claims, `docs/reviews/independent-i4-port-followup-98978ee-20260921.md`, executable repair `42be539`, and its developer-local provenance.
+Read exact-current `crates/neko-cli/src/main.rs::matrix_probe`, relevant `probe.rs` tests, `README.md`, `ROADMAP.md`, D007 in `docs/decisions.md`, `docs/carrier-architecture.md`, `docs/reviews/dev-i4-cli-h-independent-20260921.md`, and `docs/reviews/reviewer-i4-cli-h-output-contract-drift-20260921.md`.
 
-Challenge the repair contract independently:
+Challenge and resolve only the exact-current contradiction:
 
-- every test/helper that depends on Unix `kill`, signal semantics, process-group behavior, `/proc`, or Linux/POSIX process/socket-lifecycle assumptions must either be explicitly scoped to an appropriate platform or be supported by a real platform-aware implementation;
-- Unix-only lifecycle evidence must not be promoted into non-Unix execution evidence or protocol portability;
-- cfg scoping must not accidentally remove platform-independent machine/CLI coverage;
-- current first-RC Linux target and release policy must not be broadened.
+- human success/failure and exit status must be driven by the same current one-case predicate;
+- `--json` machine stdout must stay free of the human line; config/usage failures must not later print success;
+- do not promote the literal substring gate into typed parsing;
+- establish from current implementation/tests/reachable history whether the intended complete frozen human line includes `pass:` / `fail:`. If current executable/tests plus a reachable superseding contract decide that question, make the smallest factual prose correction; **do not refactor the CLI solely to make old prose true**;
+- if reconciling D007 would actually change an accepted design/value choice rather than clarify stale wording, stop only that sub-question as a maintainer/design gate and continue independent lanes below.
 
-If no counterexample exists, write one scope-precise independent no-finding closure naming inspected owners, exact reachable anchor, source/tests read, commands actually run versus not run, and exclusions. If a concrete unguarded owner remains, make the smallest test/evidence repair and gate the final pushed executable SHA. No decoder/framing change => no mechanical fuzz run.
+After any docs-only correction, do not fabricate a source-test gate. If executable code changes, run the required clean exact-tree gate/provenance. No decoder/framing change => no mechanical fuzz run.
 
-## READY_LOCAL 2 — I4-CLI-H independent human-output / stderr / exit challenge
+## READY_LOCAL 2 — I4-PORT post-`42be539` reviewer-independent acceptance
 
-This is not satisfied by the developer note at `536d59a` and is explicitly left open by `independent-i4-cli-machine-1b1b8c8-20260921.md`.
+Use `42be539`, exact-current `crates/neko-cli/tests/probe.rs`, `docs/reviews/dev-i4-port-post-42be539-20260921.md`, the older independent portability review and release/platform claims.
 
-Read exact-current `matrix_probe`, `reachability::run`, CLI error/fail paths, relevant process tests, README/ROADMAP/D007 output claims, the developer I4-CLI-H note, and the corrected reconciliation at `7197abf`.
+Independently challenge that every Unix `kill` / signal / process-group / `/proc` dependent owner is appropriately scoped; Unix-only lifecycle evidence is not promoted to non-Unix execution evidence; and platform-independent CLI/process coverage was not accidentally cfg-elided. `std::process::Child::kill()` by itself is cross-platform and is not a reason to gate a test. If no counterexample exists, persist a scope-precise reviewer no-finding acceptance; if one exists, smallest repair + focused regression + exact-tree gate.
 
-Challenge:
+## READY_LOCAL 3 — I4-BND reviewer-independent synthesis under existing committed limits
 
-- `pass: 喵~！` versus `fail: 喵呜呜呜呜…` must agree with exit status and the one-case machine artifact;
-- stderr/usage/config failures must not print a later human success line or contaminate machine stdout;
-- do **not** describe the final reachability branch as typed parsing: exact-current truth is the literal substring gate `artifact.contains("\"reachable\":true")`;
-- determine whether README/ROADMAP/D007 wording is a truthful description of the current emitted line format; if only prose is stale and current code/tests establish the intended current contract, make the smallest factual correction rather than inventing a new CLI format;
-- a schema/multi-case or alternate `reachable` occurrence remains a future re-review trigger unless an exact-current counterexample exists now.
+Treat `docs/reviews/dev-i4-bnd-synthesis-20260921.md` as an input, not the conclusion. Reconcile exact-current:
 
-If no concrete defect is found, persist a bounded independent no-finding note; do not manufacture a source refactor solely to make “parsed result” prose true.
+- `SessionRuntime` queued/received/sent-unacked ownership after H-I4-086/087;
+- MemoryCarrier payload-byte + empty-record ownership after H-I4-088;
+- `neko-reliable::Recovery` / `AckRanges` ownership using the existing independent Recovery review;
+- Carrier health/scheduler and bounded CLI loop owners only where needed for cross-surface claims.
 
-## READY_LOCAL 3 — I4-BND current independent synthesis under existing limits
+Challenge growth and release-on-pop/ACK/terminal/quiesce semantics using **existing** limits only. Do not perform capacity-pressure/adversarial-load benchmarking and do not choose a new TTL/LRU/history-size/capacity/security value. `SessionRuntime.events` remains an explicit policy gate, not a false no-finding.
 
-Independently reconcile current resource boundedness across the owners most recently changed or re-reviewed:
+## READY_LOCAL 4 — post-reconciliation packet/status/plan evidence-boundary challenge
 
-- `SessionRuntime` queued/live/sent-unacked ownership after H-I4-086/087;
-- MemoryCarrier byte + empty-record ownership after H-I4-088;
-- current `neko-reliable::Recovery` packet/frame/ACK-range ownership after the `031f7b8` boundedness challenge;
-- already-bounded Carrier health/evidence vectors and CLI loop counts only as needed to test cross-surface claims.
+Independently compare exact-current `docs/release-security-review-packet.md`, `docs/status.md`, `IMPLEMENTATION_PLAN.md`, release reconciliation notes, H-I4-085/086/087/088 provenance, I4-PORT provenance, current independent FS2/AD1/CLI-M/Recovery reviews, and results of lanes 1-3.
 
-Challenge algorithmic growth and release-on-pop/ACK/terminal/quiesce semantics using existing committed limits. Do **not** run or request a capacity-pressure/adversarial-load benchmark and do not choose TTL/LRU/history-size/capacity/security values. `SessionRuntime.events` and D019 remain policy gates. If current independent notes already prove a sub-invariant, cite/reuse them rather than duplicating tests.
+Reject stale/broadened claims: developer-local evidence must not become reviewer-local or hosted evidence; absent hosted CI is neither success nor failure; historical live negatives are not current positive evidence; item 3/4 must remain open unless their actual gates close; policy-blocked retained-state questions must not be converted into implemented numerical limits. Repair only current factual/index text, never historical artifacts.
 
-## READY_LOCAL 4 — post-reconciliation release packet / status / plan evidence-boundary spot-check
+## READY_LOCAL 5 — repository-wide 13-surface item-4 sweep / refill
 
-Independently compare exact-current:
+After lanes 1-4, repeat the broad 13-surface inventory against then-current owners. Reopen a surface only for a material owner change, a falsified prior claim, or an implemented core surface still lacking a dedicated bounded independent challenge. Explicitly check cross-layer consistency among Session delivery evidence, Carrier feedback, resource accounting, process/result truth, CLI contracts and release evidence.
 
-- `docs/release-security-review-packet.md`;
-- `docs/status.md`;
-- `IMPLEMENTATION_PLAN.md`;
-- `docs/notes/i4-reconciliation-port-cli-bnd-20260921.md` after `7197abf`;
-- H-I4-085/086/087/088 and I4-PORT provenance notes;
-- current independent FS2/AD1/CLI-M/Recovery reviews and the results of READY_LOCAL 1-3.
+Only if the broad inventory finds **no** unresolved automatic defect, no unreviewed core owner and no legitimate local review-support lane may it classify the local technical queue as exhausted. A narrow no-finding is never enough.
 
-Challenge stale SHA/breadth statements, developer-local evidence being promoted to reviewer-local/hosted evidence, hosted absence being interpreted as success/failure, historical live negatives being rewritten as current success, item 3/4 being implied complete, and policy-blocked retained-state questions being turned into implemented limits. Repair only current factual/index text; do not rewrite historical artifacts.
+## READY_LOCAL 6 — item-4 security/release-boundary classification
 
-## READY_LOCAL 5 — final item-4 technical sweep / refill
-
-After READY_LOCAL 1-4, repeat the broad 13-surface inventory against the then-current owners. Re-open only a materially changed owner, a falsified prior claim, or an implemented core surface still lacking a dedicated current bounded independent challenge. A no-finding bounded review is valid item-4 support. Do **not** call the queue exhausted from a narrow lane.
-
-This sweep should explicitly verify that the current repairs/reviews have not created a cross-layer contradiction among Session delivery evidence, Carrier packet feedback, resource accounting, process/result truth, or package/release claims. Any concrete correctness/security/evidence defect returns to repair priority before further closure work.
-
-## READY_LOCAL 6 — final item-4 security/release-boundary classification
-
-If the technical sweep has no unresolved automatic repair, classify the remaining release-item-4 boundaries precisely without deciding them:
+If the technical sweep is clean, classify without deciding:
 
 - D019/source-retention policy;
 - `SessionRuntime.events` retained-history capacity choice;
-- adversarial-load/capacity suitability if still outside bounded semantic review;
-- cryptanalysis/independent security-audit exclusions;
+- adversarial-load/capacity suitability outside bounded semantic review;
+- cryptanalysis / independent security-audit exclusions;
 - release item 3 environment/evidence dependencies;
 - maintainer RC/freeze/release/production authority.
 
-Do not convert any of these into invented values, and do not let them block independent READY local work that remains.
+Do not invent values or convert exclusions into completed security evidence.
 
 ## READY_LOCAL 7 — final independent item-4 conclusion packet
 
-Only after the inventory-driven gaps are closed, produce one concise current conclusion that names exact reachable anchors, evidence classes, unresolved policy/environment/authority gates, and whether item 4 is technically ready for a maintainer decision. This is a factual synthesis, not the RC/freeze/release decision itself. Avoid checker/schema/doc churn; if the exact-current packet/status already says the truth, a no-finding conclusion is sufficient.
+Only after inventory-driven local gaps are closed, produce one concise current conclusion naming exact reachable source/review/provenance anchors, evidence classes, unresolved policy/environment/authority gates, and whether item 4 is technically ready for a maintainer decision. This is factual synthesis only; it is not the RC/freeze/release decision.
 
 ## READY_LOCAL 8 — conditional live question only
 
-Only if new code/instrumentation/hypothesis/path condition creates a specific unresolved self-owned real-network question, classify it against `docs/standing-vps-lab-authorization.md` and `docs/vps-rental-window-priority.md`. Ordinary bounded self-owned TCP/UDP work inside standing authorization needs no per-run approval, but the authoritative current classification remains `READY_LIVE: none`.
+Only if a new code/instrumentation/hypothesis/path condition creates a concrete unresolved self-owned real-network question, classify it under `docs/standing-vps-lab-authorization.md` and `docs/vps-rental-window-priority.md`. Ordinary bounded self-owned TCP/UDP work inside standing authorization needs no per-run permission. Current authoritative classification remains `READY_LIVE: none`.
 
-## Conditional refill triggers — not immediate duplicate work
+## Conditional refill triggers — not duplicate work
 
-- Dependency/build/native: re-open only if Cargo manifests/lock/features/build hooks/native/unsafe owners change or H-I4-085 corrected truth is falsified. Do not alter dependency/default-feature/crypto selection merely to simplify evidence prose.
-- Package/repro/operator: re-open only on a material helper/package owner change or a new provenance contradiction. Do not rerun identical VPS/package scenarios for freshness alone.
-- Observability: re-open only on a material `neko-observe` owner change or a new counterexample. Candidate B remains closed.
-- Process-resource sampler H-R9-082/083/084: do not restart without a new counterexample; I4-CLI-M already re-challenged result/cleanup truth.
+- Dependency/build/native: reopen only on manifest/lock/feature/build-hook/native/unsafe owner change or falsification of H-I4-085 corrected truth.
+- Package/repro/operator: reopen only on material owner change or new provenance contradiction; do not rerun identical VPS/package scenarios for freshness.
+- Observability: reopen only on `neko-observe` owner change or a new counterexample; Candidate B remains closed.
+- Reliable UDP Candidate A: reopen only if Recovery ACK owner changes or a new future/unsent-ACK counterexample appears.
+- Process-resource H-R9-082/083/084: do not restart without a new counterexample; current result/cleanup truth has already been independently challenged.
 
 ## Stop / escalation conditions
 
-Continue review/repair -> tests -> commit -> push -> next dependency-ready slice without waiting for reviewer cadence. Stop/escalate only for an unresolved BLOCKER/HIGH that cannot be auto-decided, core Session/Carrier/ACK/crypto/wire architecture change, D019 or another policy/value choice, destructive/canonical migration, out-of-standing-authorization operation, third-party/production/new-credential permission, maintainer-selected adversarial-load/benchmark conditions, or entry into a genuinely new release stage.
+Continue review/repair -> tests -> commit -> push -> next dependency-ready slice without waiting for reviewer cadence. Stop/escalate only for an unresolved BLOCKER/HIGH that cannot be automatically decided, a core Session/Carrier/ACK/crypto/wire architecture change, D019 or another true policy/value choice, destructive/canonical migration, out-of-standing-authorization operation, third-party/production/new-credential permission, maintainer-selected adversarial-load/benchmark conditions, or entry into a genuinely new release stage.
