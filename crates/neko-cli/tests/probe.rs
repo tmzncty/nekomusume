@@ -1543,7 +1543,10 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
             "server did not classify all {ATTEMPTS} malformed datagrams in time"
         );
         let mut line = String::new();
-        let n = server.stdout.read_line(&mut line).expect("server stdout readable");
+        let n = server
+            .stdout
+            .read_line(&mut line)
+            .expect("server stdout readable");
         if n == 0 {
             panic!("server stdout closed after {classified}/{ATTEMPTS} malformed classifications");
         }
