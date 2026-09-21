@@ -1,36 +1,45 @@
-# ChatGPT reviewer handoff — repository-wide local queue exhaustion after PORT closure
+# ChatGPT reviewer handoff — H-I4-090 reopened for missing ordering regression
 
 ## Current repository truth
 
-- Synchronize to current `main` before doing work. The repository-wide refill decision immediately preceding this handoff is `4315a5cfbd89c362838844e5802f7c238a50869a` (`docs/notes/item4-refill-check-20260921.md`).
-- The latest executable source/test owner remains `0dbb93145c4e1cc031ca30258b3c58a5c3155b51` (`test(cli): H-I4-090 resource baseline sampled pre-churn, not after`). Commits after `0dbb931` through `4315a5c` are review/provenance/handoff/reconciliation documentation only.
-- **H-I4-090 is CLOSED** at `0dbb931`: the malformed-UDP Linux resource baseline is sampled after server readiness and before the first malformed datagram; the post sample follows churn plus the existing settle point; unavailable Linux `/proc` snapshots fail the resource assertion rather than becoming skip/pass.
-- Developer-local exact-tree provenance for `0dbb931` is retained at `docs/notes/h-i4-090-provenance-0dbb931-20260921.md`: focused affected testing, `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree, Linux x86_64, stable Rust, UTC timestamps and exit codes. This is developer-local evidence, not reviewer-local or hosted CI.
-- A GitHub combined-status query for `0dbb931` returned no hosted statuses. Absence is neither success nor failure.
-- H-I4-089 remains CLOSED. The follow-on I4-PORT resource, Linux `/proc` inventory, Unix/platform-boundary, process cleanup/signal, CLI machine/human owner-diff, boundedness owner-diff, release-packet consistency and PORT/item-4 reconciliation lanes have current bounded no-finding notes through `b6cffc44d20d9e1aa7341bae2f2f265b517f8845`.
-- The required repository-wide 13-surface refill check at `4315a5c` found every implemented core surface either currently independently challenged or unchanged under still-valid dedicated coverage. No exact-current concrete defect or missing dedicated bounded core review was identified.
-- Candidate A (future/unsent Recovery ACK), Candidate B (mixed datagram drop reasons), H-I4-085..090, prior R9 process/result seams, Session/Carrier/ACK separation, CarrierState/CarrierManager, FairScheduler/flow accounting, carrier adapters, observability, package/operator, dependency/build, portability, CLI machine/human contract and algorithmic boundedness remain closed unless a material owner change or new concrete counterexample falsifies them.
+- Synchronize to current `main` before doing work.
+- The latest executable source/test owner remains `0dbb93145c4e1cc031ca30258b3c58a5c3155b51` (`test(cli): H-I4-090 resource baseline sampled pre-churn, not after`). Commits after `0dbb931` through the prior `e83d192` handoff are review/provenance/reconciliation documentation only.
+- Exact `0dbb931` correctly restores the Linux malformed-UDP resource baseline to **after READY and before the first malformed datagram**, with the post sample after churn + the existing settle point. H-I4-089's Linux-only `/proc` truth boundary remains intact.
+- Developer-local exact-tree provenance for `0dbb931` remains retained at `docs/notes/h-i4-090-provenance-0dbb931-20260921.md`: focused affected testing, `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree, Linux x86_64, stable Rust, UTC timestamps and exit codes. This is developer-local evidence, not reviewer-local or hosted CI.
+- **H-I4-090 is REOPENED as HIGH evidence-oracle closure** by `docs/reviews/h-i4-090-mutation-guard-20260921.md`: the previous closure contract required a mutation-sensitive ordering guard, but `0dbb931` only moved the baseline statement and added a comment. The current full gate can therefore still remain green if a future mutation moves both resource snapshots back into the post-churn window.
+- The prior repository-wide 13-surface refill decision at `4315a5c` and queue-exhaustion handoff at `e83d192` are superseded only as to queue state; their unchanged-surface inventory remains useful after the HIGH is closed.
+- Candidate A (future/unsent Recovery ACK), Candidate B (mixed datagram drop reasons), H-I4-085..089, prior R9 process/result seams, Session/Carrier/ACK separation, CarrierState/CarrierManager, FairScheduler/flow accounting, carrier adapters, observability, package/operator, dependency/build, CLI machine/human contract and algorithmic boundedness remain closed unless a material owner change or a new concrete counterexample falsifies them.
 - `SessionRuntime.events` retained-history capacity remains a maintainer/security policy gate. Do not invent a history-size/TTL/LRU/capacity value.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not rerun prior HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track merely for freshness.
 
-## Queue state
+## FRONT HIGH — H-I4-090 ordering-oracle closure
 
-**Repository-wide dependency-ready local review/repair queue is exhausted at this exact inventory.** This is a repository-wide conclusion, not a narrow PORT result: the required 13-surface refill was performed after H-I4-089/090, and no uncovered implemented core surface, concrete defect, READY review-support lane, or READY live question remains.
+Read exact-current `crates/neko-cli/tests/probe.rs` plus `docs/reviews/h-i4-090-mutation-guard-20260921.md` before changing anything.
 
-Do **not** manufacture checker/schema/framework/docs churn to keep the agent busy. Do **not** replay unchanged closed review lanes merely because item 4 is still unchecked. Item 4's remaining release/security decision is not equivalent to an uncovered local implementation surface.
+The production/test behavior is currently correct; the missing part is regression strength. Close the HIGH with the smallest test-local change that makes ordering mechanically observable:
 
-The coding/review agent should resume immediately, without waiting for reviewer cadence, when repository truth gains any real trigger such as:
+1. preserve READY -> affirmative Linux baseline -> malformed sends -> settle -> affirmative Linux post sample;
+2. add a deterministic **mutation-sensitive sequencing guard** so moving the baseline after malformed-send start fails even if FD/RSS do not change (a tiny test-local phase/sentinel tied to the send path is enough; do not build a framework/checker);
+3. preserve the existing FD/RSS margins and `#[cfg(target_os = "linux")]` `/proc` boundary; add no new capacity/security values;
+4. keep both Linux snapshots fail-closed/affirmative;
+5. run focused affected tests, then on the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, verify clean tree, and persist exact developer-local provenance (SHA, commands, UTC start/end, exit codes, OS/arch, Rust stable, clean state);
+6. no decoder/parser/crypto-framing change => no mechanical fuzz run.
 
-1. a new developer-owned source/test/build/operator-script commit or PR;
-2. a material change to a previously reviewed core owner or evidence claim;
-3. a new concrete counterexample against a closed invariant;
-4. a new instrumentation/code/configuration/path-condition hypothesis that creates a truthful `READY_LIVE` question inside standing authorization;
-5. an environment change that actually unblocks an item-3 row (for example owned IPv6 availability), rather than an unchanged retry;
-6. a maintainer decision on `SessionRuntime.events` retained-history capacity or another policy/value gate;
-7. a genuine transition into RC/freeze/release decision work authorized by the maintainer.
+Once that final source/test SHA is pushed and gated, **continue immediately**; do not wait for reviewer cadence.
 
-When such a trigger appears, refill toward roughly 8–15 coherent dependency-ordered slices when repository truth supports that depth. A BLOCKER/HIGH goes first and must close before widening the affected error surface.
+## Rolling queue after H-I4-090
+
+These are dependency-ordered and intentionally narrower than the old repository-wide queue because the prior broad refill found unchanged owners already covered. Do not manufacture extra lanes.
+
+1. **H-I4-090 repair + exact-tree provenance** — READY_LOCAL, FRONT HIGH.
+2. **I4-PORT-RES independent re-challenge** — inspect exact-current malformed-UDP resource pre/post oracle, Linux snapshot failure behavior, lifecycle cleanup, and the new ordering guard; if no defect, write one scope-precise no-finding note.
+3. **PORT evidence reconciliation** — update/supersede the prior `1c8eacc`/`c3c1664`/`b6cffc4`/queue-exhaustion prose only where the new source/test owner changes the evidence anchor; do not rewrite unrelated closed history.
+4. **Release-packet factual consistency challenge** — verify the packet does not overstate portability/resource evidence or independent-review closure after the new anchor.
+5. **Repository-wide 13-surface refill** — repeat the broad inventory once after this material test/evidence owner change; unchanged core owners with still-valid dedicated review do not need ritual replay.
+6. **Conditional live** — only if a genuinely new code/instrumentation/hypothesis/path condition creates a specific unresolved real-network question inside standing authorization. Otherwise remain `READY_LIVE: none`.
+
+If the post-repair 13-surface refill again finds no uncovered implemented core owner, no concrete defect, no READY review-support and no READY live question, then repository-wide local queue exhaustion may be re-established. Item 4 being unchecked by itself is not permission to invent review churn, but a narrow no-finding sweep is not sufficient to claim exhaustion.
 
 ## Repository-wide refill inventory retained
 
@@ -48,8 +57,6 @@ When such a trigger appears, refill toward roughly 8–15 coherent dependency-or
 12. algorithmic resource boundedness, excluding capacity-pressure benchmark/new policy values;
 13. release-packet factual consistency/evidence boundary.
 
-A future queue-exhaustion claim must repeat this broad inventory if any relevant owner/evidence changed. Unchanged owners with current dedicated independent bounded coverage do not need ritual re-review; changed owners or falsified claims do.
-
 ## Release item 3 / live boundary
 
 Current classification remains `READY_LIVE: none`.
@@ -58,7 +65,7 @@ Current classification remains `READY_LIVE: none`.
 - HY2 and repeated-warm-failover current lines remain frozen against same-class retry without a materially new hypothesis.
 - Periodic/soak, package lifecycle, migration-back, endpoint/key migration and already answered bounded live questions are not repeated for freshness.
 - Live PLPMTUD is not reopened without the separate required design/security gate or a new accepted path condition/instrumentation question.
-- Standing authorization continues to permit bounded self-owned client↔VPS TCP/UDP work when a genuine new question becomes READY; it does not authorize third-party targets, production changes, privileged/exotic-carrier work that the authorization file reserves, or pressure/adversarial-load experiments requiring maintainer choices.
+- Standing authorization continues to permit bounded self-owned client↔VPS TCP/UDP work when a genuine new question becomes READY; it does not authorize third-party targets, production changes, privileged/exotic-carrier work reserved by the authorization file, or pressure/adversarial-load experiments requiring maintainer choices.
 
 ## Review / repair and evidence contract retained
 
