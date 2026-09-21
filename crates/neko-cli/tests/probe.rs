@@ -157,6 +157,7 @@ fn malformed_classification_barrier(
             drop(rx);
             let _ = child.kill();
             let _ = child.wait();
+            let _ = reader_handle.join();
             return Err(format!(
                 "server did not classify all {attempts} malformed datagrams in time"
             ));
@@ -167,6 +168,12 @@ fn malformed_classification_barrier(
             }
             Ok(Some(_)) => {}
             Ok(None) => {
+                // stdout EOF: the child has closed its pipe (usually exited).
+                // Reap it and join the reader so ownership stays deterministic.
+                drop(rx);
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader_handle.join();
                 return Err(format!(
                     "server stdout closed after {classified}/{attempts} malformed classifications"
                 ));
@@ -175,6 +182,7 @@ fn malformed_classification_barrier(
                 drop(rx);
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = reader_handle.join();
                 return Err(format!(
                     "server did not classify all {attempts} malformed datagrams in time"
                 ));
@@ -1620,6 +1628,10 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     let (child, reader_handle) =
         malformed_classification_barrier(child, stdout, ATTEMPTS, Duration::from_secs(5))
             .unwrap_or_else(|e| panic!("{e}; collected-so-far-see-stderr"));
+    // Mutation guard: this token is only true once the barrier returned Ok —
+    // moving the post snapshot above the barrier call leaves it false and
+    // fails the snapshot block deterministically, independent of log counting.
+    let barrier_complete = true;
     // Reaching this point proves the sends completed — the baseline must
     // already be captured while churn_started was still false.
     assert!(churn_started);
@@ -1629,6 +1641,10 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     // proven all malformed datagrams were classified.
     #[cfg(target_os = "linux")]
     {
+        assert!(
+            barrier_complete,
+            "post snapshot requires the malformed-classification barrier to complete first"
+        );
         let after = process_resource_snapshot(pid);
         assert!(
             matches!((before, after), (Some(_), Some(_))),
