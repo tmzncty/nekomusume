@@ -1534,24 +1534,58 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     // classified all ATTEMPTS malformed datagrams, not merely after a sleep.
     // The server emits a `malformed_or_unadmitted` diagnostic line for each;
     // wait for ATTEMPTS of them (bounded) before taking the post snapshot.
-    let mut server = server;
     let mut classified = 0usize;
+    let ReadyServer {
+        mut child,
+        stdout,
+        startup_log,
+    } = server;
+    // `read_line` is blocking — move it off-thread and bound the wait on a
+    // channel recv_timeout so the barrier cannot block past its deadline.
+    // On timeout, terminate/reap the child so the reader cannot be stranded.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Option<String>>(64);
+    let reader_handle = thread::spawn(move || {
+        let mut reader = stdout;
+        let mut collected = String::new();
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => {
+                    let _ = tx.send(None);
+                    return (reader, collected);
+                }
+                Ok(_) => {
+                    collected.push_str(&line);
+                    if tx.send(Some(line)).is_err() {
+                        return (reader, collected);
+                    }
+                }
+            }
+        }
+    });
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while classified < ATTEMPTS {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "server did not classify all {ATTEMPTS} malformed datagrams in time"
-        );
-        let mut line = String::new();
-        let n = server
-            .stdout
-            .read_line(&mut line)
-            .expect("server stdout readable");
-        if n == 0 {
-            panic!("server stdout closed after {classified}/{ATTEMPTS} malformed classifications");
+        let remain = deadline.saturating_duration_since(std::time::Instant::now());
+        if remain.is_zero() {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("server did not classify all {ATTEMPTS} malformed datagrams in time");
         }
-        if line.contains("\"event\":\"malformed_or_unadmitted\"") {
-            classified += 1;
+        match rx.recv_timeout(remain) {
+            Ok(Some(line)) if line.contains("\"event\":\"malformed_or_unadmitted\"") => {
+                classified += 1;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                panic!(
+                    "server stdout closed after {classified}/{ATTEMPTS} malformed classifications"
+                );
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("server did not classify all {ATTEMPTS} malformed datagrams in time");
+            }
         }
     }
     // Reaching this point proves the sends completed — the baseline must
@@ -1559,6 +1593,8 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     assert!(churn_started);
     // H-I4-089: /proc resource observation is Linux-only — on Linux the
     // snapshot must be affirmative, not silently skipped as a false-pass.
+    // Take it now while the server is still alive — the barrier has already
+    // proven all malformed datagrams were classified.
     #[cfg(target_os = "linux")]
     {
         let after = process_resource_snapshot(pid);
@@ -1601,6 +1637,18 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
         ])
         .output()
         .unwrap();
+    // Stop the reader thread (drop the receiver so its send fails) and
+    // recover the stdout reader — the failover-client run above made the
+    // server emit lines so the reader could not strand.
+    drop(rx);
+    let (stdout, barrier_lines) = reader_handle.join().expect("reader thread joinable");
+    let mut startup_log = startup_log;
+    startup_log.push_str(&barrier_lines);
+    let server = ReadyServer {
+        child,
+        stdout,
+        startup_log,
+    };
     let (status, log) = finish_server(server);
     assert!(
         out.status.success(),

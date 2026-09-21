@@ -1448,9 +1448,10 @@ fn failover_server(args: &[String]) {
                     } else {
                         // H-I4-091: emit a classification diagnostic for each
                         // rejected/malformed pre-auth datagram so a test can
-                        // build a deterministic processing barrier.
-                        emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                        // build a deterministic processing barrier — AFTER the
+                        // admission release so the observed barrier is post-cleanup.
                         preauth.release(admission);
+                        emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
                     }
                 }
             }
