@@ -78,11 +78,13 @@ Hysteria2 仍然是重要 benchmark competitor，但“超过 HY2”不是项目
 
 ```text
 如果通：
-喵~！
+pass: 喵~！
 
 如果不通：
-喵呜呜呜呜…
+fail: 喵呜呜呜呜…
 ```
+
+（前缀 `pass:`/`fail:` 与 exit code 一致；裸猫叫仍是其中的人类可识别部分。）
 
 当然，机器可读结果仍然要有 JSON / exit code，不能让 CI 猜猫叫。
 

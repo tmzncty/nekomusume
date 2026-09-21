@@ -224,11 +224,13 @@ Raw IP experimental       ?         ?
 
 ```text
 如果通：
-喵~！
+pass: 喵~！
 
 如果不通：
-喵呜呜呜呜…
+fail: 喵呜呜呜呜…
 ```
+
+（前缀 `pass:`/`fail:` 与 exit code 一致；裸猫叫仍是其中的人类可识别部分。）
 
 机器可读结果必须另外输出结构化状态；猫叫不能替代 exit code / JSON。
 
