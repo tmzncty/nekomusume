@@ -145,7 +145,7 @@ fn finish_server(mut server: ReadyServer) -> (std::process::ExitStatus, String) 
             Ok(Some(status)) => break status,
             Ok(None) => {
                 if Instant::now() >= deadline {
-                    bounded_reap_or_kill(server.child);
+                    bounded_reap_or_kill(&mut server.child);
                     panic!("finish_server: child did not exit within bound");
                 }
                 std::thread::sleep(Duration::from_millis(10));
@@ -180,7 +180,7 @@ struct BarrierProof {
 /// I4-CLI-PROC-096: reap a child deterministically without an unbounded wait.
 /// If the child already exited, `try_wait` reaps it; otherwise kill then wait
 /// (the kill makes the subsequent wait bounded).
-fn bounded_reap_or_kill(mut child: Child) {
+fn bounded_reap_or_kill(child: &mut Child) {
     // H-I4-097: no blocking `wait()` may occur unless exit is already proven
     // or termination succeeded and reaping is bounded by a local deadline.
     // `try_wait`/`kill` failures are explicit cleanup errors, not a license to
@@ -259,20 +259,47 @@ fn wait_for_ready_marker(
         Ok(Err(startup_log)) => {
             // EOF/read-error while the child may still be alive — reap
             // deterministically, never an unbounded wait().
-            bounded_reap_or_kill(child);
+            bounded_reap_or_kill(&mut child);
             Err(format!("child stdout ended before ready: {startup_log}"))
         }
         Err(_) => {
             // Timeout or channel disconnect — kill+reap so the reader gets
             // EOF and the test cannot hang.
-            bounded_reap_or_kill(child);
+            bounded_reap_or_kill(&mut child);
             Err("child produced no ready marker within bound".to_string())
         }
     }
 }
 
+/// H-I4-100: bounded child-exit observation — polls `try_wait` against a
+/// caller-supplied deadline. On deadline the child is still unproven-exited,
+/// so ownership is routed through `bounded_reap_or_kill` and the caller's
+/// contract fails closed (this helper returns Err only when the child did
+/// not exit within `deadline` and was reaped/killed accordingly).
+fn bounded_wait_exit(
+    child: &mut Child,
+    deadline: Duration,
+) -> Result<std::process::ExitStatus, String> {
+    let end = Instant::now() + deadline;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {
+                if Instant::now() >= end {
+                    // Still unproven-exited at deadline — fail closed through
+                    // the bounded cleanup primitive, then report the failure.
+                    bounded_reap_or_kill(child);
+                    return Err("bounded_wait_exit: child did not exit within deadline".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => return Err(format!("bounded_wait_exit: try_wait failed: {e}")),
+        }
+    }
+}
+
 fn malformed_classification_barrier(
-    child: Child,
+    mut child: Child,
     stdout: BufReader<std::process::ChildStdout>,
     attempts: usize,
     timeout: Duration,
@@ -306,7 +333,7 @@ fn malformed_classification_barrier(
         let remain = deadline.saturating_duration_since(std::time::Instant::now());
         if remain.is_zero() {
             drop(rx);
-            bounded_reap_or_kill(child);
+            bounded_reap_or_kill(&mut child);
 
             let _ = reader_handle.join();
             return Err(format!(
@@ -322,7 +349,7 @@ fn malformed_classification_barrier(
                 // stdout EOF: the child has closed its pipe (usually exited).
                 // Reap it and join the reader so ownership stays deterministic.
                 drop(rx);
-                bounded_reap_or_kill(child);
+                bounded_reap_or_kill(&mut child);
 
                 let _ = reader_handle.join();
                 return Err(format!(
@@ -331,7 +358,7 @@ fn malformed_classification_barrier(
             }
             Err(_) => {
                 drop(rx);
-                bounded_reap_or_kill(child);
+                bounded_reap_or_kill(&mut child);
 
                 let _ = reader_handle.join();
                 return Err(format!(
@@ -2546,7 +2573,7 @@ fn reliable_udp_incomplete_settlement_fails_not_settled() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let server = ready_failover_server(server);
+    let mut server = ready_failover_server(server);
     let out = Command::new(bin)
         .args([
             "failover-client",
@@ -2573,7 +2600,7 @@ fn reliable_udp_incomplete_settlement_fails_not_settled() {
         ])
         .output()
         .unwrap();
-    bounded_reap_or_kill(server.child);
+    bounded_reap_or_kill(&mut server.child);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
@@ -6279,7 +6306,11 @@ fn udp_application_wait_fails_at_bounded_overall_deadline() {
         &server_key,
         Duration::from_millis(1_250),
     );
-    let status = server.child.wait().unwrap();
+    // H-I4-100: bounded exit observation — the nominal --duration is runtime
+    // intent, not a harness bound. Poll try_wait against the test deadline;
+    // on deadline fail closed via bounded_reap_or_kill.
+    let status = bounded_wait_exit(&mut server.child, Duration::from_secs(5))
+        .expect("server must exit within bound");
     let elapsed = started.elapsed();
     let mut log = server.startup_log;
     server.stdout.read_to_string(&mut log).unwrap();
