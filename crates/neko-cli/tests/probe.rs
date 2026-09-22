@@ -106,24 +106,54 @@ fn start_server_for(
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
-    let mut startup_log = String::new();
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        assert!(Instant::now() < deadline, "READY timeout: {startup_log}");
-        let mut line = String::new();
-        let read = stdout.read_line(&mut line).unwrap();
-        assert_ne!(read, 0, "server exited before READY: {startup_log}");
-        startup_log.push_str(&line);
-        if line.contains("lifecycle_state=READY readiness=true") {
-            break;
+    // I4-CLI-PROC-096: `read_line` is blocking — a live child emitting no
+    // newline could strand the wait after the deadline check. Off-thread
+    // reader + bounded recv_timeout; kill/reap on timeout.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<
+        Result<(BufReader<std::process::ChildStdout>, String), String>,
+    >(1);
+    let stdout = child.stdout.take().unwrap();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut startup_log = String::new();
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    let _ = tx.send(Err(startup_log));
+                    return;
+                }
+                Ok(_) => {
+                    startup_log.push_str(&line);
+                    if line.contains("lifecycle_state=READY readiness=true") {
+                        let _ = tx.send(Ok((reader, startup_log)));
+                        return;
+                    }
+                }
+                Err(error) => {
+                    startup_log.push_str(&format!("stdout read error: {error}"));
+                    let _ = tx.send(Err(startup_log));
+                    return;
+                }
+            }
         }
-    }
-    ReadyServer {
-        child,
-        stdout,
-        startup_log,
-        ready_proof: ReadyProof { _private: () },
+    });
+    match rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(Ok((stdout, startup_log))) => ReadyServer {
+            child,
+            stdout,
+            startup_log,
+            ready_proof: ReadyProof { _private: () },
+        },
+        Ok(Err(startup_log)) => {
+            bounded_reap_or_kill(child);
+            panic!("server exited before READY: {startup_log}");
+        }
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("server produced no READY line within bound");
+        }
     }
 }
 
@@ -148,6 +178,19 @@ type BarrierReaderHandle = thread::JoinHandle<(BufReader<std::process::ChildStdo
 /// moves the snapshot above barrier success cannot compile.
 struct BarrierProof {
     _private: (),
+}
+
+/// I4-CLI-PROC-096: reap a child deterministically without an unbounded wait.
+/// If the child already exited, `try_wait` reaps it; otherwise kill then wait
+/// (the kill makes the subsequent wait bounded).
+fn bounded_reap_or_kill(mut child: Child) {
+    match child.try_wait() {
+        Ok(Some(_)) | Err(_) => {}
+        Ok(None) => {
+            let _ = child.kill();
+        }
+    }
+    let _ = child.wait();
 }
 
 fn malformed_classification_barrier(
@@ -267,7 +310,7 @@ fn ready_failover_server(mut child: Child) -> ReadyServer {
             ready_proof: ReadyProof { _private: () },
         },
         Ok(Err(startup_log)) => {
-            let _ = child.wait();
+            bounded_reap_or_kill(child);
             panic!("failover exited before start: {startup_log}");
         }
         Err(error) => {
@@ -319,7 +362,7 @@ fn ready_endpoint_rebind_server(mut child: Child) -> ReadyServer {
             ready_proof: ReadyProof { _private: () },
         },
         Ok(Err(startup_log)) => {
-            let _ = child.wait();
+            bounded_reap_or_kill(child);
             panic!("endpoint rebind exited before ready: {startup_log}");
         }
         Err(_) => {
@@ -354,6 +397,29 @@ fn ready_endpoint_rebind_bounded_when_child_is_silent() {
     assert!(
         elapsed < Duration::from_secs(10),
         "readiness wait must fail within bound, elapsed={elapsed:?}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn start_server_for_bounded_when_binary_exits_silently() {
+    // I4-CLI-PROC-096 negative regression for start_server_for: a binary that
+    // exits without emitting READY (here `sleep` rejects the server args and
+    // closes stdout immediately) must make the readiness wait fail within
+    // its bounded deadline — not block in read_line/wait.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _server = start_server_for(
+            "sleep",
+            "udp",
+            40091,
+            std::path::Path::new("/tmp/none"),
+            "0",
+            "1",
+        );
+    }));
+    assert!(
+        result.is_err(),
+        "silently exiting binary must make readiness wait panic"
     );
 }
 
