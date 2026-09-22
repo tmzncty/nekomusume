@@ -225,7 +225,10 @@ fn malformed_classification_barrier(
     attempts: usize,
     timeout: Duration,
 ) -> Result<(Child, BarrierReaderHandle, BarrierProof), String> {
-    let (tx, rx) = std::sync::mpsc::sync_channel::<Option<String>>(64);
+    // One-item handoff: the reader sends each stdout line only when the
+    // barrier is ready to consume it — the bound is the repository's
+    // established per-event handoff pattern, not an unexplained buffer.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Option<String>>(1);
     let reader_handle = thread::spawn(move || {
         let mut reader = stdout;
         let mut collected = String::new();
