@@ -490,6 +490,87 @@ fn ready_endpoint_rebind_bounded_when_child_closes_stdout_but_stays_alive() {
 
 #[test]
 #[cfg(unix)]
+fn barrier_success_reader_join_bounded_when_child_lives_and_silent() {
+    // H-I4-103 negative regression: after the barrier count is satisfied, a
+    // child that stays live with stdout open (no further lines) must not make
+    // the reader join hang — bounded_wait_exit establishes exit, then the
+    // join is EOF-bounded.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("preauth-churn-server");
+    let cp = tmp("preauth-churn-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--server-key",
+            &sk,
+            "--count",
+            "1",
+            "--bytes",
+            "16",
+            "--duration",
+            "30",
+            "--diagnostic",
+            "--experiment-id",
+            "preauth-churn-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let ReadyServer { child, stdout, .. } = server;
+    // Send exactly ATTEMPTS malformed datagrams so the barrier succeeds.
+    const ATTEMPTS: usize = 8;
+    let malformed = [b'N', b'1', 1, 1, 0];
+    let senders: Vec<_> = (0..ATTEMPTS)
+        .map(|_| UdpSocket::bind("127.0.0.1:0").unwrap())
+        .collect();
+    for sender in &senders {
+        sender.send_to(&malformed, ("127.0.0.1", udp)).unwrap();
+    }
+    let (mut child, reader_handle, _proof) =
+        malformed_classification_barrier(child, stdout, ATTEMPTS, Duration::from_secs(5))
+            .unwrap_or_else(|e| panic!("{e}"));
+    // Barrier satisfied, child still live with stdout open. A bounded exit
+    // observation must converge it; only then is the reader join legal.
+    let start = std::time::Instant::now();
+    let result = bounded_wait_exit(&mut child, Duration::from_secs(1));
+    let _ = reader_handle.join().expect("reader thread joinable");
+    let elapsed = start.elapsed();
+    assert!(
+        result.is_err(),
+        "live child past deadline must make bounded_wait_exit fail closed"
+    );
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "bounded exit+join must not hang, elapsed={elapsed:?}"
+    );
+    fs::remove_file(&sp).unwrap();
+    fs::remove_file(&cp).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
 fn finish_server_bounded_when_child_keeps_stdout_open_and_lives() {
     // H-I4-099 negative regression: a child that keeps stdout open while
     // staying alive must make finish_server fail within a bounded interval
@@ -1903,7 +1984,7 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
         startup_log,
         ready_proof,
     } = server;
-    let (child, reader_handle, barrier_proof) =
+    let (mut child, reader_handle, barrier_proof) =
         malformed_classification_barrier(child, stdout, ATTEMPTS, Duration::from_secs(5))
             .unwrap_or_else(|e| panic!("{e}; collected-so-far-see-stderr"));
     // The Linux /proc snapshot consumes barrier_proof inside its gate; on
@@ -1967,8 +2048,11 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
         ])
         .output()
         .unwrap();
-    // Join the barrier reader now that the failover-client run has made the
-    // server emit more lines — the reader can no longer be stranded.
+    // H-I4-103: a live-reader join is only legal after child exit (stdout EOF
+    // makes the read_line loop return). Establish exit with a bounded
+    // observation first — a server/lifecycle regression that leaves the child
+    // live and silent can no longer hang the join.
+    bounded_wait_exit(&mut child, Duration::from_secs(10)).unwrap_or_else(|e| panic!("{e}"));
     let (stdout, barrier_lines) = reader_handle.join().expect("reader thread joinable");
     let mut startup_log = startup_log;
     startup_log.push_str(&barrier_lines);
