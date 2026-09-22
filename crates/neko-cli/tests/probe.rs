@@ -490,6 +490,22 @@ fn ready_endpoint_rebind_bounded_when_child_closes_stdout_but_stays_alive() {
 
 #[test]
 #[cfg(unix)]
+fn start_periodic_server_bounded_when_binary_exits_silently() {
+    // H-I4-104 negative regression: a binary that exits without emitting
+    // periodic_server_ready must make the periodic readiness wait fail within
+    // its bounded deadline, not hang in read_line.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _server =
+            start_periodic_server("sleep", 40095, std::path::Path::new("/tmp/none"), "0", &[]);
+    }));
+    assert!(
+        result.is_err(),
+        "silently exiting binary must make periodic readiness wait panic"
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn barrier_success_reader_join_bounded_when_child_lives_and_silent() {
     // H-I4-103 negative regression: after the barrier count is satisfied, a
     // child that stays live with stdout open (no further lines) must not make
@@ -6784,17 +6800,12 @@ fn start_periodic_server(
         .args(extra)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command.spawn().unwrap();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
-    let mut startup_log = String::new();
-    loop {
-        let mut line = String::new();
-        assert_ne!(stdout.read_line(&mut line).unwrap(), 0, "{startup_log}");
-        startup_log.push_str(&line);
-        if line.contains("periodic_server_ready") {
-            break;
-        }
-    }
+    let child = command.spawn().unwrap();
+    // H-I4-104: bounded readiness — the shared marker primitive bounds the
+    // wait and converges child/pipe ownership on timeout/EOF/error.
+    let (child, stdout, startup_log) =
+        wait_for_ready_marker(child, "periodic_server_ready", Duration::from_secs(5))
+            .unwrap_or_else(|e| panic!("periodic server readiness failed: {e}"));
     ReadyServer {
         child,
         stdout,
