@@ -63,7 +63,6 @@ struct ReadyServer {
 /// H-I4-094: proof obtainable only once `ready_*_server` has observed the
 /// server diagnostic `start` — the pre-churn resource baseline consumes it so
 /// the measurement cannot be moved above the ready barrier.
-#[cfg(unix)]
 #[derive(Clone, Copy)]
 struct ReadyProof {
     _private: (),
@@ -147,7 +146,6 @@ type BarrierReaderHandle = thread::JoinHandle<(BufReader<std::process::ChildStdo
 /// H-I4-092: proof value only obtainable via `malformed_classification_barrier`
 /// `Ok` — the post-barrier resource snapshot requires it, so a refactor that
 /// moves the snapshot above barrier success cannot compile.
-#[cfg(unix)]
 struct BarrierProof {
     _private: (),
 }
