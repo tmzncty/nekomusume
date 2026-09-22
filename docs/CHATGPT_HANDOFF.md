@@ -1,60 +1,62 @@
-# ChatGPT reviewer handoff — H-I4-099 bounded `finish_server` HIGH FRONT
+# ChatGPT reviewer handoff — H-I4-100 direct bounded-wait HIGH FRONT
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Code/tests/reachable pushed commits outrank this prose, chat memory and stale checkbox state.
-- Reviewer re-read the required governance/spec set and exact-current process-test owner through `03c5b5410a5494a204737e8bda4a90633fa71c1c`, accepted the developer H-I4-098 repair at `1d72566f62385a7298ed91a4f8c64aa93b2a3b55`, then added H-I4-099 at `309b75cf685d1b9a48534762c17b9a8a68e15a65`.
-- **H-I4-097 remains CLOSED** at `76f33be72a1c3c24152193fb174194631cb7cf95`: `bounded_reap_or_kill` fails closed on `try_wait`/`kill` errors and bounds post-kill reap with a local deadline rather than blocking `wait()`.
-- **H-I4-098 remains CLOSED** at `1d72566f62385a7298ed91a4f8c64aa93b2a3b55`: the reliable-UDP incomplete-settlement test no longer bypasses the bounded cleanup primitive. Developer-local exact-tree provenance is `docs/notes/h-i4-098-provenance-1d72566-20260922.md`; this is not reviewer-local or hosted-CI evidence.
-- **H-I4-099 is CLOSED** at `ea3e735a7e073093c947a6881556af7cf7f1e4fa`: `finish_server` drains stdout off-thread and polls child exit via bounded `try_wait` (`MAX_DURATION + 5s` deadline); on deadline it routes through `bounded_reap_or_kill` then fails closed. A live child keeping stdout open can no longer hang the drain before `wait()`. Negative regression uses `sleep 60` (exceeds the deadline) and asserts bounded panic. Exact-tree provenance: `docs/notes/h-i4-099-provenance-ea3e735-20260922.md` — `check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-22T13:01:05Z → 13:07:00Z, Linux x86_64, rustc 1.98.0.
-- H-I4-090..095 remain closed on their bounded malformed-resource causality/cfg proof surfaces absent a new concrete counterexample. Valid I4-CLI-PROC-096 and H-I4-097/098 fixes remain retained; only the broader process-boundedness conclusion is reopened by H-I4-099.
-- Candidate A (future/unsent Recovery ACK), Candidate B (mixed datagram drop reasons), Session/Carrier/ACK separation, CarrierState/CarrierManager, FairScheduler/flow accounting, carrier adapters and observability remain closed unless materially changed or falsified.
+- This reviewer pass re-read the required governance/spec set and current process-test owner on `main` beginning at `9e4b162e31c44e06a9f04a27db2e3f28181bf582`, reviewed all developer-owned commits since the prior handoff, and added H-I4-100 at reviewer finding commit `585c5c69418a1b2e423b3320fbea605a6b8d0a56`.
+- Developer commit classification since prior reviewer handoff `702f782a658c739826f14a649cce2e7c8487abc3`:
+  - `857ce9d9ad4507ba1a5c1c428c68de79d64f8c1b` — **tests / process-harness implementation**, H-I4-099 off-thread stdout drain + bounded child-exit polling;
+  - `ea3e735a7e073093c947a6881556af7cf7f1e4fa` — **tests / process-harness repair**, raises the local exit-poll deadline to cover the existing max server duration and updates the negative regression;
+  - `9e4b162e31c44e06a9f04a27db2e3f28181bf582` — **docs / provenance / handoff**, closes H-I4-099 and records exact-tree developer-local provenance.
+- **H-I4-099 is CLOSED** at `ea3e735a7e073093c947a6881556af7cf7f1e4fa`: `finish_server` drains stdout off-thread, polls child exit with a local bound, and on deadline routes through `bounded_reap_or_kill`. Developer-local exact-tree provenance is `docs/notes/h-i4-099-provenance-ea3e735-20260922.md`. Hosted Rust CI run `35730719557` also completed successfully; hosted CI remains a separate evidence class.
+- **H-I4-097 and H-I4-098 remain CLOSED** absent a new exact-current counterexample. H-I4-090..095 likewise remain closed on their bounded malformed-resource causality/cfg proof surfaces absent owner changes or falsification.
+- **H-I4-100 is OPEN / HIGH:** `udp_application_wait_fails_at_bounded_overall_deadline` still calls direct blocking `server.child.wait()` before sampling its `< 3 s` boundedness oracle. If the server lifecycle/exit path regresses and the child remains live, the test hangs before it can assert the bound. Authoritative finding: `docs/reviews/reviewer-h-i4-100-udp-application-deadline-unbounded-wait-20260922.md` at `585c5c69418a1b2e423b3320fbea605a6b8d0a56`.
+- Candidate A (future/unsent `Recovery::on_ack`) and Candidate B (mixed datagram drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
 - `SessionRuntime.events` retained-history capacity and D019 source-retention/no-reset remain maintainer/security policy gates. Do not invent TTL/LRU/history-size/capacity/security values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely for freshness.
 
-## FRONT HIGH — H-I4-099 `finish_server` stdout drain is not locally bounded
-
-Authoritative reviewer finding: `docs/reviews/reviewer-h-i4-099-finish-server-stdout-wait-20260922.md` at `309b75cf685d1b9a48534762c17b9a8a68e15a65`.
+## FRONT HIGH — H-I4-100 direct `Child::wait()` defeats the UDP deadline boundedness oracle
 
 ### Concrete defect
 
-Exact-current `crates/neko-cli/tests/probe.rs::finish_server` does:
+Exact-current `crates/neko-cli/tests/probe.rs::udp_application_wait_fails_at_bounded_overall_deadline` starts a server with `--duration 1`, runs an authenticated UDP client with a deliberate 1.25 s data delay, then performs:
 
 ```rust
-let mut remainder = String::new();
-server.stdout.read_to_string(&mut remainder).unwrap();
 let status = server.child.wait().unwrap();
+let elapsed = started.elapsed();
+let mut log = server.startup_log;
+server.stdout.read_to_string(&mut log).unwrap();
 ```
 
-The stdout drain begins before any child-exit proof. `read_to_string` waits for EOF; if a server process remains live while keeping stdout open, the test can hang indefinitely before it reaches `wait()`. A nominal server `--duration` or expected signal handling is runtime intent, not an independent harness bound if that lifecycle path is what regressed.
+The test later asserts `elapsed < 3 s`, but the elapsed sample occurs only after the direct blocking wait returns. A live child caused by a server shutdown/lifecycle regression therefore produces a hang, not a deterministic bounded failure. The nominal server duration is runtime intent, not an independent process-harness deadline when the exit path itself is under test.
 
-This directly contradicts the process no-finding at `49925acf7d2d77595562d9ad3327f4b145a31fd1`, whose reasoning treated “stdout drained before wait” as sufficient convergence. Draining the pipe is itself an unbounded wait surface when exit is unproven.
+The post-exit stdout/stderr drains are not the finding: once child exit is actually proven, EOF is causally available. The unbounded direct wait before that proof is the HIGH.
 
 This is **item-4/release-evidence process-test boundedness**, not evidence of a production/runtime transport leak and not a Session/Carrier/ACK/crypto/wire architecture finding.
 
 ### Closure contract
 
-1. Make `finish_server` locally bounded. It must not block on stdout EOF while child exit remains unproven.
-2. Preserve complete stdout/log collection on normal exit. Prefer a narrow shape reusing established patterns: off-thread stdout read + bounded child-exit/reap observation; on deadline fail closed, invoke the already-reviewed bounded termination/reap primitive, and only then reconcile/join the reader after exit/pipe closure is established.
-3. Add a deterministic negative regression using a child that keeps stdout open and remains alive beyond the helper deadline; prove bounded failure rather than hang. Preserve existing positive lifecycle/log checks.
-4. Do not create a general process framework, alter protocol/runtime semantics, change timeout/security/capacity policy outside the test helper contract, or touch D019.
-5. Focused tests, then final pushed source/test SHA: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree; persist developer-local exact-tree provenance with SHA, UTC start/end, exit codes, OS/arch and stable Rust. No fuzz unless decoder/parser/crypto-framing owners change.
-6. Immediately continue the owner-by-owner process-cleanup causal re-challenge after the repair; do not wait for reviewer cadence.
+1. Replace this direct `server.child.wait()` with a narrow bounded exit observer. Prefer `try_wait` polling against the already-existing test upper-bound contract and route deadline cleanup through `bounded_reap_or_kill` before failing closed.
+2. Preserve the current semantic oracle: the delayed authenticated UDP application operation must fail, server status must be unsuccessful, the current lower-bound timing check must remain meaningful, and the current `< 3 s` overall upper-bound oracle must remain truthful. Do not widen runtime/session semantics.
+3. Do not create a general process framework or a new repository-wide timeout policy. If a helper is useful, it should accept an explicit caller-supplied deadline/bound and remain test-local.
+4. Add only the minimum deterministic regression required to mechanically prove a live child cannot make this path hang. Fixture timing is not protocol/security/capacity policy.
+5. Focused tests, then final pushed source/test SHA: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree; persist developer-local exact-tree provenance with exact reachable SHA, UTC start/end, exit codes, OS/arch and stable Rust. No fuzz unless decoder/parser/crypto-framing owners change.
+6. Immediately continue the owner-by-owner process-cleanup sweep after repair; do not wait for reviewer cadence.
 
-## Rolling queue — keep continuous after H-I4-099
+## Rolling queue — keep continuous after H-I4-100
 
 Do not collapse this to one ticket. Dependency-ready order:
 
-1. **H-I4-099 repair + negative regression + exact-tree provenance** — current FRONT HIGH.
-2. **Process-cleanup causal re-challenge.** Re-read every exact-current direct `wait`, `wait_with_output`/`output`, stdout `read_to_string`/drain, reader-thread `join`, `bounded_reap_or_kill`, deadline and child-ownership site in `crates/neko-cli/tests/probe.rs` and any other process-test owner. Classify each as success-path/exit-proven or failure-path/bounded. Repair only concrete unproven-exit blockers.
-3. **Cross-platform CLI/process factual reconciliation.** Reconcile `49925ac`, I4-CLI-PROC-096, H-I4-097/098/099 and current helper semantics. Keep Linux-local execution, macOS/BSD source/cfg reasoning and Windows claims separate.
-4. **Algorithmic/resource boundedness reconciliation.** Reconcile `d814457` / `5b7b22b`, channel bounds, stdout accumulation, cleanup deadlines, reader lifetime and process ownership. No capacity-pressure benchmark and no invented policy/security numbers.
-5. **Release packet / item-4 factual reconciliation.** Qualify stale claims that all process failure paths are bounded or that the repository queue is exhausted. Retain valid H-I4-090..098 evidence boundaries. Do not promote local process tests to WAN/performance/security approval.
-6. **Pre-auth malformed/rejection accounting exact-current reuse challenge.** Reuse `cfce41e` only if relevant owners remain unchanged; otherwise narrowly re-challenge changed ownership.
-7. **CLI diagnostic/machine-output boundary exact-current reuse challenge.** Reuse `4b8e70a` only across unchanged owners; diagnostics remain evidence-only and never authentication/Delivery/Path/ACK evidence.
-8. **Package/build/reproducibility spot re-challenge.** Verify process-test repairs did not stale manifests/scripts/provenance assumptions. Do not invent signing/SBOM/key-custody policy.
-9. **Reliable UDP / CarrierState / CarrierManager / scheduler / SessionRuntime targeted spot re-challenge.** Re-open materially changed owners; otherwise record exact-current reuse boundaries rather than rerunning equivalent sweeps.
+1. **H-I4-100 repair + focused regression + exact-tree provenance** — current FRONT HIGH.
+2. **Remaining process wait/output causal re-challenge.** Re-read every exact-current direct `wait_with_output`, `output`, stdout drain, reader-thread `join`, `try_wait`, deadline and child-ownership site in `crates/neko-cli/tests/probe.rs` and any other process-test owner. Classify each as exit-proven/success-path bounded or failure-path externally bounded. Repair only concrete unproven-exit blockers; do not turn every synchronous command into a framework project.
+3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..100 with current helper/cfg semantics. Keep Linux-local execution, macOS/BSD source/cfg reasoning and Windows claims separate.
+4. **Algorithmic/resource boundedness reconciliation.** Reconcile the accepted boundedness reviews with current channel bounds, stdout accumulation, cleanup deadlines, reader lifetime, process ownership, and any changed helper. No capacity-pressure benchmark and no invented policy/security numbers.
+5. **Release packet / item-4 factual reconciliation.** Qualify any stale statement that every process failure path is bounded or that the repository queue is exhausted. Retain valid H-I4-090..099 evidence boundaries. Do not promote local process tests to WAN/performance/security approval.
+6. **Pre-auth malformed/rejection accounting exact-current reuse challenge.** Reuse prior independent review only where owner source/tests remain unchanged; otherwise narrowly re-challenge changed ownership. D019 remains a policy gate.
+7. **CLI diagnostic / JSON / human-output boundary exact-current reuse challenge.** Diagnostics remain evidence-only and never authentication/Delivery/Path/ACK evidence.
+8. **Package/build/reproducibility spot re-challenge.** Verify process-test repairs do not stale manifests/scripts/provenance assumptions. Do not invent signing/SBOM/key-custody policy.
+9. **Reliable UDP / CarrierState / CarrierManager / FairScheduler / SessionRuntime targeted spot re-challenge.** Re-open materially changed owners; otherwise record exact-current reuse boundaries rather than rerunning equivalent sweeps.
 10. **Observability + carrier adapters + dependency/build exact-current reuse challenge.** Same owner-diff rule; no checker/schema/docs filler.
 11. **Repository-wide 13-surface refill.** Re-apply all 13 required surfaces after the HIGH and dependent reconciliation close. Queue exhaustion is legal only if the broad inventory finds no concrete defect, no uncovered implemented core surface, no READY review-support and no READY live question.
 12. **Conditional live.** Only if new code/instrumentation/hypothesis/path condition creates a specific unresolved real-network question within standing authorization. Otherwise keep `READY_LIVE: none`.
@@ -94,7 +96,7 @@ Current classification remains `READY_LIVE: none`.
 
 Developer-reported local CI, persisted local provenance, reviewer-local execution, GitHub-hosted CI, live WAN evidence and performance conclusions are distinct evidence classes. All shared exact-tree provenance anchors must be reachable pushed commits. No unpublished/local-only SHA becomes repository evidence. No secret, protected identity, private topology or unnecessary absolute path belongs in provenance.
 
-Reviewer H-I4-099 is exact-current source/control-flow review only; no reviewer-local Rust/full-gate, cross-platform execution, fuzz, WAN or performance execution is claimed.
+Reviewer H-I4-100 is exact-current source/control-flow review only; no reviewer-local Rust/full-gate, cross-platform execution, fuzz, WAN or performance execution is claimed.
 
 ## Stop / escalation conditions
 
