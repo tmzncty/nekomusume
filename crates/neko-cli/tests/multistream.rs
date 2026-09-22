@@ -73,6 +73,63 @@ fn bounded_wait_with_output(
     }
 }
 
+#[test]
+#[cfg(unix)]
+fn bounded_wait_with_output_fails_when_server_never_exits() {
+    // H-I4-106 negative regression: a real multistream server with valid
+    // identity on an unused port but NO client must make the bounded wait
+    // fail within its deadline, not hang in wait_with_output.
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let (server_identity, _server_key) = identity(bin, "no-client-server");
+    let (client_identity, client_key) = identity(bin, "no-client-client");
+    let mut server = Command::new(bin)
+        .args([
+            "multistream",
+            "--mode",
+            "server",
+            "--addr",
+            &format!("127.0.0.1:{port}"),
+            "--streams",
+            "1",
+            "--records",
+            "1",
+            "--bytes",
+            "16",
+            "--session-window",
+            "17",
+            "--stream-window",
+            "17",
+            "--identity",
+            server_identity.to_str().unwrap(),
+            "--client-key",
+            &client_key,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bounded_wait_with_output(&mut server, Duration::from_secs(1))
+    }));
+    let elapsed = start.elapsed();
+    assert!(
+        result.is_err(),
+        "no-client server must make bounded_wait_with_output panic"
+    );
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "bounded wait must fail within bound, elapsed={elapsed:?}"
+    );
+    let _ = fs::remove_file(server_identity);
+    let _ = fs::remove_file(client_identity);
+}
+
 fn connect_with_startup_deadline(addr: &str, deadline: Duration) -> TcpStream {
     let deadline_at = std::time::Instant::now() + deadline;
     loop {
