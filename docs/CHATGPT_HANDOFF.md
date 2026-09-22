@@ -1,69 +1,66 @@
-# ChatGPT reviewer handoff — H-I4-101 try_wait-error ownership HIGH FRONT
+# ChatGPT reviewer handoff — H-I4-102 `bounded_reap_or_kill` try_wait-error ownership HIGH FRONT
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Code/tests/reachable pushed commits outrank this prose, chat memory and stale checkbox state.
-- This reviewer pass re-read the required governance/spec set and current process-test owner on exact `main = daaec2fe6d366f288aa40fe3f0ab5e8491ceb0c3`, reviewed the developer-owned H-I4-100 repair/provenance, and added H-I4-101 at reviewer finding commit `ab9381b2b146f763d006b74b9e74540027ef39f5`.
-- Developer-owned commits since the prior reviewer handoff `f0d96821b426840d0fc3fa2737e6b0badfcef3bc`:
-  - `833962e4499d2d6b969485176f35151a242e43f9` — **tests / process-harness implementation**, replaces the direct application-deadline `Child::wait()` with caller-bounded `bounded_wait_exit` and updates `bounded_reap_or_kill` ownership to `&mut Child`;
-  - `daaec2fe6d366f288aa40fe3f0ab5e8491ceb0c3` — **docs / provenance / handoff**, records the exact-tree gate and closes the original H-I4-100 direct-wait defect.
-- **H-I4-100 is CLOSED on its original direct-wait claim** at `833962e`: `udp_application_wait_fails_at_bounded_overall_deadline` no longer blocks in `Child::wait()` before the `< 3 s` timing oracle. Developer-local exact-tree provenance is `docs/notes/h-i4-100-provenance-833962e-20260922.md`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, 2026-09-22T13:55:37Z → 14:01:20Z, Linux x86_64, rustc 1.98.0 stable. This remains developer-reported local evidence, not reviewer-local execution.
-- **H-I4-101 is CLOSED** at `5da05085c1b006633174bba123db0f68ff88af8c`: `bounded_wait_exit`'s `try_wait` `Err` and `finish_server`'s `try_wait` `Err` now converge ownership via `bounded_kill_reap` (kill + bounded poll reap) before the error escapes — no `Err`/panic while a live child remains ownership-unresolved. `bounded_kill_reap` is a distinct primitive from `bounded_reap_or_kill` (no leading `try_wait`; used when the caller's own exit observation already failed). Exact-tree provenance: `docs/notes/h-i4-101-provenance-5da0508-20260922.md` — `check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-22T14:50:55Z → 14:56:40Z, Linux x86_64, rustc 1.98.0.
-- H-I4-097..100 otherwise remain closed absent a new exact-current counterexample. H-I4-090..095 remain closed on their bounded malformed-resource causality/cfg proof surfaces absent owner changes or falsification.
+- This reviewer pass re-read the required governance/spec set plus the exact-current process-test owner on `main = 6ed7dc28ddf5a32ff07c3adf0e3c127983d1e6f9`, accepted the developer-owned H-I4-101 repair/provenance, checked its hosted Rust CI separately, then added H-I4-102 at reviewer finding commit `1903a3cc1e591aa427d15b4be0c421eeb0ca0a10`.
+- Developer-owned commits since the prior reviewer handoff `87bc841b47d6dcf3f97bac249316288798bd9947`:
+  - `5da05085c1b006633174bba123db0f68ff88af8c` — **tests / process-harness implementation**, adds `bounded_kill_reap` and routes `bounded_wait_exit`/`finish_server` post-`try_wait` error ownership through it;
+  - `6ed7dc28ddf5a32ff07c3adf0e3c127983d1e6f9` — **docs / provenance / handoff**, records the exact-tree gate and closes H-I4-101 on those original call-site claims.
+- **H-I4-101 is CLOSED on its original two call-site claims** at `5da0508`: `bounded_wait_exit`'s `try_wait` `Err` and `finish_server`'s `try_wait` `Err` now attempt bounded termination/reap through `bounded_kill_reap` before the error/panic escapes. Developer-local exact-tree provenance is `docs/notes/h-i4-101-provenance-5da0508-20260922.md`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, 2026-09-22T14:50:55Z → 14:56:40Z, Linux x86_64, rustc 1.98.0 stable. GitHub-hosted Rust CI run `35742860989` for exact `5da0508` also completed successfully. These are distinct evidence classes; neither is reviewer-local execution.
+- **H-I4-102 is OPEN / HIGH**: the shared wrapper `bounded_reap_or_kill` still panics immediately when its own initial `child.try_wait()` returns `Err`, before any `bounded_kill_reap` attempt. This leaves child exit unproven and invalidates the stronger repository-wide claim that every wrapper failure path converges process ownership.
+- H-I4-097..101 otherwise remain closed absent a new exact-current counterexample. H-I4-090..095 remain closed on their bounded malformed-resource causality/cfg proof surfaces absent owner changes or falsification.
 - Candidate A (future/unsent `Recovery::on_ack`) and Candidate B (mixed datagram drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
 - `SessionRuntime.events` retained-history capacity and D019 source-retention/no-reset remain maintainer/security policy gates. Do not invent TTL/LRU/history-size/capacity/security values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely for freshness.
 
-## FRONT HIGH — H-I4-101 unresolved child ownership on `try_wait()` error
+## FRONT HIGH — H-I4-102 shared cleanup wrapper loses ownership on its own `try_wait()` error
 
 ### Concrete defect
 
-Exact-current `crates/neko-cli/tests/probe.rs::bounded_wait_exit` has three exit classes:
+Exact-current `crates/neko-cli/tests/probe.rs::bounded_reap_or_kill` still has this control flow:
 
 ```rust
-match child.try_wait() {
-    Ok(Some(status)) => return Ok(status),
-    Ok(None) => {
-        if Instant::now() >= end {
-            bounded_reap_or_kill(child);
-            return Err("bounded_wait_exit: child did not exit within deadline".to_string());
+fn bounded_reap_or_kill(child: &mut Child) {
+    match child.try_wait() {
+        Ok(Some(_)) => return,
+        Err(e) => {
+            panic!("bounded_reap_or_kill: try_wait failed before cleanup: {e}");
         }
+        Ok(None) => {}
     }
-    Err(e) => return Err(format!("bounded_wait_exit: try_wait failed: {e}")),
+    bounded_kill_reap(child);
 }
 ```
 
-The deadline branch converges through the bounded cleanup primitive, but the `try_wait` error branch returns ordinary `Err` while child exit is still unproven. Its current caller immediately `.expect(...)`s that result, so this failure shape panics and drops `Child` without a kill/reap guarantee. That violates the helper's own documented ownership postcondition that an error corresponds to a child that failed to exit within the supplied deadline and was reaped/killed accordingly.
+If that first `try_wait()` returns `Err`, exit is unproven and the wrapper panics before any termination/reap attempt. H-I4-101 introduced exactly the primitive needed for this class (`bounded_kill_reap`) but only used it at two callers whose *earlier* `try_wait` failed.
 
-`finish_server` contains the same ownership gap:
+This is reachable from multiple exact-current process-test cleanup paths: readiness timeout/EOF/read-error/channel-disconnect, malformed-classification timeout/EOF/channel-error, bounded-wait deadline cleanup and other direct wrapper users. The outer path may be wall-clock bounded until cleanup begins, but process/pipe/resource ownership is not shown to converge if the wrapper's own observation errors.
 
-```rust
-Err(e) => {
-    panic!("finish_server: try_wait failed: {e}");
-}
-```
-
-At that point the off-thread stdout reader may still be blocked on a live child's pipe. The branch is wall-clock bounded because it panics, but the child/process/pipe ownership is not shown to converge. This is **item-4/release-evidence process-harness correctness**, not evidence of a production transport leak and not a Session/Carrier/ACK/crypto/wire finding.
+This is **item-4/release-evidence process-harness correctness**, not evidence of a production transport leak and not a Session/Carrier/ACK/crypto/wire finding.
 
 ### Closure contract
 
-1. Make every `bounded_wait_exit` failure shape truthful about ownership: either child exit is proven, or a bounded best-effort termination/reap convergence is attempted before ownership is abandoned. A `try_wait` error must not simply return an ordinary `Err` that callers can panic on with a live child still unresolved.
-2. Apply the same ownership rule to `finish_server`'s `try_wait` error branch while preserving H-I4-099's off-thread stdout drain and normal-exit full log collection. Do not reintroduce blocking stdout drain or blocking `wait()` on an unproven-live child.
-3. Keep the repair test-local and minimal. If `bounded_reap_or_kill` cannot express post-`try_wait`-error cleanup because it begins by repeating `try_wait`, split/refactor only the narrow termination/reap primitive needed. Do not build a generic process framework or invent a repository-wide timeout/security policy.
-4. Keep failure semantics truthful: an unrecoverable OS cleanup error may fail the test explicitly, but comments/provenance must not call it successful cleanup. No silent ownership abandonment.
-5. Focused deterministic regression/source proof, then final pushed source/test SHA: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree; persist developer-local exact-tree provenance with exact reachable SHA, UTC start/end, exit codes, OS/arch and stable Rust. No fuzz unless decoder/parser/crypto-framing owners change.
-6. Immediately continue the owner-by-owner process-cleanup sweep after repair; do not wait for reviewer cadence.
+1. Make `bounded_reap_or_kill`'s own `try_wait`-error branch follow the same ownership rule as H-I4-101: perform the existing bounded best-effort termination/reap path before the error/panic escapes instead of panicking immediately with exit unproven.
+2. Preserve truthful classes: `Ok(Some(_))` = exit proven; `Ok(None)` = live -> bounded termination/reap; `Err(_)` = exit observation failed -> bounded best-effort termination/reap, then explicit failure. Cleanup errors may fail closed but must not be mislabeled as successful cleanup.
+3. Keep the repair test-local and minimal. Reuse `bounded_kill_reap`; do not create a generic process framework and do not invent new repository-wide timeout/security numbers.
+4. Preserve H-I4-097..101 bounds, H-I4-099 off-thread stdout drain, readiness/barrier reader ownership, and H-I4-090..095 malformed-resource causality/cfg proofs. No runtime/session/wire semantic change is needed.
+5. Do not manufacture unsafe/platform-specific machinery merely to force a kernel `try_wait` error. Source-level ownership proof plus existing deterministic live-child/EOF/deadline regressions is acceptable unless a natural small regression seam exists.
+6. Final pushed source/test SHA: run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist developer-local exact-tree provenance with reachable SHA, UTC start/end, exit codes, OS/arch and stable Rust. No fuzz unless decoder/parser/crypto-framing owners change.
+7. Immediately continue the process ownership sweep after repair; do not wait for reviewer cadence and do not declare repository-wide queue exhaustion from this narrow closure.
 
-## Rolling queue — keep continuous after H-I4-101
+Full finding: `docs/reviews/reviewer-h-i4-102-bounded-reap-try-wait-error-ownership-20260922.md`.
+
+## Rolling queue — keep continuous after H-I4-102
 
 Do not collapse this to one ticket. Dependency-ready order:
 
-1. **H-I4-101 repair + focused regression/source proof + exact-tree provenance** — current FRONT HIGH.
-2. **Remaining process wait/output causal re-challenge.** Re-read every exact-current `try_wait`, direct/indirect `wait`, `wait_with_output`, `output`, stdout/stderr drain, reader-thread `join`, channel timeout and child-ownership site in `crates/neko-cli/tests/probe.rs` and other process-test owners. Classify each as exit-proven/success-path bounded or failure-path externally bounded. Repair only concrete unproven-exit blockers; do not turn synchronous commands into a framework project.
-3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..101 with current helper/cfg semantics. Keep Linux-local execution, macOS/BSD source/cfg reasoning and Windows claims separate.
+1. **H-I4-102 repair + focused source/regression proof + exact-tree provenance** — current FRONT HIGH.
+2. **Remaining process wait/output causal re-challenge.** Re-read every exact-current `try_wait`, direct/indirect `wait`, `wait_with_output`, `output`, stdout/stderr drain, reader-thread `join`, channel timeout and child-ownership site in `crates/neko-cli/tests/probe.rs` and other process-test owners. Classify each as exit-proven, success-path self-bounded, or failure-path externally bounded. Repair only concrete unproven-exit blockers; do not turn synchronous CLI test calls into a framework project without a concrete hang/control-flow counterexample.
+3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..102 with current helper/cfg semantics. Keep Linux-local execution, macOS/BSD source/cfg reasoning and Windows claims separate.
 4. **Algorithmic/resource boundedness reconciliation.** Reconcile accepted boundedness reviews with current channel bounds, stdout accumulation, cleanup deadlines, reader lifetime, child ownership and changed helpers. No capacity-pressure benchmark and no invented policy/security numbers.
-5. **Release packet / item-4 factual reconciliation.** Qualify stale statements that every process failure path is bounded or that the repository queue is exhausted. Retain valid H-I4-090..100 boundaries. Do not promote local process tests to WAN/performance/security approval.
+5. **Release packet / item-4 factual reconciliation.** Qualify stale statements that every process failure path is bounded or that the repository queue is exhausted. Retain valid H-I4-090..101 boundaries. Do not promote local process tests to WAN/performance/security approval.
 6. **Pre-auth malformed/rejection accounting exact-current reuse challenge.** Reuse prior independent review only where owner source/tests remain unchanged; otherwise narrowly re-challenge changed ownership. D019 remains a policy gate.
 7. **CLI diagnostic / JSON / human-output boundary exact-current reuse challenge.** Diagnostics remain evidence-only and never authentication/Delivery/Path/ACK evidence.
 8. **Package/build/reproducibility spot re-challenge.** Verify process-test repairs do not stale manifests/scripts/provenance assumptions. Do not invent signing/SBOM/key-custody policy.
@@ -107,7 +104,7 @@ Current classification remains `READY_LIVE: none`.
 
 Developer-reported local CI, persisted local provenance, reviewer-local execution, GitHub-hosted CI, live WAN evidence and performance conclusions are distinct evidence classes. All shared exact-tree provenance anchors must be reachable pushed commits. No unpublished/local-only SHA becomes repository evidence. No secret, protected identity, private topology or unnecessary absolute path belongs in provenance.
 
-Reviewer H-I4-101 is exact-current source/control-flow review only; no reviewer-local Rust/full-gate, cross-platform execution, fuzz, WAN or performance execution is claimed.
+Reviewer H-I4-102 is exact-current GitHub source/control-flow review only; no reviewer-local Rust/full-gate, cross-platform execution, fuzz, WAN or performance execution is claimed.
 
 ## Stop / escalation conditions
 
