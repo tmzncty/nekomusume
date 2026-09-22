@@ -5,13 +5,14 @@
 - Synchronize to current `main` before work. Code, tests, reachable pushed commits and current specs outrank this handoff, chat memory and stale checkbox state.
 - Reviewer exact-current source/spec anchor before H-I4-104: `a179b4c05c4291d44be35c5fbf33aab6ff53cbc9`. Reviewer finding commit: `dbb6d94190dda3c03a5ca2ffb168d039e1e0e88e` (`docs(review): flag H-I4-104 unbounded periodic readiness wait`).
 - **H-I4-103 is CLOSED** at developer-owned `d2aa63b3b02f988a580919f397fabd6db65e4bcf`: after `malformed_classification_barrier` succeeds, post-barrier reader join now follows bounded child-exit observation, and `barrier_success_reader_join_bounded_when_child_lives_and_silent` exercises the live-silent child shape. Exact-tree developer-local provenance is `docs/notes/h-i4-103-provenance-d2aa63b-20260922.md`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, 2026-09-22T16:50:41Z → 16:56:35Z, Linux x86_64, rustc 1.98.0 stable. No GitHub-hosted workflow/status was visible for exact `d2aa63b` during this reviewer pass. This is developer-reported local provenance, not reviewer-local execution.
+- **H-I4-104 is CLOSED** at `0467152d4e595c30ba6373333cd19bf8fa382cc0`: `start_periodic_server` replaced its raw `read_line` readiness loop with `wait_for_ready_marker(5s)` — the shared bounded primitive bounds the wait and converges child/pipe ownership on timeout/EOF/error. `start_periodic_server_bounded_when_binary_exits_silently` proves bounded panic on a silently-exiting binary. Exact-tree provenance: `docs/notes/h-i4-104-provenance-0467152-20260922.md` — `check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-22T17:50:09Z → 17:56:00Z, Linux x86_64, rustc 1.98.0.
 - H-I4-097..103 remain closed on their original process-cleanup claims except where a new exact-current counterexample explicitly reopens a distinct owner. H-I4-090..095 remain closed on malformed-resource causality/cfg proof surfaces absent owner change/falsification.
 - Candidate A (`Recovery::on_ack` future/unsent ACK) and Candidate B (`record_datagrams` mixed drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
 - `SessionRuntime.events` retained-history capacity and D019 source-retention/no-reset remain maintainer/security policy gates. Do not invent TTL/LRU/history-size/capacity/security values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely for freshness.
 
-## FRONT HIGH — H-I4-104 `start_periodic_server` readiness is not harness-bounded
+## FRONT HIGH — H-I4-104 `start_periodic_server` readiness CLOSED at `0467152`
 
 ### Concrete defect
 
