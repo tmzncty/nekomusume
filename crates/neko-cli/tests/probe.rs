@@ -136,7 +136,10 @@ fn finish_server(mut server: ReadyServer) -> (std::process::ExitStatus, String) 
         let _ = stdout.read_to_string(&mut remainder);
         let _ = tx.send(remainder);
     });
-    let deadline = Instant::now() + Duration::from_secs(10);
+    // Bound must exceed the maximum server `--duration` (30s) plus slack for
+    // the caller's client work before finish_server is reached — a shorter
+    // local deadline would false-positive on a healthy long-duration server.
+    let deadline = Instant::now() + Duration::from_secs(35);
     let status = loop {
         match server.child.try_wait() {
             Ok(Some(status)) => break status,
@@ -445,9 +448,10 @@ fn ready_endpoint_rebind_bounded_when_child_closes_stdout_but_stays_alive() {
 fn finish_server_bounded_when_child_keeps_stdout_open_and_lives() {
     // H-I4-099 negative regression: a child that keeps stdout open while
     // staying alive must make finish_server fail within a bounded interval
-    // rather than hang in read_to_string/wait.
+    // rather than hang in read_to_string/wait. Sleep must exceed the
+    // finish_server exit-poll deadline so the deadline path is exercised.
     let mut child = Command::new("sleep")
-        .arg("30")
+        .arg("60")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -467,7 +471,7 @@ fn finish_server_bounded_when_child_keeps_stdout_open_and_lives() {
         "live child with open stdout must make finish_server panic, not hang"
     );
     assert!(
-        elapsed < Duration::from_secs(15),
+        elapsed < Duration::from_secs(40),
         "finish_server must fail within bound, elapsed={elapsed:?}"
     );
 }
