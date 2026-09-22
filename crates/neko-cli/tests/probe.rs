@@ -2483,7 +2483,7 @@ fn reliable_udp_incomplete_settlement_fails_not_settled() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let mut server = ready_failover_server(server);
+    let server = ready_failover_server(server);
     let out = Command::new(bin)
         .args([
             "failover-client",
@@ -2510,8 +2510,7 @@ fn reliable_udp_incomplete_settlement_fails_not_settled() {
         ])
         .output()
         .unwrap();
-    let _ = server.child.kill();
-    let _ = server.child.wait();
+    bounded_reap_or_kill(server.child);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
