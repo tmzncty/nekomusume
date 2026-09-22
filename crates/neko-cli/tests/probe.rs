@@ -215,6 +215,9 @@ fn bounded_reap_or_kill(child: &mut Child) {
     match child.try_wait() {
         Ok(Some(_)) => return,
         Err(e) => {
+            // Observation itself failed — converge ownership via bounded
+            // kill+reap before the error escapes, not panic with exit unproven.
+            bounded_kill_reap(child);
             panic!("bounded_reap_or_kill: try_wait failed before cleanup: {e}");
         }
         Ok(None) => {}
