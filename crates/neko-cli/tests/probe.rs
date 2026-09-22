@@ -1646,6 +1646,11 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     let (child, reader_handle, barrier_proof) =
         malformed_classification_barrier(child, stdout, ATTEMPTS, Duration::from_secs(5))
             .unwrap_or_else(|e| panic!("{e}; collected-so-far-see-stderr"));
+    // The Linux /proc snapshot consumes barrier_proof inside its gate; on
+    // non-Linux Unix the portable socket/lifecycle path still runs, so the
+    // proof is explicitly sunk to keep the build warning-clean.
+    #[cfg(not(target_os = "linux"))]
+    let _ = barrier_proof;
     // Reaching this point proves the sends completed — the baseline must
     // already be captured while churn_started was still false.
     assert!(churn_started);
