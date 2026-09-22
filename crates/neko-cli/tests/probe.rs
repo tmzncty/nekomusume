@@ -57,6 +57,16 @@ struct ReadyServer {
     child: Child,
     stdout: BufReader<std::process::ChildStdout>,
     startup_log: String,
+    ready_proof: ReadyProof,
+}
+
+/// H-I4-094: proof obtainable only once `ready_*_server` has observed the
+/// server diagnostic `start` — the pre-churn resource baseline consumes it so
+/// the measurement cannot be moved above the ready barrier.
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct ReadyProof {
+    _private: (),
 }
 
 fn start_server(
@@ -114,6 +124,7 @@ fn start_server_for(
         child,
         stdout,
         startup_log,
+        ready_proof: ReadyProof { _private: () },
     }
 }
 
@@ -255,6 +266,7 @@ fn ready_failover_server(mut child: Child) -> ReadyServer {
             child,
             stdout,
             startup_log,
+            ready_proof: ReadyProof { _private: () },
         },
         Ok(Err(startup_log)) => {
             let _ = child.wait();
@@ -285,6 +297,7 @@ fn ready_endpoint_rebind_server(mut child: Child) -> ReadyServer {
                 child,
                 stdout: reader,
                 startup_log,
+                ready_proof: ReadyProof { _private: () },
             };
         }
     }
@@ -1613,7 +1626,12 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     let mut churn_started = false;
     #[cfg(target_os = "linux")]
     let before = gated_resource_snapshot(
-        || assert!(!churn_started, "baseline must precede the churn"),
+        || {
+            // H-I4-094: the baseline consumes the ready-barrier proof — moving
+            // the measurement above ready_failover_server fails to compile.
+            let ReadyProof { _private: () } = server.ready_proof;
+            assert!(!churn_started, "baseline must precede the churn");
+        },
         pid,
     );
     let malformed = [b'N', b'1', 1, 1, 0];
@@ -1642,6 +1660,7 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
         child,
         stdout,
         startup_log,
+        ready_proof,
     } = server;
     let (child, reader_handle, barrier_proof) =
         malformed_classification_barrier(child, stdout, ATTEMPTS, Duration::from_secs(5))
@@ -1726,6 +1745,7 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
         child,
         stdout,
         startup_log,
+        ready_proof,
     });
     assert!(
         out.status.success(),
@@ -6451,6 +6471,7 @@ fn start_periodic_server(
         child,
         stdout,
         startup_log,
+        ready_proof: ReadyProof { _private: () },
     }
 }
 
