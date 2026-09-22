@@ -151,6 +151,8 @@ fn finish_server(mut server: ReadyServer) -> (std::process::ExitStatus, String) 
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(e) => {
+                // Exit observation failed — converge ownership before panic.
+                bounded_kill_reap(&mut server.child);
                 panic!("finish_server: try_wait failed: {e}");
             }
         }
@@ -180,12 +182,36 @@ struct BarrierProof {
 /// I4-CLI-PROC-096: reap a child deterministically without an unbounded wait.
 /// If the child already exited, `try_wait` reaps it; otherwise kill then wait
 /// (the kill makes the subsequent wait bounded).
+/// H-I4-101: bounded termination/reap without a leading try_wait — used when
+/// the caller's own exit observation already failed (e.g. try_wait error) and
+/// ownership must still converge. kill failure or reap failure is an explicit
+/// fail-closed panic, never a silent abandon.
+fn bounded_kill_reap(child: &mut Child) {
+    if let Err(e) = child.kill() {
+        panic!("bounded_kill_reap: kill failed and child exit unproven: {e}");
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    panic!("bounded_kill_reap: child did not exit within bound after kill");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => {
+                panic!("bounded_kill_reap: try_wait failed while child live: {e}");
+            }
+        }
+    }
+}
+
 fn bounded_reap_or_kill(child: &mut Child) {
     // H-I4-097: no blocking `wait()` may occur unless exit is already proven
     // or termination succeeded and reaping is bounded by a local deadline.
     // `try_wait`/`kill` failures are explicit cleanup errors, not a license to
     // block.
-    let deadline = Instant::now() + Duration::from_secs(3);
     match child.try_wait() {
         Ok(Some(_)) => return,
         Err(e) => {
@@ -193,23 +219,7 @@ fn bounded_reap_or_kill(child: &mut Child) {
         }
         Ok(None) => {}
     }
-    if let Err(e) = child.kill() {
-        panic!("bounded_reap_or_kill: kill failed and child exit unproven: {e}");
-    }
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    panic!("bounded_reap_or_kill: child did not exit within bound after kill");
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(e) => {
-                panic!("bounded_reap_or_kill: try_wait failed while child live: {e}");
-            }
-        }
-    }
+    bounded_kill_reap(child);
 }
 
 /// I4-CLI-PROC-096: narrow wait primitive shared by the readiness helpers —
@@ -293,7 +303,12 @@ fn bounded_wait_exit(
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            Err(e) => return Err(format!("bounded_wait_exit: try_wait failed: {e}")),
+            Err(e) => {
+                // Exit observation itself failed — ownership must still
+                // converge before the error escapes.
+                bounded_kill_reap(child);
+                return Err(format!("bounded_wait_exit: try_wait failed: {e}"));
+            }
         }
     }
 }
