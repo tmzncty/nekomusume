@@ -1,47 +1,47 @@
-# ChatGPT reviewer handoff — H-I4-091 non-Linux Unix closure HIGH
+# ChatGPT reviewer handoff — H-I4-092 split resource oracle HIGH
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Code/tests/reachable pushed commits outrank this prose and older notes.
-- Reviewer re-read the required governance/spec/status surface and reviewed every developer-owned commit after prior reviewed anchor `f77b853c4e84fc81ff9b4670c3d57c70d8b97a4d`.
-- New developer commit reviewed:
-  - `90831a72a4de7194e0c6ed1feeba806a45e5aaf6` — **test/helper implementation**: adds a successful-barrier token checked at the Linux post-resource snapshot site and makes the early-EOF `Ok(None)` barrier exit kill/reap the child and join the reader.
-- **Accepted from `90831a7`:** the prior post-snapshot ordering source hole is repaired; stdout EOF now restores child/reader ownership deterministically; timeout/disconnect bounded cleanup and post-`preauth.release(admission)` malformed classification remain intact.
-- **H-I4-091 is CLOSED** at `8e507ac09b971ee9c3adbc7d3d452f9a87c29ec7`: `barrier_complete` is now `#[cfg(target_os = "linux")]`-gated so non-Linux Unix compiles warning-clean under `cargo clippy --workspace --all-targets -- -D warnings`; `malformed_classification_barrier_fails_bounded_on_early_stdout_eof` covers the `Ok(None)` EOF path (child killed+reaped, reader joined). The post-snapshot ordering token, post-`preauth.release` emit order, and bounded timeout/kill/reap semantics are preserved. Exact-tree provenance: `docs/notes/h-i4-091-provenance-8e507ac-20260922.md` — `check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-22T00:50:28Z → 00:56:25Z, Linux x86_64, rustc 1.98.0.
-- The previously requested focused **early-EOF/insufficient-classification regression is still not present**. The source cleanup itself is now acceptable, but this newly changed ownership branch still needs a small focused regression if feasible; do not build a generic process-test framework.
-- `90831a7` has no accepted final developer-local exact-tree provenance persisted yet. No visible hosted status/workflow result is treated only as absence of hosted evidence, not CI failure.
-- **H-I4-090 remains closed:** affirmative Linux baseline remains before the first malformed send; do not weaken it.
-- Candidate A (future/unsent Recovery ACK), Candidate B (mixed datagram drop reasons), H-I4-085..090, prior R9 process/result seams, Session/Carrier/ACK separation, CarrierState/CarrierManager, FairScheduler/flow accounting, carrier adapters, observability, package/operator, dependency/build, and prior CLI machine/human contracts remain closed unless materially changed or falsified by a new concrete counterexample.
+- Reviewer re-read the required governance/spec/status/release surface and reviewed all developer-owned commits after prior reviewed anchor `586b332ddcf47bcb0480df795dd850e4e489c5c8`.
+- Developer source/test commit accepted for its narrow H-I4-091 fixes:
+  - `8e507ac09b971ee9c3adbc7d3d452f9a87c29ec7` — Linux-gates `barrier_complete` for non-Linux Unix warning cleanliness and adds `malformed_classification_barrier_fails_bounded_on_early_stdout_eof`.
+  - Developer-reported clean exact-tree provenance is persisted in `docs/notes/h-i4-091-provenance-8e507ac-20260922.md`: `scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, 2026-09-22T00:50:28Z → 00:56:25Z, Linux x86_64, rustc 1.98.0 stable.
+  - No visible hosted status/workflow result is classified only as absence of hosted evidence, not CI failure.
+- **Accepted from H-I4-091:** bounded off-thread classification wait; timeout/disconnect/EOF child kill+reap and reader join; post-`preauth.release(admission)` malformed diagnostic ordering; focused missing-event and early-EOF negative regressions; non-Linux Unix warning-clean token placement. The exact-current execution order is presently correct.
+- **New HIGH H-I4-092** at reviewer commit `b4a7041799576f1e07ffabe74918eddf319d2fee`: the Linux pre/post resource measurements can be split away from the assertions/tokens meant to guard their ordering. Review note: `docs/reviews/h-i4-092-resource-oracle-split-20260922.md`.
+- H-I4-092 is an **item-4/release evidence-oracle correctness** finding, not evidence of a runtime resource leak. The actual current snapshot order is correct; the regression protection is not mechanically coupled to the snapshot operation.
+- H-I4-090/H-I4-091 source/runtime cleanup facts remain accepted except for the split-oracle closure claim superseded by H-I4-092.
+- Candidate A (future/unsent Recovery ACK), Candidate B (mixed datagram drop reasons), H-I4-085..089, prior R9 process/result seams, Session/Carrier/ACK separation, CarrierState/CarrierManager, FairScheduler/flow accounting, carrier adapters, observability, package/operator, dependency/build, and prior CLI machine/human contracts remain closed unless materially changed or falsified by a new concrete counterexample.
 - `SessionRuntime.events` retained-history capacity remains a maintainer/security policy gate; do not invent TTL/LRU/history-size/capacity values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat prior WAN/VPS evidence merely for freshness.
 
-## FRONT HIGH — H-I4-091 exact closure contract
+## FRONT HIGH — H-I4-092 exact closure contract
 
-Do not redo the already-correct runtime diagnostic ordering or timeout/disconnect cleanup. Close only the remaining portability/regression/provenance seam:
+Do not redo the already-correct runtime diagnostic ordering, bounded stdout wait, EOF cleanup, or non-Linux Unix cfg repair. Close only the split-oracle seam:
 
-1. Preserve H-I4-090's pre-churn Linux `/proc` baseline and existing FD/RSS margins unchanged.
-2. Keep a **mutation-sensitive post-barrier oracle** that is established only after successful `malformed_classification_barrier(...)` and is asserted immediately before the Linux post-resource snapshot. Moving the post snapshot above barrier success must deterministically fail or fail to compile.
-3. Make that oracle **warning-clean on non-Linux Unix**. The current unconditional `barrier_complete` declaration inside the `#[cfg(unix)]` test with Linux-only use must not leave an unused local under `-D warnings`. Use the smallest cfg/placement repair; do not weaken the ordering proof.
-4. Preserve `preauth.release(admission)` before the observable `malformed_or_unadmitted` event. Keep the event diagnostic-only; do not promote it into auth/Session/Carrier/ACK/wire/release semantics.
-5. Preserve deterministic ownership restoration on **every unsuccessful barrier exit**, including EOF, timeout, and disconnect.
-6. Add one focused early-EOF/insufficient-classification regression if it is not already present so the `Ok(None)` cleanup path is mechanically protected. Keep the existing timeout/missing-event regression. Do not create helper/schema/framework churn.
-7. Keep non-Linux Unix lifecycle/socket semantics portable; do not claim `/proc` evidence outside Linux and do not claim macOS/BSD execution unless actually run there.
-8. Do not invent capacity/security/TTL/history values. No fuzz unless wire decoder/parser/crypto framing owners change.
-9. Run focused CLI process tests. Then on the **final pushed source/test SHA** run:
+1. Preserve H-I4-090's affirmative Linux baseline before the first malformed send, H-I4-091's post-cleanup classification barrier, existing FD/RSS margins, ATTEMPTS count, and Linux-only `/proc` evidence boundary.
+2. Couple each resource snapshot to its phase proof so the assertion/token and `process_resource_snapshot(pid)` cannot be separated by an ordinary refactor. A small Linux-only test helper that performs the phase check and snapshot acquisition together is sufficient; do **not** create a general phase/checker framework.
+3. Pre-churn: calling the coupled snapshot helper after churn starts must fail deterministically.
+4. Post-barrier: the coupled snapshot helper must require a value/token that only exists after successful `malformed_classification_barrier(...)`; moving the coupled post snapshot before barrier success must fail to compile or fail deterministically.
+5. Keep `malformed_classification_barrier_fails_bounded_when_events_missing` and `malformed_classification_barrier_fails_bounded_on_early_stdout_eof`; do not weaken kill/reap + reader-join ownership restoration.
+6. Keep `malformed_or_unadmitted` diagnostic-only and after `preauth.release(admission)`; do not promote it into authentication, Session, Carrier, ACK, wire, or release semantics.
+7. Do not change capacity/security/TTL/history numbers. No fuzz unless decoder/parser/crypto framing owners change.
+8. Run focused CLI process tests, then on the **final pushed source/test SHA** run:
    - `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`
    - `git diff --check`
    - verify clean tree
    Persist exact reachable SHA, UTC start/end, exit codes, OS/arch, `rustc --version`, and clean-tree state. Keep developer-local, hosted, reviewer-local, live, and performance evidence classifications separate.
-10. After closure continue immediately through the rolling queue; do not wait for reviewer cadence.
+9. After closure continue immediately through the rolling queue; do not wait for reviewer cadence.
 
 ## Rolling queue — keep continuous after the HIGH
 
 Maintain a real dependency-ordered queue; do not collapse to a one-ticket idle state:
 
-1. **H-I4-091 portability/regression/provenance closure.** Smallest test/helper repair only.
-2. **I4-PORT-RES exact-current independent causal re-challenge.** Challenge both causal edges: `READY -> affirmative pre-churn snapshot -> first malformed send` and `all bounded malformed inputs classified + corresponding cleanup complete -> affirmative post-churn snapshot`. Attempt to move/split the oracle and verify it fails closed.
-3. **Pre-auth malformed/rejection resource-accounting bounded challenge.** Inspect exact-current `admit_carrier`, `charge_input`, invalid-negotiation release, response-admission rejection, and pending-owner paths. Verify rejection cannot become authentication/delivery evidence and diagnostic support does not retain unbounded state. A scoped no-finding is valid.
+1. **H-I4-092 split-oracle repair + exact-tree provenance.** Smallest test/helper repair only.
+2. **I4-PORT-RES exact-current independent causal re-challenge.** Re-attempt both causal edges with the coupled helper: `READY -> affirmative pre-churn snapshot -> first malformed send` and `all bounded malformed inputs classified + corresponding cleanup complete -> affirmative post-churn snapshot`. Attempt whole-block and split/oracle mutations; a scoped no-finding is valid only if both fail closed.
+3. **Pre-auth malformed/rejection resource-accounting bounded challenge.** Inspect exact-current `admit_carrier`, `charge_input`, invalid-negotiation release, response-admission rejection, and pending-owner paths. Verify rejection cannot become authentication/delivery evidence and diagnostics do not retain unbounded state.
 4. **Cross-platform CLI/process-test semantics.** Re-challenge Linux-only `/proc` cfgs, Unix process/signal assumptions, child reap/join behavior, warning cleanliness, and non-Linux Unix compile/contract semantics.
 5. **CLI diagnostic/machine-output boundary.** Challenge `malformed_or_unadmitted` scope, JSON/human-output collision, diagnostic stability, and keep it evidence-only rather than protocol semantics.
 6. **Algorithmic/resource boundedness reconciliation.** Challenge reader/channel lifetime, timeout/EOF/disconnect cleanup, queue/counter growth, and test-local bounds. No capacity-pressure benchmark and no new policy numbers.
