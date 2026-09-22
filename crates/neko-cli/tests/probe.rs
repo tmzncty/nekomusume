@@ -15,6 +15,16 @@ use std::{
 fn tmp(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("neko-cli-{name}-{}", std::process::id()))
 }
+/// H-I4-092: couple a resource snapshot to a phase proof so the gate and the
+/// measurement cannot be split by an ordinary refactor — moving only the
+/// `process_resource_snapshot(pid)` call across a phase boundary would break
+/// compilation (the snapshot is acquired inside this helper after `gate()`).
+#[cfg(target_os = "linux")]
+fn gated_resource_snapshot(gate: impl FnOnce(), pid: u32) -> Option<(usize, usize)> {
+    gate();
+    process_resource_snapshot(pid)
+}
+
 #[cfg(target_os = "linux")]
 fn process_resource_snapshot(pid: u32) -> Option<(usize, usize)> {
     let fd_count = fs::read_dir(format!("/proc/{pid}/fd")).ok()?.count();
@@ -1594,10 +1604,10 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     // false-negative) if this baseline is moved into the post-churn window.
     let mut churn_started = false;
     #[cfg(target_os = "linux")]
-    let before = {
-        assert!(!churn_started, "baseline must precede the churn");
-        process_resource_snapshot(pid)
-    };
+    let before = gated_resource_snapshot(
+        || assert!(!churn_started, "baseline must precede the churn"),
+        pid,
+    );
     let malformed = [b'N', b'1', 1, 1, 0];
     const ATTEMPTS: usize = 8;
     let senders: Vec<_> = (0..ATTEMPTS)
@@ -1644,11 +1654,15 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     // proven all malformed datagrams were classified.
     #[cfg(target_os = "linux")]
     {
-        assert!(
-            barrier_complete,
-            "post snapshot requires the malformed-classification barrier to complete first"
+        let after = gated_resource_snapshot(
+            || {
+                assert!(
+                    barrier_complete,
+                    "post snapshot requires the malformed-classification barrier to complete first"
+                )
+            },
+            pid,
         );
-        let after = process_resource_snapshot(pid);
         assert!(
             matches!((before, after), (Some(_), Some(_))),
             "Linux /proc resource snapshot must succeed"
