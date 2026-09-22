@@ -5,13 +5,14 @@
 - Synchronize to current `main` before work. Code, tests, reachable pushed commits and current specs outrank this handoff, chat memory and stale checkbox state.
 - Reviewer exact-current source/spec anchor before the new finding: `33085124fc30acbe15183bcaa9b0478ef5c50ed3`. Reviewer finding commit: `657381d4c5bee7dac5a0eb62c8de8ddfc3bf43fe` (`docs(review): flag H-I4-103 unbounded barrier reader success join`).
 - Developer-owned H-I4-102 source/test commit `319ac5d8caa7c245c35e4477bb3cf707ffb4fee2` is accepted on its original claim: `bounded_reap_or_kill` now routes its own initial `try_wait()` error through `bounded_kill_reap` before explicit failure. Developer-local exact-tree provenance is `docs/notes/h-i4-102-provenance-319ac5d-20260922.md`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, 2026-09-22T15:50:41Z → 15:56:25Z, Linux x86_64, rustc 1.98.0 stable. No GitHub-hosted workflow/status was visible for exact `319ac5d` during this reviewer pass. This is developer-reported local provenance, not reviewer-local execution.
+- **H-I4-103 is CLOSED** at `d2aa63b3b02f988a580919f397fabd6db65e4bcf`: after `malformed_classification_barrier` succeeds, the post-barrier `reader_handle.join()` now follows `bounded_wait_exit` — child exit makes stdout EOF so the `read_line` loop returns and the join is EOF-bounded. `barrier_success_reader_join_bounded_when_child_lives_and_silent` proves bounded join after the barrier count is satisfied. Exact-tree provenance: `docs/notes/h-i4-103-provenance-d2aa63b-20260922.md` — `check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-22T16:50:41Z → 16:56:35Z, Linux x86_64, rustc 1.98.0.
 - H-I4-097..102 remain closed on their original bounded process-cleanup claims absent a new exact-current counterexample. H-I4-090..095 remain closed on their malformed-resource causality/cfg proof surfaces absent owner change or falsification.
 - Candidate A (future/unsent `Recovery::on_ack`) and Candidate B (mixed datagram drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
 - `SessionRuntime.events` retained-history capacity and D019 source-retention/no-reset remain maintainer/security policy gates. Do not invent TTL/LRU/history-size/capacity/security values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely for freshness.
 
-## FRONT HIGH — H-I4-103 barrier-success reader join is unbounded before child/pipe proof
+## FRONT HIGH — H-I4-103 barrier-success reader join CLOSED at `d2aa63b`
 
 ### Concrete defect
 
