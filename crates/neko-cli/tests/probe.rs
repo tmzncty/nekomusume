@@ -86,7 +86,7 @@ fn start_server_for(
     client_key: &str,
     duration: &str,
 ) -> ReadyServer {
-    let mut child = Command::new(bin)
+    let child = Command::new(bin)
         .args([
             "server",
             "--transport",
@@ -107,53 +107,20 @@ fn start_server_for(
         .spawn()
         .unwrap();
     // I4-CLI-PROC-096: `read_line` is blocking — a live child emitting no
-    // newline could strand the wait after the deadline check. Off-thread
-    // reader + bounded recv_timeout; kill/reap on timeout.
-    let (tx, rx) = std::sync::mpsc::sync_channel::<
-        Result<(BufReader<std::process::ChildStdout>, String), String>,
-    >(1);
-    let stdout = child.stdout.take().unwrap();
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        let mut startup_log = String::new();
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => {
-                    let _ = tx.send(Err(startup_log));
-                    return;
-                }
-                Ok(_) => {
-                    startup_log.push_str(&line);
-                    if line.contains("lifecycle_state=READY readiness=true") {
-                        let _ = tx.send(Ok((reader, startup_log)));
-                        return;
-                    }
-                }
-                Err(error) => {
-                    startup_log.push_str(&format!("stdout read error: {error}"));
-                    let _ = tx.send(Err(startup_log));
-                    return;
-                }
-            }
-        }
-    });
-    match rx.recv_timeout(Duration::from_secs(5)) {
-        Ok(Ok((stdout, startup_log))) => ReadyServer {
-            child,
-            stdout,
-            startup_log,
-            ready_proof: ReadyProof { _private: () },
-        },
-        Ok(Err(startup_log)) => {
-            bounded_reap_or_kill(child);
-            panic!("server exited before READY: {startup_log}");
-        }
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("server produced no READY line within bound");
-        }
+    // newline could strand the wait after the deadline check. The narrow
+    // wait primitive performs the read off-thread and bounds the wait on
+    // recv_timeout; on timeout/EOF/error the child is killed+reaped.
+    let (child, stdout, startup_log) = wait_for_ready_marker(
+        child,
+        "lifecycle_state=READY readiness=true",
+        Duration::from_secs(5),
+    )
+    .unwrap_or_else(|e| panic!("server not ready: {e}"));
+    ReadyServer {
+        child,
+        stdout,
+        startup_log,
+        ready_proof: ReadyProof { _private: () },
     }
 }
 
@@ -191,6 +158,65 @@ fn bounded_reap_or_kill(mut child: Child) {
         }
     }
     let _ = child.wait();
+}
+
+/// I4-CLI-PROC-096: narrow wait primitive shared by the readiness helpers —
+/// moves the blocking `read_line` loop off-thread and bounds the wait on a
+/// `recv_timeout` receiver. On every failure shape (timeout, EOF, read error,
+/// channel disconnect) the owned child is killed+reaped via
+/// `bounded_reap_or_kill` before the error is returned, so no failure path
+/// blocks on `wait()`. On success the child, remaining-stdout reader and the
+/// accumulated startup log are returned so ownership/log continuity is
+/// preserved.
+fn wait_for_ready_marker(
+    mut child: Child,
+    marker: &'static str,
+    timeout: Duration,
+) -> Result<(Child, BufReader<std::process::ChildStdout>, String), String> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<
+        Result<(BufReader<std::process::ChildStdout>, String), String>,
+    >(1);
+    let stdout = child.stdout.take().unwrap();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut startup_log = String::new();
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    let _ = tx.send(Err(startup_log));
+                    return;
+                }
+                Ok(_) => {
+                    startup_log.push_str(&line);
+                    if line.contains(marker) {
+                        let _ = tx.send(Ok((reader, startup_log)));
+                        return;
+                    }
+                }
+                Err(error) => {
+                    startup_log.push_str(&format!("stdout read error: {error}"));
+                    let _ = tx.send(Err(startup_log));
+                    return;
+                }
+            }
+        }
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(Ok((stdout, startup_log))) => Ok((child, stdout, startup_log)),
+        Ok(Err(startup_log)) => {
+            // EOF/read-error while the child may still be alive — reap
+            // deterministically, never an unbounded wait().
+            bounded_reap_or_kill(child);
+            Err(format!("child stdout ended before ready: {startup_log}"))
+        }
+        Err(_) => {
+            // Timeout or channel disconnect — kill+reap so the reader gets
+            // EOF and the test cannot hang.
+            bounded_reap_or_kill(child);
+            Err("child produced no ready marker within bound".to_string())
+        }
+    }
 }
 
 fn malformed_classification_barrier(
@@ -271,105 +297,40 @@ fn malformed_classification_barrier(
     Ok((child, reader_handle, BarrierProof { _private: () }))
 }
 
-fn ready_failover_server(mut child: Child) -> ReadyServer {
-    // `read_line` is blocking, so perform it off-thread and bound the wait on
-    // the receiver. On timeout terminate the child; EOF then releases the
-    // reader and preserves every line read before the diagnostic start event.
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    let stdout = child.stdout.take().unwrap();
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        let mut startup_log = String::new();
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => {
-                    let _ = tx.send(Err(startup_log));
-                    return;
-                }
-                Ok(_) => {
-                    startup_log.push_str(&line);
-                    if line.contains("\"role\":\"server\",\"event\":\"start\"") {
-                        let _ = tx.send(Ok((reader, startup_log)));
-                        return;
-                    }
-                }
-                Err(error) => {
-                    startup_log.push_str(&format!("stdout read error: {error}"));
-                    let _ = tx.send(Err(startup_log));
-                    return;
-                }
-            }
-        }
-    });
-    match rx.recv_timeout(Duration::from_secs(2)) {
-        Ok(Ok((stdout, startup_log))) => ReadyServer {
-            child,
-            stdout,
-            startup_log,
-            ready_proof: ReadyProof { _private: () },
-        },
-        Ok(Err(startup_log)) => {
-            bounded_reap_or_kill(child);
-            panic!("failover exited before start: {startup_log}");
-        }
-        Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("failover start timeout: {error}");
-        }
+fn ready_failover_server(child: Child) -> ReadyServer {
+    // `read_line` is blocking, so the narrow wait primitive performs it
+    // off-thread and bounds the wait on the receiver. On timeout/EOF/error
+    // the child is killed+reaped; EOF preserves every line read before the
+    // diagnostic start event.
+    let (child, stdout, startup_log) = wait_for_ready_marker(
+        child,
+        "\"role\":\"server\",\"event\":\"start\"",
+        Duration::from_secs(2),
+    )
+    .unwrap_or_else(|e| panic!("failover not ready: {e}"));
+    ReadyServer {
+        child,
+        stdout,
+        startup_log,
+        ready_proof: ReadyProof { _private: () },
     }
 }
 
-fn ready_endpoint_rebind_server(mut child: Child) -> ReadyServer {
-    // I4-CLI-PROC-096: `read_line` is blocking — a silent-but-live child could
-    // strand the wait. Move it off-thread and bound the wait on a channel
-    // recv_timeout; on timeout kill/reap the child so the reader gets EOF.
-    let (tx, rx) = std::sync::mpsc::sync_channel::<
-        Result<(BufReader<std::process::ChildStdout>, String), String>,
-    >(1);
-    let stdout = child.stdout.take().unwrap();
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        let mut startup_log = String::new();
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => {
-                    let _ = tx.send(Err(startup_log));
-                    return;
-                }
-                Ok(_) => {
-                    startup_log.push_str(&line);
-                    if line.contains("endpoint_rebind_server_ready") {
-                        let _ = tx.send(Ok((reader, startup_log)));
-                        return;
-                    }
-                }
-                Err(error) => {
-                    startup_log.push_str(&format!("stdout read error: {error}"));
-                    let _ = tx.send(Err(startup_log));
-                    return;
-                }
-            }
-        }
-    });
-    match rx.recv_timeout(Duration::from_secs(5)) {
-        Ok(Ok((stdout, startup_log))) => ReadyServer {
-            child,
-            stdout,
-            startup_log,
-            ready_proof: ReadyProof { _private: () },
-        },
-        Ok(Err(startup_log)) => {
-            bounded_reap_or_kill(child);
-            panic!("endpoint rebind exited before ready: {startup_log}");
-        }
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("endpoint rebind produced no ready line within bound");
-        }
+fn ready_endpoint_rebind_server(child: Child) -> ReadyServer {
+    // I4-CLI-PROC-096: the narrow wait primitive performs the blocking
+    // `read_line` off-thread and bounds the wait on recv_timeout; on
+    // timeout/EOF/error the child is killed+reaped.
+    let (child, stdout, startup_log) = wait_for_ready_marker(
+        child,
+        "endpoint_rebind_server_ready",
+        Duration::from_secs(5),
+    )
+    .unwrap_or_else(|e| panic!("endpoint rebind not ready: {e}"));
+    ReadyServer {
+        child,
+        stdout,
+        startup_log,
+        ready_proof: ReadyProof { _private: () },
     }
 }
 
@@ -393,6 +354,33 @@ fn ready_endpoint_rebind_bounded_when_child_is_silent() {
     assert!(
         result.is_err(),
         "silent child must make readiness wait panic, not hang"
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "readiness wait must fail within bound, elapsed={elapsed:?}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn ready_endpoint_rebind_bounded_when_child_closes_stdout_but_stays_alive() {
+    // I4-CLI-PROC-096 negative regression: a child that closes stdout while
+    // remaining alive must make the readiness wait fail within bound — the
+    // EOF path must kill/reap via bounded_reap_or_kill, not block in wait().
+    let child = Command::new("sh")
+        .args(["-c", "exec 1>&-; sleep 30"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ready_endpoint_rebind_server(child)
+    }));
+    let elapsed = start.elapsed();
+    assert!(
+        result.is_err(),
+        "stdout-closing live child must make readiness wait panic, not hang"
     );
     assert!(
         elapsed < Duration::from_secs(10),
