@@ -151,13 +151,35 @@ struct BarrierProof {
 /// If the child already exited, `try_wait` reaps it; otherwise kill then wait
 /// (the kill makes the subsequent wait bounded).
 fn bounded_reap_or_kill(mut child: Child) {
+    // H-I4-097: no blocking `wait()` may occur unless exit is already proven
+    // or termination succeeded and reaping is bounded by a local deadline.
+    // `try_wait`/`kill` failures are explicit cleanup errors, not a license to
+    // block.
+    let deadline = Instant::now() + Duration::from_secs(3);
     match child.try_wait() {
-        Ok(Some(_)) | Err(_) => {}
-        Ok(None) => {
-            let _ = child.kill();
+        Ok(Some(_)) => return,
+        Err(e) => {
+            panic!("bounded_reap_or_kill: try_wait failed before cleanup: {e}");
+        }
+        Ok(None) => {}
+    }
+    if let Err(e) = child.kill() {
+        panic!("bounded_reap_or_kill: kill failed and child exit unproven: {e}");
+    }
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    panic!("bounded_reap_or_kill: child did not exit within bound after kill");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => {
+                panic!("bounded_reap_or_kill: try_wait failed while child live: {e}");
+            }
         }
     }
-    let _ = child.wait();
 }
 
 /// I4-CLI-PROC-096: narrow wait primitive shared by the readiness helpers —
@@ -220,7 +242,7 @@ fn wait_for_ready_marker(
 }
 
 fn malformed_classification_barrier(
-    mut child: Child,
+    child: Child,
     stdout: BufReader<std::process::ChildStdout>,
     attempts: usize,
     timeout: Duration,
@@ -254,8 +276,8 @@ fn malformed_classification_barrier(
         let remain = deadline.saturating_duration_since(std::time::Instant::now());
         if remain.is_zero() {
             drop(rx);
-            let _ = child.kill();
-            let _ = child.wait();
+            bounded_reap_or_kill(child);
+
             let _ = reader_handle.join();
             return Err(format!(
                 "server did not classify all {attempts} malformed datagrams in time"
@@ -270,8 +292,8 @@ fn malformed_classification_barrier(
                 // stdout EOF: the child has closed its pipe (usually exited).
                 // Reap it and join the reader so ownership stays deterministic.
                 drop(rx);
-                let _ = child.kill();
-                let _ = child.wait();
+                bounded_reap_or_kill(child);
+
                 let _ = reader_handle.join();
                 return Err(format!(
                     "server stdout closed after {classified}/{attempts} malformed classifications"
@@ -279,8 +301,8 @@ fn malformed_classification_barrier(
             }
             Err(_) => {
                 drop(rx);
-                let _ = child.kill();
-                let _ = child.wait();
+                bounded_reap_or_kill(child);
+
                 let _ = reader_handle.join();
                 return Err(format!(
                     "server did not classify all {attempts} malformed datagrams in time"
