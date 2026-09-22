@@ -48,6 +48,22 @@ This is a release/item-4 **test-harness correctness HIGH**, not a production Ses
 7. On the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm a clean tree, and persist developer-local exact-tree provenance with reachable SHA, UTC start/end, exit codes, OS/arch and stable Rust.
 8. Continue immediately into the next ownership/review slice after closure; do not wait for reviewer cadence and do not declare repository-wide queue exhaustion from this repair.
 
+### Stagnation assist — concrete narrow implementation shape
+
+`main` remained at the reviewer handoff without a developer-owned H-I4-106 commit across multiple reviewer opportunities. Per `AGENTS.md` §3.2, treat that as implementation stagnation, not as a reason for both sides to wait. The invariant is already decided; no maintainer/policy choice is required.
+
+A minimal acceptable shape is test-local to `crates/neko-cli/tests/multistream.rs`:
+
+1. Introduce one small captured-child helper/struct that **retains the `Child` handle**. Spawn with `stdout`/`stderr` piped, immediately take both pipes, and drain them concurrently into bounded channels/buffers so a live child cannot deadlock on a full pipe.
+2. Its bounded wait polls `try_wait()` until a caller-supplied test-local deadline. `Ok(Some(status))` establishes exit proof. `Ok(None)` at deadline and `Err(_)` both go through bounded best-effort `kill` + bounded `try_wait` reap before returning/panicking as harness failure. Do not call blocking `wait()`/`wait_with_output()` while exit is unproven.
+3. After direct-child exit is proven, collect the stdout/stderr drain results through a bounded receive/join step and construct/preserve the same `std::process::Output`-equivalent evidence (`status`, `stdout`, `stderr`). Keep current assertions and JSON/human-output checks unchanged.
+4. Use that owner for **both** sides of the two real server/client tests: start the captured server, run the captured client with its own deadline, then bounded-wait the server. For `executable_rejects_unsupported_only_negotiation_before_noise_or_data`, only the server owner needs replacement; keep its already-bounded socket startup/read oracle intact.
+5. The deterministic negative regression can use the actual `neko-cli multistream --mode server` with valid temporary identity/key material on an unused loopback port and intentionally provide **no client**. The helper must reach its local deadline, terminate/reap the still-blocked server, and return/fail within the bound. This avoids shell/platform-specific sleeper dependencies and directly exercises the owner shape under review.
+6. The existing 50 ms startup sleep is not a lifetime proof. It may remain only as scheduling/race mitigation if current positive tests still need it; do not cite it as closure evidence and do not redesign product readiness semantics in this slice.
+7. Keep the helper local and small. Do not move it into production code, do not create a repository-wide process framework, and do not rewrite fast pre-network/config/keygen `.output()` calls merely for symmetry.
+
+This is an implementation-shape refinement of H-I4-106, not a new finding and not a scope expansion. After the repair/provenance commit, continue directly to the remaining process/socket/thread ownership sweep.
+
 ## Rolling queue — keep continuous after H-I4-106
 
 Do not collapse this to one ticket. Dependency-ready order:
