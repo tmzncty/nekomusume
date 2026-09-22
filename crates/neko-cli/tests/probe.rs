@@ -1631,6 +1631,9 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     // Mutation guard: this token is only true once the barrier returned Ok —
     // moving the post snapshot above the barrier call leaves it false and
     // fails the snapshot block deterministically, independent of log counting.
+    // It is only read by the Linux-only /proc snapshot, so it is cfg'd to
+    // Linux to keep non-Linux Unix builds warning-clean.
+    #[cfg(target_os = "linux")]
     let barrier_complete = true;
     // Reaching this point proves the sends completed — the baseline must
     // already be captured while churn_started was still false.
@@ -1785,6 +1788,73 @@ fn malformed_classification_barrier_fails_bounded_when_events_missing() {
         "barrier must fail within bound, elapsed={elapsed:?}"
     );
     // The child was killed and reaped by the barrier; verify cleanup.
+    fs::remove_file(&sp).unwrap();
+    fs::remove_file(&cp).unwrap();
+    assert!(!sp.exists());
+    assert!(!cp.exists());
+}
+
+#[test]
+#[cfg(unix)]
+fn malformed_classification_barrier_fails_bounded_on_early_stdout_eof() {
+    // H-I4-091 negative regression for the EOF ownership path: when the child
+    // exits before emitting the required classifications, the barrier must
+    // return Err on the Ok(None) branch, reap the child, and join the reader —
+    // not leave a stray process or strand the reader.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("preauth-churn-server");
+    let cp = tmp("preauth-churn-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--server-key",
+            &sk,
+            "--count",
+            "1",
+            "--bytes",
+            "16",
+            // 1-second duration: the server exits on failover timeout, closing
+            // its stdout — the barrier sees EOF before any classification.
+            "--duration",
+            "1",
+            "--diagnostic",
+            "--experiment-id",
+            "preauth-churn-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let ReadyServer { child, stdout, .. } = server;
+    let start = std::time::Instant::now();
+    let result = malformed_classification_barrier(child, stdout, 1, Duration::from_secs(10));
+    let elapsed = start.elapsed();
+    assert!(result.is_err(), "barrier must fail on early stdout EOF");
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "barrier must fail within bound, elapsed={elapsed:?}"
+    );
     fs::remove_file(&sp).unwrap();
     fs::remove_file(&cp).unwrap();
     assert!(!sp.exists());
