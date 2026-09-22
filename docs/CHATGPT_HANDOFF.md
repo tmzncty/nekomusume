@@ -1,59 +1,47 @@
-# ChatGPT reviewer handoff — H-I4-103 barrier-success reader join HIGH FRONT
+# ChatGPT reviewer handoff — H-I4-104 periodic readiness HIGH FRONT
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Code, tests, reachable pushed commits and current specs outrank this handoff, chat memory and stale checkbox state.
-- Reviewer exact-current source/spec anchor before the new finding: `33085124fc30acbe15183bcaa9b0478ef5c50ed3`. Reviewer finding commit: `657381d4c5bee7dac5a0eb62c8de8ddfc3bf43fe` (`docs(review): flag H-I4-103 unbounded barrier reader success join`).
-- Developer-owned H-I4-102 source/test commit `319ac5d8caa7c245c35e4477bb3cf707ffb4fee2` is accepted on its original claim: `bounded_reap_or_kill` now routes its own initial `try_wait()` error through `bounded_kill_reap` before explicit failure. Developer-local exact-tree provenance is `docs/notes/h-i4-102-provenance-319ac5d-20260922.md`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, 2026-09-22T15:50:41Z → 15:56:25Z, Linux x86_64, rustc 1.98.0 stable. No GitHub-hosted workflow/status was visible for exact `319ac5d` during this reviewer pass. This is developer-reported local provenance, not reviewer-local execution.
-- **H-I4-103 is CLOSED** at `d2aa63b3b02f988a580919f397fabd6db65e4bcf`: after `malformed_classification_barrier` succeeds, the post-barrier `reader_handle.join()` now follows `bounded_wait_exit` — child exit makes stdout EOF so the `read_line` loop returns and the join is EOF-bounded. `barrier_success_reader_join_bounded_when_child_lives_and_silent` proves bounded join after the barrier count is satisfied. Exact-tree provenance: `docs/notes/h-i4-103-provenance-d2aa63b-20260922.md` — `check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-22T16:50:41Z → 16:56:35Z, Linux x86_64, rustc 1.98.0.
-- H-I4-097..102 remain closed on their original bounded process-cleanup claims absent a new exact-current counterexample. H-I4-090..095 remain closed on their malformed-resource causality/cfg proof surfaces absent owner change or falsification.
-- Candidate A (future/unsent `Recovery::on_ack`) and Candidate B (mixed datagram drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
+- Reviewer exact-current source/spec anchor before H-I4-104: `a179b4c05c4291d44be35c5fbf33aab6ff53cbc9`. Reviewer finding commit: `dbb6d94190dda3c03a5ca2ffb168d039e1e0e88e` (`docs(review): flag H-I4-104 unbounded periodic readiness wait`).
+- **H-I4-103 is CLOSED** at developer-owned `d2aa63b3b02f988a580919f397fabd6db65e4bcf`: after `malformed_classification_barrier` succeeds, post-barrier reader join now follows bounded child-exit observation, and `barrier_success_reader_join_bounded_when_child_lives_and_silent` exercises the live-silent child shape. Exact-tree developer-local provenance is `docs/notes/h-i4-103-provenance-d2aa63b-20260922.md`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, 2026-09-22T16:50:41Z → 16:56:35Z, Linux x86_64, rustc 1.98.0 stable. No GitHub-hosted workflow/status was visible for exact `d2aa63b` during this reviewer pass. This is developer-reported local provenance, not reviewer-local execution.
+- H-I4-097..103 remain closed on their original process-cleanup claims except where a new exact-current counterexample explicitly reopens a distinct owner. H-I4-090..095 remain closed on malformed-resource causality/cfg proof surfaces absent owner change/falsification.
+- Candidate A (`Recovery::on_ack` future/unsent ACK) and Candidate B (`record_datagrams` mixed drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
 - `SessionRuntime.events` retained-history capacity and D019 source-retention/no-reset remain maintainer/security policy gates. Do not invent TTL/LRU/history-size/capacity/security values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely for freshness.
 
-## FRONT HIGH — H-I4-103 barrier-success reader join CLOSED at `d2aa63b`
+## FRONT HIGH — H-I4-104 `start_periodic_server` readiness is not harness-bounded
 
 ### Concrete defect
 
-Exact-current `crates/neko-cli/tests/probe.rs::malformed_classification_barrier(...)` runs the child stdout `read_line()` loop in a reader thread and uses a bounded `recv_timeout` while counting the required malformed classifications. On success it drops the receiver and returns the still-live `child`, the `reader_handle`, and `BarrierProof`.
+Exact-current `crates/neko-cli/tests/probe.rs::start_periodic_server(...)` still spawns the periodic server and then waits for `periodic_server_ready` with a raw main-thread `BufRead::read_line()` loop. Unlike the already-hardened `wait_for_ready_marker(...)` path used by other process-test owners, this readiness edge has no channel timeout, independent harness deadline or bounded cleanup.
 
-Dropping the receiver does not wake a thread already blocked in `read_line()`. The reader exits only after another stdout line lets `tx.send(...)` observe the disconnected receiver, or after EOF/read error.
+A live child that keeps stdout open but never emits a complete readiness marker can therefore block `read_line()` indefinitely. The helper has not returned yet, so `finish_server`, `bounded_wait_exit`, `bounded_reap_or_kill` and their cleanup proofs are unreachable.
 
-The positive malformed-churn test later runs the authenticated failover client and then immediately executes:
+The command's nominal `--duration 5` is runtime behavior under test, not an independent harness bound. A lifecycle/readiness regression that also prevents nominal exit must become bounded negative evidence rather than a hung test. This helper is shared by multiple periodic Session tests (delayed confirmations, key update, schedule mismatch, missing/duplicate ACK, setup timeout and malformed setup), so the defect is a shared process-test owner.
 
-```rust
-let (stdout, barrier_lines) = reader_handle.join().expect("reader thread joinable");
-```
-
-This raw join occurs **before** any bounded child-exit observation or `finish_server(...)` cleanup. The comment assumes the client run necessarily caused another server stdout line, but that is not a harness-local proof. A lifecycle/diagnostic regression in which the client returns while the server remains live and emits no additional stdout strands the reader and blocks `join()` indefinitely instead of producing bounded negative evidence.
-
-A deterministic counterexample can be built test-locally without protocol or network-policy change: a child emits exactly the required `malformed_or_unadmitted` line, then stays alive and silent with stdout open. The barrier succeeds; a raw join cannot complete until the child/pipe changes state.
-
-This is item-4 / release-evidence process-harness correctness. It is not evidence of a production Session/Carrier/ACK/crypto/wire defect.
-
-Full finding: `docs/reviews/reviewer-h-i4-103-barrier-reader-success-join-20260922.md`.
+Full finding: `docs/reviews/reviewer-h-i4-104-periodic-readiness-boundedness-20260922.md`.
 
 ### Closure contract
 
-1. Remove the direct unbounded post-barrier success `reader_handle.join()`. Join only after child exit/pipe closure is mechanically established, or after reader completion is itself observed through a local bound.
-2. If the bound expires while child/reader ownership is unresolved, fail closed through the existing bounded process cleanup path before any final join. Reuse existing helpers or a minimal test-local helper; do not create a generic process framework.
-3. Add a deterministic negative regression: satisfy the barrier count, then keep the child alive with stdout open and emit no additional line. The regression must terminate within its local bound and converge child/reader ownership instead of hanging.
-4. Preserve H-I4-090..095: READY-derived baseline, `churn_started`, `ATTEMPTS`, barrier-derived post proof, Linux-only affirmative `/proc` measurement, existing FD/RSS margins, and the final authenticated success/lifecycle assertions.
-5. Preserve H-I4-097..102 cleanup behavior. No runtime/session/wire/crypto semantic change and no new timeout/capacity/security policy values.
-6. No decoder/parser/crypto-framing change is implicated; do not run fuzz mechanically.
-7. Final pushed source/test SHA: run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist developer-local exact-tree provenance with reachable SHA, UTC start/end, exit codes, OS/arch and stable Rust.
-8. Continue immediately into the next process ownership slice after closure; do not wait for reviewer cadence and do not declare repository-wide queue exhaustion from this narrow repair.
+1. Replace the raw readiness `read_line()` loop in `start_periodic_server` with the existing bounded readiness primitive (`wait_for_ready_marker`) or a strictly equivalent narrow wrapper. Preserve the `ReadyServer` startup-log/stdout ownership and exact `periodic_server_ready` marker semantics.
+2. Reuse an existing test-local readiness bound. Do not add a new repository-wide timeout, capacity or security-policy value.
+3. Add a focused deterministic negative regression for this owner: child remains live with stdout open but silent / never completes the readiness marker; periodic readiness must fail within its local bound and converge child/reader ownership. If the caller delegates completely to an already-covered helper, keep the caller-specific regression minimal rather than building a generic process framework.
+4. Preserve H-I4-097..103 cleanup behavior and H-I4-090..095 causality/cfg proofs. Do not weaken `ReadyProof` / `BarrierProof`, FD/RSS margins, `ATTEMPTS`, post-release diagnostic checks or authenticated lifecycle assertions.
+5. No decoder/parser/crypto-framing change is implicated; do not run fuzz mechanically.
+6. Final pushed source/test SHA: run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist developer-local exact-tree provenance with reachable SHA, UTC start/end, exit codes, OS/arch and stable Rust.
+7. Continue immediately into the next process ownership slice after closure; do not wait for reviewer cadence and do not declare repository-wide queue exhaustion from this narrow repair.
 
-## Rolling queue — keep continuous after H-I4-103
+## Rolling queue — keep continuous after H-I4-104
 
 Do not collapse this to one ticket. Dependency-ready order:
 
-1. **H-I4-103 repair + deterministic negative regression + exact-tree provenance** — current FRONT HIGH.
-2. **Remaining process wait/output ownership causal sweep.** Re-read every exact-current `try_wait`, direct/indirect `wait`, `wait_with_output`, `.output()`, stdout/stderr drain, reader-thread `join`, channel timeout and child-ownership site in `crates/neko-cli/tests/probe.rs` and other process-test owners. Classify each as exit-proven, success-path self-bounded, or failure-path externally bounded. Repair only concrete unproven-exit/hang counterexamples; do not turn ordinary synchronous CLI calls into a process framework without a real control-flow defect.
-3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..103 with exact-current helper/cfg semantics. Keep Linux-local execution, macOS/BSD source/cfg reasoning and Windows claims separate.
+1. **H-I4-104 repair + caller-specific bounded negative regression + exact-tree provenance** — current FRONT HIGH.
+2. **Remaining process wait/output/join ownership causal sweep.** Re-read exact-current direct/indirect `try_wait`, `wait`, `wait_with_output`, `.output()`, stdout/stderr drain, reader `join`, channel timeout and child-ownership sites in `crates/neko-cli/tests/probe.rs` and other process-test owners. Classify each as exit-proven, success-path self-bounded, or failure-path externally bounded. Repair only concrete unproven-exit/hang counterexamples; ordinary synchronous CLI calls are not automatically defects.
+3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..104 with exact-current helper/cfg semantics. Keep Linux-local execution, macOS/BSD source/cfg reasoning and Windows claims separate.
 4. **Algorithmic/resource boundedness reconciliation.** Reconcile accepted boundedness reviews with current channel bounds, stdout accumulation, cleanup deadlines, reader lifetime and child ownership. No capacity-pressure benchmark and no invented policy/security values.
-5. **Release packet / item-4 factual reconciliation.** Qualify any stale statement that all process failure paths are bounded or that the repository queue is exhausted. Retain valid H-I4-090..102 boundaries. Do not promote local process tests to WAN/performance/security approval.
+5. **Release packet / item-4 factual reconciliation.** Qualify stale statements that all process failure paths are bounded or that the repository queue is exhausted. Retain valid H-I4-090..103 boundaries. Do not promote local process tests to WAN/performance/security approval.
 6. **Pre-auth malformed/rejection accounting exact-current reuse challenge.** Reuse prior independent review only where owner source/tests remain unchanged; otherwise narrowly re-challenge changed ownership. D019 remains a policy gate.
 7. **CLI diagnostic / exit-code / JSON / human-output boundary exact-current reuse challenge.** Diagnostics remain evidence-only and never authentication/Delivery/Path/ACK evidence.
 8. **Package/build/reproducibility spot re-challenge.** Verify process-test repairs do not stale manifests/scripts/provenance assumptions. Do not invent signing/SBOM/key-custody policy.
@@ -68,8 +56,8 @@ If several coherent slices complete in 10–30 minutes with stable quality, deep
 
 At each meaningful repository-wide refill, explicitly ask whether each surface has a reachable, dedicated, independent bounded review that remains valid on current owners:
 
-1. `neko-reliable` UDP recovery — ACK range/future-unsent ACK/loss/retransmit/RTT/PTO/persistent congestion/Reno/fault simulation;
-2. `neko-carrier::CarrierState` — generation/validation/hysteresis/single-active/drain/fail/activate;
+1. `neko-reliable` UDP recovery — ACK range, future/unsent ACK, loss/retransmit, RTT/PTO, persistent congestion, Reno, fault simulation;
+2. `neko-carrier::CarrierState` — generation, validation, hysteresis, single-active, drain/fail/activate;
 3. Concurrent Carrier Manager / health / migration-back;
 4. FairScheduler / multi-stream / session+stream flow-control accounting;
 5. Memory/UDP/TCP carrier adapter close/error/resource semantics;
@@ -79,26 +67,16 @@ At each meaningful repository-wide refill, explicitly ask whether each surface h
 9. Cargo manifests/lock/features/build/native hooks/unsafe inheritance;
 10. cross-platform CLI/process-test semantics;
 11. CLI exit-code / JSON / human-output contract;
-12. algorithmic resource boundedness, without capacity-pressure benchmarking or invented policy numbers;
+12. algorithmic resource boundedness without capacity-pressure benchmarks or new policy values;
 13. release-packet factual consistency and evidence boundary.
 
-A bounded no-finding challenge is valid item-4 support. If a concrete defect is found, convert it immediately into the repair lane rather than manufacturing checker/docs work.
+A bounded no-finding review is valid item-4 support when it identifies inspected owners, challenged invariant, deterministic checks/commands, exclusions and an exact reachable anchor. Do not create checker/schema/framework/docs churn merely to manufacture a slice.
 
-## VPS / live boundary
+## Evidence discipline
 
-Current classification remains `READY_LIVE: none`.
-
-- IPv6 remains environment-blocked unless a real owned IPv6 endpoint/path appears.
-- HY2 and repeated warm-failover current lines remain frozen against same-class retry without a materially new hypothesis.
-- Periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD and Experimental Track are not repeated for freshness when their bounded question is already answered or the current line is frozen/blocked.
-- Standing authorization permits bounded self-owned client<->VPS ordinary TCP/UDP work only when a real new question becomes READY. It does not authorize third-party targets, production route/firewall/DNS/proxy/tunnel/qdisc changes, privileged/exotic-carrier work reserved by the authorization file, or pressure/adversarial-load conditions requiring maintainer choice.
-
-## Evidence discipline retained
-
-Developer-reported local CI, persisted local provenance, reviewer-local execution, GitHub-hosted CI, live WAN evidence and performance conclusions are distinct evidence classes. All shared exact-tree provenance anchors must be reachable pushed commits. No unpublished/local-only SHA becomes repository evidence. No secret, protected identity, private topology or unnecessary absolute path belongs in provenance.
-
-This reviewer H-I4-103 pass is exact-current GitHub source/control-flow review only; no reviewer-local Rust/full-gate, cross-platform execution, fuzz, WAN or performance execution is claimed.
-
-## Stop / escalation conditions
-
-Normal progress does not require administrator notification. Escalate only for an automatically undecidable BLOCKER/HIGH, core Session/Carrier/ACK/crypto/wire architecture decision, D019 or another genuine policy/value choice, destructive/canonical migration, action outside standing authorization, third-party/production/new-credential permission, maintainer-selected adversarial-load/benchmark conditions, or entry into a genuinely new release stage.
+- Developer-reported local CI, repository-persisted provenance, reviewer source review, hosted CI, live WAN evidence and performance conclusions are distinct evidence classes.
+- Accepted exact-tree provenance must anchor a GitHub-resolvable pushed SHA. Never publish a local-only/unreachable SHA as shared exact-tree evidence.
+- Hosted Actions are cross-evidence, not a wait condition and not a replacement for the developer-local clean exact-tree gate.
+- Fuzz only when wire decoder/parser/crypto framing changes materially.
+- Standing VPS authorization permits bounded self-owned TCP/UDP lab work, but current authoritative classification remains `READY_LIVE: none`; no repeat live run without a new concrete question.
+- Never decide D019, capacity/TTL/LRU/history/security values, signing/key-custody/SBOM/publication policy, core Session/Carrier/ACK/crypto/wire architecture, destructive/canonical migration, RC/freeze/release/production authority.
