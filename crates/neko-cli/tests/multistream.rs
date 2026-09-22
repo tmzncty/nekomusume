@@ -394,7 +394,26 @@ fn executable_rejects_one_byte_different_negotiation_binding_before_session_data
     let port = listener.local_addr().unwrap().port();
 
     let peer = thread::spawn(move || {
-        let (mut socket, _) = listener.accept().unwrap();
+        // H-I4-105: bounded accept + read deadline so a never-connecting or
+        // never-framing peer cannot strand the join.
+        listener.set_nonblocking(true).unwrap();
+        let accept_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let (mut socket, _) = loop {
+            match listener.accept() {
+                Ok(conn) => break conn,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        std::time::Instant::now() < accept_deadline,
+                        "tcp peer accept timed out"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(e) => panic!("tcp peer accept failed: {e}"),
+            }
+        };
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
         let hello = frame_read(&mut socket).unwrap();
         let mut negotiation =
             VersionNegotiator::new(NegotiationRole::Server, &[NEGOTIATION_VERSION]).unwrap();

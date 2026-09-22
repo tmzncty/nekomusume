@@ -6,7 +6,7 @@ use neko_wire::{NEGOTIATION_VERSION, NegotiationRole, VersionNegotiator};
 use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
-    net::{TcpListener, UdpSocket},
+    net::{TcpListener, TcpStream, UdpSocket},
     path::PathBuf,
     process::{Child, Command, Stdio},
     thread,
@@ -316,6 +316,25 @@ fn bounded_wait_exit(
     }
 }
 
+/// H-I4-105: bounded TCP accept — polls `accept()` against a deadline so a
+/// client regression that never connects cannot strand the peer thread.
+fn bounded_accept(listener: TcpListener, timeout: Duration) -> TcpStream {
+    listener.set_nonblocking(true).unwrap();
+    let deadline = Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok((socket, _)) => return socket,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    panic!("bounded_accept: no connection within bound");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => panic!("bounded_accept: accept failed: {e}"),
+        }
+    }
+}
+
 fn malformed_classification_barrier(
     mut child: Child,
     stdout: BufReader<std::process::ChildStdout>,
@@ -501,6 +520,28 @@ fn start_periodic_server_bounded_when_binary_exits_silently() {
     assert!(
         result.is_err(),
         "silently exiting binary must make periodic readiness wait panic"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn bounded_accept_fails_within_bound_when_never_connected() {
+    // H-I4-105 negative regression: a listener whose peer never connects must
+    // make bounded_accept panic within its deadline — the join is provably
+    // bounded.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let start = std::time::Instant::now();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bounded_accept(listener, Duration::from_secs(1))
+    }));
+    let elapsed = start.elapsed();
+    assert!(
+        result.is_err(),
+        "never-connected listener must make bounded_accept panic"
+    );
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "bounded_accept must fail within bound, elapsed={elapsed:?}"
     );
 }
 
@@ -1005,7 +1046,9 @@ fn matrix_probe_distinguishes_invalid_failed_and_reachable_outcomes() {
 
     let tcp = TcpListener::bind("127.0.0.1:0").unwrap();
     let tcp_addr = tcp.local_addr().unwrap();
-    let tcp_peer = thread::spawn(move || tcp.accept().unwrap());
+    // H-I4-105: bounded accept so a peer never connected-to cannot strand the
+    // join.
+    let tcp_peer = thread::spawn(move || bounded_accept(tcp, Duration::from_secs(5)));
     let before_tcp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1042,6 +1085,9 @@ fn matrix_probe_distinguishes_invalid_failed_and_reachable_outcomes() {
 
     let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
     let udp_addr = udp.local_addr().unwrap();
+    // H-I4-105: read timeout before the first recv so a peer never sent to
+    // cannot strand the join.
+    udp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     let udp_peer = thread::spawn(move || {
         let mut buf = [0u8; 1200];
         let (n, peer) = udp.recv_from(&mut buf).unwrap();
@@ -6609,7 +6655,12 @@ fn tcp_and_udp_transcript_mismatch_rejects_before_application_echo() {
             }]);
             if transport == "tcp" {
                 let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
-                let (mut socket, _) = listener.accept().unwrap();
+                // H-I4-105: bounded accept + read deadline so a never-connecting
+                // or never-framing peer cannot strand the join.
+                let mut socket = bounded_accept(listener, Duration::from_secs(5));
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
                 let hello = frame_read_test(&mut socket);
                 let mut negotiation =
                     VersionNegotiator::new(NegotiationRole::Server, &[NEGOTIATION_VERSION])
@@ -6633,6 +6684,11 @@ fn tcp_and_udp_transcript_mismatch_rejects_before_application_echo() {
                 assert!(handshake.receive_first(&first, test_context()).is_err());
             } else {
                 let socket = UdpSocket::bind(("127.0.0.1", port)).unwrap();
+                // H-I4-105: read timeout before recv_from — a peer never sent
+                // to cannot strand the join.
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
                 let mut buf = [0; 2048];
                 let (n, peer) = socket.recv_from(&mut buf).unwrap();
                 let mut negotiation =
@@ -6686,7 +6742,12 @@ fn tcp_and_udp_reject_unsupported_selected_version_before_noise() {
         let peer = thread::spawn(move || {
             if transport == "tcp" {
                 let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
-                let (mut socket, _) = listener.accept().unwrap();
+                // H-I4-105: bounded accept + read deadline before first frame
+                // read so a never-connecting peer cannot strand the join.
+                let mut socket = bounded_accept(listener, Duration::from_secs(5));
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
                 assert_eq!(frame_read_test(&mut socket), [b'N', b'1', 1, 1, 0, 0]);
                 frame_write_test(&mut socket, &[b'N', b'1', 2, 0, 0, 1]);
                 socket
