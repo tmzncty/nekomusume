@@ -125,9 +125,36 @@ fn start_server_for(
 }
 
 fn finish_server(mut server: ReadyServer) -> (std::process::ExitStatus, String) {
-    let mut remainder = String::new();
-    server.stdout.read_to_string(&mut remainder).unwrap();
-    let status = server.child.wait().unwrap();
+    // H-I4-099: do not block in stdout drain or wait() while the child is
+    // unproven-exited. Move the stdout drain off-thread and bound the
+    // child-exit wait; on deadline fail closed via bounded_reap_or_kill.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<String>(1);
+    let mut stdout = server.stdout;
+    thread::spawn(move || {
+        use std::io::Read;
+        let mut remainder = String::new();
+        let _ = stdout.read_to_string(&mut remainder);
+        let _ = tx.send(remainder);
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        match server.child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    bounded_reap_or_kill(server.child);
+                    panic!("finish_server: child did not exit within bound");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => {
+                panic!("finish_server: try_wait failed: {e}");
+            }
+        }
+    };
+    let remainder = rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap_or_else(|_| panic!("finish_server: stdout reader did not finish after child exit"));
     server.startup_log.push_str(&remainder);
     (status, server.startup_log)
 }
@@ -410,6 +437,38 @@ fn ready_endpoint_rebind_bounded_when_child_closes_stdout_but_stays_alive() {
     assert!(
         elapsed < Duration::from_secs(10),
         "readiness wait must fail within bound, elapsed={elapsed:?}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn finish_server_bounded_when_child_keeps_stdout_open_and_lives() {
+    // H-I4-099 negative regression: a child that keeps stdout open while
+    // staying alive must make finish_server fail within a bounded interval
+    // rather than hang in read_to_string/wait.
+    let mut child = Command::new("sleep")
+        .arg("30")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let stdout = BufReader::new(child.stdout.take().unwrap());
+    let server = ReadyServer {
+        child,
+        stdout,
+        startup_log: String::new(),
+        ready_proof: ReadyProof { _private: () },
+    };
+    let start = std::time::Instant::now();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| finish_server(server)));
+    let elapsed = start.elapsed();
+    assert!(
+        result.is_err(),
+        "live child with open stdout must make finish_server panic, not hang"
+    );
+    assert!(
+        elapsed < Duration::from_secs(15),
+        "finish_server must fail within bound, elapsed={elapsed:?}"
     );
 }
 
