@@ -1,78 +1,51 @@
-# ChatGPT reviewer handoff — H-I4-106 multistream process ownership HIGH FRONT
+# ChatGPT reviewer handoff — H-I4-107 multistream helper failure-ownership HIGH FRONT
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Code, tests, reachable pushed commits and current specs outrank this handoff, chat memory and stale checkbox state.
-- **H-I4-106 is CLOSED** at `a5e80bb85948419e20a01430ee8381bf475fa3bd`: `bounded_wait_with_output` polls `try_wait` against a caller-supplied deadline; on expiry it kills and poll-reaps so a lifecycle regression becomes bounded failure instead of an unbounded `wait_with_output`. Three owners converted: `bounded_tcp_multistream_loopback`, `unauthorized_client_is_rejected_by_allowlist`, `executable_rejects_unsupported_only_negotiation_before_noise_or_data`. Exact-tree provenance: `docs/notes/h-i4-106-provenance-a5e80bb-20260922.md` — `check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-22T22:50:56Z → 22:56:40Z, Linux x86_64, rustc 1.98.0.
-- **H-I4-105 is CLOSED** at developer-owned `af214408e8350e95723e3d855b1786da738588b3`: auxiliary peer workers now bound listener accept / first UDP receive / accepted-stream frame reads before the main test joins them. Persisted developer-local exact-tree provenance: `docs/notes/h-i4-105-provenance-af21440-20260922.md` (`PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, Linux x86_64, stable Rust). No exact-`af214408` hosted workflow/status was visible in the reviewer pass that opened H-I4-106; do not relabel developer-local provenance as hosted or reviewer-local execution.
+- **H-I4-106 direct owner defect is closed on its normal path** by developer-owned `a5e80bb85948419e20a01430ee8381bf475fa3bd`, with follow-up deterministic timeout regression `f3093d5a6c5ec063d29f08b0eada0a4afee6a538`. The three original `wait_with_output()` server owners in `crates/neko-cli/tests/multistream.rs` now use `bounded_wait_with_output`; developer-local exact-tree provenance is `docs/notes/h-i4-106-provenance-a5e80bb-20260922.md` (`PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, Linux x86_64, rustc 1.98.0 stable). No exact-`a5e80bb` hosted workflow/status was visible in the reviewer pass that opened H-I4-107; do not relabel this as hosted or reviewer-local execution.
+- **H-I4-107 is OPEN HIGH** at reviewer anchor `0dfed87fc96f1427e333f8d42dde34f96a31ae2a`: the new `bounded_wait_with_output` helper is wall-clock bounded on its ordinary timeout path but still abandons unresolved child/pipe ownership on `try_wait`/cleanup error branches. Full finding: `docs/reviews/reviewer-h-i4-107-bounded-wait-helper-error-ownership-20260923.md`.
 - H-I4-097..105 remain closed on their original child/readiness/barrier/socket-thread ownership claims except where an exact-current counterexample identifies a distinct owner. H-I4-090..095 remain closed on malformed-resource causality/cfg proof surfaces absent owner change/falsification.
 - Candidate A (`Recovery::on_ack` future/unsent ACK) and Candidate B (`record_datagrams` mixed drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
 - `SessionRuntime.events` retained-history capacity and D019 source-retention/no-reset remain maintainer/security policy gates. Do not invent TTL/LRU/history-size/capacity/security values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely for freshness.
 
-## FRONT HIGH — H-I4-106 bounded multistream product-process ownership
+## FRONT HIGH — H-I4-107 bounded helper error-path ownership
 
 ### Concrete defect
 
-The H-I4-105 auxiliary-peer repair is valid, but the remaining ownership sweep found a distinct real-process owner in `crates/neko-cli/tests/multistream.rs`.
+Exact-current `crates/neko-cli/tests/multistream.rs::bounded_wait_with_output` starts stdout/stderr `read_to_end` threads before proving child exit and then has two ownership-invalid failure paths:
 
-At reviewed source anchor `945d03dbf1b671811be498b769873349120c2b4c`:
+1. **Outer `try_wait Err`** immediately executes `panic!("try_wait failed: {e}")`. Child exit is unproven, no bounded termination/reap is attempted, and both pipe readers may still be blocked on a live child.
+2. **Deadline cleanup** executes `let _ = child.kill()` and then treats `Ok(Some(_)) | Err(_)` from the reap-side `try_wait()` identically. Therefore `kill` failure is ignored and `try_wait Err` is incorrectly accepted as if reap/exit were established. The helper then panics before joining the readers; if the child still owns the write ends, pipe ownership is unresolved.
 
-1. `bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced`
-   - spawns the real multistream server;
-   - runs the real client through synchronous `Command::output()`;
-   - then calls `server.wait_with_output()`;
-   - neither child lifetime is independently bounded by the test harness. The 50 ms startup sleep is not a readiness/lifetime proof.
-2. `unauthorized_client_is_rejected_by_allowlist`
-   - has the same real-server + real-client `.output()` / `wait_with_output()` ownership shape without an independent deadline.
-3. `executable_rejects_unsupported_only_negotiation_before_noise_or_data`
-   - bounds its direct socket startup/read observation, but then calls `server.wait_with_output()` with no independent child-exit deadline. A server that closes/resets the tested socket but remains alive would strand the gate.
+`f3093d5` proves the ordinary no-client deadline branch fails within a finite bound when kill/reap behave normally. It does not exercise or prove the error branches above.
 
-Invariant: a built-binary/process integration test must have a harness-local completion bound independent of the product behavior whose termination is under test. A lifecycle/protocol regression must become bounded negative evidence, not an indefinitely hung item-4 gate.
-
-This does **not** mean every synchronous `.output()` is automatically defective. The finding is limited to exact-current networked multistream child owners for which no separate finite exit proof exists. Exact-current `crates/neko-cli/src/multistream.rs` uses blocking TCP/framed I/O as part of the semantics under test and does not provide an outer wall-clock proof that can substitute for a harness deadline.
-
-The earlier `49925acf7d2d77595562d9ad3327f4b145a31fd1` cross-platform process no-finding does not close this surface: its declared owners were `probe.rs` readiness/cleanup helpers plus `main.rs`/manifest portability, not these `tests/multistream.rs` real child lifecycle waits.
+Invariant: a bounded process helper must be ownership-truthful on every branch. `try_wait Err`, `kill Err`, and post-kill `try_wait Err` do **not** establish child exit. A branch may report bounded cleanup failure, but it must not silently classify unresolved child/pipe ownership as converged.
 
 This is a release/item-4 **test-harness correctness HIGH**, not a production Session/Carrier/ACK/crypto/wire semantic finding.
 
 ### Closure contract
 
-1. Give the affected multistream child owners a narrow test-local deadline while retaining kill/reap ownership on timeout/error. Do not implement a timeout by moving `Command::output()` into an unkillable worker thread.
-2. Preserve stdout/stderr evidence without creating a pipe deadlock. If stdout/stderr are piped while the child is live, drain concurrently or use a strictly equivalent bounded pattern; blocking final drain is safe only after exit/pipe-closure proof.
-3. Timeout is harness failure only. After deadline, perform bounded best-effort termination/reap and fail closed.
-4. Add one deterministic negative regression for the common process-owner shape: intentionally keep a child/process alive past the local deadline and prove the helper returns/fails within its bound instead of hanging.
-5. Reuse a narrow helper where useful, but do not build a generic process framework or introduce repository-wide timeout/capacity/security policy numbers. Fast pre-network/config/keygen `.output()` calls are not in this finding unless a later source review produces a separate concrete counterexample.
-6. Preserve H-I4-090..105 closure semantics and exact negotiation/crypto/output assertions. No decoder/parser/crypto-framing implementation change is implicated; do not run fuzz mechanically.
-7. On the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm a clean tree, and persist developer-local exact-tree provenance with reachable SHA, UTC start/end, exit codes, OS/arch and stable Rust.
-8. Continue immediately into the next ownership/review slice after closure; do not wait for reviewer cadence and do not declare repository-wide queue exhaustion from this repair.
+1. Keep the H-I4-106 normal deadline semantics and three converted call sites.
+2. Initial `try_wait Err` must enter bounded best-effort terminate/reap before failing; do not immediately panic with unresolved child ownership.
+3. Deadline cleanup must not ignore `kill()` result and must not treat post-kill `try_wait Err` as `Ok(Some)`. Preserve truthful classes: exit proven; bounded cleanup succeeded; bounded cleanup itself failed / exit unproven.
+4. Do not block on stdout/stderr drain joins while exit/pipe closure is unproven. If cleanup itself fails and a live child may still own the write ends, fail closed without falsely claiming drain convergence. Prefer the smallest test-local repair; do not build a generic process framework.
+5. Add focused regression coverage where portable. If forcing real OS `try_wait`/`kill` failures would require unsafe/kernel fault injection, source-level ownership proof plus the existing deterministic live-child timeout regression is acceptable; do not manufacture brittle platform tricks.
+6. Preserve current multistream negotiation/crypto/JSON/human-output assertions. No decoder/parser/crypto-framing implementation change is implicated; do not run fuzz mechanically.
+7. On the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist developer-local exact-tree provenance with reachable SHA, UTC start/end, exit codes, OS/arch and stable Rust.
+8. Continue immediately into the next ownership/review slice after closure; do not wait for reviewer cadence and do not infer repository-wide queue exhaustion from this helper repair.
 
-### Stagnation assist — concrete narrow implementation shape
-
-`main` remained at the reviewer handoff without a developer-owned H-I4-106 commit across multiple reviewer opportunities. Per `AGENTS.md` §3.2, treat that as implementation stagnation, not as a reason for both sides to wait. The invariant is already decided; no maintainer/policy choice is required.
-
-A minimal acceptable shape is test-local to `crates/neko-cli/tests/multistream.rs`:
-
-1. Introduce one small captured-child helper/struct that **retains the `Child` handle**. Spawn with `stdout`/`stderr` piped, immediately take both pipes, and drain them concurrently into bounded channels/buffers so a live child cannot deadlock on a full pipe.
-2. Its bounded wait polls `try_wait()` until a caller-supplied test-local deadline. `Ok(Some(status))` establishes exit proof. `Ok(None)` at deadline and `Err(_)` both go through bounded best-effort `kill` + bounded `try_wait` reap before returning/panicking as harness failure. Do not call blocking `wait()`/`wait_with_output()` while exit is unproven.
-3. After direct-child exit is proven, collect the stdout/stderr drain results through a bounded receive/join step and construct/preserve the same `std::process::Output`-equivalent evidence (`status`, `stdout`, `stderr`). Keep current assertions and JSON/human-output checks unchanged.
-4. Use that owner for **both** sides of the two real server/client tests: start the captured server, run the captured client with its own deadline, then bounded-wait the server. For `executable_rejects_unsupported_only_negotiation_before_noise_or_data`, only the server owner needs replacement; keep its already-bounded socket startup/read oracle intact.
-5. The deterministic negative regression can use the actual `neko-cli multistream --mode server` with valid temporary identity/key material on an unused loopback port and intentionally provide **no client**. The helper must reach its local deadline, terminate/reap the still-blocked server, and return/fail within the bound. This avoids shell/platform-specific sleeper dependencies and directly exercises the owner shape under review.
-6. The existing 50 ms startup sleep is not a lifetime proof. It may remain only as scheduling/race mitigation if current positive tests still need it; do not cite it as closure evidence and do not redesign product readiness semantics in this slice.
-7. Keep the helper local and small. Do not move it into production code, do not create a repository-wide process framework, and do not rewrite fast pre-network/config/keygen `.output()` calls merely for symmetry.
-
-This is an implementation-shape refinement of H-I4-106, not a new finding and not a scope expansion. After the repair/provenance commit, continue directly to the remaining process/socket/thread ownership sweep.
-
-## Rolling queue — keep continuous after H-I4-106
+## Rolling queue — keep continuous after H-I4-107
 
 Do not collapse this to one ticket. Dependency-ready order:
 
-1. **H-I4-106 repair + focused bounded process-owner negative regression + exact-tree provenance** — current FRONT HIGH.
-2. **Remaining process/socket/thread ownership causal sweep.** Re-read exact-current direct/indirect `try_wait`, `wait`, `wait_with_output`, `.output()`, socket `accept`/`recv`/`read_exact`, stdout/stderr drain, peer/reader `join`, channel timeout and child/thread ownership sites in `crates/neko-cli/tests/probe.rs`, `crates/neko-cli/tests/multistream.rs`, and other process-test owners. Classify each as exit/peer-completion-proven, success-path source-self-bounded, or failure-path externally bounded. Repair only concrete unproven hang counterexamples; ordinary synchronous CLI calls are not automatically defects.
-3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..106 with exact-current helper/cfg/socket/process semantics. Keep Linux-local execution, macOS/BSD source/cfg reasoning and Windows claims separate.
+1. **H-I4-107 repair + focused helper failure-ownership proof/regression + exact-tree provenance** — current FRONT HIGH.
+2. **Remaining process/socket/thread ownership causal sweep.** Re-read exact-current direct/indirect `try_wait`, `wait`, `wait_with_output`, `.output()`, socket `accept`/`recv`/`read_exact`, stdout/stderr drain, peer/reader `join`, channel timeout and child/thread ownership sites in `crates/neko-cli/tests/probe.rs`, `crates/neko-cli/tests/multistream.rs`, and other process-test owners. Classify each as exit/peer-completion-proven, success-path source-self-bounded, or failure-path externally bounded. Repair only concrete unproven hang/ownership counterexamples; ordinary synchronous CLI calls are not automatically defects.
+3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..107 with exact-current helper/cfg/socket/process semantics. Keep Linux-local execution, macOS/BSD source/cfg reasoning and Windows claims separate.
 4. **Algorithmic/resource boundedness reconciliation.** Reconcile accepted boundedness reviews with current channel/output bounds, stdout accumulation, cleanup deadlines, socket peer lifetime, reader lifetime and child/thread ownership. No capacity-pressure benchmark and no invented policy/security values.
-5. **Release packet / item-4 factual reconciliation.** Qualify stale statements that all process failure paths are bounded or that repository-wide review is exhausted. Retain valid H-I4-090..105 boundaries. Do not promote local process/socket tests to WAN/performance/security approval.
+5. **Release packet / item-4 factual reconciliation.** Qualify stale statements that all process failure paths are bounded or that repository-wide review is exhausted. Retain valid H-I4-090..106 boundaries. Do not promote local process/socket tests to WAN/performance/security approval.
 6. **Pre-auth malformed/rejection accounting exact-current reuse challenge.** Reuse prior independent review only where owner source/tests remain unchanged; otherwise narrowly re-challenge changed ownership. D019 remains a policy gate.
 7. **CLI diagnostic / exit-code / JSON / human-output boundary exact-current reuse challenge.** Diagnostics remain evidence-only and never authentication/Delivery/Path/ACK evidence.
 8. **Package/build/reproducibility spot re-challenge.** Verify recent process-test repairs do not stale manifests/scripts/provenance assumptions. Do not invent signing/SBOM/key-custody policy.
