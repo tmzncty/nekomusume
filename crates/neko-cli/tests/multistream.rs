@@ -12,6 +12,67 @@ use std::{
     time::Duration,
 };
 
+/// H-I4-106: bounded wait+collect for a spawned child. The nominal process
+/// duration is behavior under test, not a harness bound. Poll try_wait with
+/// a local deadline; on expiry kill and poll-reap so a lifecycle regression
+/// becomes bounded failure instead of an unbounded wait_with_output.
+fn bounded_wait_with_output(
+    child: &mut std::process::Child,
+    deadline: Duration,
+) -> std::process::Output {
+    // H-I4-106: drain both pipes concurrently off-thread so a live child can
+    // never deadlock on a full stdout/stderr buffer, and poll try_wait to a
+    // local deadline. On expiry kill + bounded reap before returning.
+    let mut stdout_child = child.stdout.take().unwrap();
+    let mut stderr_child = child.stderr.take().unwrap();
+    let stdout_handle = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout_child.read_to_end(&mut buf);
+        buf
+    });
+    let stderr_handle = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr_child.read_to_end(&mut buf);
+        buf
+    });
+    let end = std::time::Instant::now() + deadline;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if std::time::Instant::now() >= end {
+                    let _ = child.kill();
+                    let reap_end = std::time::Instant::now() + Duration::from_secs(3);
+                    loop {
+                        match child.try_wait() {
+                            Ok(Some(_)) | Err(_) => break,
+                            Ok(None) => {
+                                assert!(
+                                    std::time::Instant::now() < reap_end,
+                                    "child did not exit within bound after kill"
+                                );
+                                std::thread::sleep(Duration::from_millis(10));
+                            }
+                        }
+                    }
+                    panic!("child did not exit within bound");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => panic!("try_wait failed: {e}"),
+        }
+    };
+    // Exit proven — pipes are EOF-closed; join the drain threads (bounded by
+    // the already-established exit).
+    let stdout = stdout_handle.join().expect("stdout drain thread");
+    let stderr = stderr_handle.join().expect("stderr drain thread");
+    std::process::Output {
+        status,
+        stdout,
+        stderr,
+    }
+}
+
 fn connect_with_startup_deadline(addr: &str, deadline: Duration) -> TcpStream {
     let deadline_at = std::time::Instant::now() + deadline;
     loop {
@@ -58,7 +119,7 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let (server_identity, server_key) = identity(bin, "server");
     let (client_identity, client_key) = identity(bin, "client");
-    let server = Command::new(bin)
+    let mut server = Command::new(bin)
         .args([
             "multistream",
             "--mode",
@@ -80,6 +141,8 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
             "--client-key",
             &client_key,
         ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     thread::sleep(Duration::from_millis(50));
@@ -112,7 +175,7 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
         "{}",
         String::from_utf8_lossy(&client.stderr)
     );
-    let status = server.wait_with_output().unwrap();
+    let status = bounded_wait_with_output(&mut server, Duration::from_secs(10));
     assert!(
         status.status.success(),
         "{}",
@@ -152,7 +215,7 @@ fn unauthorized_client_is_rejected_by_allowlist() {
         .local_addr()
         .unwrap()
         .port();
-    let server = Command::new(bin)
+    let mut server = Command::new(bin)
         .args([
             "multistream",
             "--mode",
@@ -170,6 +233,8 @@ fn unauthorized_client_is_rejected_by_allowlist() {
             "--client-key",
             &allowed_key,
         ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     thread::sleep(Duration::from_millis(50));
@@ -194,7 +259,7 @@ fn unauthorized_client_is_rejected_by_allowlist() {
         .output()
         .unwrap();
     assert!(!client.status.success());
-    let status = server.wait_with_output().unwrap();
+    let status = bounded_wait_with_output(&mut server, Duration::from_secs(10));
     assert!(!status.status.success());
     for path in [server_identity, allowed_identity, unauthorized_identity] {
         let _ = fs::remove_file(path);
@@ -474,7 +539,7 @@ fn executable_rejects_unsupported_only_negotiation_before_noise_or_data() {
     let reservation = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = reservation.local_addr().unwrap().port();
     drop(reservation);
-    let server = Command::new(bin)
+    let mut server = Command::new(bin)
         .args([
             "multistream",
             "--mode",
@@ -511,7 +576,7 @@ fn executable_rejects_unsupported_only_negotiation_before_noise_or_data() {
         Ok(n) => panic!("server emitted {n} byte(s) after unsupported negotiation"),
         Err(error) => panic!("unexpected terminal-close error: {error}"),
     }
-    let output = server.wait_with_output().unwrap();
+    let output = bounded_wait_with_output(&mut server, Duration::from_secs(10));
     assert_uniform_handshake_rejection(&output);
     let _ = fs::remove_file(server_identity_path);
     let _ = fs::remove_file(client_identity_path);
