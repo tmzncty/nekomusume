@@ -133,12 +133,20 @@ fn finish_server(mut server: ReadyServer) -> (std::process::ExitStatus, String) 
 /// on success so ownership/log continuity is preserved.
 type BarrierReaderHandle = thread::JoinHandle<(BufReader<std::process::ChildStdout>, String)>;
 
+/// H-I4-092: proof value only obtainable via `malformed_classification_barrier`
+/// `Ok` — the post-barrier resource snapshot requires it, so a refactor that
+/// moves the snapshot above barrier success cannot compile.
+#[cfg(unix)]
+struct BarrierProof {
+    _private: (),
+}
+
 fn malformed_classification_barrier(
     mut child: Child,
     stdout: BufReader<std::process::ChildStdout>,
     attempts: usize,
     timeout: Duration,
-) -> Result<(Child, BarrierReaderHandle), String> {
+) -> Result<(Child, BarrierReaderHandle, BarrierProof), String> {
     let (tx, rx) = std::sync::mpsc::sync_channel::<Option<String>>(64);
     let reader_handle = thread::spawn(move || {
         let mut reader = stdout;
@@ -208,7 +216,7 @@ fn malformed_classification_barrier(
     // after the server has produced more output (e.g. the failover-client
     // run), keeping the barrier causally bounded without starving the
     // post-churn snapshot.
-    Ok((child, reader_handle))
+    Ok((child, reader_handle, BarrierProof { _private: () }))
 }
 
 fn ready_failover_server(mut child: Child) -> ReadyServer {
@@ -1635,16 +1643,9 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
         stdout,
         startup_log,
     } = server;
-    let (child, reader_handle) =
+    let (child, reader_handle, barrier_proof) =
         malformed_classification_barrier(child, stdout, ATTEMPTS, Duration::from_secs(5))
             .unwrap_or_else(|e| panic!("{e}; collected-so-far-see-stderr"));
-    // Mutation guard: this token is only true once the barrier returned Ok —
-    // moving the post snapshot above the barrier call leaves it false and
-    // fails the snapshot block deterministically, independent of log counting.
-    // It is only read by the Linux-only /proc snapshot, so it is cfg'd to
-    // Linux to keep non-Linux Unix builds warning-clean.
-    #[cfg(target_os = "linux")]
-    let barrier_complete = true;
     // Reaching this point proves the sends completed — the baseline must
     // already be captured while churn_started was still false.
     assert!(churn_started);
@@ -1656,10 +1657,9 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     {
         let after = gated_resource_snapshot(
             || {
-                assert!(
-                    barrier_complete,
-                    "post snapshot requires the malformed-classification barrier to complete first"
-                )
+                // H-I4-092: the gate requires the barrier-derived proof value —
+                // the post snapshot cannot compile above the barrier call.
+                let BarrierProof { _private: () } = barrier_proof;
             },
             pid,
         );
