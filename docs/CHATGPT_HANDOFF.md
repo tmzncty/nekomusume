@@ -1,62 +1,76 @@
-# ChatGPT reviewer handoff — H-I4-115 descendant-held output pipe HIGH FRONT
+# ChatGPT reviewer handoff — H-I4-115 source accepted; provenance + ownership sweep FRONT
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Code, tests, reachable pushed commits and current specs outrank this handoff, chat memory and stale checkbox state.
-- Last developer source/test anchor independently reviewed this pass: `46d624e2272fcd5cf9d86457d018c4f508b8ba10` (`test(cli): H-I4-114 duplicate-negotiation TCP read bound`). Subsequent `9a46fe91185bb8c00aa2140575bf787581b945c3` is docs/provenance/handoff only and does not change the reviewed test source.
-- Developer-owned `f5f7bba259bd9ed9da60f5451dcecd292af9a322` closed the remaining networked matrix-probe client owner via existing `bounded_client_output(..., 10s)`. Developer-owned `46d624e...` installed the TCP duplicate-negotiation read timeout before the first `frame_read_test`.
-- **H-I4-113 and H-I4-114 are CLOSED** at exact source/test `46d624e...`. Reachable developer-local exact-tree provenance is `docs/notes/h-i4-113-114-provenance-46d624e-20260923.md`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0 after one retained transient first-run bind race, `git diff --check` exit 0, clean tree, 2026-09-23T14:51:06Z → 14:56:50Z, Linux x86_64, stable rustc 1.98.0. GitHub Actions separately records one successful Rust CI workflow for exact `46d624e`; hosted CI remains cross-evidence, not a substitute for the developer-local gate.
-- H-I4-111/112 remain closed at `fc23a7a88c917e116f1140333faa6d8f441ca557`; H-I4-107/108/109 remain accepted/provenanced through `4c445ce36aa06edc1b3d4952036073865e3f20d0`; H-I4-110 remains closed at `259495fad9949a526b12187ba59cf74aec0ee7f7`.
+- Latest developer-owned source/test anchor independently reviewed this pass: `1f6d744c9954b9a7a5d693b43a20d137a5c5e75d` (`test(cli): H-I4-115 descendant-held pipe bound in bounded_wait_with_output`). It changes only `crates/neko-cli/tests/probe.rs` and `crates/neko-cli/tests/multistream.rs`.
+- Independent reviewer note: `docs/reviews/independent-h-i4-115-bounded-output-1f6d744-20260924.md` (reviewer commit `eb498e16a6e2fcb4d58a61dd4423ef33bb6abb4b`).
+- **H-I4-115 source repair is accepted at `1f6d744...` for the bounded-caller invariant.** Both helper copies now keep concurrent pipe draining but route reader completion through bounded channels; after direct-child exit/reap, descendant-held stdout/stderr produces an explicit finite harness failure rather than an unbounded reader `join()`. The Unix regression directly challenges the inherited-writer premise with a finite descendant.
+- **H-I4-115 is not fully evidence-closed yet.** At reviewer time there was no reachable developer-local exact-tree provenance for `1f6d744...` (or a later unchanged-source anchor), and exact `1f6d744...` had no GitHub combined-status entries. Do not convert reviewer source inspection into developer-local or hosted CI evidence.
+- The synthetic descendant in the negative regression is finite but can outlive the assertion for part of its finite sleep interval. This does not reintroduce the caller hang and is not a new production/process-tree finding. Only reopen this as a separate narrow harness issue if actual leaked-process interference is demonstrated; do not manufacture process-group policy.
+- H-I4-113/114 remain closed at exact source/test `46d624e2272fcd5cf9d86457d018c4f508b8ba10` with reachable developer-local provenance and separately recorded hosted Rust CI. H-I4-111/112 remain closed at `fc23a7a88c917e116f1140333faa6d8f441ca557`; H-I4-107/108/109 remain accepted/provenanced through `4c445ce36aa06edc1b3d4952036073865e3f20d0`; H-I4-110 remains closed at `259495fad9949a526b12187ba59cf74aec0ee7f7`.
 - Candidate A (`Recovery::on_ack` future/unsent ACK) and Candidate B (`record_datagrams` mixed drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
 - `SessionRuntime.events` retained-history capacity and D019 source-retention/no-reset remain maintainer/security policy gates. Do not invent TTL/LRU/history-size/capacity/security values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely for freshness.
 
-## FRONT HIGH — H-I4-115 direct-child exit does not prove inherited output pipes reached EOF
+## FRONT 1 — finish H-I4-115 exact-tree provenance, then continue immediately
 
-Reviewer finding: `docs/reviews/h-i4-115-bounded-output-descendant-pipe-ownership-20260923.md` (reviewer commit `479781b33c2a7e8c24b65815cc21a4ad6a7a69b1`).
+The source defect is no longer open; this lane is evidence closure only.
 
-### Concrete defect
+1. On exact developer source/test `1f6d744...` or a later reachable commit whose relevant source is unchanged, run in a safe clean checkout/worktree:
+   - `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`
+   - `git diff --check`
+   - confirm clean tree.
+2. Persist reachable developer-local provenance with exact SHA, UTC start/end, exit codes, OS/arch, stable Rust and clean-tree state. Do not record secrets, private addresses/topology, credentials or unnecessary absolute paths.
+3. Keep evidence classes separate. GitHub Actions, if any appear later, are cross-evidence only and not a wait condition.
+4. No decoder/parser/crypto-framing implementation changed; do not run fuzz mechanically.
+5. After provenance is pushed, continue directly to FRONT 2 without waiting for reviewer cadence.
 
-Exact-current `crates/neko-cli/tests/probe.rs::bounded_wait_with_output` and `crates/neko-cli/tests/multistream.rs::bounded_wait_with_output` both:
+## FRONT 2 — remaining process/socket/thread ownership causal sweep
 
-1. take piped stdout/stderr from an owned direct child;
-2. spawn concurrent `read_to_end` reader threads;
-3. bound **direct-child** exit via `try_wait` / kill / bounded reap;
-4. once direct-child exit is observed, unconditionally `join()` both reader threads.
+Continue the exact-current sweep instead of declaring queue exhaustion because the H-I4-115 seam is repaired.
 
-The helpers currently assume direct-child exit implies the pipe writers are all gone. That is false when a descendant inherited stdout/stderr. A direct child can exit and be reaped while a descendant keeps a pipe write descriptor open; the reader thread remains blocked in `read_to_end`, and the post-exit `join()` is no longer covered by the helper deadline. H-I4-106/107/109 hardened direct child ownership and pipe-full draining but did not establish descendant-writer EOF.
+### Scope
 
-Exact-current `neko-cli` production source does not launch external subprocesses, so this is **test-harness boundedness/evidence reliability**, not a production process tree, Session, Carrier, ACK, crypto or wire finding. It matters because the helper is the outer harness termination proof for networked process tests: a wrapper or lifecycle regression that creates an inherited writer can turn a supposed bounded negative into a stranded gate.
+Inspect current `crates/neko-cli/tests/probe.rs`, `crates/neko-cli/tests/multistream.rs`, their invoked CLI owner paths, and any newly changed helpers. For each candidate wait, classify it as one of:
 
-Reviewer source inspection found the same seam in both helper copies. A reviewer-local generic Linux process-semantics check (not repository CI) ran the equivalent of `sh -c 'sleep 3 & exit 0'` with stdout/stderr piped: the direct shell exited in ~0.001s while pipe EOF arrived only ~3.001s later, after the descendant closed its inherited writer. This is only a proof of the OS ownership premise; it is not exact-tree Rust/full-gate evidence.
+- source-self-bounded;
+- externally/harness-bounded with a proven owner;
+- peer/child completion causally proven;
+- concrete unbounded owner.
 
-### Closure contract
+Challenge at least:
 
-1. Add a deterministic inherited-writer negative regression: the direct child exits promptly while a finite synthetic descendant keeps stdout and/or stderr open past the helper deadline. The harness must return/fail within the declared bound rather than block on a reader join. Keep the synthetic descendant finite and cleanup-safe.
-2. Repair **both** `probe.rs` and `multistream.rs` bounded-output helpers, or use a genuinely smaller shared shape only if it avoids framework churn. Direct-child exit alone must not authorize an unbounded `JoinHandle::join()`.
-3. Preserve concurrent draining while the direct child is live so the existing pipe-full deadlock protection remains. Preserve current `try_wait` / kill / bounded-reap failure classification; do not regress H-I4-107/109.
-4. Reader completion after direct-child exit must itself be causally bounded. Reader-completion timeout is explicit harness failure, never successful evidence or silent output loss. Do not introduce production process-group/session policy merely to repair test ownership.
-5. Do not mechanically convert fail-fast keygen/help/capabilities/invalid-config/socket-free fixtures. Do not change Session/Carrier/ACK/crypto/wire semantics or invent repository-wide timeout/capacity/security values.
-6. No decoder/parser/crypto-framing implementation change is implicated; do not run fuzz mechanically.
-7. On the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist reachable developer-local exact-tree provenance with exact SHA, UTC start/end, exit codes, OS/arch, stable Rust and clean-tree state.
-8. Continue immediately to the next READY slice after closure; do not wait for reviewer cadence and do not infer repository-wide queue exhaustion from this helper repair.
+- remaining direct `.output()` / `wait*` uses;
+- `read_exact` / `read` / `recv` / `recv_from` / `accept` paths;
+- output-drain completion and reader/thread joins;
+- direct-child versus descendant ownership;
+- socket peer lifetime and cleanup after negative paths.
 
-## Rolling queue — keep continuous after H-I4-115
+Keep keygen/help/capabilities/invalid-config/socket-free fail-fast calls excluded unless exact source proves they can block on an external owner.
+
+### Important policy boundary discovered during source reasoning
+
+`crates/neko-cli/src/multistream.rs` contains authenticated application-level blocking socket reads after the pre-auth/Noise stage. That observation by itself is **not** authorization to invent an application idle timeout, duration, capacity or security number. Before treating it as a defect, read exact-current owner source plus applicable spec/ADR/status/security claims and decide whether the repository already fixes the required liveness semantics. If current semantics do not decide a timeout, classify it explicitly as an operational/policy boundary or maintainer gate rather than manufacturing a numeric repair. Outer process tests being bounded also must not be misreported as proof that the production/lab fixture recursively owns every authenticated peer lifetime.
+
+If a concrete defect is found and current committed semantics already determine the answer, do the smallest repair + focused positive/negative regression + exact-tree gate + provenance. If no defect is found, write a bounded no-finding note identifying exact owners, challenged invariant, checks/reasoning, exclusions and reachable anchor; do not create framework/checker/schema filler.
+
+## Rolling queue — keep continuous after FRONT 1/2
 
 Do not collapse this to one ticket. Dependency-ready order:
 
-1. **H-I4-115 repair + deterministic inherited-writer regression + exact-tree provenance.** Keep scope test-harness-local; no production process policy.
-2. **Remaining process/socket/thread ownership causal sweep.** Continue exact-current `crates/neko-cli/tests/probe.rs` and `crates/neko-cli/tests/multistream.rs`, including direct `.output()` / `wait*`, `read_exact` / `read` / `recv` / `recv_from` / `accept`, output-drain completion, reader/thread joins and child/descendant ownership. Classify each as source-self-bounded, externally bounded, exit/peer-completion proven, or concrete unbounded owner. Repair only the last class. Keep keygen/help/capabilities/invalid-config/socket-free fail-fast exclusions unless source proves otherwise.
-3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..115 against exact-current helper/cfg/socket/process semantics. Separate Linux execution evidence from macOS/BSD source reasoning and Windows claims. Do not claim Unix descendant/pipe behavior as Windows proof.
-4. **Algorithmic/resource boundedness reconciliation.** Reconcile accepted boundedness reviews with channel/output bounds, stdout/stderr accumulation, cleanup deadlines, socket peer lifetime, reader lifetime, direct-child vs descendant ownership and thread completion. No capacity-pressure benchmark and no invented policy values.
-5. **Release packet / item-4 factual reconciliation.** The packet is an evidence index and currently predates this process-ownership repair cluster. Qualify any broad statement that process failure paths are globally bounded; index H-I4-097..115 only after the relevant final exact-tree provenance is reachable. Local process/socket tests are not WAN/performance/security approval.
+1. **H-I4-115 exact-tree provenance closure** at `1f6d744...` or a later unchanged-source anchor.
+2. **Remaining process/socket/thread ownership causal sweep** as above; repair only proven unbounded owners.
+3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..115 against exact-current helper/cfg/socket/process semantics. Separate Linux execution evidence from macOS/BSD source reasoning and Windows claims. Unix inherited-pipe behavior is not Windows proof.
+4. **Algorithmic/resource boundedness reconciliation.** Reconcile accepted boundedness reviews with channel/output bounds, stdout/stderr accumulation, cleanup deadlines, socket peer lifetime, authenticated application reads, reader lifetime, direct-child versus descendant ownership and thread completion. No capacity-pressure benchmark and no invented policy values.
+5. **Release packet / item-4 factual reconciliation.** The packet is an evidence index, not approval. Qualify any broad statement that process failure paths are globally bounded; index H-I4-097..115 only after relevant exact-tree provenance is reachable. Local process/socket tests are not WAN/performance/security approval.
 6. **Pre-auth malformed/rejection accounting exact-current reuse challenge.** Reuse prior independent review only where owner source/tests remain unchanged; narrowly re-challenge changed owners. D019 remains policy blocked.
 7. **CLI diagnostic / exit-code / JSON / human-output contract exact-current reuse challenge.** Diagnostics remain evidence-only; never promote them to authentication, Session Delivery, Path or ACK evidence.
 8. **Package/build/reproducibility spot re-challenge.** Verify recent process-test repairs do not stale manifests, lock/features, scripts, package provenance or native-hook/unsafe assumptions. Do not invent signing/SBOM/key-custody/publication policy.
 9. **Reliable UDP / CarrierState / CarrierManager / FairScheduler / SessionRuntime targeted spot re-challenge.** Re-open materially changed owners; otherwise record exact-current reuse boundaries rather than rerunning equivalent deep sweeps. Candidate A remains closed unless current source falsifies it.
 10. **Observability + carrier adapters + dependency/build exact-current reuse challenge.** Same owner-diff rule. Candidate B remains closed unless current source falsifies it. No checker/schema/framework/docs filler.
-11. **Repository-wide 13-surface refill.** Re-apply every required core surface after the HIGH and dependent reconciliation close. Queue exhaustion is legal only if the broad inventory finds no concrete defect, no uncovered implemented core surface, no READY review-support and no READY live question, with all remaining work genuinely external/policy/environment/release-authority gated.
+11. **Repository-wide 13-surface refill.** Queue exhaustion is legal only if the broad inventory finds no concrete defect, no uncovered implemented core surface, no READY review-support and no READY live question, with all remaining work genuinely external/policy/environment/release-authority gated.
 12. **Conditional live.** Only if new code/instrumentation/hypothesis/path condition creates a specific unresolved real-network question within standing authorization. Otherwise keep `READY_LIVE: none`.
 
 If several coherent slices complete in 10–30 minutes with stable quality, deepen the queue and continue implementation/review -> tests -> commit -> push -> next slice without waiting. Every 3–4 coherent slices or important repair cluster, perform one factual item-4/release reconciliation rather than rewriting large docs after every small commit.
@@ -79,14 +93,14 @@ At each meaningful repository-wide refill, explicitly ask whether each surface h
 12. algorithmic resource boundedness without capacity-pressure benchmarks or new policy values;
 13. release-packet factual consistency and evidence boundary.
 
-A bounded no-finding review is valid item-4 support when it identifies inspected owners, challenged invariant, deterministic checks/commands, exclusions and an exact reachable anchor. Do not create checker/schema/framework/docs churn merely to manufacture a slice.
+A bounded no-finding review is valid item-4 support when it identifies inspected owners, challenged invariant, deterministic checks/commands or source reasoning, exclusions and an exact reachable anchor. Do not create checker/schema/framework/docs churn merely to manufacture a slice.
 
 ## Evidence discipline
 
 - Developer-reported local CI, repository-persisted developer-local provenance, reviewer source/control-flow review, reviewer-local generic OS checks, hosted CI, live WAN evidence and performance conclusions are distinct evidence classes.
 - Accepted exact-tree provenance must anchor a GitHub-resolvable pushed SHA. Never publish a local-only/unreachable SHA as shared exact-tree evidence.
-- Exact `46d624e` has both reachable developer-local provenance and a separate successful hosted Rust CI workflow. Neither is reviewer-local Rust execution.
-- H-I4-115 reviewer work is source/control-flow inspection plus a generic Linux pipe-inheritance check only. Reviewer did not run the repository Rust/full gate, cross-platform runtime, fuzz, WAN or performance work in this pass.
+- Exact `1f6d744...` H-I4-115 review is source/control-flow inspection only. At review time it had no combined-status entries and no reachable developer-local exact-tree provenance. The reviewer did not run repository Rust/full-gate, cross-platform runtime, fuzz, WAN or performance work in this pass.
+- Exact `46d624e...` has both reachable developer-local provenance and a separate successful hosted Rust CI workflow; neither is reviewer-local Rust execution.
 - Hosted Actions are cross-evidence, not a wait condition and not a replacement for developer-local clean exact-tree validation.
 - Fuzz only when wire decoder/parser/crypto framing changes materially.
 - Standing VPS authorization permits bounded self-owned TCP/UDP lab work, but authoritative classification remains `READY_LIVE: none`; no repeat live run without a new concrete question.
