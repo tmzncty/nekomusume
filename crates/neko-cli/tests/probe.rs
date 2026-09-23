@@ -7012,7 +7012,8 @@ fn periodic_session_delayed_confirmations_are_counted_on_one_session() {
     let port = port_lease.port();
     port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--test-ack-delay-ms", "150"]);
-    let out = Command::new(bin)
+    let out = bounded_client_output(
+        Command::new(bin)
         .args([
             "periodic-client",
             "--port",
@@ -7034,8 +7035,10 @@ fn periodic_session_delayed_confirmations_are_counted_on_one_session() {
             "--ack-timeout-ms",
             "500",
         ])
-        .output()
-        .unwrap();
+        ,
+        Duration::from_secs(10),
+    )
+        ;
     assert!(
         out.status.success(),
         "{}",
@@ -7066,7 +7069,8 @@ fn periodic_session_synchronized_key_update_crosses_authenticated_socket() {
     let port = port_lease.port();
     port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--key-update-after", "1"]);
-    let out = Command::new(bin)
+    let out = bounded_client_output(
+        Command::new(bin)
         .args([
             "periodic-client",
             "--port",
@@ -7090,8 +7094,10 @@ fn periodic_session_synchronized_key_update_crosses_authenticated_socket() {
             "--key-update-after",
             "1",
         ])
-        .output()
-        .unwrap();
+        ,
+        Duration::from_secs(10),
+    )
+        ;
     assert!(
         out.status.success(),
         "{}",
@@ -7132,7 +7138,8 @@ fn periodic_session_mismatched_key_update_schedule_fails_closed() {
     let port = port_lease.port();
     port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--key-update-after", "1"]);
-    let out = Command::new(bin)
+    let out = bounded_client_output(
+        Command::new(bin)
         .args([
             "periodic-client",
             "--port",
@@ -7156,8 +7163,10 @@ fn periodic_session_mismatched_key_update_schedule_fails_closed() {
             "--key-update-after",
             "2",
         ])
-        .output()
-        .unwrap();
+        ,
+        Duration::from_secs(10),
+    )
+        ;
     assert!(
         !out.status.success(),
         "{}",
@@ -7190,7 +7199,8 @@ fn periodic_session_accounts_missing_ack_and_fails_closed() {
     let port = port_lease.port();
     port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--test-drop-ack", "3"]);
-    let out = Command::new(bin)
+    let out = bounded_client_output(
+        Command::new(bin)
         .args([
             "periodic-client",
             "--port",
@@ -7212,8 +7222,10 @@ fn periodic_session_accounts_missing_ack_and_fails_closed() {
             "--ack-timeout-ms",
             "200",
         ])
-        .output()
-        .unwrap();
+        ,
+        Duration::from_secs(7),
+    )
+        ;
     assert_eq!(out.status.code(), Some(2));
     let log = String::from_utf8_lossy(&out.stdout);
     assert!(log.contains("attempted=3 confirmed=2 missing=1"), "{log}");
@@ -7235,7 +7247,8 @@ fn periodic_session_duplicate_ack_is_authenticated_and_idempotent() {
     let port = port_lease.port();
     port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--test-duplicate-ack"]);
-    let out = Command::new(bin)
+    let out = bounded_client_output(
+        Command::new(bin)
         .args([
             "periodic-client",
             "--port",
@@ -7257,8 +7270,10 @@ fn periodic_session_duplicate_ack_is_authenticated_and_idempotent() {
             "--ack-timeout-ms",
             "500",
         ])
-        .output()
-        .unwrap();
+        ,
+        Duration::from_secs(10),
+    )
+        ;
     assert!(
         out.status.success(),
         "{}",
@@ -7287,7 +7302,8 @@ fn periodic_setup_timeout_is_separate_from_ack_timeout() {
     let port = port_lease.port();
     port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--test-setup-delay-ms", "300"]);
-    let out = Command::new(bin)
+    let out = bounded_client_output(
+        Command::new(bin)
         .args([
             "periodic-client",
             "--port",
@@ -7311,8 +7327,10 @@ fn periodic_setup_timeout_is_separate_from_ack_timeout() {
             "--setup-timeout-ms",
             "1000",
         ])
-        .output()
-        .unwrap();
+        ,
+        Duration::from_secs(10),
+    )
+        ;
     assert!(
         out.status.success(),
         "{}",
@@ -7343,7 +7361,8 @@ fn periodic_setup_timeout_fails_before_application_records() {
         &ck,
         &["--setup-timeout-ms", "200", "--test-setup-delay-ms", "400"],
     );
-    let out = Command::new(bin)
+    let out = bounded_client_output(
+        Command::new(bin)
         .args([
             "periodic-client",
             "--port",
@@ -7367,8 +7386,10 @@ fn periodic_setup_timeout_fails_before_application_records() {
             "--setup-timeout-ms",
             "200",
         ])
-        .output()
-        .unwrap();
+        ,
+        Duration::from_secs(7),
+    )
+        ;
     assert!(!out.status.success());
     let (status, server_log) = finish_server(server);
     assert!(!status.success(), "{server_log}");
@@ -7470,7 +7491,8 @@ fn endpoint_rebind_real_sockets_promote_new_source_and_reject_stale_old_source()
         .spawn()
         .unwrap();
     let server = ready_endpoint_rebind_server(server);
-    let out = Command::new(bin)
+    let out = bounded_client_output(
+        Command::new(bin)
         .args([
             "endpoint-rebind-client",
             "--addr",
@@ -7492,8 +7514,10 @@ fn endpoint_rebind_real_sockets_promote_new_source_and_reject_stale_old_source()
             "--experiment-id",
             "endpoint-rebind-test-client",
         ])
-        .output()
-        .unwrap();
+        ,
+        Duration::from_secs(10),
+    )
+        ;
     let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -7582,7 +7606,8 @@ fn endpoint_rebind_wrong_challenge_fails_after_candidate_without_success() {
         .spawn()
         .unwrap();
     let server = ready_endpoint_rebind_server(server);
-    let out = Command::new(bin)
+    let out = bounded_client_output(
+        Command::new(bin)
         .args([
             "endpoint-rebind-client",
             "--addr",
@@ -7604,8 +7629,10 @@ fn endpoint_rebind_wrong_challenge_fails_after_candidate_without_success() {
             "--experiment-id",
             "endpoint-rebind-negative-client",
         ])
-        .output()
-        .unwrap();
+        ,
+        Duration::from_secs(8),
+    )
+        ;
     let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
