@@ -4,6 +4,7 @@
 
 - Synchronize to current `main` before work. Code, tests, reachable pushed commits and current specs outrank this handoff, chat memory and stale checkbox state.
 - Latest developer-owned source/test anchor in this cycle remains `1f6d744c9954b9a7a5d693b43a20d137a5c5e75d` (`test(cli): H-I4-115 descendant-held pipe bound in bounded_wait_with_output`). Later commits are reviewer evidence/navigation unless a newer developer source/test commit appears.
+- As of the 2026-09-23T23:22Z reviewer pass, `main` had no developer-owned source/test commit newer than `1f6d744`, no repair PR was open, and the non-main heads were historical branches rather than a new H-I4-116 work product. Under `AGENTS.md` §3.2 this is implementation stagnation, not a reason to wait; the FRONT below is intentionally sharpened to an exact owner/test seam so the coding agent can implement immediately.
 - **H-I4-097..115 process/socket/thread ownership repair group is closed for its challenged exact source owners.** H-I4-115 has reachable developer-local exact-tree provenance plus independent bounded review; do not reopen it without material owner movement.
 - Repository-wide thirteen-surface owner-diff inventory remains `docs/reviews/independent-core-surface-owner-diff-inventory-e94ac0f-20260924.md` / reviewer commit `6be17732a5effc1b6fbfaceacba130588782af95`.
 - Recovery current-owner challenge progress is now:
@@ -34,6 +35,17 @@ Exact-current cross-owner defect:
 5. Do not change ACK architecture, RTT/PTO semantics, persistent-congestion thresholds, D019/source-retention rules, wire/parser/crypto framing, or introduce new capacity/security values.
 6. Commit/push source + tests, then run the final pushed exact-tree developer-local gate in a safe clean checkout/worktree: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, clean tree. Persist exact reachable SHA, UTC start/end, exit codes, OS+arch, stable Rust, clean-tree state. No fuzz unless framing/decoder code unexpectedly changes.
 7. Immediately continue the remainder of R-REC-4 after closure; reviewer cadence is not a work-ticket boundary.
+
+### Reviewer navigator note — concrete minimal regression shape
+
+The current owners already expose enough test seams; no new production getter/debug API is needed.
+
+- **Direct owner regression (`neko-reliable`):** create `Reno::new(1200)`, call `sent(1200)` so in-flight state is non-zero, snapshot all three public congestion fields, call `lost(0)`, and assert exact equality of `cwnd`, `ssthresh`, and `bytes_in_flight`. The smallest production repair is an early `if b == 0 { return; }` in `Reno::lost`; this changes no numeric policy and protects every present/future caller.
+- **Cross-owner regression (`path_recovery_tests`):** the existing helpers `recovery()`, `sent(...)`, and `ack_of(...)` are sufficient. With MSS 1200, send one 1200-byte ack-eliciting packet, apply `on_ack(7, &ack_of(0), ...)` without creating any lost packet, assert `bytes_in_flight()==0`, and then assert an admission threshold that distinguishes the correct window from the buggy halved window. `can_send(12_000)` is suitable: correct loss-free handling leaves at least the initial 10-MSS window (and current slow-start ACK growth makes it larger), while the exact-current `acked(1200)` then `lost(0)` path collapses to about 6.6k and rejects 12k. This exercises the current public admission seam rather than exposing `cwnd` from `PathRecovery`.
+- **Runtime variant if preferred:** the existing `runtime_send_admission_refuses_when_cwnd_full_and_recovers_on_ack` currently proves only that a 400-byte send becomes possible again, which is too weak because the erroneous halved cwnd still admits 400 bytes. Strengthen or add a focused ACK-only case with an admission size that would fail after multiplicative decrease but succeed under the unchanged/grown window.
+- **Positive-loss control:** retain an existing positive `Reno::lost(nonzero)` reduction test if it already asserts the exact transition, or add one narrow aggregate-loss `PathRecovery` case. Do not invent a second loss algorithm merely to count the reduction; the required proof is simply that a non-zero aggregate loss still invokes one multiplicative decrease while zero loss invokes none.
+
+This navigator note is implementation guidance, not a code change or new policy. If exact-current source has moved when the coding agent starts, re-derive the same invariant against the new owner before editing.
 
 ## Dependency-ready rolling queue
 
