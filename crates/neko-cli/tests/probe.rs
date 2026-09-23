@@ -318,6 +318,85 @@ fn bounded_wait_exit(
 
 /// H-I4-105: bounded TCP accept — polls `accept()` against a deadline so a
 /// client regression that never connects cannot strand the peer thread.
+/// H-I4-108: bounded wait+collect for a spawned networked product child.
+/// stdout/stderr are drained concurrently off-thread (no pipe-full deadlock);
+/// child exit is observed via try_wait to a local deadline; timeout/error
+/// converge via kill + bounded reap before the failure escapes.
+fn bounded_wait_with_output(child: &mut Child, deadline: Duration) -> std::process::Output {
+    let mut stdout_child = child.stdout.take().unwrap();
+    let mut stderr_child = child.stderr.take().unwrap();
+    let stdout_handle = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout_child.read_to_end(&mut buf);
+        buf
+    });
+    let stderr_handle = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr_child.read_to_end(&mut buf);
+        buf
+    });
+    let end = Instant::now() + deadline;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if Instant::now() >= end {
+                    let _ = child.kill();
+                    let reap_end = Instant::now() + Duration::from_secs(3);
+                    loop {
+                        match child.try_wait() {
+                            Ok(Some(_)) | Err(_) => break,
+                            Ok(None) => {
+                                assert!(
+                                    Instant::now() < reap_end,
+                                    "child did not exit within bound after kill"
+                                );
+                                std::thread::sleep(Duration::from_millis(10));
+                            }
+                        }
+                    }
+                    panic!("child did not exit within bound");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let reap_end = Instant::now() + Duration::from_secs(3);
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(_)) | Err(_) => break,
+                        Ok(None) => {
+                            assert!(
+                                Instant::now() < reap_end,
+                                "child did not exit within bound after kill"
+                            );
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                    }
+                }
+                panic!("try_wait failed: {e}");
+            }
+        }
+    };
+    let stdout = stdout_handle.join().expect("stdout drain thread");
+    let stderr = stderr_handle.join().expect("stderr drain thread");
+    std::process::Output {
+        status,
+        stdout,
+        stderr,
+    }
+}
+
+/// Run a networked client Command builder under bounded_wait_with_output.
+fn bounded_client_output(command: &mut Command, timeout: Duration) -> std::process::Output {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    bounded_wait_with_output(&mut child, timeout)
+}
+
 fn bounded_accept(listener: TcpListener, timeout: Duration) -> TcpStream {
     listener.set_nonblocking(true).unwrap();
     let deadline = Instant::now() + timeout;
@@ -520,6 +599,27 @@ fn start_periodic_server_bounded_when_binary_exits_silently() {
     assert!(
         result.is_err(),
         "silently exiting binary must make periodic readiness wait panic"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn bounded_client_output_fails_when_client_never_exits() {
+    // H-I4-108 negative regression: a spawned client-like child that stays
+    // live past the deadline must make bounded_client_output fail closed
+    // within bound — not hang in a synchronous .output()/wait().
+    let start = std::time::Instant::now();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bounded_client_output(Command::new("sleep").arg("30"), Duration::from_secs(1))
+    }));
+    let elapsed = start.elapsed();
+    assert!(
+        result.is_err(),
+        "live client must make bounded_client_output panic"
+    );
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "bounded client must fail within bound, elapsed={elapsed:?}"
     );
 }
 
@@ -1311,8 +1411,8 @@ fn authenticated_tcp_and_udp_loopback_probe_starts_after_ready() {
                 .contains("lifecycle_state=READY readiness=true")
         );
 
-        let out = Command::new(bin)
-            .args([
+        let out = bounded_client_output(
+            Command::new(bin).args([
                 "client",
                 "--transport",
                 transport,
@@ -1328,9 +1428,9 @@ fn authenticated_tcp_and_udp_loopback_probe_starts_after_ready() {
                 "32",
                 "--duration",
                 "2",
-            ])
-            .output()
-            .unwrap();
+            ]),
+            Duration::from_secs(10),
+        );
         let (server_status, server_log) = finish_server(server);
         let _ = fs::remove_file(sp);
         let _ = fs::remove_file(cp);
@@ -1358,8 +1458,8 @@ fn authenticated_tcp_benchmark_echoes_exact_payload_and_hash() {
     let ck = key(bin, &cp);
     let server = start_server(bin, "tcp", 40081, &sp, &ck);
 
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "client",
             "--transport",
             "tcp",
@@ -1380,9 +1480,9 @@ fn authenticated_tcp_benchmark_echoes_exact_payload_and_hash() {
             "--payload-file",
             payload_path.to_str().unwrap(),
             "--json",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -2088,8 +2188,8 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     }
     // On non-Linux Unix the /proc resource assertion is compiled out — the
     // portable socket/lifecycle part of the test still runs.
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -2107,9 +2207,9 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
             "16",
             "--duration",
             "3",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     // H-I4-103: a live-reader join is only legal after child exit (stdout EOF
     // makes the read_line loop return). Establish exit with a bounded
     // observation first — a server/lifecycle regression that leaves the child
@@ -2457,8 +2557,8 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -2481,9 +2581,9 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
             "--diagnostic",
             "--experiment-id",
             "health-failover-client",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -2609,8 +2709,8 @@ fn reliable_udp_failover_settles_packet_acks_to_zero_in_flight() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -2632,9 +2732,9 @@ fn reliable_udp_failover_settles_packet_acks_to_zero_in_flight() {
             "--diagnostic",
             "--experiment-id",
             "r9-client-test-01",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -2738,8 +2838,8 @@ fn reliable_udp_incomplete_settlement_fails_not_settled() {
         .spawn()
         .unwrap();
     let mut server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -2761,9 +2861,9 @@ fn reliable_udp_incomplete_settlement_fails_not_settled() {
             "--diagnostic",
             "--experiment-id",
             "r9-incomplete-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     bounded_reap_or_kill(&mut server.child);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -2834,8 +2934,8 @@ fn reliable_udp_migration_back_reserves_final_record() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -2859,9 +2959,9 @@ fn reliable_udp_migration_back_reserves_final_record() {
             "--diagnostic",
             "--experiment-id",
             "r9-mig-cli-01",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -3191,8 +3291,8 @@ fn reliable_udp_reversed_ack_order_confirms_in_order() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -3214,9 +3314,9 @@ fn reliable_udp_reversed_ack_order_confirms_in_order() {
             "--diagnostic",
             "--experiment-id",
             "r9-rev-cli-01",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (_st, _sl) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -3336,8 +3436,8 @@ fn reliable_udp_malformed_budget_persists_across_carrier_ack() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -3359,9 +3459,9 @@ fn reliable_udp_malformed_budget_persists_across_carrier_ack() {
             "--diagnostic",
             "--experiment-id",
             "r9-malf-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (_st, _sl) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -3464,8 +3564,8 @@ fn reliable_udp_post_return_incomplete_is_terminal() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -3489,9 +3589,9 @@ fn reliable_udp_post_return_incomplete_is_terminal() {
             "--diagnostic",
             "--experiment-id",
             "r9-p4-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (_st, _sl) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -3564,8 +3664,8 @@ fn reliable_udp_stale_ack_is_accepted_empty_not_rejected() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -3587,9 +3687,9 @@ fn reliable_udp_stale_ack_is_accepted_empty_not_rejected() {
             "--diagnostic",
             "--experiment-id",
             "r9-stale-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -3689,8 +3789,8 @@ fn reliable_udp_future_ack_is_typed_rejected() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -3712,9 +3812,9 @@ fn reliable_udp_future_ack_is_typed_rejected() {
             "--diagnostic",
             "--experiment-id",
             "r9-fut-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -3801,8 +3901,8 @@ fn reliable_udp_stale_ack_settlement_phase_is_accepted_empty() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -3824,9 +3924,9 @@ fn reliable_udp_stale_ack_settlement_phase_is_accepted_empty() {
             "--diagnostic",
             "--experiment-id",
             "r9-stlate-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -3934,8 +4034,8 @@ fn reliable_udp_post_return_carrier_ack_withheld_fails() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -3959,9 +4059,9 @@ fn reliable_udp_post_return_carrier_ack_withheld_fails() {
             "--diagnostic",
             "--experiment-id",
             "r9-p4a-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -4093,8 +4193,8 @@ fn reliable_udp_post_return_session_ack_withheld_fails() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -4118,9 +4218,9 @@ fn reliable_udp_post_return_session_ack_withheld_fails() {
             "--diagnostic",
             "--experiment-id",
             "r9-p4b-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -4268,8 +4368,8 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -4294,9 +4394,9 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
             "--diagnostic",
             "--experiment-id",
             "r9-dl-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -4572,8 +4672,8 @@ fn reliable_udp_ack_loss_delayed_original_reorder_settles() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -4597,9 +4697,9 @@ fn reliable_udp_ack_loss_delayed_original_reorder_settles() {
             "--diagnostic",
             "--experiment-id",
             "r9-alo-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, server_log) = finish_server(server);
     let client_log = String::from_utf8_lossy(&out.stdout);
     let client_err = String::from_utf8_lossy(&out.stderr);
@@ -4734,8 +4834,8 @@ fn reliable_udp_first_send_socket_failure_rolls_back() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -4760,9 +4860,9 @@ fn reliable_udp_first_send_socket_failure_rolls_back() {
             "--diagnostic",
             "--experiment-id",
             "r9-fsf-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, _server_log) = finish_server(server);
     let client_log = String::from_utf8_lossy(&out.stdout);
     let _ = srv_status;
@@ -4859,8 +4959,8 @@ fn reliable_udp_post_return_malformed_bound_is_terminal() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -4884,9 +4984,9 @@ fn reliable_udp_post_return_malformed_bound_is_terminal() {
             "--diagnostic",
             "--experiment-id",
             "r9-mb-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, server_log) = finish_server(server);
     let client_log = String::from_utf8_lossy(&out.stdout);
     let client_err = String::from_utf8_lossy(&out.stderr);
@@ -4982,8 +5082,8 @@ fn reliable_udp_carrier_ack_send_failure_is_typed_not_sent() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -5007,9 +5107,9 @@ fn reliable_udp_carrier_ack_send_failure_is_typed_not_sent() {
             "--diagnostic",
             "--experiment-id",
             "r9-aksf-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, server_log) = finish_server(server);
     let client_log = String::from_utf8_lossy(&out.stdout);
     let _ = srv_status;
@@ -5132,8 +5232,8 @@ fn reliable_udp_post_return_reversed_ack_order_settles() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -5157,9 +5257,9 @@ fn reliable_udp_post_return_reversed_ack_order_settles() {
             "--diagnostic",
             "--experiment-id",
             "r9-rord-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -5314,8 +5414,8 @@ fn reliable_udp_post_return_stale_ack_is_accepted_empty() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -5339,9 +5439,9 @@ fn reliable_udp_post_return_stale_ack_is_accepted_empty() {
             "--diagnostic",
             "--experiment-id",
             "r9-pstale-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -5473,8 +5573,8 @@ fn reliable_udp_post_return_future_ack_is_rejected() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -5498,9 +5598,9 @@ fn reliable_udp_post_return_future_ack_is_rejected() {
             "--diagnostic",
             "--experiment-id",
             "r9-pfut-cli",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -5637,8 +5737,8 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -5661,9 +5761,9 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
             "--diagnostic",
             "--experiment-id",
             "warm-failover-client",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -5850,8 +5950,8 @@ fn migration_back_tamper_fails_closed_before_return() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let output = Command::new(bin)
-        .args([
+    let output = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -5875,9 +5975,9 @@ fn migration_back_tamper_fails_closed_before_return() {
             "--diagnostic",
             "--experiment-id",
             "migration-tamper-client",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -6209,8 +6309,8 @@ fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let client = Command::new(bin)
-        .args([
+    let client = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -6231,9 +6331,9 @@ fn first_udp_noise_response_loss_replays_without_resetting_session_state() {
             "--diagnostic",
             "--experiment-id",
             "noise-retry-client",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -6301,8 +6401,8 @@ fn failover_udp_handshake_timeout_reports_last_success_stage() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let dir = tmp("failover-timeout");
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--json",
             "--addr",
@@ -6317,9 +6417,9 @@ fn failover_udp_handshake_timeout_reports_last_success_stage() {
             dir.to_str().unwrap(),
             "--duration",
             "1",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!out.status.success());
     assert!(stdout.contains(r#""stage":"socket_bind""#));
@@ -6336,8 +6436,8 @@ fn udp_handshake_diagnostic_stages_are_deterministic() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let dir = tmp("diagnostic-timeout");
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--json",
             "--addr",
@@ -6352,9 +6452,9 @@ fn udp_handshake_diagnostic_stages_are_deterministic() {
             dir.to_str().unwrap(),
             "--duration",
             "1",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     assert!(!out.status.success());
     let log = String::from_utf8_lossy(&out.stdout);
     for stage in ["socket_bind", "client_send"] {
@@ -6507,8 +6607,8 @@ fn run_client(
     identity: &std::path::Path,
     server_key: &str,
 ) -> std::process::Output {
-    Command::new(bin)
-        .args([
+    bounded_client_output(
+        Command::new(bin).args([
             "client",
             "--transport",
             transport,
@@ -6522,9 +6622,9 @@ fn run_client(
             identity.to_str().unwrap(),
             "--duration",
             "2",
-        ])
-        .output()
-        .unwrap()
+        ]),
+        Duration::from_secs(10),
+    )
 }
 
 #[test]
