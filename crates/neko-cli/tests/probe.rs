@@ -6094,7 +6094,7 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let client = Command::new(bin)
+    let mut client = Command::new(bin)
         .args([
             "failover-client",
             "--addr",
@@ -6128,7 +6128,10 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
         .unwrap()
         .send_to(b"unrelated", ("127.0.0.1", udp))
         .unwrap();
-    let client = client.wait_with_output().unwrap();
+    // H-I4-111: bounded wait on the spawned client — the concurrent datagram
+    // injection stays; the wait gets a harness deadline so a live client can
+    // no longer strand finish_server.
+    let client = bounded_wait_with_output(&mut client, Duration::from_secs(9));
     let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -7731,40 +7734,42 @@ fn warm_readiness_failures_close_before_admission_or_application_data() {
             .spawn()
             .unwrap();
         thread::sleep(Duration::from_millis(150));
-        let client = Command::new(bin)
-            .args([
-                "failover-client",
-                "--addr",
-                "127.0.0.1",
-                "--udp-port",
-                &udp.to_string(),
-                "--tcp-port",
-                &tcp.to_string(),
-                "--server-key",
-                &sk,
-                "--identity",
-                cp.to_str().unwrap(),
-                "--count",
-                "3",
-                "--bytes",
-                "16",
-                "--duration",
-                "2",
-                "--automatic-health-failover",
-                if seam == "--test-readiness-sequence-pause-200" {
-                    "--test-readiness-sequence-pause-ms"
+        let client = bounded_client_output(
+            Command::new(bin)
+                .args([
+                    "failover-client",
+                    "--addr",
+                    "127.0.0.1",
+                    "--udp-port",
+                    &udp.to_string(),
+                    "--tcp-port",
+                    &tcp.to_string(),
+                    "--server-key",
+                    &sk,
+                    "--identity",
+                    cp.to_str().unwrap(),
+                    "--count",
+                    "3",
+                    "--bytes",
+                    "16",
+                    "--duration",
+                    "2",
+                    "--automatic-health-failover",
+                    if seam == "--test-readiness-sequence-pause-200" {
+                        "--test-readiness-sequence-pause-ms"
+                    } else {
+                        seam
+                    },
+                ])
+                .args(if seam == "--test-readiness-sequence-pause-200" {
+                    vec!["200"]
                 } else {
-                    seam
-                },
-            ])
-            .args(if seam == "--test-readiness-sequence-pause-200" {
-                vec!["200"]
-            } else {
-                vec![]
-            })
-            .output()
-            .unwrap();
-        let server = server.wait_with_output().unwrap();
+                    vec![]
+                }),
+            Duration::from_secs(7),
+        );
+        let mut server = server;
+        let server = bounded_wait_with_output(&mut server, Duration::from_secs(10));
         let _ = fs::remove_file(sp);
         let _ = fs::remove_file(cp);
         let client_log = format!(
