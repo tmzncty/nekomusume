@@ -2454,8 +2454,8 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
         .spawn()
         .unwrap();
     let server = ready_failover_server(server);
-    let out = Command::new(bin)
-        .args([
+    let out = bounded_client_output(
+        Command::new(bin).args([
             "failover",
             "--role",
             "client",
@@ -2478,9 +2478,9 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
             "--diagnostic",
             "--experiment-id",
             "primary-a-client",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(8),
+    );
     let (_server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
