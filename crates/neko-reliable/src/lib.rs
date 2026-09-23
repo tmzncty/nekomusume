@@ -500,6 +500,11 @@ impl Reno {
         }
     }
     pub fn lost(&mut self, b: u64) {
+        // H-I4-116: a loss-free ACK outcome (b == 0) must not collapse the
+        // congestion window — Reno reduction only fires on actual loss.
+        if b == 0 {
+            return;
+        }
         self.bytes_in_flight = self.bytes_in_flight.saturating_sub(b);
         self.ssthresh = (self.cwnd / 2).max(self.mss.saturating_mul(2));
         self.cwnd = self.ssthresh
@@ -1448,6 +1453,23 @@ impl FecBlock {
 #[cfg(test)]
 mod fec_tests {
     use super::*;
+    #[test]
+    fn reno_lost_zero_is_noop() {
+        // H-I4-116: a loss-free ACK outcome (lost(0)) must not collapse cwnd.
+        let mut r = Reno::new(1000).unwrap();
+        r.cwnd = 10_000;
+        r.ssthresh = 5_000;
+        r.bytes_in_flight = 4_000;
+        r.lost(0);
+        assert_eq!(r.cwnd, 10_000, "lost(0) must not halve cwnd");
+        assert_eq!(r.ssthresh, 5_000, "lost(0) must not change ssthresh");
+        assert_eq!(r.bytes_in_flight, 4_000, "lost(0) must not change bif");
+        // Positive loss still reduces.
+        r.lost(400);
+        assert!(r.cwnd < 10_000);
+        assert_eq!(r.bytes_in_flight, 3_600);
+    }
+
     #[test]
     fn xor_recovers_single_loss_and_is_reorder_independent() {
         let c = FecConfig {
