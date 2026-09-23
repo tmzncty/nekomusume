@@ -6712,12 +6712,14 @@ fn tcp_and_udp_reject_malformed_unsupported_and_duplicate_negotiation_before_ech
         let hello = [b'N', b'1', 1, 1, 0, 0];
         if transport == "tcp" {
             let mut socket = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            // H-I4-114: read timeout before the first frame_read so a server
+            // that never responds cannot strand the test in read_exact.
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             frame_write_test(&mut socket, &hello);
             assert_eq!(frame_read_test(&mut socket), [b'N', b'1', 2, 0, 0, 0]);
             frame_write_test(&mut socket, &hello);
-            socket
-                .set_read_timeout(Some(Duration::from_secs(1)))
-                .unwrap();
             let mut byte = [0; 1];
             assert_eq!(
                 socket.read(&mut byte).unwrap(),
