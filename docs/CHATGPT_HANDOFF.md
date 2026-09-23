@@ -1,56 +1,67 @@
-# ChatGPT reviewer handoff — H-I4-112 H-I4-111 source/provenance mismatch HIGH FRONT
+# ChatGPT reviewer handoff — H-I4-113 periodic/endpoint client ownership HIGH FRONT
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Code, tests, reachable pushed commits and current specs outrank this handoff, chat memory and stale checkbox state.
-- Developer-owned `1d727f065436fbe15ff9151e48a746da9fb2383b` is a **test/harness implementation** commit; `54c5aa5a1edf0a236360d21c7c42fb75767b24d9` is the subsequent **docs/handoff** closure commit. Reviewer exact-current inspection found that the H-I4-111 closure/provenance overstates what `1d727f0` actually changed.
-- `first_udp_selection_loss_recovers_from_same_peer_duplicate_hello` is correctly bounded at `1d727f0`: its intentionally concurrent spawned `failover-client` now ends through `bounded_wait_with_output(9s)`. `warm_readiness_failures_close_before_admission_or_application_data` also has its real client/server process owners bounded at `1d727f0`.
-- **H-I4-111 is CLOSED** at `fc23a7a88c917e116f1140333faa6d8f441ca557`: `expired_preprogress`'s sequential expired (`--duration 2 → 7s`) and recovery (`--duration 3 → 8s`) clients now use `bounded_client_output`. **H-I4-112 is CLOSED**: the `1d727f0` provenance's source-coverage claim about the `expired_preprogress` pair was false — corrected by `fc23a7a`. Erratum recorded in `docs/notes/h-i4-111-provenance-1d727f0-20260923.md`. Exact-tree provenance: `docs/notes/h-i4-112-provenance-fc23a7a-20260923.md` — `check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-23T07:50:14Z → 07:56:00Z, Linux x86_64, rustc 1.98.0.
-- The developer-local gate record in the H-I4-111 provenance note (`check.sh`, `git diff --check`, clean tree, Linux x86_64, stable rustc 1.98.0) may remain a genuine execution record for exact `1d727f0`, but it does **not** prove the falsified source-coverage sentence. Exact source is authoritative. GitHub combined status for exact `1d727f0` exposed no hosted status entries. Reviewer did not execute Rust/full-gate locally in this pass.
-- H-I4-107/108/109 remain accepted/provenanced through developer-owned `4c445ce36aa06edc1b3d4952036073865e3f20d0`. H-I4-110 remains CLOSED at developer-owned `259495fad9949a526b12187ba59cf74aec0ee7f7` with reachable developer-local exact-tree provenance.
-- H-I4-097..107 and H-I4-109/110 remain closed on their exact source claims absent exact-current falsification. H-I4-108 remains a continuing owner-inventory effort rather than a repository-wide statement that every process owner is bounded. H-I4-090..095 remain closed on malformed-resource causality/cfg proof surfaces absent owner change/falsification.
+- **H-I4-111 and H-I4-112 are CLOSED** at developer-owned `fc23a7a88c917e116f1140333faa6d8f441ca557`: `expired_preprogress_udp_session_is_retired_before_delivery_and_fresh_handshake_recovers` now routes its sequential expired (`--duration 2 -> 7s`) and recovery (`--duration 3 -> 8s`) clients through `bounded_client_output`. The false source-coverage sentence in the older `1d727f0` provenance was preserved and explicitly corrected rather than silently rewritten. Reachable exact-tree provenance is `docs/notes/h-i4-112-provenance-fc23a7a-20260923.md`: developer-reported `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, 2026-09-23T07:50:14Z -> 07:56:00Z, Linux x86_64, stable rustc 1.98.0. GitHub combined status for exact `fc23a7a` exposes no hosted status entries; absence is not a hosted pass/fail result.
+- H-I4-107/108/109 remain accepted/provenanced through developer-owned `4c445ce36aa06edc1b3d4952036073865e3f20d0`. H-I4-110 remains closed at `259495fad9949a526b12187ba59cf74aec0ee7f7`. H-I4-097..107 and H-I4-109..112 remain closed on their exact source claims absent exact-current falsification. H-I4-108 remains a continuing owner-inventory effort, not a repository-wide claim that every process owner is bounded.
 - Candidate A (`Recovery::on_ack` future/unsent ACK) and Candidate B (`record_datagrams` mixed drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
 - `SessionRuntime.events` retained-history capacity and D019 source-retention/no-reset remain maintainer/security policy gates. Do not invent TTL/LRU/history-size/capacity/security values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely for freshness.
 
-## FRONT HIGH — H-I4-112 H-I4-111 source/provenance mismatch
+## FRONT HIGH — H-I4-113 periodic / endpoint-rebind real client owners remain unbounded
+
+Reviewer finding: `docs/reviews/h-i4-113-periodic-endpoint-client-ownership-20260923.md`.
 
 ### Concrete defect
 
-Exact developer source at `1d727f0` still has this control flow in `crates/neko-cli/tests/probe.rs::expired_preprogress_udp_session_is_retired_before_delivery_and_fresh_handshake_recovers`:
+Exact-current `crates/neko-cli/tests/probe.rs` still has two real-network process-test families where the server is bounded but the client is not. A product `--duration` is behavior under test, not an independent harness deadline; if connect/negotiation/Noise/auth/DeliveryAck/lifecycle/shutdown regresses, synchronous `Command::output()` can block forever before `finish_server(server)` becomes reachable.
 
-1. start a real `failover-server` and pass `ready_failover_server`;
-2. run an intentionally expired real `failover-client` (`--duration 2`, `--test-first-data-delay-ms 1200`) through synchronous `.output().unwrap()`;
-3. assert the expired client failed and emitted no UDP DeliveryAck validation;
-4. run a fresh recovery real `failover-client` (`--duration 3`) through a second synchronous `.output().unwrap()`;
-5. only after both clients return call `finish_server(server)`.
+**Periodic-session family — seven direct synchronous real clients:**
 
-Either client can strand the gate if connect/negotiation/Noise/auth/DeliveryAck/lifecycle/shutdown regresses. Product `--duration` is behavior under test, not an independent harness deadline. This is release/item-4 **test-harness correctness + evidence truthfulness HIGH**, not production Session/Carrier/ACK/crypto/wire semantics.
+1. `periodic_session_delayed_confirmations_are_counted_on_one_session` — `periodic-client --duration 5`;
+2. `periodic_session_synchronized_key_update_crosses_authenticated_socket` — `--duration 5`;
+3. `periodic_session_mismatched_key_update_schedule_fails_closed` — `--duration 5`;
+4. `periodic_session_accounts_missing_ack_and_fails_closed` — `--duration 2`;
+5. `periodic_session_duplicate_ack_is_authenticated_and_idempotent` — `--duration 5`;
+6. `periodic_setup_timeout_is_separate_from_ack_timeout` — `--duration 5`;
+7. `periodic_setup_timeout_fails_before_application_records` — `--duration 2`.
 
-The reachable provenance note compounds the issue by claiming these exact two owners were already converted at `1d727f0`; they were not. Preserve the historical gate record, but supersede/correct the false coverage claim.
+`start_periodic_server` readiness and `finish_server` exit/drain are already bounded, but neither protects the test while the main thread is blocked in the client `.output()`.
+
+**Endpoint-rebind family — two direct synchronous real clients:**
+
+8. `endpoint_rebind_real_sockets_promote_new_source_and_reject_stale_old_source` — `endpoint-rebind-client --duration 5`;
+9. `endpoint_rebind_wrong_challenge_fails_after_candidate_without_success` — `endpoint-rebind-client --duration 3`.
+
+This is release/item-4 **test-harness correctness + evidence reliability HIGH**, not a production Session/Carrier/ACK/crypto/wire defect. Do not infer that every `.output()` is defective: keygen/help/capabilities, invalid-argument/configuration and socket-free fixture calls remain explicit fail-fast/self-bounded exclusions unless exact source proves otherwise.
 
 ### Closure contract
 
 1. Reuse exact-current `bounded_client_output`; do not create another process framework.
-2. Route the intentionally expired client through `bounded_client_output(..., Duration::from_secs(7))` (`--duration 2 + 5s`). Preserve `--test-first-data-delay-ms 1200`, expected failure, and the assertion that no `udp_delivery_ack_validated` is emitted.
-3. Route the fresh recovery client through `bounded_client_output(..., Duration::from_secs(8))` (`--duration 3 + 5s`). Preserve every existing recovery, ACK-count, ordering, ResumeGuard and `failover_client_ok` / `failover_server_ok` assertion.
-4. Do not touch the already-correct `first_udp_selection_loss` and `warm_readiness_failures` repairs except as needed for compilation. Do not mechanically convert keygen, help/capabilities, invalid-argument/configuration, or socket-free fixture `.output()` calls.
-5. Existing `bounded_client_output_fails_when_client_never_exits` is sufficient for the ordinary shared deadline path unless this exact owner exposes a distinct failure mode; do not add duplicate generic sleep churn.
-6. No decoder/parser/crypto-framing implementation change is implicated; do not run fuzz mechanically.
-7. On the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist developer-local exact-tree provenance with reachable pushed SHA, UTC start/end, exit codes, OS/arch, stable Rust and clean-tree state.
-8. Add a reachable erratum/superseding provenance record that explicitly says the `1d727f0` note's two `expired_preprogress` source-coverage bullets were false. Do not erase the original historical execution record.
-9. Continue immediately to the next ownership/review slice after closure; do not wait for reviewer cadence and do not infer repository-wide queue exhaustion from this repair.
+2. Convert the seven periodic clients while preserving every existing argument/assertion:
+   - `--duration 5` => `Duration::from_secs(10)` under the established duration + 5s harness convention;
+   - `--duration 2` => `Duration::from_secs(7)`.
+3. Convert both endpoint-rebind clients:
+   - `--duration 5` => `Duration::from_secs(10)`;
+   - `--duration 3` => `Duration::from_secs(8)`.
+4. Preserve all delayed-confirmation, synchronized/mismatched key-update, missing/duplicate ACK, setup-timeout and authentication assertions; preserve endpoint candidate/challenge/promotion/sync/stale-source/failure assertions exactly.
+5. Existing `bounded_client_output_fails_when_client_never_exits` is sufficient for the ordinary shared deadline path. Do not add duplicate generic sleep churn unless these owners expose a distinct failure mode.
+6. Do not mechanically convert keygen, help/capabilities, invalid argument/configuration or socket-free fixture `.output()` calls.
+7. No decoder/parser/crypto-framing implementation change is implicated; do not run fuzz mechanically.
+8. On the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist developer-local exact-tree provenance with reachable pushed SHA, UTC start/end, exit codes, OS/arch, stable Rust and clean-tree state.
+9. Continue immediately to the next ownership/review slice after closure; do not wait for reviewer cadence and do not infer repository-wide queue exhaustion from this family repair.
 
-## Rolling queue — keep continuous after H-I4-112
+## Rolling queue — keep continuous after H-I4-113
 
 Do not collapse this to one ticket. Dependency-ready order:
 
-1. **H-I4-112 repair + corrected exact-tree provenance** — current FRONT HIGH; this fully closes the remaining H-I4-111 owner pair.
-2. **Remaining process/socket/thread ownership causal sweep.** Continue exact-current `crates/neko-cli/tests/probe.rs`, `crates/neko-cli/tests/multistream.rs`, and other process tests. Pay special attention to later direct/indirect `.output()`, `wait`, `wait_with_output`, `try_wait`, periodic/endpoint-rebind clients, blocking socket `accept`/`recv`/`read_exact`, pipe drains and peer/reader joins. Classify each as exit/peer-completion proven, source-self-bounded, externally bounded, or concrete unbounded owner; repair only the last class. Preserve explicit fail-fast/self-bounded exclusions.
-3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..112 with exact-current helper/cfg/socket/process semantics. Keep Linux-local execution, macOS/BSD source/cfg reasoning and Windows claims separate.
+1. **H-I4-113 repair + exact-tree provenance** — current FRONT HIGH.
+2. **Remaining process/socket/thread ownership causal sweep.** Continue exact-current `crates/neko-cli/tests/probe.rs`, `crates/neko-cli/tests/multistream.rs`, and other process tests. Pay special attention to later direct/indirect `.output()`, `wait`, `wait_with_output`, `try_wait`, blocking socket `accept`/`recv`/`read_exact`, pipe drains and peer/reader joins. Classify each as exit/peer-completion proven, source-self-bounded, externally bounded, or concrete unbounded owner; repair only the last class. Preserve explicit fail-fast/self-bounded exclusions.
+3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..113 with exact-current helper/cfg/socket/process semantics. Keep Linux-local execution, macOS/BSD source/cfg reasoning and Windows claims separate.
 4. **Algorithmic/resource boundedness reconciliation.** Reconcile accepted boundedness reviews with current channel/output bounds, stdout accumulation, cleanup deadlines, socket peer lifetime, reader lifetime and child/thread ownership. Do not run capacity-pressure benchmarks or invent capacity/security policy values.
-5. **Release packet / item-4 factual reconciliation.** `docs/release-security-review-packet.md` top coverage boundary predates H-I4-097..112. Qualify stale statements that process failure paths are globally bounded or review is exhausted; index reachable repair/review notes only after relevant exact-tree provenance exists. Local process/socket tests are not WAN/performance/security approval.
+5. **Release packet / item-4 factual reconciliation.** `docs/release-security-review-packet.md` top coverage boundary still predates H-I4-097..113. Qualify stale statements that process failure paths are globally bounded or review is exhausted; index reachable repair/review notes only after relevant exact-tree provenance exists. Local process/socket tests are not WAN/performance/security approval.
 6. **Pre-auth malformed/rejection accounting exact-current reuse challenge.** Reuse prior independent review only where owner source/tests remain unchanged; otherwise narrowly re-challenge changed ownership. D019 remains a policy gate.
 7. **CLI diagnostic / exit-code / JSON / human-output boundary exact-current reuse challenge.** Diagnostics remain evidence-only and never authentication/Delivery/Path/ACK evidence.
 8. **Package/build/reproducibility spot re-challenge.** Verify recent process-test repairs do not stale manifests/scripts/provenance assumptions. Do not invent signing/SBOM/key-custody/publication policy.
@@ -85,8 +96,8 @@ A bounded no-finding review is valid item-4 support when it identifies inspected
 
 - Developer-reported local CI, repository-persisted provenance, reviewer source review, hosted CI, live WAN evidence and performance conclusions are distinct evidence classes.
 - Accepted exact-tree provenance must anchor a GitHub-resolvable pushed SHA. Never publish a local-only/unreachable SHA as shared exact-tree evidence.
-- Exact `1d727f0` has a reachable developer-local gate record, but its H-I4-111 provenance source-coverage claim is partly false; exact source wins. GitHub combined status exposed no hosted entries. Do not call the absence a hosted pass/fail result.
-- Reviewer H-I4-112 is source/control-flow inspection only; reviewer did not run Rust/full gate, cross-platform execution, fuzz, WAN or performance work in this pass.
+- Exact `fc23a7a` has reachable developer-reported local provenance for H-I4-112; GitHub combined status exposed no hosted entries. Do not call the absence a hosted pass/fail result.
+- Reviewer H-I4-113 is source/control-flow inspection only; reviewer did not run Rust/full gate, cross-platform execution, fuzz, WAN or performance work in this pass.
 - Hosted Actions are cross-evidence, not a wait condition and not a replacement for the developer-local clean exact-tree gate.
 - Fuzz only when wire decoder/parser/crypto framing changes materially.
 - Standing VPS authorization permits bounded self-owned TCP/UDP lab work, but current authoritative classification remains `READY_LIVE: none`; no repeat live run without a new concrete question.
