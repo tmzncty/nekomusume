@@ -341,17 +341,27 @@ fn bounded_wait_with_output(child: &mut Child, deadline: Duration) -> std::proce
             Ok(Some(status)) => break status,
             Ok(None) => {
                 if Instant::now() >= end {
-                    let _ = child.kill();
+                    // Deadline with exit unproven — kill must succeed or
+                    // cleanup is an explicit failure; try_wait Err is not
+                    // reap proof.
+                    if let Err(e) = child.kill() {
+                        panic!("bounded_wait_with_output: kill failed with exit unproven: {e}");
+                    }
                     let reap_end = Instant::now() + Duration::from_secs(3);
                     loop {
                         match child.try_wait() {
-                            Ok(Some(_)) | Err(_) => break,
+                            Ok(Some(_)) => break,
                             Ok(None) => {
                                 assert!(
                                     Instant::now() < reap_end,
                                     "child did not exit within bound after kill"
                                 );
                                 std::thread::sleep(Duration::from_millis(10));
+                            }
+                            Err(e) => {
+                                panic!(
+                                    "bounded_wait_with_output: try_wait failed while child live: {e}"
+                                );
                             }
                         }
                     }
@@ -360,17 +370,29 @@ fn bounded_wait_with_output(child: &mut Child, deadline: Duration) -> std::proce
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(e) => {
-                let _ = child.kill();
+                // Exit observation itself failed — converge ownership via
+                // kill + bounded reap; kill/try_wait error is an explicit
+                // cleanup failure, not convergence.
+                if let Err(ke) = child.kill() {
+                    panic!(
+                        "bounded_wait_with_output: try_wait failed ({e}) and kill failed ({ke}) — ownership unproven"
+                    );
+                }
                 let reap_end = Instant::now() + Duration::from_secs(3);
                 loop {
                     match child.try_wait() {
-                        Ok(Some(_)) | Err(_) => break,
+                        Ok(Some(_)) => break,
                         Ok(None) => {
                             assert!(
                                 Instant::now() < reap_end,
-                                "child did not exit within bound after kill"
+                                "try_wait failed ({e}) and child did not exit within bound after kill"
                             );
                             std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(te) => {
+                            panic!(
+                                "bounded_wait_with_output: try_wait failed ({e}) and reap try_wait failed ({te}) — ownership unproven"
+                            );
                         }
                     }
                 }
