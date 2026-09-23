@@ -846,7 +846,11 @@ fn rejects_unbounded_arguments() {
 #[test]
 fn matrix_probe_distinguishes_invalid_failed_and_reachable_outcomes() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
-    let run = |args: &[&str]| Command::new(bin).args(args).output().unwrap();
+    // H-I4-113: probe --matrix args are networked probe calls — the matrix
+    // client's connect/probe lifecycle cannot be the only termination proof.
+    let run = |args: &[&str]| {
+        bounded_client_output(Command::new(bin).args(args), Duration::from_secs(10))
+    };
 
     for args in [
         vec![
