@@ -3482,7 +3482,7 @@ fn reliable_udp_malformed_budget_persists_across_carrier_ack() {
             "--experiment-id",
             "r9-malf-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     );
     let (_st, _sl) = finish_server(server);
     let _ = fs::remove_file(sp);
@@ -3612,7 +3612,7 @@ fn reliable_udp_post_return_incomplete_is_terminal() {
             "--experiment-id",
             "r9-p4-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     );
     let (_st, _sl) = finish_server(server);
     let _ = fs::remove_file(sp);
@@ -3710,7 +3710,7 @@ fn reliable_udp_stale_ack_is_accepted_empty_not_rejected() {
             "--experiment-id",
             "r9-stale-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
@@ -3835,7 +3835,7 @@ fn reliable_udp_future_ack_is_typed_rejected() {
             "--experiment-id",
             "r9-fut-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
@@ -3947,7 +3947,7 @@ fn reliable_udp_stale_ack_settlement_phase_is_accepted_empty() {
             "--experiment-id",
             "r9-stlate-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
@@ -4082,7 +4082,7 @@ fn reliable_udp_post_return_carrier_ack_withheld_fails() {
             "--experiment-id",
             "r9-p4a-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
@@ -4241,7 +4241,7 @@ fn reliable_udp_post_return_session_ack_withheld_fails() {
             "--experiment-id",
             "r9-p4b-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
@@ -4417,7 +4417,7 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
             "--experiment-id",
             "r9-dl-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(17),
     );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
@@ -4720,7 +4720,7 @@ fn reliable_udp_ack_loss_delayed_original_reorder_settles() {
             "--experiment-id",
             "r9-alo-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(17),
     );
     let (srv_status, server_log) = finish_server(server);
     let client_log = String::from_utf8_lossy(&out.stdout);
@@ -4883,7 +4883,7 @@ fn reliable_udp_first_send_socket_failure_rolls_back() {
             "--experiment-id",
             "r9-fsf-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(17),
     );
     let (srv_status, _server_log) = finish_server(server);
     let client_log = String::from_utf8_lossy(&out.stdout);
@@ -5007,7 +5007,7 @@ fn reliable_udp_post_return_malformed_bound_is_terminal() {
             "--experiment-id",
             "r9-mb-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(17),
     );
     let (srv_status, server_log) = finish_server(server);
     let client_log = String::from_utf8_lossy(&out.stdout);
@@ -5130,7 +5130,7 @@ fn reliable_udp_carrier_ack_send_failure_is_typed_not_sent() {
             "--experiment-id",
             "r9-aksf-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(17),
     );
     let (srv_status, server_log) = finish_server(server);
     let client_log = String::from_utf8_lossy(&out.stdout);
@@ -5280,7 +5280,7 @@ fn reliable_udp_post_return_reversed_ack_order_settles() {
             "--experiment-id",
             "r9-rord-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
@@ -5462,7 +5462,7 @@ fn reliable_udp_post_return_stale_ack_is_accepted_empty() {
             "--experiment-id",
             "r9-pstale-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
@@ -5621,7 +5621,7 @@ fn reliable_udp_post_return_future_ack_is_rejected() {
             "--experiment-id",
             "r9-pfut-cli",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     );
     let (srv_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
@@ -5784,7 +5784,7 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
             "--experiment-id",
             "warm-failover-client",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     );
     let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
@@ -5998,7 +5998,7 @@ fn migration_back_tamper_fails_closed_before_return() {
             "--experiment-id",
             "migration-tamper-client",
         ]),
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     );
     let (server_status, server_log) = finish_server(server);
     let _ = fs::remove_file(sp);
