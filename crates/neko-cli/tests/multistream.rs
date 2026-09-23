@@ -41,17 +41,25 @@ fn bounded_wait_with_output(
             Ok(Some(status)) => break status,
             Ok(None) => {
                 if std::time::Instant::now() >= end {
-                    let _ = child.kill();
+                    // H-I4-107: kill failure is explicit cleanup error, not a
+                    // license to abandon ownership. If kill fails the child may
+                    // remain live — panic before the error escapes.
+                    if let Err(e) = child.kill() {
+                        panic!("kill failed and child exit unproven: {e}");
+                    }
                     let reap_end = std::time::Instant::now() + Duration::from_secs(3);
                     loop {
                         match child.try_wait() {
-                            Ok(Some(_)) | Err(_) => break,
+                            Ok(Some(_)) => break,
                             Ok(None) => {
                                 assert!(
                                     std::time::Instant::now() < reap_end,
                                     "child did not exit within bound after kill"
                                 );
                                 std::thread::sleep(Duration::from_millis(10));
+                            }
+                            Err(e) => {
+                                panic!("try_wait failed while child live after kill: {e}");
                             }
                         }
                     }
@@ -62,17 +70,22 @@ fn bounded_wait_with_output(
             Err(e) => {
                 // Exit observation failed — converge ownership via kill +
                 // bounded reap before the error escapes.
-                let _ = child.kill();
+                if let Err(ke) = child.kill() {
+                    panic!("try_wait failed ({e}) and kill failed too: {ke}");
+                }
                 let reap_end = std::time::Instant::now() + Duration::from_secs(3);
                 loop {
                     match child.try_wait() {
-                        Ok(Some(_)) | Err(_) => break,
+                        Ok(Some(_)) => break,
                         Ok(None) => {
                             assert!(
                                 std::time::Instant::now() < reap_end,
                                 "child did not exit within bound after kill"
                             );
                             std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(e2) => {
+                            panic!("try_wait failed ({e}) and reap try_wait failed too: {e2}");
                         }
                     }
                 }
