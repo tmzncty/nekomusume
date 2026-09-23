@@ -1,83 +1,57 @@
-# ChatGPT reviewer handoff — H-I4-115 source accepted; provenance + ownership sweep FRONT
+# ChatGPT reviewer handoff — process ownership group closed; exact-current item-4 refill
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Code, tests, reachable pushed commits and current specs outrank this handoff, chat memory and stale checkbox state.
-- Latest developer-owned source/test anchor independently reviewed this pass: `1f6d744c9954b9a7a5d693b43a20d137a5c5e75d` (`test(cli): H-I4-115 descendant-held pipe bound in bounded_wait_with_output`). It changes only `crates/neko-cli/tests/probe.rs` and `crates/neko-cli/tests/multistream.rs`.
-- Independent reviewer note: `docs/reviews/independent-h-i4-115-bounded-output-1f6d744-20260924.md` (reviewer commit `eb498e16a6e2fcb4d58a61dd4423ef33bb6abb4b`).
-- **H-I4-115 source repair is accepted at `1f6d744...` for the bounded-caller invariant.** Both helper copies now keep concurrent pipe draining but route reader completion through bounded channels; after direct-child exit/reap, descendant-held stdout/stderr produces an explicit finite harness failure rather than an unbounded reader `join()`. The Unix regression directly challenges the inherited-writer premise with a finite descendant.
-- **H-I4-115 is CLOSED** at `1f6d744c9954b9a7a5d693b43a20d137a5c5e75d`: both `bounded_wait_with_output` copies route drained buffers through bounded `mpsc` channels; reader completion has a 3s deadline — descendant-held pipes produce explicit finite harness failure. Exact-tree provenance: `docs/notes/h-i4-115-provenance-1f6d744-20260924.md` — `check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-23T16:51:02Z → 16:56:45Z, Linux x86_64, rustc 1.98.0.
-- The synthetic descendant in the negative regression is finite but can outlive the assertion for part of its finite sleep interval. This does not reintroduce the caller hang and is not a new production/process-tree finding. Only reopen this as a separate narrow harness issue if actual leaked-process interference is demonstrated; do not manufacture process-group policy.
-- H-I4-113/114 remain closed at exact source/test `46d624e2272fcd5cf9d86457d018c4f508b8ba10` with reachable developer-local provenance and separately recorded hosted Rust CI. H-I4-111/112 remain closed at `fc23a7a88c917e116f1140333faa6d8f441ca557`; H-I4-107/108/109 remain accepted/provenanced through `4c445ce36aa06edc1b3d4952036073865e3f20d0`; H-I4-110 remains closed at `259495fad9949a526b12187ba59cf74aec0ee7f7`.
+- Latest developer-owned source/test anchor reviewed in this cycle remains `1f6d744c9954b9a7a5d693b43a20d137a5c5e75d` (`test(cli): H-I4-115 descendant-held pipe bound in bounded_wait_with_output`). No later developer-owned implementation/source commit was present when this handoff was refreshed; later reviewer commits are evidence/navigation only.
+- **H-I4-097..115 process/socket/thread ownership repair group is closed for its challenged exact source owners.** H-I4-115 exact-tree developer-local provenance is `docs/notes/h-i4-115-provenance-1f6d744-20260924.md`; earlier findings keep their own reachable source/provenance anchors. Do not collapse the chain into an imaginary SHA that ran every historical gate.
+- Current independent remaining-owner sweep: `docs/reviews/independent-cli-process-ownership-fcd7a08-20260924.md` — bounded **NO FINDING** for remaining test-harness process/socket/thread ownership. It explicitly does not claim every authenticated product socket lifetime is globally wall-clock bounded.
+- Current cross-platform reconciliation: `docs/reviews/independent-cli-cross-platform-process-416fd5e-20260924.md` — **NO correctness finding inside the currently evidenced Linux release/package scope; no Windows/macOS/BSD execution claim.** The old `8e11de0` portability note is historical exact-tree evidence only. Current package/hosted paths are Linux-scoped; `/proc/self/fd` benchmark FD accounting and Unix signal/process regressions must not be promoted to generic cross-platform proof.
+- Current algorithmic/resource reconciliation: `docs/reviews/independent-i4-bnd-current-reconciliation-934c878-20260924.md` — **NO NEW dependency-ready boundedness finding.** Compare from exact `5b7b22b` shows no changes to `crates/neko-session/src/lib.rs`, `crates/neko-carrier/src/lib.rs`, or `crates/neko-reliable/src/lib.rs`; post-anchor code changes are CLI process-test hardening. `SessionRuntime.events` retained-history capacity remains `POLICY_BLOCKED_RESOURCE_BOUND`; do not invent a history/capacity number.
+- Process-group release/item-4 reconciliation: `docs/reviews/release-item4-process-boundary-reconciliation-59c7f30-20260924.md`. It preserves evidence classes and release flags.
+- Exact owner-diff reuse is already established for two queued lanes:
+  - `d96aabe..f5c3e9b`: no changes to `crates/neko-cli/src/preauth.rs`, `crates/neko-cli/src/main.rs` or `crates/neko-crypto/src/lib.rs`; prior `docs/reviews/independent-preauth-rejection-accounting-d96aabe-20260922.md` remains reusable for unchanged owners. D019/RSEC policy boundaries remain open.
+  - `b4af007..f5c3e9b`: no changes to `crates/neko-cli/src/main.rs`, manifests/package scripts or product CLI owners; changes are `probe.rs`/`multistream.rs` tests plus docs. Existing CLI diagnostic/output and package/build reviews remain reusable where their named owners are unchanged. Do not manufacture duplicate notes merely because HEAD advanced.
 - Candidate A (`Recovery::on_ack` future/unsent ACK) and Candidate B (`record_datagrams` mixed drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
-- `SessionRuntime.events` retained-history capacity and D019 source-retention/no-reset remain maintainer/security policy gates. Do not invent TTL/LRU/history-size/capacity/security values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
-- **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely for freshness.
+- **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track merely for freshness.
 
-## FRONT 1 — finish H-I4-115 exact-tree provenance, then continue immediately
+## FRONT — repository-wide exact-current owner-diff refill, then challenge changed/uncovered owners
 
-The source defect is no longer open; this lane is evidence closure only.
+The long CLI process seam is no longer the queue front. Do not keep rediscovering `.output()` variants after the exact-current no-finding sweep unless source materially changes or a concrete counterexample appears.
 
-1. On exact developer source/test `1f6d744...` or a later reachable commit whose relevant source is unchanged, run in a safe clean checkout/worktree:
-   - `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`
-   - `git diff --check`
-   - confirm clean tree.
-2. Persist reachable developer-local provenance with exact SHA, UTC start/end, exit codes, OS/arch, stable Rust and clean-tree state. Do not record secrets, private addresses/topology, credentials or unnecessary absolute paths.
-3. Keep evidence classes separate. GitHub Actions, if any appear later, are cross-evidence only and not a wait condition.
-4. No decoder/parser/crypto-framing implementation changed; do not run fuzz mechanically.
-5. After provenance is pushed, continue directly to FRONT 2 without waiting for reviewer cadence.
+Build a current 13-surface owner-diff map against the **latest dedicated independent review anchor for each surface**, not merely the oldest 2026-09-13 sweep. For each surface classify:
 
-## FRONT 2 — remaining process/socket/thread ownership causal sweep
+1. exact-current owner unchanged since latest adequate independent challenge -> **REUSE**, retain prior review/provenance and move on without duplicate doc churn;
+2. owner changed only in tests/evidence helpers -> inspect the changed harness seam and reuse production review only if semantics are unchanged;
+3. material owner change after latest dedicated challenge -> **READY_LOCAL independent bounded challenge**;
+4. known policy/external/environment/release-authority gate -> classify explicitly and continue other independent work;
+5. concrete correctness/security/evidence defect whose answer is already fixed by committed semantics -> repair immediately, add focused positive/negative regression, exact-tree local gate/provenance, then continue.
 
-Continue the exact-current sweep instead of declaring queue exhaustion because the H-I4-115 seam is repaired.
+A no-finding challenge is valid item-4 support, but only when it covers a real changed/uncovered owner or a materially different invariant. Do not create checker/schema/framework/docs filler just to count slices.
 
-### Scope
+## Dependency-ready rolling queue after owner-diff classification
 
-Inspect current `crates/neko-cli/tests/probe.rs`, `crates/neko-cli/tests/multistream.rs`, their invoked CLI owner paths, and any newly changed helpers. For each candidate wait, classify it as one of:
+Keep multiple lanes ready; execute dependency-ready work continuously without waiting for the next reviewer cadence.
 
-- source-self-bounded;
-- externally/harness-bounded with a proven owner;
-- peer/child completion causally proven;
-- concrete unbounded owner.
+1. **13-surface owner-diff inventory/refill.** Map the latest independent review anchor and current owner-change status for every required surface. This is the navigation step that determines which following lanes are true review work rather than stale reruns.
+2. **Reliable UDP recovery current spot challenge if changed/uncovered.** ACK range/future-unsent ACK, loss/retransmit, RTT/PTO, persistent congestion, Reno and fault simulation. Candidate A stays closed absent contrary current evidence.
+3. **CarrierState + concurrent Carrier Manager/health/migration-back current spot challenge if changed/uncovered.** Preserve single-active/multi-ready and committed hysteresis/generation semantics; do not redesign architecture.
+4. **FairScheduler + multi-stream + session/stream flow-control current spot challenge if changed/uncovered.** Challenge aggregate accounting and error atomicity, not new policy values.
+5. **Carrier adapters Memory/UDP/TCP close/error/resource semantics current spot challenge if changed/uncovered.** Avoid repeating already closed empty-message/terminal-ownership slices unless owner code moved.
+6. **SessionRuntime lifecycle/window/DeliveryAck current spot challenge if changed/uncovered.** Keep `events` retained-history capacity separate as a maintainer/security value gate; do not use it to block other runtime review.
+7. **Observability projection/counter/high-water current spot challenge if changed/uncovered.** Candidate B remains closed unless current source/tests falsify its repair.
+8. **CLI exit-code/JSON/human-output + diagnostic evidence boundary reuse/rechallenge.** Product owner source is unchanged since `b4af007`; only challenge newly changed test/harness claims or a new exact-current contradiction. Diagnostics never become authentication, Session Delivery, Path or ACK evidence.
+9. **Package/reproducibility/dependency/build reuse/rechallenge.** Current product/manifests/package-script owners are unchanged in the recent process-test interval. Reuse prior reviews unless owner diff finds a material change; do not invent signing/SBOM/key-custody/publication policy.
+10. **Pre-auth rejection/resource accounting reuse/rechallenge.** `d96aabe..f5c3e9b` leaves preauth/main/crypto owners unchanged. Reuse prior no-finding; re-open only on source change/new counterexample. D019 and RSEC-001 release/security promotion remain separate gates.
+11. **Release packet / item-4 factual indexing.** The packet currently does not index H-I4-097..115 or the 2026-09-24 current-owner reconciliations. Add links only as evidence-index maintenance after the owner-diff map identifies which notes remain current; do not rewrite historical provenance, imply one all-tests SHA, or advance release flags.
+12. **Conditional live.** Only if new code/instrumentation/hypothesis/path condition creates a specific unresolved real-network question inside standing authorization. Otherwise keep `READY_LIVE: none`.
 
-Challenge at least:
+If the broad inventory finds that every implemented surface has a reachable dedicated review still valid on its exact-current owner, no concrete defect exists, no READY review-support remains, and all outstanding work is genuinely policy/external/environment/release-authority gated, then and only then may queue exhaustion be considered. Do not infer that from one seam.
 
-- remaining direct `.output()` / `wait*` uses;
-- `read_exact` / `read` / `recv` / `recv_from` / `accept` paths;
-- output-drain completion and reader/thread joins;
-- direct-child versus descendant ownership;
-- socket peer lifetime and cleanup after negative paths.
+## Required 13-surface inventory
 
-Keep keygen/help/capabilities/invalid-config/socket-free fail-fast calls excluded unless exact source proves they can block on an external owner.
-
-### Important policy boundary discovered during source reasoning
-
-`crates/neko-cli/src/multistream.rs` contains authenticated application-level blocking socket reads after the pre-auth/Noise stage. That observation by itself is **not** authorization to invent an application idle timeout, duration, capacity or security number. Before treating it as a defect, read exact-current owner source plus applicable spec/ADR/status/security claims and decide whether the repository already fixes the required liveness semantics. If current semantics do not decide a timeout, classify it explicitly as an operational/policy boundary or maintainer gate rather than manufacturing a numeric repair. Outer process tests being bounded also must not be misreported as proof that the production/lab fixture recursively owns every authenticated peer lifetime.
-
-If a concrete defect is found and current committed semantics already determine the answer, do the smallest repair + focused positive/negative regression + exact-tree gate + provenance. If no defect is found, write a bounded no-finding note identifying exact owners, challenged invariant, checks/reasoning, exclusions and reachable anchor; do not create framework/checker/schema filler.
-
-## Rolling queue — keep continuous after FRONT 1/2
-
-Do not collapse this to one ticket. Dependency-ready order:
-
-1. **H-I4-115 exact-tree provenance closure** at `1f6d744...` or a later unchanged-source anchor.
-2. **Remaining process/socket/thread ownership causal sweep** as above; repair only proven unbounded owners.
-3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..115 against exact-current helper/cfg/socket/process semantics. Separate Linux execution evidence from macOS/BSD source reasoning and Windows claims. Unix inherited-pipe behavior is not Windows proof.
-4. **Algorithmic/resource boundedness reconciliation.** Reconcile accepted boundedness reviews with channel/output bounds, stdout/stderr accumulation, cleanup deadlines, socket peer lifetime, authenticated application reads, reader lifetime, direct-child versus descendant ownership and thread completion. No capacity-pressure benchmark and no invented policy values.
-5. **Release packet / item-4 factual reconciliation.** The packet is an evidence index, not approval. Qualify any broad statement that process failure paths are globally bounded; index H-I4-097..115 only after relevant exact-tree provenance is reachable. Local process/socket tests are not WAN/performance/security approval.
-6. **Pre-auth malformed/rejection accounting exact-current reuse challenge.** Reuse prior independent review only where owner source/tests remain unchanged; narrowly re-challenge changed owners. D019 remains policy blocked.
-7. **CLI diagnostic / exit-code / JSON / human-output contract exact-current reuse challenge.** Diagnostics remain evidence-only; never promote them to authentication, Session Delivery, Path or ACK evidence.
-8. **Package/build/reproducibility spot re-challenge.** Verify recent process-test repairs do not stale manifests, lock/features, scripts, package provenance or native-hook/unsafe assumptions. Do not invent signing/SBOM/key-custody/publication policy.
-9. **Reliable UDP / CarrierState / CarrierManager / FairScheduler / SessionRuntime targeted spot re-challenge.** Re-open materially changed owners; otherwise record exact-current reuse boundaries rather than rerunning equivalent deep sweeps. Candidate A remains closed unless current source falsifies it.
-10. **Observability + carrier adapters + dependency/build exact-current reuse challenge.** Same owner-diff rule. Candidate B remains closed unless current source falsifies it. No checker/schema/framework/docs filler.
-11. **Repository-wide 13-surface refill.** Queue exhaustion is legal only if the broad inventory finds no concrete defect, no uncovered implemented core surface, no READY review-support and no READY live question, with all remaining work genuinely external/policy/environment/release-authority gated.
-12. **Conditional live.** Only if new code/instrumentation/hypothesis/path condition creates a specific unresolved real-network question within standing authorization. Otherwise keep `READY_LIVE: none`.
-
-If several coherent slices complete in 10–30 minutes with stable quality, deepen the queue and continue implementation/review -> tests -> commit -> push -> next slice without waiting. Every 3–4 coherent slices or important repair cluster, perform one factual item-4/release reconciliation rather than rewriting large docs after every small commit.
-
-## Required 13-surface refill inventory
-
-At each meaningful repository-wide refill, explicitly ask whether each surface has a reachable, dedicated, independent bounded review that remains valid on exact-current owners:
+For every repository-wide refill, explicitly classify all of these:
 
 1. `neko-reliable` UDP recovery — ACK range, future/unsent ACK, loss/retransmit, RTT/PTO, persistent congestion, Reno, fault simulation;
 2. `neko-carrier::CarrierState` — generation, validation, hysteresis, single-active, drain/fail/activate;
@@ -93,15 +67,15 @@ At each meaningful repository-wide refill, explicitly ask whether each surface h
 12. algorithmic resource boundedness without capacity-pressure benchmarks or new policy values;
 13. release-packet factual consistency and evidence boundary.
 
-A bounded no-finding review is valid item-4 support when it identifies inspected owners, challenged invariant, deterministic checks/commands or source reasoning, exclusions and an exact reachable anchor. Do not create checker/schema/framework/docs churn merely to manufacture a slice.
-
 ## Evidence discipline
 
 - Developer-reported local CI, repository-persisted developer-local provenance, reviewer source/control-flow review, reviewer-local generic OS checks, hosted CI, live WAN evidence and performance conclusions are distinct evidence classes.
 - Accepted exact-tree provenance must anchor a GitHub-resolvable pushed SHA. Never publish a local-only/unreachable SHA as shared exact-tree evidence.
-- Exact `1f6d744...` H-I4-115 review is source/control-flow inspection only. At review time it had no combined-status entries and no reachable developer-local exact-tree provenance. The reviewer did not run repository Rust/full-gate, cross-platform runtime, fuzz, WAN or performance work in this pass.
-- Exact `46d624e...` has both reachable developer-local provenance and a separate successful hosted Rust CI workflow; neither is reviewer-local Rust execution.
+- The 2026-09-24 `independent-cli-process-ownership`, cross-platform and boundedness notes are reviewer source/owner-diff reviews; they are **not** reviewer-local Rust/full-gate execution records.
+- H-I4-115 exact `1f6d744...` has reachable developer-local exact-tree provenance. Do not infer hosted or reviewer-local execution unless separately observed.
+- Exact `46d624e...` H-I4-113/114 has reachable developer-local provenance and separately recorded hosted Rust CI; neither is reviewer-local execution.
 - Hosted Actions are cross-evidence, not a wait condition and not a replacement for developer-local clean exact-tree validation.
-- Fuzz only when wire decoder/parser/crypto framing changes materially.
+- For any new ordinary READY_LOCAL code/test/docs-evidence source change, run the final pushed developer SHA in a safe clean checkout/worktree with `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist SHA/UTC times/exit codes/OS+arch/stable Rust/clean state without secrets or private topology.
+- Fuzz only when wire decoder/parser/crypto framing changes materially, using the pinned `scripts/fuzz-toolchain.sh` toolchain and the required `decode` build/run commands.
 - Standing VPS authorization permits bounded self-owned TCP/UDP lab work, but authoritative classification remains `READY_LIVE: none`; no repeat live run without a new concrete question.
-- Never decide D019, capacity/TTL/LRU/history/security values, signing/key-custody/SBOM/publication policy, core Session/Carrier/ACK/crypto/wire architecture, destructive/canonical migration, RC/freeze/release/production authority.
+- Never decide D019, TTL/LRU/history/capacity/security values, signing/key-custody/SBOM/publication policy, core Session/Carrier/ACK/crypto/wire architecture, destructive/canonical migration, RC/freeze/release/production authority.
