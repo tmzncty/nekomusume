@@ -25,15 +25,21 @@ fn bounded_wait_with_output(
     // local deadline. On expiry kill + bounded reap before returning.
     let mut stdout_child = child.stdout.take().unwrap();
     let mut stderr_child = child.stderr.take().unwrap();
-    let stdout_handle = thread::spawn(move || {
+    // H-I4-115: reader completion after child exit is NOT causally bounded by
+    // direct-child exit alone — a descendant can hold an inherited writer open
+    // past the child exit. Route each drained buffer through a bounded channel
+    // so the reader-join is itself deadline-capped.
+    let (stdout_tx, stdout_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
+    thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = stdout_child.read_to_end(&mut buf);
-        buf
+        let _ = stdout_tx.send(buf);
     });
-    let stderr_handle = thread::spawn(move || {
+    thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = stderr_child.read_to_end(&mut buf);
-        buf
+        let _ = stderr_tx.send(buf);
     });
     let end = std::time::Instant::now() + deadline;
     let status = loop {
@@ -93,10 +99,21 @@ fn bounded_wait_with_output(
             }
         }
     };
-    // Exit proven — pipes are EOF-closed; join the drain threads (bounded by
-    // the already-established exit).
-    let stdout = stdout_handle.join().expect("stdout drain thread");
-    let stderr = stderr_handle.join().expect("stderr drain thread");
+    // Child exit proven. A descendant may still hold an inherited writer —
+    // bound the reader completion with a channel deadline rather than join().
+
+    let stdout = match stdout_rx.recv_timeout(Duration::from_secs(3)) {
+        Ok(buf) => buf,
+        Err(_) => panic!(
+            "bounded_wait_with_output: stdout reader did not complete within bound after child exit — descendant-held pipe suspected"
+        ),
+    };
+    let stderr = match stderr_rx.recv_timeout(Duration::from_secs(3)) {
+        Ok(buf) => buf,
+        Err(_) => panic!(
+            "bounded_wait_with_output: stderr reader did not complete within bound after child exit — descendant-held pipe suspected"
+        ),
+    };
     std::process::Output {
         status,
         stdout,
