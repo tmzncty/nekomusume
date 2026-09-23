@@ -1,52 +1,60 @@
-# ChatGPT reviewer handoff — H-I4-110 canonical failover client ownership HIGH FRONT
+# ChatGPT reviewer handoff — H-I4-111 remaining probe client ownership HIGH FRONT
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Code, tests, reachable pushed commits and current specs outrank this handoff, chat memory and stale checkbox state.
-- Developer-owned `10d97e7e2c03ca19d9c575d0f0897c1703af1f8d` + `75d65e653b3c245e6d6146a293a183f058952804` bound the real multistream client owners and harden `multistream.rs::bounded_wait_with_output`; `3bc1de3dcf015aac0a59fe1375323de040f251a9` makes the analogous `probe.rs` cleanup classification truthful; `4c445ce36aa06edc1b3d4952036073865e3f20d0` fixes H-I4-108 caller deadlines so they exceed the product `--duration` plus bounded slack.
-- The developer-local exact-tree provenance for the H-I4-107/108/109 repair cluster is reachable at `docs/notes/h-i4-107-108-109-provenance-4c445ce-20260923.md`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, UTC 2026-09-23T03:02:29Z → 03:08:20Z, Linux x86_64, stable rustc 1.98.0. This is developer-reported local provenance, not reviewer-local execution or hosted CI.
-- **H-I4-107 and H-I4-109 remain CLOSED on their exact claims. H-I4-108's helper and many networked-client conversions are accepted/provenanced, but the owner inventory was not complete.** Reviewer finding `docs/reviews/reviewer-h-i4-110-canonical-failover-client-ownership-20260923.md` identifies a missed canonical `failover --role client` process owner in `executable_loopback_controlled_udp_stop_tcp_resume`.
-- **H-I4-110 is CLOSED** at `259495fad9949a526b12187ba59cf74aec0ee7f7`: `executable_loopback_controlled_udp_stop_tcp_resume`'s `failover --role client` now runs under `bounded_client_output` (`--duration 3 + 5s = 8s` timeout) — a live client can no longer strand `finish_server`. Exact-tree provenance: `docs/notes/h-i4-110-provenance-259495f-20260923.md` — `check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-23T03:49:56Z → 03:55:40Z, Linux x86_64, rustc 1.98.0.
-- Exact reviewed source shape: server spawn → `ready_failover_server` → direct synchronous `Command(... "failover", "--role", "client", ... "--duration", "3").output()` → only after client return `finish_server(server)`. A stuck client therefore prevents the already-bounded server cleanup from becoming reachable. Product `--duration` is behavior under test, not an independent harness deadline.
-- H-I4-097..107 and H-I4-109 remain closed on their original source claims absent exact-current falsification. H-I4-090..095 remain closed on malformed-resource causality/cfg proof surfaces absent owner change/falsification.
+- H-I4-107/108/109 repair cluster is accepted/provenanced through developer-owned `4c445ce36aa06edc1b3d4952036073865e3f20d0`; reachable local provenance is `docs/notes/h-i4-107-108-109-provenance-4c445ce-20260923.md`. This is developer-reported local exact-tree evidence, not reviewer-local execution or hosted CI.
+- **H-I4-110 is CLOSED** at developer-owned `259495fad9949a526b12187ba59cf74aec0ee7f7`: the canonical `failover --role client` in `executable_loopback_controlled_udp_stop_tcp_resume` now runs under `bounded_client_output` with `--duration 3 + 5s = 8s`. Reachable developer-local exact-tree provenance is `docs/notes/h-i4-110-provenance-259495f-20260923.md`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, UTC 2026-09-23T03:49:56Z → 03:55:40Z, Linux x86_64, stable rustc 1.98.0. The reviewed GitHub combined-status view for exact `259495f` exposed no hosted status entries; do not convert that absence into either a hosted-CI pass or a local-gate claim.
+- **FRONT HIGH is now H-I4-111.** Reviewer finding `docs/reviews/reviewer-h-i4-111-remaining-probe-client-ownership-20260923.md` identifies two still-unbounded real networked client owner shapes in exact-current `crates/neko-cli/tests/probe.rs` after H-I4-110: one direct `wait_with_output()` after an intentional concurrent UDP injection, plus two sequential direct `.output()` clients in the preprogress-expiry/fresh-handshake recovery test.
+- H-I4-097..107 and H-I4-109/110 remain closed on their exact source claims absent exact-current falsification. H-I4-108 remains a continuing owner-inventory effort rather than a repository-wide statement that every process owner is already bounded. H-I4-090..095 remain closed on malformed-resource causality/cfg proof surfaces absent owner change/falsification.
 - Candidate A (`Recovery::on_ack` future/unsent ACK) and Candidate B (`record_datagrams` mixed drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
 - `SessionRuntime.events` retained-history capacity and D019 source-retention/no-reset remain maintainer/security policy gates. Do not invent TTL/LRU/history-size/capacity/security values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely for freshness.
 
-## FRONT HIGH — H-I4-110 canonical failover client ownership CLOSED at `259495f`
+## FRONT HIGH — H-I4-111 remaining probe client ownership
 
-### Concrete defect
+### Concrete defects
 
-`crates/neko-cli/tests/probe.rs::executable_loopback_controlled_udp_stop_tcp_resume` still owns a real canonical failover client with synchronous `.output()`. If that client remains live during connect, negotiation, Noise/authentication, framed I/O, DeliveryAck/resume or shutdown, the test can block forever before it reaches `finish_server`.
+`crates/neko-cli/tests/probe.rs::first_udp_selection_loss_recovers_from_same_peer_duplicate_hello` has this exact-current control flow:
 
-This is release/item-4 **test-harness correctness HIGH**, not production Session/Carrier/ACK/crypto/wire semantics.
+1. start a real failover server and pass `ready_failover_server`;
+2. spawn a real `failover-client` with piped stdout/stderr and product `--duration 4`;
+3. after 30 ms inject an unrelated UDP datagram while the client is live;
+4. call direct `client.wait_with_output().unwrap()`;
+5. only after that returns call `finish_server(server)`.
+
+The injection is part of the test semantics, but the final wait is not harness-bounded. A client lifecycle/protocol regression can therefore strand the test before already-bounded server cleanup is reachable.
+
+`crates/neko-cli/tests/probe.rs::expired_preprogress_udp_session_is_retired_before_delivery_and_fresh_handshake_recovers` likewise starts a real server, then executes an intentionally expired real client (`--duration 2`, delayed first data) through direct synchronous `.output()`, then a fresh recovery real client (`--duration 3`) through a second direct `.output()`, and only then calls `finish_server`. Either client can strand the gate.
+
+Product `--duration` is behavior under test, not an independent harness deadline. This is release/item-4 **test-harness correctness HIGH**, not production Session/Carrier/ACK/crypto/wire semantics.
 
 ### Closure contract
 
-1. Replace this canonical `failover --role client` `.output()` with the existing exact-current `bounded_client_output`; do not create another process framework.
-2. Preserve its product arguments and every existing protocol/diagnostic/assertion boundary. The harness deadline must exceed product `--duration`; using the already-established `duration + 5s` pattern gives 8s for this `--duration 3` owner and does not create a new global policy value.
-3. Continue the exact-current owner-by-owner sweep after this repair. Classify remaining direct/indirect `.output()`, `wait`, `wait_with_output`, `try_wait`, socket `accept`/`recv`/`read_exact`, stdout/stderr drain and peer/reader `join` sites as: exit/peer-completion proven, source-self-bounded, externally bounded, or concrete unbounded owner. Repair only the last class.
-4. Do not mechanically convert local fail-fast keygen, help/capabilities, invalid-argument/invalid-configuration paths. `probe --matrix` and other commands with their own runtime timeout still need causal classification rather than blanket conversion.
-5. The existing `bounded_client_output_fails_when_client_never_exits` regression already proves the shared ordinary deadline path. Do not add a duplicate generic sleep regression unless this exact owner exposes a distinct failure mode.
+1. Reuse exact-current `bounded_client_output` / `bounded_wait_with_output`; do not create another process framework.
+2. For `first_udp_selection_loss_recovers_from_same_peer_duplicate_hello`, preserve the intentional 30 ms unrelated-datagram injection while the spawned client is live. Keep the spawned child and replace only the raw final `wait_with_output()` with `bounded_wait_with_output(&mut client, ...)`. Under the already-established duration-plus-5s convention, `--duration 4` maps to a 9s harness bound.
+3. For `expired_preprogress_udp_session_is_retired_before_delivery_and_fresh_handshake_recovers`, route both real clients through `bounded_client_output`: `--duration 2` → 7s and `--duration 3` → 8s. Preserve the delayed-first-data negative and every subsequent recovery/guard/order assertion.
+4. Do not mechanically convert local fail-fast keygen, help/capabilities, invalid-argument/configuration or socket-free fixture `.output()` calls. Continue causal classification owner by owner.
+5. Existing `bounded_client_output_fails_when_client_never_exits` already proves the ordinary shared deadline path. Do not add duplicate generic sleep churn unless one of these exact owners exposes a distinct failure mode.
 6. No decoder/parser/crypto-framing implementation change is implicated; do not run fuzz mechanically.
-7. On the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist developer-local exact-tree provenance with reachable SHA, UTC start/end, exit codes, OS/arch, stable Rust and clean-tree state.
+7. On the final pushed source/test SHA run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, confirm clean tree, and persist developer-local exact-tree provenance with reachable pushed SHA, UTC start/end, exit codes, OS/arch, stable Rust and clean-tree state.
 8. Continue immediately to the next ownership/review slice after closure; do not wait for reviewer cadence and do not infer repository-wide queue exhaustion from this repair.
 
-## Rolling queue — keep continuous after H-I4-110
+## Rolling queue — keep continuous after H-I4-111
 
 Do not collapse this to one ticket. Dependency-ready order:
 
-1. **H-I4-110 repair + exact-tree provenance** — current FRONT HIGH.
-2. **Remaining process/socket/thread ownership causal sweep.** Re-read exact-current owners in `crates/neko-cli/tests/probe.rs`, `crates/neko-cli/tests/multistream.rs`, and other process tests. Pay special attention to canonical `failover --role client`, direct `client`, `periodic-client`, endpoint-rebind clients, synchronous `.output()` calls, child waits, socket blocking operations, pipe drains and joins. Preserve precise fail-fast/self-bounded exclusions.
-3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..110 with exact-current helper/cfg/socket/process semantics. Keep Linux-local execution, macOS/BSD source/cfg reasoning and Windows claims separate.
-4. **Algorithmic/resource boundedness reconciliation.** Reconcile accepted boundedness reviews with current channel/output bounds, stdout accumulation, cleanup deadlines, socket peer lifetime, reader lifetime and child/thread ownership. No capacity-pressure benchmark and no invented policy/security values.
-5. **Release packet / item-4 factual reconciliation.** `docs/release-security-review-packet.md` predates H-I4-097..110. Qualify stale statements that process failure paths are globally bounded or review is exhausted; index reachable repair/review notes only after the relevant exact-tree provenance exists. Do not promote local process/socket tests to WAN/performance/security approval.
+1. **H-I4-111 repair + exact-tree provenance** — current FRONT HIGH.
+2. **Remaining process/socket/thread ownership causal sweep.** Continue exact-current `crates/neko-cli/tests/probe.rs`, `crates/neko-cli/tests/multistream.rs`, and other process tests. Pay special attention to later direct/indirect `.output()`, `wait`, `wait_with_output`, `try_wait`, periodic/endpoint-rebind clients, blocking socket `accept`/`recv`/`read_exact`, pipe drains and peer/reader joins. Classify each as exit/peer-completion proven, source-self-bounded, externally bounded, or concrete unbounded owner; repair only the last class. Preserve explicit fail-fast/self-bounded exclusions.
+3. **Cross-platform CLI/process factual reconciliation.** Reconcile I4-CLI-PROC-096 and H-I4-097..111 with exact-current helper/cfg/socket/process semantics. Keep Linux-local execution, macOS/BSD source/cfg reasoning and Windows claims separate.
+4. **Algorithmic/resource boundedness reconciliation.** Reconcile accepted boundedness reviews with current channel/output bounds, stdout accumulation, cleanup deadlines, socket peer lifetime, reader lifetime and child/thread ownership. Do not run capacity-pressure benchmarks or invent capacity/security policy values.
+5. **Release packet / item-4 factual reconciliation.** `docs/release-security-review-packet.md` predates H-I4-097..111 in its top coverage boundary. Qualify stale statements that process failure paths are globally bounded or review is exhausted; index reachable repair/review notes only after relevant exact-tree provenance exists. Local process/socket tests are not WAN/performance/security approval.
 6. **Pre-auth malformed/rejection accounting exact-current reuse challenge.** Reuse prior independent review only where owner source/tests remain unchanged; otherwise narrowly re-challenge changed ownership. D019 remains a policy gate.
 7. **CLI diagnostic / exit-code / JSON / human-output boundary exact-current reuse challenge.** Diagnostics remain evidence-only and never authentication/Delivery/Path/ACK evidence.
-8. **Package/build/reproducibility spot re-challenge.** Verify recent process-test repairs do not stale manifests/scripts/provenance assumptions. Do not invent signing/SBOM/key-custody policy.
+8. **Package/build/reproducibility spot re-challenge.** Verify recent process-test repairs do not stale manifests/scripts/provenance assumptions. Do not invent signing/SBOM/key-custody/publication policy.
 9. **Reliable UDP / CarrierState / CarrierManager / FairScheduler / SessionRuntime targeted spot re-challenge.** Re-open materially changed owners; otherwise record exact-current reuse boundaries rather than rerunning equivalent sweeps.
-10. **Observability + carrier adapters + dependency/build exact-current reuse challenge.** Same owner-diff rule; no checker/schema/docs filler.
+10. **Observability + carrier adapters + dependency/build exact-current reuse challenge.** Same owner-diff rule; no checker/schema/framework/docs filler.
 11. **Repository-wide 13-surface refill.** Re-apply every required core surface after the HIGH and dependent reconciliation close. Queue exhaustion is legal only if the broad inventory finds no concrete defect, no uncovered implemented core surface, no READY review-support and no READY live question.
 12. **Conditional live.** Only if new code/instrumentation/hypothesis/path condition creates a specific unresolved real-network question within standing authorization. Otherwise keep `READY_LIVE: none`.
 
@@ -76,8 +84,8 @@ A bounded no-finding review is valid item-4 support when it identifies inspected
 
 - Developer-reported local CI, repository-persisted provenance, reviewer source review, hosted CI, live WAN evidence and performance conclusions are distinct evidence classes.
 - Accepted exact-tree provenance must anchor a GitHub-resolvable pushed SHA. Never publish a local-only/unreachable SHA as shared exact-tree evidence.
-- Exact `4c445ce` has developer-local provenance but no visible combined hosted status in the reviewed GitHub view. Do not turn absence of hosted checks into a local-gate or hosted-CI claim.
-- Reviewer H-I4-110 is source/control-flow inspection only until the developer supplies a final exact-tree local gate for the repair.
+- H-I4-110 exact `259495f` has reachable developer-local provenance; the reviewed combined-status endpoint exposed no hosted status entries. This is not a hosted pass/fail claim.
+- H-I4-111 is reviewer source/control-flow inspection only until a developer repair receives a clean exact-tree local gate and reachable provenance.
 - Hosted Actions are cross-evidence, not a wait condition and not a replacement for the developer-local clean exact-tree gate.
 - Fuzz only when wire decoder/parser/crypto framing changes materially.
 - Standing VPS authorization permits bounded self-owned TCP/UDP lab work, but current authoritative classification remains `READY_LIVE: none`; no repeat live run without a new concrete question.
