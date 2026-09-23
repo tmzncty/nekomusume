@@ -6207,8 +6207,8 @@ fn expired_preprogress_udp_session_is_retired_before_delivery_and_fresh_handshak
         .unwrap();
     let server = ready_failover_server(server);
 
-    let expired = Command::new(bin)
-        .args([
+    let expired = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -6228,14 +6228,14 @@ fn expired_preprogress_udp_session_is_retired_before_delivery_and_fresh_handshak
             "2",
             "--test-first-data-delay-ms",
             "1200",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(7),
+    );
     assert!(!expired.status.success());
     assert!(!String::from_utf8_lossy(&expired.stdout).contains("udp_delivery_ack_validated"));
 
-    let recovered = Command::new(bin)
-        .args([
+    let recovered = bounded_client_output(
+        Command::new(bin).args([
             "failover-client",
             "--addr",
             "127.0.0.1",
@@ -6253,9 +6253,9 @@ fn expired_preprogress_udp_session_is_retired_before_delivery_and_fresh_handshak
             "16",
             "--duration",
             "3",
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(8),
+    );
     let (server_status, server_log) = finish_server(server);
     assert!(
         recovered.status.success(),
