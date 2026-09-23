@@ -234,6 +234,16 @@ fail: 喵呜呜呜呜…
 
 机器可读结果必须另外输出结构化状态；猫叫不能替代 exit code / JSON。
 
+### 8.2 Middlebox / 网络行为研究边界
+
+协议内部正确不等于真实网络一定接受该流量。NAT、firewall、policer、流量分类器和其他 middlebox 可能基于端口、生命周期、包长、时序、方向性、握手与重试行为作出不同处理。
+
+近阶段优先研究 **网络环境模拟与 reachability**：UDP hard block、间歇退化、idle timeout、endpoint change、MTU/packet-size failure、重复 failover 和 bounded long-lived flow。先用 netns/veth/netem 等可控环境复现，再在 standing authorization 范围内用自有端点验证真实路径。
+
+“协议拟态/流量外观”是独立且更晚的研究项。修改 magic/header 不足以证明“像另一种协议”，也不得在没有可复现失败类别时提前把 camouflage 变成核心需求。若简单的 Carrier fallback、NAT/idle/PMTU 修复或 path-management 改进能解决问题，应优先采用更简单的方案。
+
+详细计划与证据字段见 [`docs/research/middlebox-reachability-and-network-behavior.md`](research/middlebox-reachability-and-network-behavior.md)。
+
 ## 9. 实验环境
 
 当前可用方向：
@@ -284,6 +294,7 @@ trait Carrier {
 4. Carrier score 应包含哪些指标，如何避免路径频繁抖动？
 5. ICMP / Raw-IP 在真实公网的可达性、限速、payload 和持续传输行为到底怎样？
 6. concurrent UDP + TCP 是否能在不制造严重跨路径 HOL 的前提下提供实际收益？
+7. 哪些真实 middlebox / path 行为会导致某种 Carrier 不可用，哪些能由 Carrier 迁移或普通 path 修复解决，哪些才值得进入后置的 traffic-appearance 研究？
 
 这些问题必须由实验逐步回答，不在文档阶段假装已经解决。
 
