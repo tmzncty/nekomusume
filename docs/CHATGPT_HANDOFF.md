@@ -6,6 +6,7 @@
 - Developer-owned `10d97e7e2c03ca19d9c575d0f0897c1703af1f8d` + `75d65e653b3c245e6d6146a293a183f058952804` bound the real multistream client owners and harden `multistream.rs::bounded_wait_with_output`; `3bc1de3dcf015aac0a59fe1375323de040f251a9` makes the analogous `probe.rs` cleanup classification truthful; `4c445ce36aa06edc1b3d4952036073865e3f20d0` fixes H-I4-108 caller deadlines so they exceed the product `--duration` plus bounded slack.
 - The developer-local exact-tree provenance for the H-I4-107/108/109 repair cluster is reachable at `docs/notes/h-i4-107-108-109-provenance-4c445ce-20260923.md`: `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh` exit 0, `git diff --check` exit 0, clean worktree, UTC 2026-09-23T03:02:29Z → 03:08:20Z, Linux x86_64, stable rustc 1.98.0. This is developer-reported local provenance, not reviewer-local execution or hosted CI.
 - **H-I4-107 and H-I4-109 remain CLOSED on their exact claims. H-I4-108's helper and many networked-client conversions are accepted/provenanced, but the owner inventory was not complete.** Reviewer finding `docs/reviews/reviewer-h-i4-110-canonical-failover-client-ownership-20260923.md` identifies a missed canonical `failover --role client` process owner in `executable_loopback_controlled_udp_stop_tcp_resume`.
+- **H-I4-110 is CLOSED** at `259495fad9949a526b12187ba59cf74aec0ee7f7`: `executable_loopback_controlled_udp_stop_tcp_resume`'s `failover --role client` now runs under `bounded_client_output` (`--duration 3 + 5s = 8s` timeout) — a live client can no longer strand `finish_server`. Exact-tree provenance: `docs/notes/h-i4-110-provenance-259495f-20260923.md` — `check.sh` exit 0, `git diff --check` exit 0, clean worktree, 2026-09-23T03:49:56Z → 03:55:40Z, Linux x86_64, rustc 1.98.0.
 - Exact reviewed source shape: server spawn → `ready_failover_server` → direct synchronous `Command(... "failover", "--role", "client", ... "--duration", "3").output()` → only after client return `finish_server(server)`. A stuck client therefore prevents the already-bounded server cleanup from becoming reachable. Product `--duration` is behavior under test, not an independent harness deadline.
 - H-I4-097..107 and H-I4-109 remain closed on their original source claims absent exact-current falsification. H-I4-090..095 remain closed on malformed-resource causality/cfg proof surfaces absent owner change/falsification.
 - Candidate A (`Recovery::on_ack` future/unsent ACK) and Candidate B (`record_datagrams` mixed drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
@@ -13,7 +14,7 @@
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
 - **`READY_LIVE: none`.** Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track evidence merely for freshness.
 
-## FRONT HIGH — H-I4-110 canonical failover client ownership
+## FRONT HIGH — H-I4-110 canonical failover client ownership CLOSED at `259495f`
 
 ### Concrete defect
 
