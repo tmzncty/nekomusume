@@ -59,7 +59,25 @@ fn bounded_wait_with_output(
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            Err(e) => panic!("try_wait failed: {e}"),
+            Err(e) => {
+                // Exit observation failed — converge ownership via kill +
+                // bounded reap before the error escapes.
+                let _ = child.kill();
+                let reap_end = std::time::Instant::now() + Duration::from_secs(3);
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(_)) | Err(_) => break,
+                        Ok(None) => {
+                            assert!(
+                                std::time::Instant::now() < reap_end,
+                                "child did not exit within bound after kill"
+                            );
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                    }
+                }
+                panic!("try_wait failed: {e}");
+            }
         }
     };
     // Exit proven — pipes are EOF-closed; join the drain threads (bounded by
@@ -203,8 +221,8 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
         .spawn()
         .unwrap();
     thread::sleep(Duration::from_millis(50));
-    let client = Command::new(bin)
-        .args([
+    let client = bounded_client_output(
+        Command::new(bin).args([
             "multistream",
             "--mode",
             "client",
@@ -224,9 +242,9 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
             client_identity.to_str().unwrap(),
             "--server-key",
             &server_key,
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     assert!(
         client.status.success(),
         "{}",
@@ -295,8 +313,8 @@ fn unauthorized_client_is_rejected_by_allowlist() {
         .spawn()
         .unwrap();
     thread::sleep(Duration::from_millis(50));
-    let client = Command::new(bin)
-        .args([
+    let client = bounded_client_output(
+        Command::new(bin).args([
             "multistream",
             "--mode",
             "client",
@@ -312,9 +330,9 @@ fn unauthorized_client_is_rejected_by_allowlist() {
             unauthorized_identity.to_str().unwrap(),
             "--server-key",
             &server_key,
-        ])
-        .output()
-        .unwrap();
+        ]),
+        Duration::from_secs(10),
+    );
     assert!(!client.status.success());
     let status = bounded_wait_with_output(&mut server, Duration::from_secs(10));
     assert!(!status.status.success());
@@ -466,13 +484,27 @@ fn frame_write(stream: &mut TcpStream, frame: &[u8]) {
     stream.write_all(frame).unwrap();
 }
 
+/// H-I4-107: run a networked client Command builder under a bounded wait —
+/// spawn with piped pipes, then bounded_wait_with_output.
+fn bounded_client_output(command: &mut Command, timeout: Duration) -> std::process::Output {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    bounded_wait_with_output(&mut child, timeout)
+}
+
 fn multistream_client(
     bin: &str,
     port: u16,
     identity: &Path,
     server_key: &str,
 ) -> std::process::Output {
-    Command::new(bin)
+    // H-I4-107: the networked client is a product process under test — its
+    // termination cannot be the only oracle. Spawn + bounded wait so a
+    // lifecycle regression becomes bounded negative evidence.
+    let mut child = Command::new(bin)
         .args([
             "multistream",
             "--mode",
@@ -490,8 +522,11 @@ fn multistream_client(
             "--server-key",
             server_key,
         ])
-        .output()
-        .unwrap()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    bounded_wait_with_output(&mut child, Duration::from_secs(10))
 }
 
 fn assert_uniform_handshake_rejection(output: &std::process::Output) {
