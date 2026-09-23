@@ -3,8 +3,11 @@
 ## Current repository truth
 
 - Synchronize to current `main` before work. Code, tests, reachable pushed commits and current specs outrank this handoff, chat memory and stale checkbox state.
-- Developer-owned H-I4-113 source repair is accepted at `8fc460c8eeb2369efaa6e0651f2a3fd8f864ccae` plus formatting-only `d2827851751b0eddc782943ee3498aeba029f513`: the seven periodic real clients and two endpoint-rebind real clients now use existing `bounded_client_output` with the requested duration + 5s harness bounds while preserving their assertions. **Final reachable developer-local exact-tree provenance for that final source tree is still pending**; reviewer source inspection is not a substitute for the gate.
-- H-I4-111 and H-I4-112 remain closed at `fc23a7a88c917e116f1140333faa6d8f441ca557`. H-I4-107/108/109 remain accepted/provenanced through `4c445ce36aa06edc1b3d4952036073865e3f20d0`; H-I4-110 remains closed at `259495fad9949a526b12187ba59cf74aec0ee7f7`. H-I4-108 remains an owner-inventory effort, not a repository-wide statement that every process/socket/thread owner is bounded.
+- Reviewer-observed developer HEAD before this handoff refresh: `f5f7bba259bd9ed9da60f5451dcecd292af9a322`.
+- New developer-owned commit since the prior review: `f5f7bba259bd9ed9da60f5451dcecd292af9a322` (`test(cli): H-I4-113 matrix probe run closure bounded`). Classification: **test-harness ownership repair** only. It changes `matrix_probe_distinguishes_invalid_failed_and_reachable_outcomes` so the networked `probe --matrix` child uses existing `bounded_client_output(..., 10s)` instead of synchronous `.output()`. Source inspection accepts this as an additional H-I4-113 owner closure; it does **not** touch or close H-I4-114.
+- No reachable developer-local exact-tree provenance for final H-I4-113 source has been identified yet. `f5f7bba` has no visible combined-status entries or PR workflow runs in the reviewer check; this is neither a hosted PASS nor a local-gate substitute.
+- Developer-owned H-I4-113 source repairs remain accepted through `8fc460c8eeb2369efaa6e0651f2a3fd8f864ccae`, formatting-only `d2827851751b0eddc782943ee3498aeba029f513`, and the additional matrix owner repair `f5f7bba259bd9ed9da60f5451dcecd292af9a322`: seven periodic clients, two endpoint-rebind clients and the networked matrix probe closure now use the existing bounded client-output path. **Final reachable developer-local exact-tree provenance for that final source tree is still pending.**
+- H-I4-111 and H-I4-112 remain closed at `fc23a7a88c917e116f1140333faa6d8f441ca557`. H-I4-107/108/109 remain accepted/provenanced through `4c445ce36aa06edc1b3d4952036073865e3f20d0`; H-I4-110 remains closed at `259495fad9949a526b12187ba59cf74aec0ee7f7`.
 - Candidate A (`Recovery::on_ack` future/unsent ACK) and Candidate B (`record_datagrams` mixed drop reasons) remain closed unless materially changed or falsified by exact-current source/tests.
 - `SessionRuntime.events` retained-history capacity and D019 source-retention/no-reset remain maintainer/security policy gates. Do not invent TTL/LRU/history-size/capacity/security values.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
@@ -16,9 +19,9 @@ Reviewer finding: `docs/reviews/h-i4-114-duplicate-negotiation-tcp-read-bound-20
 
 ### Concrete defect
 
-In exact-current `crates/neko-cli/tests/probe.rs::tcp_and_udp_reject_malformed_unsupported_and_duplicate_negotiation_before_echo`, the TCP **duplicate-negotiation** branch starts a real server, connects a real `TcpStream`, sends the first valid hello, then immediately calls `frame_read_test(&mut socket)` for the server response. `frame_read_test` performs blocking `read_exact` calls. The test only installs `set_read_timeout(Some(Duration::from_secs(1)))` **after** that first response has completed, immediately before the second/duplicate-hello close check.
+In exact-current `crates/neko-cli/tests/probe.rs::tcp_and_udp_reject_malformed_unsupported_and_duplicate_negotiation_before_echo`, the TCP **duplicate-negotiation** branch starts a real server, connects a real `TcpStream`, sends the first valid hello, then immediately calls `frame_read_test(&mut socket)` for the server response. `frame_read_test` performs blocking `read_exact` calls. The test installs `set_read_timeout(Some(Duration::from_secs(1)))` only after that first response has completed, immediately before the second/duplicate-hello close check.
 
-Therefore a regression where the server accepts the connection but never emits, or only partially emits, the first negotiation response can block the test forever in `read_exact`; the later one-second timeout and bounded `finish_server(server)` are unreachable. This is release/item-4 test-harness correctness/evidence reliability HIGH, not a production wire/negotiation architecture finding.
+Therefore a regression where the server accepts the connection but never emits, or only partially emits, the first negotiation response can block the test forever in `read_exact`; the later one-second timeout and bounded `finish_server(server)` are unreachable. The new `f5f7bba` matrix-probe change is unrelated and does not affect this control flow. This is release/item-4 test-harness correctness/evidence reliability HIGH, not a production wire/negotiation architecture finding.
 
 The adjacent UDP duplicate branch already installs a read timeout before its first `recv`. The H-I4-105 transcript-mismatch and unsupported-selected-version TCP peer owners also install a read timeout before their first `frame_read_test`, so do not broaden this finding mechanically.
 
@@ -74,8 +77,8 @@ A bounded no-finding review is valid item-4 support when it identifies inspected
 
 - Developer-reported local CI, repository-persisted provenance, reviewer source review, hosted CI, live WAN evidence and performance conclusions are distinct evidence classes.
 - Accepted exact-tree provenance must anchor a GitHub-resolvable pushed SHA. Never publish a local-only/unreachable SHA as shared exact-tree evidence.
-- H-I4-113 source conversion is accepted from exact-current source, but its final developer-local exact-tree provenance is still pending. Do not call reviewer source inspection a local gate.
-- Reviewer H-I4-114 is source/control-flow inspection only; reviewer did not run Rust/full gate, cross-platform execution, fuzz, WAN or performance work in this pass.
+- H-I4-113 source conversion is accepted from exact-current source through `f5f7bba`, but its final developer-local exact-tree provenance is still pending. Do not call reviewer source inspection a local gate.
+- Reviewer H-I4-114 and reviewer inspection of `f5f7bba` are source/control-flow inspection only; reviewer did not run Rust/full gate, cross-platform execution, fuzz, WAN or performance work in this pass.
 - Hosted Actions are cross-evidence, not a wait condition and not a replacement for the developer-local clean exact-tree gate.
 - Fuzz only when wire decoder/parser/crypto framing changes materially.
 - Standing VPS authorization permits bounded self-owned TCP/UDP lab work, but current authoritative classification remains `READY_LIVE: none`; no repeat live run without a new concrete question.
