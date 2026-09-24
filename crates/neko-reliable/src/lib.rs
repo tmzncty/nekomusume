@@ -832,12 +832,13 @@ mod tests {
         assert_eq!(r.in_flight(), 2);
     }
     #[test]
-    fn non_ack_eliciting_ack_resets_pto_baseline() {
-        // Authorized pre-H-I4-119 baseline (restored by H-I4-120 rollback): an
-        // ACK that newly retires at least one sent packet resets the PTO
-        // streak regardless of ack_eliciting. This is NOT the H-I4-119 decision
-        // — that remains a maintainer semantics gate. This test pins the
-        // baseline so a later maintainer-chosen rule change is a deliberate diff.
+    fn non_ack_eliciting_ack_keeps_older_packet_outstanding() {
+        // Semantics-neutral under the unresolved H-I4-119 gate: this test
+        // asserts only that a legal ACK for a non-ack-eliciting packet does
+        // NOT time-threshold the older still-unresolved ack-eliciting packet.
+        // It deliberately does NOT assert any pto_count outcome — the reset
+        // rule (any-acked vs ack-eliciting-only) is a pending maintainer/spec
+        // decision, so the test must not pin either side.
         let mut r = Recovery::default();
         // Packet 0 is ack-eliciting and stays unresolved.
         r.on_sent(packet(0, 1_000, 7)).unwrap();
@@ -850,32 +851,29 @@ mod tests {
             frames: vec![],
         })
         .unwrap();
-        // Fire two PTOs while packet 0 is unresolved.
-        r.pto_count = 2;
         // A legal ACK retires only packet 1 (non-ack-eliciting). largest=1 is
-        // a sent packet, so the ACK is valid. Baseline: it resets pto_count.
-        // Timing: the ACK's RTT sample (2_000 - 1_000) makes loss_delay ≈
-        // 1_125us, so packet 0 (age 1_000us) is NOT time-thresholded — it
-        // remains in flight for the assertions below.
+        // a sent packet, so the ACK is valid. Timing: the ACK's RTT sample
+        // (2_000 - 1_000) makes loss_delay ≈ 1_125us, so packet 0 (age
+        // 1_000us) is NOT time-thresholded and must remain in flight.
         let mut a1 = AckRanges::new(1).unwrap();
         a1.insert(1).unwrap();
         let out = r.on_ack(&a1, 2_000, 0).unwrap();
         assert_eq!(out.acked_packets, vec![1]);
-        assert_eq!(
-            r.pto_count, 0,
-            "baseline: any newly acked packet resets PTO streak (pre-H-I4-119)"
+        assert!(
+            out.lost_packets.is_empty(),
+            "non-eliciting ACK must not time-threshold packet 0"
         );
         assert_eq!(
             r.in_flight(),
             1,
             "ack-eliciting packet 0 remains unresolved"
         );
-        // A subsequent ACK for the ack-eliciting packet 0 also resets it.
+        // A subsequent ACK for the ack-eliciting packet 0 retires it cleanly.
         let mut a0 = AckRanges::new(1).unwrap();
         a0.insert(0).unwrap();
         let out2 = r.on_ack(&a0, 3_000, 0).unwrap();
         assert_eq!(out2.acked_packets, vec![0]);
-        assert_eq!(r.pto_count, 0, "ack-eliciting ACK resets PTO streak");
+        assert_eq!(r.in_flight(), 0, "all packets retired");
     }
 
     #[test]
