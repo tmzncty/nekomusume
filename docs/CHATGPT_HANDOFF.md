@@ -1,45 +1,46 @@
-# ChatGPT reviewer handoff — H-I4-119 policy gate; packet factual lane FRONT
+# ChatGPT reviewer handoff — H-I4-120 BLOCKER; H-I4-119 ACK/PTO gate violated on current main
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Exact code/tests/reachable commits/current specs outrank this handoff, chat memory and stale checkbox state.
-- Product/test source anchor for the latest reviewer refill remains `68d938279478b91661f786e830e99af83db457f1`; reviewer-only commits after that anchor do not move product/test owners.
-- **H-I4-119 remains a MAINTAINER / CORE ACK-PTO SEMANTICS GATE, not an automatic READY_LOCAL correctness repair.** Exact-current `Recovery::on_ack` resets `pto_count` whenever an ACK newly retires at least one sent packet. Repository docs do not uniquely require the stronger “only newly acknowledged ack-eliciting packets reset” rule. Do not auto-patch this seam until maintainer/spec chooses the intended rule and its relation to simplified health/persistent-congestion evidence. Reconciliation: `docs/reviews/reviewer-h-i4-119-pto-reset-semantics-gate-20260924.md` (`49166d0b9d7faa67a89f472d57dee28e5554b633`).
-- **H-I4-116/117/118 remain CLOSED** with reachable developer-local exact-tree provenance. H-I4-097..115 and Candidate A/B remain closed unless their exact semantic owners move.
-- **Recovery residual refill CLOSED NO-FINDING** outside H-I4-119: `docs/reviews/independent-r-rec-residual-68d9382-20260924.md` (`4aee288de0cd10143bb34c1a6bb547ccde095636`).
-- **Pre-auth owner-diff CLOSED REUSE**: `docs/reviews/independent-r-preauth-diff-68d9382-20260924.md` (`a370aff5d0e6a2c4c72b1a1ec37fea938dc8f122`). D019 and RSEC-001 remain separate gates.
-- **Exact-current 13-surface inventory refreshed**: `docs/reviews/independent-core-surface-owner-diff-inventory-68d9382-20260924.md` (`3001156724537c11eb427cb6edd9ddeb11be4a3c`). Every implemented core surface has a current dedicated challenge or exact owner-diff reuse classification at the source anchor; no second materially moved/unreviewed production-code owner was identified. Do not manufacture fake moved-owner lanes to meet a numeric queue target.
-- **Grouped release/item-4 factual reconciliation**: `docs/reviews/release-item4-reconciliation-recovery-policy-preauth-3001156-20260924.md` (`28f954850ea882ff508d72624703eb7a5808016c`).
-- **R-SECURITY-BOUNDARY-DIFF CLOSED NO-FINDING / REUSE** at `docs/reviews/independent-security-boundary-diff-5577a2f-20260924.md` (`e02edfe43de2ef1cde41b8bb1f0a4640f37a882e`). Exact owner/history inspection found no later semantic movement in the current crypto/pre-auth/security engineering owners that invalidates the dedicated independent reviews. This is source/history review support, not cryptanalysis, adversarial-load evidence or security approval. D019, RSEC-001, `SessionRuntime.events` retained-history capacity, persistent restart/rollback replay safety, signing/key-custody/SBOM/publication and release/security authority remain explicit gates.
-- CarrierState R-CS-1/R-CS-2 and manager/health/migration-back remain current no-findings; package/build, observe/adapters, FairScheduler/Session, CLI/process/boundedness owner-diff reuse notes remain current while owners do not move.
+- **Exact-current source/test commit `8d0a6e3a2824cd8338fff5a0cdb995107f0e114e` moved `crates/neko-reliable/src/lib.rs` after the last authorized reviewer source anchor `68d938279478b91661f786e830e99af83db457f1`.** It is not a test-only move: its diff changes production `Recovery::on_ack` PTO-reset semantics.
+- **H-I4-120 is BLOCKER / core ACK-PTO semantics + evidence reliability.** Reviewer finding: `docs/reviews/reviewer-h-i4-120-ack-pto-gate-violation-20260924.md` (`2065b36c5cc4f870ffa399b4e563babc60f7f3a6`). Reachable `8d0a6e3...` implements the stronger H-I4-119 rule (`pto_count` resets only when a newly acknowledged packet was ack-eliciting) even though the current repository gate explicitly forbids auto-patching that seam until maintainer/spec chooses the intended rule.
+- **H-I4-119 remains a MAINTAINER / CORE ACK-PTO SEMANTICS GATE.** The repository still does not uniquely decide between “any newly acknowledged sent packet resets” and “only newly acknowledged ack-eliciting packets reset.” No `docs/decisions.md` / normative spec amendment selecting the latter was found. Reconciliation remains `docs/reviews/reviewer-h-i4-119-pto-reset-semantics-gate-20260924.md` (`49166d0b9d7faa67a89f472d57dee28e5554b633`).
+- **Current provenance is not acceptable shared exact-tree evidence.** `docs/notes/check-gate-5c2c558-20260924.md` (reachable provenance commit `4f53eb817680c531f332e8da9d5e5aff828b93b3`) anchors `5c2c558fab6521bfb1ebb3a89c0f49ae95604c47`, which is not GitHub-resolvable from this repository, and describes the change as test-only. The reachable `8d0a6e3...` diff includes the gated production semantic change. Do not use the existing provenance as accepted current-tree evidence; supersede/errata it rather than silently rewriting history.
+- **H-I4-116/117/118 remain CLOSED** with their previously reachable developer-local exact-tree provenance; Candidate A/B and H-I4-097..115 remain closed unless their exact semantic owners move.
+- Recovery residual, pre-auth reuse, CarrierState R-CS-1/R-CS-2, manager/health/migration-back, package/build, observe/adapters, FairScheduler/Session, CLI/process/boundedness and security-boundary reuse notes remain valid only for their stated earlier owner anchors. Because `neko-reliable` moved at `8d0a6e3...`, the prior repository-wide 13-surface inventory is no longer exact-current for surface 1 and must be refreshed after the BLOCKER is closed.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
-- **`READY_LIVE: none`.** Standing self-owned VPS authorization remains valid, but do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track absent a materially new unresolved real-network question.
+- **`READY_LIVE: none`.** The current source movement creates no new real-network question. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track absent a materially new unresolved path condition.
 
-## MAINTAINER / SPEC GATE — H-I4-119
+## FRONT — H-I4-120 closure contract
 
-Do not let this gate idle the agent; it blocks only the disputed PTO-reset semantic.
+This is a governance rollback, not a maintainer semantic choice. Until a maintainer/spec decision is committed, the permitted repository state is the last authorized pre-H-I4-119 behavior.
 
-Before any implementation change, maintainer/spec must explicitly choose/document one of the intended rules:
+1. Re-read exact-current `8d0a6e3...`, the H-I4-119 gate note, this finding and applicable Recovery tests.
+2. **Restore the production PTO-reset seam to the pre-gate baseline** present before the unauthorized semantic change: `pto_count` resets when the newly-acked sent-packet set is non-empty. Do not describe this rollback as permanently selecting that rule; it only restores the authorized baseline while H-I4-119 remains unresolved.
+3. Remove or rewrite the policy-selecting `non_ack_eliciting_ack_does_not_reset_pto` assertion. The stale-ACK timing improvement may remain only as a semantics-neutral regression (for example, proving the older ack-eliciting packet remains outstanding under the corrected timings) and must not decide the reset rule.
+4. Do not change PTO thresholds, persistent-congestion policy, D019, Session/Carrier architecture, wire/crypto semantics or any release/governance flag.
+5. Add an explicit erratum/superseding note for `docs/notes/check-gate-5c2c558-20260924.md`: its recorded SHA is unreachable and its “test-only” scope claim is not valid for the reachable current change. Do not mutate the historical note in place to hide the mismatch.
+6. On the final **reachable pushed** source/test SHA, run `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, verify clean tree, and persist SHA / UTC start+end / exit codes / OS-arch / stable Rust version. Hosted CI is separate cross-evidence and not a wait condition. No decoder/framing change exists, so do not run fuzz mechanically.
+7. Commit/push closure, then immediately continue the queue below without waiting for reviewer cadence.
 
-1. **Any newly acknowledged sent packet resets `pto_count`:** retain current behavior; close H-I4-119 as no code defect after suitable semantic documentation/tests if useful.
-2. **Only newly acknowledged ack-eliciting packets reset `pto_count`:** explicitly adopt that project-specific rule; only then does the earlier narrow guard become dependency-ready.
+If a maintainer has actually selected an H-I4-119 rule outside repository truth, do **not** infer it from chat or commit intent: first encode the explicit decision in the appropriate decision/spec surface, then re-evaluate this closure contract.
 
-Do not infer the choice from Reno byte charging or receiver ACK-obligation behavior; those are distinct existing meanings of `ack_eliciting`. Do not change PTO thresholds, D019, wire/crypto/Session/Carrier architecture, or health policy as a side effect.
+## Dependency-ready rolling queue — continue after H-I4-120 closure
 
-## Dependency-ready rolling queue — continue immediately
+Do not expand implementation on top of the unresolved core-semantics violation. Once the rollback/provenance closure is reachable, continue continuously through real work:
 
-Recovery, pre-auth, current-owner inventory and security-boundary diff are complete at the anchors above. Continue only real repository work; do not wait for the next reviewer cadence and do not invent filler.
+1. **R-POST-H120-RECOVERY — exact-current Recovery re-challenge.** Challenge only the owner delta introduced by the rollback/timing-regression closure: ACK validity/high-water, stale/duplicate ACK ordering, loss eligibility, RTT/PTO state, Reno/persistent-congestion integration and deterministic fault simulation. H-I4-119 itself remains excluded as policy-gated.
+2. **R-POST-DIFF-REFILL — repository-wide 13-surface owner inventory refresh.** The prior `68d9382` inventory is stale for `neko-reliable`. Recompute exact-current moved-owner classification after closure; any other real semantic owner movement becomes READY_LOCAL.
+3. **R-RPKT-CURRENT — release packet factual/evidence-index maintenance.** Re-read exact-current `docs/release-security-review-packet.md`, `docs/status.md`, implementation-plan flags and reachable review/provenance notes. Index H-I4-116/117/118, H-I4-119 policy classification, H-I4-120 rollback/evidence correction, CarrierState/manager reviews, Recovery/pre-auth/security reuse and the refreshed owner inventory. Preserve historical evidence classes; never imply one SHA ran all historical tests. Reconcile the older Session-delivery wording only to “no complete Session release/security validation or protocol-freeze approval” (or equivalent), not broader assurance. Do not advance release flags.
+4. **R-MOVED-OWNER-1 — conditional.** First real moved/unreviewed implemented core owner found by the refreshed inventory. Exact source/tests/spec -> invariant -> falsification attempt -> smallest repair only if current semantics decide it. No filler if none exists.
+5. **R-MOVED-OWNER-2 — conditional.** Second independent real moved/unreviewed owner if present; a precise bounded no-finding is valid item-4 support.
+6. **R-RELEASE-RECONCILE — grouped factual reconciliation.** After 3–4 coherent review/repair slices or any important repair group, reconcile item-4 facts/evidence boundaries again. Do not rewrite every tiny commit into the packet.
+7. **R-ITEM4-EXTERNAL/POLICY MAP — after local lanes close.** Classify residual gaps as H-I4-119/core semantics, D019, retained-history capacity, RSEC-001/adversarial-load/security approval, persistent restart/rollback replay safety, signing/key-custody/SBOM/publication, environment limits, independent external review, item-3 evidence or release authority. This is navigation, not permission to choose values.
+8. **CONDITIONAL LIVE — only if a new concrete unresolved path condition appears** and is within standing authorization. Current classification is `READY_LIVE: none`.
+9. **FINAL repository-wide reconciliation before any `queue exhausted` statement.** Queue exhaustion is legal only if there is no unreviewed moved core owner, no concrete defect, no READY review-support lane, no READY live question, and every remaining item is genuinely policy/external/environment/release-authority gated.
 
-1. **FRONT — R-RPKT-CURRENT: release packet factual/evidence-index maintenance.** Re-read exact-current `docs/release-security-review-packet.md`, `docs/status.md`, implementation-plan flags and latest reachable review/provenance notes. Add/index the latest H-I4-116/117/118 repair/provenance chain, H-I4-119 policy reclassification, current CarrierState/manager reviews, Recovery residual review, pre-auth/security owner-diff reuse, and current-owner inventory where appropriate. Preserve historical evidence classes; never imply one SHA ran all historical tests. The older Session-delivery row currently says “no ... independent review” while later packet rows already index bounded independent SessionRuntime/FairScheduler review: update that wording only to the factual boundary “no complete Session release/security validation or protocol-freeze approval” (or equivalent), without inflating assurance. Do not advance release flags or call H-I4-119 resolved.
-2. **R-POST-DIFF-REFILL — repository-wide history refresh.** Immediately after packet maintenance, or sooner if any developer source/test commit lands, rerun the thirteen-surface owner inventory. Any newly moved semantic owner becomes READY_LOCAL and must be challenged under the normal review→repair contract.
-3. **R-MOVED-OWNER-1 — conditional.** First real moved/unreviewed implemented core owner found by R-POST-DIFF-REFILL. Read exact source/tests/spec, state an invariant, attempt to falsify, smallest repair only if current semantics decide it. No filler lane if none exists.
-4. **R-MOVED-OWNER-2 — conditional.** Second independent real moved/unreviewed owner if present. A precise no-finding is valid item-4 support.
-5. **R-RELEASE-RECONCILE — grouped factual reconciliation.** After 3–4 coherent new review/repair slices or any important repair group, reconcile item-4 facts, evidence boundaries and flags again. Do not rewrite every tiny commit into the packet.
-6. **R-ITEM4-EXTERNAL/POLICY MAP — only after local lanes close.** Classify what remains as H-I4-119/core semantics, D019, retained-history capacity, RSEC-001/adversarial-load/security approval, persistent restart/rollback replay safety, signing/key-custody/SBOM/publication, environment limits, independent external review, item-3 evidence, or release authority. This is navigation, not permission to choose those values.
-7. **CONDITIONAL LIVE — only if a new concrete unresolved path condition appears** and it is within `docs/standing-vps-lab-authorization.md`. Current classification is `READY_LIVE: none`.
-8. **FINAL repository-wide reconciliation before any `queue exhausted` statement.** Queue exhaustion is legal only if there is no unreviewed moved core owner, no concrete defect, no READY review-support lane, no READY live question, and every remaining item is genuinely policy/external/environment/release-authority gated.
-
-Eight entries are the real dependency graph at this anchor; several are conditional by design. Do not manufacture checker/schema/framework/docs churn merely to reach 8–15 active slices. Conversely, if a new developer commit moves multiple owners, expand the queue immediately and keep the coding agent working continuously through dependency-ready slices.
+Nine entries are the real dependency graph now. Do not manufacture checker/schema/framework/docs churn merely to reach a numeric target; conversely, expand immediately if the refreshed inventory finds multiple real moved owners.
 
 ## Standing 13-surface inventory requirement
 
@@ -59,11 +60,11 @@ Every meaningful refill must verify whether each surface still has a dedicated r
 12. algorithmic resource boundedness without capacity-pressure benchmark or invented policy values;
 13. release packet factual consistency/evidence boundary.
 
-A narrow no-finding never means repository-wide queue exhaustion. If an owner moves, refill immediately from repository truth.
+A narrow no-finding never means repository-wide queue exhaustion.
 
 ## Review -> repair / provenance contract
 
-For every bounded slice: read exact-current owner source/tests + applicable spec/ADR/status claim; state the invariant; try to falsify it with source reasoning and focused deterministic tests. If a concrete defect exists and current committed semantics already decide the answer, make the smallest repair + positive/negative regression + commit/push, then run the final pushed developer source SHA through:
+For every bounded slice: read exact-current owner source/tests + applicable spec/ADR/status claim; state the invariant; try to falsify it with source reasoning and focused deterministic tests. If a concrete defect exists and current committed semantics decide the answer, make the smallest repair + positive/negative regression + commit/push, then run the final pushed developer source SHA through:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
@@ -79,5 +80,5 @@ If no defect is found, record a scope-precise independent bounded no-finding not
 - Developer-reported local CI, persisted developer-local provenance, reviewer source/control-flow review, reviewer-local generic OS checks, hosted CI, live WAN evidence and performance conclusions are distinct classes.
 - Accepted exact-tree provenance must anchor a GitHub-resolvable pushed SHA; never publish local-only/unreachable SHA as shared evidence.
 - Never decide D019; TTL/LRU/history/capacity/security values; signing/key-custody/SBOM/publication; previous frozen release policy; core Session/Carrier/ACK/crypto/wire architecture; destructive/canonical migration; RC/freeze/release/production authority.
-- A correctness/security/evidence BLOCKER/HIGH becomes FRONT only when current semantics determine a repair. If it requires a core semantic/policy choice, classify it as maintainer/spec gate and continue unrelated READY work.
+- A correctness/security/evidence BLOCKER/HIGH becomes FRONT when current semantics determine a repair. If it requires a core semantic/policy choice, keep it as maintainer/spec gate and continue only unrelated READY work; do not let an unauthorized implementation silently convert a gate into a decision.
 - Normal progression does not require administrator notification. Notify only for unresolved BLOCKER/HIGH requiring maintainer choice, core architecture/destructive migration, policy/value decisions, authorization expansion/new credentials/third-party/production actions, adversarial-load benchmark conditions requiring maintainer choice, or a genuine release-phase transition.
