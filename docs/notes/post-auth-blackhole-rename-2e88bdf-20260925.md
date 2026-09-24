@@ -1,5 +1,14 @@
 # Post-auth blackhole seam rename — H-I4-121 closure note (final source SHA 2e88bdf)
 
+**Superseded in part by H-I4-122** (`docs/reviews/h-i4-122-post-auth-reply-evidence-boundary-20260925.md`):
+the 2e88bdf seam suppressed only the authenticated Session DeliveryAck —
+reliable-UDP Carrier packet ACKs were never suppressed, so this note's
+"every authenticated application-level UDP reply" wording below was an
+overclaim. The current seam label is `--drop-post-auth-delivery-acks` /
+`post_auth_session_delivery_ack_blackhole`; see the successor provenance
+note for the exact repaired SHA. The 2e88bdf gate run itself remains valid
+execution provenance for that tree.
+
 Developer-owned companion to reviewer notes
 `docs/reviews/h-i4-121-rootless-hard-loss-evidence-boundary-20260924.md`
 (H-I4-121, HIGH) and
@@ -46,12 +55,14 @@ bounded developer pass:
 - `FaultInjectCarrier { loss_percent: 100 }` remains the deterministic
   Carrier-level hard-loss evidence, explicitly separated from process/
   topology evidence (H-I4-121 item 2).
-- The process test proves: UDP negotiation/authentication succeeds; every
-  post-authentication application-level UDP reply is withheld from the first
-  application record; health evidence (`udp_health_failed`, 3 observation
-  windows, `authenticated_delivery_ack_timeout`) drives the cold TCP
-  fallback; all three records/48 bytes complete over TCP; no fabricated
-  duplicate metric (H-I4-121 item 3).
+- The process test proves (as corrected by H-I4-122): UDP
+  negotiation/authentication succeeds; the authenticated Session DeliveryAck
+  is withheld for every application record (this seam did not and does not
+  suppress reliable-UDP Carrier packet ACKs — that claim was an overclaim,
+  removed); health evidence (`udp_health_failed`, 3 observation windows,
+  `authenticated_delivery_ack_timeout`) drives the cold TCP fallback; all
+  three records/48 bytes complete over TCP; no fabricated duplicate metric
+  (H-I4-121 item 3, H-I4-122 items 1-4).
 - This supersedes the specific "from first datagram / server never replies /
   hard black hole" claims in the earlier reviewer note's reading of the
   process seam (H-I4-121 item 6). The earlier notes are historical evidence

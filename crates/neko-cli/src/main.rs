@@ -1235,16 +1235,17 @@ fn failover_server(args: &[String]) {
     if cease_udp_replies_after.is_some_and(|point| point == 0 || point >= count) {
         fail("UDP reply cessation point outside 1..count");
     }
-    // R-MBOX-ROOTLESS-LOSS / H-I4-121: post-authenticated UDP
-    // application-reply blackhole seam — after successful version
+    // R-MBOX-ROOTLESS-LOSS / H-I4-121 / H-I4-122: post-authenticated
+    // Session DeliveryAck suppression seam — after successful version
     // negotiation, Noise authentication and session establishment, the
-    // server withholds every authenticated application-level UDP reply
-    // (Session DeliveryAck and reliable-UDP Carrier packet ACKs) from the
-    // first application record. Negotiation/handshake replies are NOT
-    // affected: startup semantics stay unchanged, and the impairment starts
-    // only at the authenticated application boundary. Local user-space only;
-    // no tc/netem/netns; not a directional network-topology model.
-    let drop_post_auth_udp_replies = args.iter().any(|a| a == "--drop-post-auth-udp-replies");
+    // server withholds the authenticated Session DeliveryAck for every
+    // application record. This seam does NOT suppress negotiation,
+    // handshake, reliable-UDP Carrier packet ACK or any other UDP reply
+    // class (H-I4-122 item 2: no false Carrier-ACK claim). Startup
+    // semantics stay unchanged; the impairment starts only at the
+    // authenticated application DeliveryAck boundary. Local user-space
+    // only; no tc/netem/netns; not a directional network-topology model.
+    let drop_post_auth_delivery_acks = args.iter().any(|a| a == "--drop-post-auth-delivery-acks");
     let mut udp_replies = 0usize;
     // Bounded one-peer pre-auth cache. It is discarded only after authentication.
     let mut pending: Option<PendingUdpNegotiation> = None;
@@ -1689,7 +1690,7 @@ fn failover_server(args: &[String]) {
                                     0,
                                     ",\"offset\":0",
                                 );
-                            } else if !drop_post_auth_udp_replies
+                            } else if !drop_post_auth_delivery_acks
                                 && cease_udp_replies_after.is_none_or(|point| udp_replies < point)
                             {
                                 // M-R9-008 P3: malformed #1 -> malformed #2 ->
@@ -1958,18 +1959,18 @@ fn failover_server(args: &[String]) {
                 } else {
                     count
                 };
-                // R-MBOX-ROOTLESS-LOSS / H-I4-121: under
-                // --drop-post-auth-udp-replies the server blackholed every
-                // authenticated application UDP reply, so the client's
-                // record-0 DeliveryAck never arrived and the client retains
-                // record 0 as uncertain ownership for TCP replay (its
-                // bounded-timeout continuation). The server's expected TCP
-                // Data count must include that replay; SessionRuntime's
-                // exact-duplicate dedup keeps the already-delivered record-0
-                // bytes single-counted.
-                let post_auth_blackhole_replay = if drop_post_auth_udp_replies { 1 } else { 0 };
+                // R-MBOX-ROOTLESS-LOSS / H-I4-121 / H-I4-122: under
+                // --drop-post-auth-delivery-acks the server withheld the
+                // authenticated Session DeliveryAck for record 0, so the
+                // client retains record 0 as uncertain ownership for TCP
+                // replay (its bounded-timeout continuation). The server's
+                // expected TCP Data count must include that replay;
+                // SessionRuntime's exact-duplicate dedup keeps the
+                // already-delivered record-0 bytes single-counted.
+                let post_auth_ack_withhold_replay =
+                    if drop_post_auth_delivery_acks { 1 } else { 0 };
                 let tcp_records =
-                    uncertain_end.saturating_sub(uncertain_start) + post_auth_blackhole_replay;
+                    uncertain_end.saturating_sub(uncertain_start) + post_auth_ack_withhold_replay;
                 for _ in 0..tcp_records {
                     bound_stream_to_deadline(&stream, experiment_deadline, None)
                         .unwrap_or_else(|_| fail("TCP data deadline elapsed"));
@@ -2396,8 +2397,8 @@ fn failover_server(args: &[String]) {
                     );
                     fail("migration-back terminal milestone missing")
                 }
-                let mode = if drop_post_auth_udp_replies {
-                    "post_auth_udp_reply_blackhole"
+                let mode = if drop_post_auth_delivery_acks {
+                    "post_auth_session_delivery_ack_blackhole"
                 } else if cease_udp_replies_after.is_some() {
                     "automatic_health_failure"
                 } else {
@@ -2409,7 +2410,7 @@ fn failover_server(args: &[String]) {
                     app.len(),
                     hex(&app),
                     mode,
-                    !drop_post_auth_udp_replies && cease_udp_replies_after.is_none(),
+                    !drop_post_auth_delivery_acks && cease_udp_replies_after.is_none(),
                     udp_local_port,
                     tcp_local_port
                 );
@@ -2714,18 +2715,20 @@ fn failover_client(args: &[String]) {
         }
     }
     let application_deadline = Instant::now() + Duration::from_secs(secs);
-    // R-MBOX-ROOTLESS-LOSS: under hard UDP loss (all server UDP replies
-    // blackholed from the first datagram) the application record loop can hit
-    // its bounded deadline with outstanding records unconfirmed. Under
-    // --automatic-health-failover that deadline is the degradation signal the
-    // health observation window below exists to classify: the unconfirmed
-    // outstanding records are retained as uncertain ownership (replayed over
-    // TCP after manager promotion) instead of failing the process. This
-    // mirrors the post-return precedent (H-R9-068): an ordinary bounded
-    // receive timeout is a non-terminal continuation; a transport failure
-    // stays fail-closed inside recv_udp_delivery_ack. Without the flag the
-    // original fail-closed behavior is unchanged.
-    let mut hard_loss_uncertain: Vec<OutboundRecord> = Vec::new();
+    // R-MBOX-ROOTLESS-LOSS / H-I4-122: when every authenticated Session
+    // DeliveryAck is withheld (--drop-post-auth-delivery-acks server seam,
+    // or any other cause of zero application-level UDP progress) the
+    // application record loop can hit its bounded deadline with outstanding
+    // records unconfirmed. Under --automatic-health-failover that deadline
+    // is the degradation signal the health observation window below
+    // exists to classify: the unconfirmed outstanding records are retained
+    // as uncertain ownership (replayed over TCP after manager promotion)
+    // instead of failing the process. This mirrors the post-return
+    // precedent (H-R9-068): an ordinary bounded receive timeout is a
+    // non-terminal continuation; a transport failure stays fail-closed
+    // inside recv_udp_delivery_ack. Without the flag the original
+    // fail-closed behavior is unchanged.
+    let mut unacked_retained_records: Vec<OutboundRecord> = Vec::new();
     let mut admission_diagnostic = |reason| {
         emit_diagnostic(
             args,
@@ -2785,7 +2788,7 @@ fn failover_client(args: &[String]) {
                     0,
                     &format!(",\"session_outstanding\":{}", outstanding.len()),
                 );
-                hard_loss_uncertain = std::mem::take(&mut outstanding);
+                unacked_retained_records = std::mem::take(&mut outstanding);
                 pending_acks.clear();
                 break;
             }
@@ -3031,14 +3034,15 @@ fn failover_client(args: &[String]) {
     .unwrap();
     manager.set_active_udp(PathId(1), PathGeneration(0));
     failover.udp_progress();
-    // R-MBOX-ROOTLESS-LOSS: records retained by the application loop's
-    // bounded-timeout continuation (hard UDP loss, all server replies
-    // blackholed) enter uncertain ownership here — after controller
-    // construction, before the ordinary uncertain-range tracking — so
-    // FailoverController::tcp_resend replays exactly this retained set after
-    // manager promotion. The server's SessionRuntime exact-duplicate dedup
-    // keeps the original UDP delivery of the same offsets single-counted.
-    for record in hard_loss_uncertain.drain(..) {
+    // R-MBOX-ROOTLESS-LOSS / H-I4-122: records retained by the application
+    // loop's bounded-timeout continuation (zero application-level UDP
+    // progress, e.g. the --drop-post-auth-delivery-acks server seam) enter
+    // uncertain ownership here — after controller construction, before the
+    // ordinary uncertain-range tracking — so FailoverController::tcp_resend
+    // replays exactly this retained set after manager promotion. The
+    // server's SessionRuntime exact-duplicate dedup keeps the original UDP
+    // delivery of the same offsets single-counted.
+    for record in unacked_retained_records.drain(..) {
         failover
             .track_uncertain(DataId(record.offset), &record.data)
             .unwrap_or_else(|_| fail("post-auth blackhole uncertain tracking failed"));
