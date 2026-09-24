@@ -5734,9 +5734,15 @@ mod path_recovery_tests {
         assert!(rt.can_send(11_500), "cwnd 12000 admits 11500 before PTO");
         // PTO 1 and PTO 2: below threshold — window not collapsed.
         rt.pto_probe();
-        assert!(rt.can_send(11_500), "PTO 1 below threshold — cwnd unchanged");
+        assert!(
+            rt.can_send(11_500),
+            "PTO 1 below threshold — cwnd unchanged"
+        );
         rt.pto_probe();
-        assert!(rt.can_send(11_500), "PTO 2 below threshold — cwnd unchanged");
+        assert!(
+            rt.can_send(11_500),
+            "PTO 2 below threshold — cwnd unchanged"
+        );
         // PTO 3: threshold — Reno persistent congestion collapses to 2*MSS =
         // 2400; a 11500 send is now refused.
         rt.pto_probe();
@@ -6048,7 +6054,10 @@ mod path_recovery_tests {
         assert!(r.persistent_congestion(), "pto_count=3 must trigger");
         // cwnd = 2*MSS = 2400; bytes_in_flight = 800 — 1600 fits, 1601 doesn't.
         assert!(r.can_send(1600), "2400 cwnd admits 800+1600");
-        assert!(!r.can_send(1601), "persistent congestion collapsed cwnd to 2*MSS");
+        assert!(
+            !r.can_send(1601),
+            "persistent congestion collapsed cwnd to 2*MSS"
+        );
     }
 }
 
