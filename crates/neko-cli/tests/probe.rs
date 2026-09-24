@@ -2719,6 +2719,142 @@ fn executable_loopback_post_auth_delivery_ack_blackhole_drives_tcp_failover() {
 }
 
 #[test]
+fn reliable_udp_delivery_ack_suppression_replays_full_owned_set() {
+    // H-I4-123: --reliable-udp + --drop-post-auth-delivery-acks + automatic
+    // cold health failover. The first two logical records are reliable-owned
+    // and both are in the Session-DeliveryAck outstanding set; suppressing
+    // every Session DeliveryAck moves BOTH into retained uncertain
+    // ownership, and the ordinary uncertain range contributes record 2. The
+    // client's authoritative replay set is therefore all three records, and
+    // the server must derive the same replay cardinality from the same
+    // ownership partition instead of assuming one retained record. Carrier
+    // packet ACKs are NOT suppressed by this seam, so packet-level in-flight
+    // settlement still succeeds over UDP while Session DeliveryAck
+    // confirmation is silent. Asserts exact replay cardinality/identity and
+    // complete Session delivery without duplicate application bytes.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("i4-123-server");
+    let cp = tmp("i4-123-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            // The client spends its full application deadline (6s) awaiting
+            // Session DeliveryAcks, then 3x1s health windows, then the cold
+            // TCP resume; the server must outlive that boundary.
+            "--duration",
+            "15",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--reliable-udp",
+            "--drop-post-auth-delivery-acks",
+            "--diagnostic",
+            "--experiment-id",
+            "i4-123-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = bounded_client_output(
+        Command::new(bin).args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "6",
+            "--reliable-udp",
+            "--automatic-health-failover",
+            "--cold-health-failover",
+            "--diagnostic",
+            "--experiment-id",
+            "i4-123-client",
+        ]),
+        Duration::from_secs(15),
+    );
+    let (server_status, server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "stdout={client_log} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(server_status.success(), "server stdout={server_log}");
+    // Health evidence still drives the cold fallback.
+    assert!(
+        client_log.contains("carrier_event name=udp_health_failed"),
+        "UDP health must fail under DeliveryAck suppression: {client_log}"
+    );
+    assert!(
+        client_log.contains("\"fallback_class\":\"cold\""),
+        "{client_log}"
+    );
+    // Exact replay cardinality and identity: all three records (both
+    // reliable-owned retained records + the ordinary uncertain record)
+    // are TCP-replayed and validated in offset order.
+    let replay_offsets: Vec<&str> = client_log
+        .lines()
+        .filter(|l| l.contains("\"event\":\"tcp_delivery_ack_validated\""))
+        .map(|l| {
+            l.split("\"offset\":")
+                .nth(1)
+                .and_then(|rest| rest.split(['}', ' ']).next())
+                .unwrap_or("?")
+        })
+        .collect();
+    assert_eq!(replay_offsets, ["0", "16", "32"], "{client_log}");
+    // Complete Session delivery over the fallback, no duplicate bytes.
+    assert!(
+        server_log.contains("records=3 application_bytes_total=48"),
+        "all 3 records delivered over TCP fallback: {server_log}"
+    );
+    assert!(
+        !server_log.contains("duplicates="),
+        "server must not report an unmeasured duplicate constant: {server_log}"
+    );
+    assert!(
+        server_log.contains("failover_mode=post_auth_session_delivery_ack_blackhole"),
+        "{server_log}"
+    );
+}
+
+#[test]
 fn executable_loopback_health_threshold_drives_udp_to_tcp() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");

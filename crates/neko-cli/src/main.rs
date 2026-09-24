@@ -1959,16 +1959,32 @@ fn failover_server(args: &[String]) {
                 } else {
                     count
                 };
-                // R-MBOX-ROOTLESS-LOSS / H-I4-121 / H-I4-122: under
-                // --drop-post-auth-delivery-acks the server withheld the
-                // authenticated Session DeliveryAck for record 0, so the
-                // client retains record 0 as uncertain ownership for TCP
-                // replay (its bounded-timeout continuation). The server's
-                // expected TCP Data count must include that replay;
-                // SessionRuntime's exact-duplicate dedup keeps the
-                // already-delivered record-0 bytes single-counted.
-                let post_auth_ack_withhold_replay =
-                    if drop_post_auth_delivery_acks { 1 } else { 0 };
+                // R-MBOX-ROOTLESS-LOSS / H-I4-121 / H-I4-122 / H-I4-123:
+                // under --drop-post-auth-delivery-acks the server withheld
+                // the authenticated Session DeliveryAck for every
+                // application record, so the client's bounded-timeout
+                // continuation retains every record that was outstanding in
+                // the Session-DeliveryAck await set as uncertain ownership
+                // for TCP replay. That set is derived from the same
+                // committed logical ownership partition as the uncertain
+                // range: without --reliable-udp exactly one record (record 0)
+                // is DeliveryAck-awaited; with --reliable-udp the first two
+                // logical records are reliable-owned and both are
+                // DeliveryAck-awaited (H-I4-123: do not assume exactly one
+                // retained record). The server's expected TCP Data count
+                // must equal that retained width plus the ordinary uncertain
+                // width; SessionRuntime's exact-duplicate dedup keeps
+                // already-delivered bytes single-counted.
+                let delivery_ack_awaited = if reliable_udp {
+                    count.min(2)
+                } else {
+                    count.min(1)
+                };
+                let post_auth_ack_withhold_replay = if drop_post_auth_delivery_acks {
+                    delivery_ack_awaited
+                } else {
+                    0
+                };
                 let tcp_records =
                     uncertain_end.saturating_sub(uncertain_start) + post_auth_ack_withhold_replay;
                 for _ in 0..tcp_records {
