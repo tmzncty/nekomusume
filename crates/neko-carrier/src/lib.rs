@@ -5214,7 +5214,10 @@ mod path_recovery_tests {
         assert_eq!(out.lost_packets, vec![0, 1, 2]);
         // Retransmit frames are the stable FrameIds of lost packets' last
         // outstanding copies.
-        assert_eq!(out.retransmit_frames, vec![FrameId(0), FrameId(1), FrameId(2)]);
+        assert_eq!(
+            out.retransmit_frames,
+            vec![FrameId(0), FrameId(1), FrameId(2)]
+        );
         // bytes_in_flight = packets 3,4 still outstanding = 800.
         assert_eq!(r.bytes_in_flight(), 800);
         // One aggregate Reno reduction: acked(400) grew cwnd 12000→12400
