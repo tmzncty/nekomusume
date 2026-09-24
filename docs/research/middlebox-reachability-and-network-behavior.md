@@ -233,7 +233,7 @@ This plan does not:
 - authorize experiments against third-party networks or access controls;
 - freeze a camouflage format or Carrier;
 - change Session/Carrier separation;
-- promote current implementation status to RC, production-ready, frozen, or
+- promote current implementation status to RC, release-grade, frozen, or
   released.
 
 The guiding rule is the same as the rest of the repository:

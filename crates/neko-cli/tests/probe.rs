@@ -2583,12 +2583,15 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
 }
 
 #[test]
-fn executable_loopback_hard_udp_loss_drives_tcp_failover() {
-    // R-MBOX-ROOTLESS-LOSS: rootless hard-UDP-loss model — the server receives
-    // UDP datagrams but never replies (--drop-all-udp), so the client's UDP
-    // path is a hard black hole. Health evidence drives TCP failover; the
-    // Session must retain bounded transition evidence and no duplicate
-    // delivery. Local user-space only; no tc/netem/netns.
+fn executable_loopback_post_auth_udp_reply_blackhole_drives_tcp_failover() {
+    // R-MBOX-ROOTLESS-LOSS / H-I4-121: post-authenticated application UDP
+    // reply blackhole (--drop-post-auth-udp-replies) — negotiation and
+    // Noise handshake complete normally, then every authenticated
+    // application-level UDP reply is withheld from the first application
+    // record. Health evidence drives the cold TCP failover; the Session
+    // must retain bounded transition evidence and no duplicate delivery.
+    // Local user-space only; no tc/netem/netns; not a directional
+    // network-topology claim.
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let sp = tmp("hard-loss-server");
@@ -2616,12 +2619,16 @@ fn executable_loopback_hard_udp_loss_drives_tcp_failover() {
             "--bytes",
             "16",
             "--duration",
-            "5",
+            // R-MBOX-ROOTLESS-LOSS / H-I4-121: under the post-auth blackhole the client spends its full
+            // application deadline (3s) awaiting the first delivery ACK before
+            // the 3x1s health observation windows run, so the cold TCP resume
+            // begins around T+6s. The server must outlive that boundary.
+            "12",
             "--udp-bind",
             &format!("127.0.0.1:{udp}"),
             "--tcp-bind",
             &format!("127.0.0.1:{tcp}"),
-            "--drop-all-udp",
+            "--drop-post-auth-udp-replies",
             "--diagnostic",
             "--experiment-id",
             "hard-loss-server",
@@ -2675,10 +2682,13 @@ fn executable_loopback_hard_udp_loss_drives_tcp_failover() {
     );
     assert!(
         client_log.contains("carrier_event name=udp_health_failed"),
-        "UDP health must fail under hard loss: {client_log}"
+        "UDP health must fail under the post-auth reply blackhole: {client_log}"
     );
     assert!(client_log.contains("\"state\":\"failed\""), "{client_log}");
     // Session retained through TCP fallback; bounded transition evidence.
+    // Under the post-auth blackhole record 0's UDP DeliveryAck was withheld, so ALL three
+    // records are retained as uncertain ownership and replayed over TCP —
+    // unlike cease-after-N where record 0 completes over UDP.
     assert!(
         client_log.contains("\"fallback_class\":\"cold\""),
         "{client_log}"
@@ -2687,7 +2697,7 @@ fn executable_loopback_hard_udp_loss_drives_tcp_failover() {
         client_log
             .matches("\"event\":\"tcp_delivery_ack_validated\"")
             .count(),
-        2,
+        3,
         "bounded TCP resume ACKs: {client_log}"
     );
     assert!(
@@ -2699,7 +2709,7 @@ fn executable_loopback_hard_udp_loss_drives_tcp_failover() {
         "all 3 records delivered over TCP fallback: {server_log}"
     );
     assert!(
-        server_log.contains("failover_mode=hard_udp_loss"),
+        server_log.contains("failover_mode=post_auth_udp_reply_blackhole"),
         "{server_log}"
     );
 }
