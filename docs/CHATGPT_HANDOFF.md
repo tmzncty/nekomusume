@@ -1,53 +1,49 @@
-# ChatGPT reviewer handoff — packet current + independently checked; external/policy map FRONT
+# ChatGPT reviewer handoff — rootless middlebox/reachability research queue active
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Exact code/tests/reachable commits/current specs outrank this handoff, chat memory and stale checkbox state.
-- **Exact current product/test anchor:** reachable `4511e4f147eb9511907bb4ec52cad687f113bb7a`. Commits after it through the current reviewer packet-check note are documentation/provenance/review navigation only and do not move product/test owners.
-- **H-I4-120 is CLOSED.** Reviewer closure: `docs/reviews/reviewer-h-i4-120-closure-4511e4f-20260924.md`. Developer rollback `9e79e6b...` restored the authorized pre-gate production `Recovery::on_ack` baseline; `4511e4f...` made the non-ack-eliciting ACK regression semantics-neutral and corrected the erratum. Reachable exact-tree developer-local provenance is `docs/notes/check-gate-4511e4f-20260924.md` (`scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, exact UTC start/end, Linux x86_64, stable rustc 1.98.0).
-- GitHub combined status for `4511e4f...` exposes `statuses=[]`. Do not relabel developer-local provenance as hosted CI.
-- **H-I4-119 remains a MAINTAINER / CORE ACK-PTO SEMANTICS GATE.** Repository truth still does not normatively choose between “any newly acknowledged sent packet resets `pto_count`” and “only newly acknowledged ack-eliciting packets reset.” The restored baseline is the last authorized implementation state pending a maintainer/spec decision, not reviewer authority to choose the final rule.
-- **Post-H-I4-120 Recovery delta is independently re-challenged with bounded NO-FINDING** in `docs/reviews/independent-r-post-h120-recovery-4511e4f-20260924.md`, explicitly excluding H-I4-119. Existing R-REC-1/2/3, R-REC-4a/4b, H-I4-116/117/118 and `independent-r-rec-residual-68d9382-20260924.md` remain reusable outside that policy seam.
-- **R-RPKT-CURRENT is complete.** Exact-current `docs/release-security-review-packet.md` now indexes H-I4-116/117/118, keeps H-I4-119 unresolved, records H-I4-120 finding/partial-closure rejection/rollback/closure/provenance, points to current Recovery/CarrierState/manager/pre-auth/security/inventory notes, and preserves the corrected Session-delivery boundary.
-- **R-RPKT-CHECK is complete with bounded NO-FINDING** at packet anchor `cc8904581346cc7b518bce1161764433ac723d4e`; reviewer note: `docs/reviews/independent-r-rpkt-check-cc89045-20260924.md` (note commit `85069a0f772602b9b267b5b4357dde4d94b88d5b`). It independently challenged SHA reachability, evidence-class wording, Session/security boundaries, H-I4-119/H-I4-120 classification and release flags. No reviewer-local Rust/full-gate, hosted-success, WAN, fuzz or performance claim was made.
-- **Post-H-I4-120 13-surface inventory:** `docs/reviews/independent-core-surface-owner-diff-inventory-4511e4f-20260924.md`. Surfaces 1–12 have current/reusable bounded review outside explicit policy seams; surface 13 is now current through R-RPKT-CHECK.
-- `independent-security-boundary-diff-5577a2f-20260924.md` and `independent-r-preauth-diff-68d9382-20260924.md` remain reusable because no crypto/trust/pre-auth/Session-security/wire owner moved after their source anchor.
+- **Exact current product/test anchor:** reachable `4511e4f147eb9511907bb4ec52cad687f113bb7a`. Subsequent movement through the latest reviewer notes and merged PR #4 is documentation/research/review navigation only; no Rust source/test/Cargo/build/package/wire owner moved.
+- **H-I4-120 is CLOSED.** `9e79e6b...` restored the authorized pre-gate production `Recovery::on_ack` baseline; `4511e4f...` made the disputed non-ack-eliciting ACK regression semantics-neutral. Reachable developer-local exact-tree provenance is `docs/notes/check-gate-4511e4f-20260924.md` (`scripts/check.sh` exit 0, `git diff --check` exit 0, clean tree, exact UTC start/end, Linux x86_64, stable rustc 1.98.0). GitHub combined status for that SHA exposes `statuses=[]`; do not call this hosted CI.
+- **H-I4-119 remains MAINTAINER / CORE ACK-PTO SEMANTICS.** Do not choose between any-newly-acked reset and ack-eliciting-only reset. Current rollback baseline is the last authorized implementation state, not a final semantic decision.
+- Release/security packet is current and independently checked: `docs/reviews/independent-r-rpkt-check-cc89045-20260924.md` is bounded no-finding.
+- Residual item-4 policy/external map is current: `docs/reviews/independent-r-item4-external-policy-map-d9e1296-20260924.md`. It keeps H-I4-119, D019, retained-history capacity, RSEC-001/adversarial-load suitability, restart/rollback replay safety, signing/key-custody/SBOM/publication, independent external review, and RC/freeze/release/production authority in their proper policy/external/dependency classes.
+- Thirteen-surface owner history is current in `docs/reviews/independent-r-final-owner-history-f7bf1f0-20260924.md`; all 13 release-item-4 surfaces retain dedicated reachable bounded review/evidence outside explicit policy seams.
+- PR #4 (`research: Define reproducible middlebox and reachability simulation plan`) was independently reviewed and squash-merged as reachable `f7bf1f0d2b55ab69834c119cfc6310c9a2dce0be`. Fresh open-PR query after merge returned none. It adds research/spec material only and does not freeze architecture or create release/security approval.
+- **PR #4 also creates real dependency-ready local research/test-support work.** `docs/reviews/independent-r-mbox-gap-inventory-bb8c620-20260924.md` records the exact-current gap inventory. Current repo search finds no reusable netem/rootless impairment harness, repeated-failover integration fixture, or repeated-transition resource fixture implementing the new matrix; existing `crates/neko-cli/tests/probe.rs` already provides loopback peers, warm/cold failover diagnostics, bounded child ownership and Linux resource snapshots that should be reused instead of creating a parallel framework.
 - Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
-- **`READY_LIVE: none`.** Current source/test movement creates no new unresolved real-network question. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track without a materially new code/instrumentation/hypothesis/path condition.
+- **`READY_LIVE: none`.** The new research queue is deterministic local/rootless work. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track merely because a VPS is rented.
 
-## FRONT — R-ITEM4-EXTERNAL/POLICY MAP
+## FRONT — R-MBOX-ROOTLESS-LOSS
 
-Refresh the exact-current residual item-4 map now that the packet is current and independently checked. This is classification/review support, not permission to resolve policy values or advance release state.
+Implement/review the first dependency-ready slice from the merged middlebox/reachability plan **without changing production semantics** unless the test independently proves a concrete defect.
 
-1. Re-read current `IMPLEMENTATION_PLAN.md`, `docs/status.md`, `SECURITY.md`, `docs/spec/m5-release-readiness-gate.md`, `docs/release-security-review-packet.md`, H-I4-119, current Session spec, D019/pre-auth ADR and reviews, current security-boundary note, package/release evidence, item-3 rows, and current standing/VPS policy.
-2. Build one scope-precise residual map separating at least:
-   - H-I4-119 / core ACK-PTO semantics — maintainer/spec decision;
-   - D019 source-retention/no-reset — maintainer/security policy;
-   - retained `SessionRuntime.events` capacity — maintainer/security numeric policy;
-   - RSEC-001/adversarial-load suitability + public-listener/security approval — security/release gate; do not invent benchmark pressure conditions;
-   - persistent restart/rollback replay safety — unresolved security/protocol/persistence gate;
-   - signing/key-custody/SBOM/publication trust — policy/release engineering gate;
-   - release item 3 evidence/environment rows including IPv6/environment and frozen same-class orchestration/HY2 lines;
-   - independent external/security review acceptance;
-   - RC/freeze/release/production authority.
-3. For every residual, classify whether it is `READY_LOCAL`, `READY_LIVE`, `BLOCKED_ENVIRONMENT`, `BLOCKED_DEPENDENCY`, `MAINTAINER/POLICY`, or `EXTERNAL/RELEASE_AUTHORITY`. Do not turn a policy/external item into a coding slice just to inflate queue depth.
-4. Verify again that no current residual creates a truthful new `READY_LIVE` question. If none, retain `READY_LIVE: none`.
-5. If the map reveals a concrete dependency-ready implementation/review gap whose semantics are already committed, immediately front it and continue review -> repair/tests/provenance. If all identified residuals are policy/external/environment but item 4 is still incomplete, continue R-FINAL-OWNER-HISTORY rather than claiming repository-wide queue exhaustion prematurely.
-6. Commit/push the map, then immediately continue the rolling queue below without waiting for reviewer cadence.
+1. Re-read exact-current `docs/research/middlebox-reachability-and-network-behavior.md`, `docs/carrier-architecture.md`, current failover owners in `crates/neko-cli/tests/probe.rs`, applicable CarrierState/manager reviews, and standing authorization.
+2. Reuse the existing loopback/failover test seams. Add the smallest rootless local user-space impairment seam necessary to deterministically model:
+   - UDP reply cessation / one-way silence; and
+   - hard UDP loss.
+   Do **not** create a parallel generic network framework if existing fake-peer/local-socket seams can express the invariant.
+3. Challenge current committed behavior: Carrier owns path health/failure/promotion; Session retains protocol/delivery semantics. Assert bounded transition/timeline evidence and no duplicate delivery. Do not select new readiness/hysteresis/PTO/security/capacity values.
+4. No host route/firewall/DNS/proxy/tunnel/qdisc mutation. Do not make privileged `tc`/netem/netns execution a prerequisite for this slice. Rootless/local-socket execution is the required first path.
+5. If the fixture exposes a concrete current-semantics defect, stop expansion, make the smallest repair + positive/negative regression, then refill the affected core-surface review immediately. If it exposes a policy/core semantic choice, classify it rather than deciding it.
+6. For any source/test change, commit/push and run the final pushed developer source SHA through `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`, `git diff --check`, verify clean tree, and persist reachable exact-tree provenance with required metadata. No decoder/parser/crypto-framing change is implied; do not run fuzz mechanically.
+7. Continue immediately to the remaining queue below; reviewer cadence is not a work-ticket boundary.
 
-## Dependency-ready rolling queue
+## Dependency-ordered rolling queue
 
-1. **R-ITEM4-EXTERNAL/POLICY MAP — FRONT.** Refresh the residual item-4 classification described above.
-2. **R-FINAL-OWNER-HISTORY.** Rerun exact-current thirteen-surface owner history after packet/policy-map commits. Any actual source/test semantic movement creates a new READY_LOCAL challenge immediately; documentation-only movement does not invalidate unchanged semantic-owner reviews.
-3. **R-RECOVERY-CONDITIONAL.** If any coding agent changes `neko-reliable`, immediately re-challenge ACK high-water/future/stale ordering, loss eligibility, RTT/PTO, Reno, persistent congestion, retransmit/frame-copy ownership and deterministic fault simulation, while excluding H-I4-119 until explicitly decided.
-4. **R-CARRIER-CONDITIONAL.** If CarrierState or manager owners move, refill generation/validation/hysteresis/single-active/drain/fail/activate and manager health/migration-back lanes before broader expansion.
-5. **R-SESSION/FLOW-CONDITIONAL.** If FairScheduler, multi-stream, SessionRuntime, flow-control or DeliveryAck owners move, refill their dedicated independent challenge rather than relying on stale reuse.
-6. **R-OBS/ADAPTER/BUILD/CLI-CONDITIONAL.** If observability, carrier adapters, package/repro/operator scripts, Cargo/build/dependency hooks, CLI output/process or resource-boundedness owners move, refill only the actually moved owners; do not manufacture duplicate reviews.
-7. **R-SECURITY/PREAUTH-CONDITIONAL.** If crypto/trust/authz/pre-auth/Session-security/wire owners move, invalidate the corresponding owner-diff reuse and perform a fresh bounded review; wire/parser/crypto-framing code changes require the pinned decode fuzz build/run.
-8. **CONDITIONAL LIVE.** Only if new code/instrumentation/hypothesis/path condition creates a concrete unresolved real-network question within `docs/standing-vps-lab-authorization.md`. Current classification remains `READY_LIVE: none`.
-9. **FINAL repository-wide reconciliation before any `queue exhausted` statement.** Queue exhaustion is legal only if broad owner inventory shows no unreviewed/moved implemented core surface, no concrete defect, no READY review-support lane, no READY live question, and every residual item is genuinely policy/external/environment/release-authority gated.
+1. **R-MBOX-ROOTLESS-LOSS — FRONT.** Rootless one-way UDP silence + hard-loss impairment seam using existing failover owners.
+2. **R-MBOX-REORDER-DELAY.** Extend/reuse the same seam for deterministic bounded reorder + delay; challenge transition/order semantics without inventing timer or performance policy.
+3. **R-MBOX-MTU.** Model a local oversized-datagram/MTU-drop boundary without changing system interface MTU, PLPMTUD policy or wire framing.
+4. **R-MBOX-CLEAN-RECOVERY.** Controlled loss followed by clean path; prove recovery/validation according to existing semantics and no duplicate Session delivery.
+5. **R-MBOX-REPEATED-FAILOVER.** Bounded repeated failover/recovery transitions; assert exactly one active carrier, valid generation ownership, no duplicate delivery and diagnostic transition order. No new hysteresis/readiness thresholds.
+6. **R-MBOX-RESOURCE.** Bounded repeated-transition resource fixture reusing existing observability/resource helpers where possible; challenge ownership convergence and monotonic leaks in live endpoints/session entries/in-flight recovery work. This is **not** a capacity-pressure benchmark; do not invent RSS/FD/security limits.
+7. **R-MBOX-TRANSITION-MATRIX.** Reconcile each injected impairment against exact Carrier/Session events/state expectations and record tested vs unresolved boundaries; no new architecture ADR.
+8. **Grouped release/item-4 factual reconciliation** after 3–4 coherent R-MBOX slices or any important repair. Preserve evidence-class boundaries and existing policy/external gates.
+9. **Conditional core-owner refill.** Any semantic movement in Recovery, CarrierState/manager, Session/flow-control, adapters, observability, package/build, CLI/process/resource or security/pre-auth owners immediately invalidates the corresponding reuse and creates a fresh bounded challenge.
+10. **CONDITIONAL LIVE.** Only if new code/instrumentation/hypothesis/path condition creates a concrete unresolved real-network question within standing VPS authorization. Current classification is `READY_LIVE: none`.
+11. **FINAL repository-wide reconciliation before any `queue exhausted` statement.** The newly merged R-MBOX queue means queue exhaustion is currently false. It becomes legal only after this real queue is completed/blocked and the broad 13-surface inventory again shows no unreviewed/moved implemented owner, no defect, no READY review-support, no READY live question, and every residual is genuinely policy/external/environment/release-authority gated.
 
-The repository currently does **not** have eight independent unreviewed product-code owners merely because a target queue depth was requested. Do not invent checker/schema/framework/docs churn to hit a number. Keep the conditional refill lanes above armed and expand immediately when repository truth creates real work.
+Seven coherent R-MBOX slices are real current work; do not inflate them with checker/schema/framework/docs filler merely to hit an arbitrary number. If the agent completes them rapidly with low defect rate, refill from actual moved owners and the transition matrix rather than waiting for the next reviewer.
 
 ## Standing 13-surface inventory requirement
 
@@ -85,7 +81,8 @@ If no defect is found, record a scope-precise independent bounded no-finding not
 ## Evidence discipline / stop conditions
 
 - Developer-reported local CI, persisted developer-local provenance, reviewer source/control-flow review, reviewer-local generic OS checks, hosted CI, live WAN evidence and performance conclusions are distinct classes.
-- Accepted exact-tree provenance must anchor a GitHub-resolvable pushed SHA and contain the required exact metadata; never publish local-only/unreachable SHA as shared evidence and never fabricate missing timestamps/toolchain details.
+- Accepted exact-tree provenance must anchor a GitHub-resolvable pushed SHA and contain required exact metadata; never publish local-only/unreachable SHA as shared evidence and never fabricate missing timestamps/toolchain details.
 - Never decide H-I4-119/core ACK-PTO semantics; D019; TTL/LRU/history/capacity/security values; signing/key-custody/SBOM/publication; previous frozen release policy; core Session/Carrier/ACK/crypto/wire architecture; destructive/canonical migration; RC/freeze/release/production authority.
+- Do not automatically mutate host/production route/firewall/DNS/proxy/tunnel/qdisc or rely on privileged network setup. The current R-MBOX queue is deliberately rootless first.
 - A correctness/security/evidence BLOCKER/HIGH becomes FRONT when current semantics determine a repair. If it requires a core semantic/policy choice, keep it as maintainer/spec gate and continue unrelated READY work; do not let an unauthorized implementation silently convert a gate into a decision.
 - Normal progression does not require administrator notification. Notify only for unresolved BLOCKER/HIGH requiring maintainer choice, core architecture/destructive migration, policy/value decisions, authorization expansion/new credentials/third-party/production actions, adversarial-load benchmark conditions requiring maintainer choice, or a genuine release-phase transition.
