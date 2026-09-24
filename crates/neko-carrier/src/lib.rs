@@ -5498,9 +5498,15 @@ mod path_recovery_tests {
         // sends and retransmissions (the real source is the crypto sequence).
         let mut pn = 10u64;
         for i in 0..8u64 {
-            rt.on_packet_sent(pn, 100_000 + i * 1000, 400, FrameId(2000 + i), b"x")
-                .unwrap();
-            pn += 1;
+            // H-I4-117: persistent congestion collapses cwnd to 2*MSS at PTO 3
+            // — a late send may be refused once the window tightens, but PTO
+            // probing and health polling continue.
+            if rt
+                .on_packet_sent(pn, 100_000 + i * 1000, 400, FrameId(2000 + i), b"x")
+                .is_ok()
+            {
+                pn += 1;
+            }
             // PTO probe frames re-send under a FRESH packet number with the
             // SAME stable FrameId.
             for (frame, _plaintext) in rt.pto_probe() {
