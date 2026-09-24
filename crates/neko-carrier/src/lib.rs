@@ -4895,7 +4895,8 @@ impl ReliableUdpRuntime {
         if self.in_flight() == 0 {
             return Vec::new();
         }
-        self.recovery
+        let frames = self
+            .recovery
             .on_pto(4)
             .map(|frames| {
                 frames
@@ -4903,7 +4904,12 @@ impl ReliableUdpRuntime {
                     .filter_map(|f| self.retransmit.get(*f).map(|b| (*f, b.to_vec())))
                     .collect()
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // H-I4-117: apply the committed Reno persistent-congestion effect once
+        // the PTO streak reaches the committed threshold — a runtime PTO must
+        // not count the threshold while bypassing the window collapse.
+        self.recovery.persistent_congestion();
+        frames
     }
 
     /// Record a fresh retransmission packet carrying a stable frame identity.
@@ -5717,6 +5723,30 @@ mod path_recovery_tests {
     }
 
     #[test]
+    fn runtime_pto_persistent_congestion_collapses_window_at_threshold() {
+        // H-I4-117: a runtime PTO streak at the committed threshold (3) must
+        // apply Reno persistent-congestion collapse to 2*MSS through
+        // ReliableUdpRuntime::pto_probe — not just count the streak.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        // Admit one small ack-eliciting packet so PTO is legitimate.
+        rt.on_packet_sent(0, 0, 400, FrameId(4000), b"x").unwrap();
+        // Initial cwnd = 10*mss = 12000; 400B in flight — 11500 send fits.
+        assert!(rt.can_send(11_500), "cwnd 12000 admits 11500 before PTO");
+        // PTO 1 and PTO 2: below threshold — window not collapsed.
+        rt.pto_probe();
+        assert!(rt.can_send(11_500), "PTO 1 below threshold — cwnd unchanged");
+        rt.pto_probe();
+        assert!(rt.can_send(11_500), "PTO 2 below threshold — cwnd unchanged");
+        // PTO 3: threshold — Reno persistent congestion collapses to 2*MSS =
+        // 2400; a 11500 send is now refused.
+        rt.pto_probe();
+        assert!(
+            !rt.can_send(11_500),
+            "PTO 3 at threshold — cwnd collapsed to 2*MSS, 11500 refused"
+        );
+    }
+
+    #[test]
     fn runtime_send_admission_refuses_when_cwnd_full_and_recovers_on_ack() {
         let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
         // Fill the congestion window (initial cwnd = 10*mss = 12000).
@@ -6006,9 +6036,19 @@ mod path_recovery_tests {
         let out2 = r.on_ack(7, &ack_of(0), 21_000, 0).unwrap();
         assert_eq!(out2.acked_bytes, 0);
         assert_eq!(r.bytes_in_flight(), 800);
-        // Persistent congestion collapses the window so can_send tightens.
-        assert!(r.can_send(400));
-        r.persistent_congestion();
+        // H-I4-117: persistent congestion collapses the window so can_send
+        // tightens — executable evidence, not a comment plus unasserted call.
+        // Below threshold: no collapse.
+        assert!(!r.persistent_congestion(), "pto_count=0 must not trigger");
+        assert!(r.can_send(400), "sub-threshold cwnd unchanged");
+        // Drive pto_count to threshold (3) then collapse.
+        for _ in 0..3 {
+            r.recovery.on_pto(1).unwrap();
+        }
+        assert!(r.persistent_congestion(), "pto_count=3 must trigger");
+        // cwnd = 2*MSS = 2400; bytes_in_flight = 800 — 1600 fits, 1601 doesn't.
+        assert!(r.can_send(1600), "2400 cwnd admits 800+1600");
+        assert!(!r.can_send(1601), "persistent congestion collapsed cwnd to 2*MSS");
     }
 }
 
