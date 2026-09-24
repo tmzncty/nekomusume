@@ -5233,6 +5233,35 @@ mod path_recovery_tests {
     }
 
     #[test]
+    fn packet_threshold_loss_triggers_one_aggregate_reno_reduction() {
+        // R-REC-4a: one ACK that both ACKs packet(s) and causes packet-threshold
+        // loss of older packet(s) must invoke Reno::lost once on the aggregate
+        // released_lost, not once per lost packet.
+        let mut r = recovery();
+        r.on_sent(sent(0, 400, &[0])).unwrap();
+        r.on_sent(sent(1, 400, &[1])).unwrap();
+        r.on_sent(sent(2, 400, &[2])).unwrap();
+        r.on_sent(sent(3, 400, &[3])).unwrap();
+        // ACK largest=3; packets 0/1/2 fall below PACKET_THRESHOLD or exceed
+        // loss_delay — aggregated into one Reno::lost call.
+        let out = r.on_ack(7, &ack_of(3), 10_000, 0).unwrap();
+        assert_eq!(out.acked_packets, vec![3]);
+        assert!(!out.lost_packets.is_empty(), "older packets must be lost");
+        assert!(out.lost_bytes > 0);
+        // Positive loss -> one aggregate Reno reduction: cwnd 12000 -> ssthresh
+        // max(12000/2, 2*1200)=6000 -> cwnd 6000. Admission of 5900 succeeds
+        // (bytes_in_flight 0 + 5900 <= 6000); 11900 would exceed the reduced cwnd.
+        assert!(
+            r.can_send(5_900),
+            "positive loss reduces cwnd to ~6000; 5900 admissible"
+        );
+        assert!(
+            !r.can_send(11_900),
+            "positive loss collapses cwnd below the original 12000"
+        );
+    }
+
+    #[test]
     fn ack_retires_bytes_in_flight_exactly_once_and_emits_no_session_evidence() {
         let mut r = recovery();
         r.on_sent(sent(0, 100, &[0])).unwrap();
