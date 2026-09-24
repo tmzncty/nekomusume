@@ -5188,6 +5188,48 @@ mod path_recovery_tests {
     }
 
     #[test]
+    fn aggregate_loss_single_reno_reduction() {
+        // R-REC-4a: one ACK that retires packet 5 while threshold-declaring
+        // packets 0..=2 lost produces exactly one aggregate Reno reduction —
+        // not one reduction per lost packet.
+        let mut r = recovery();
+        // sent_at close to ACK time so loss-delay does not trigger for
+        // packets 3,4 — only PACKET_THRESHOLD selects 0,1,2.
+        for n in 0..=5u64 {
+            r.on_sent(SentPacket {
+                number: n,
+                sent_at_us: 5000 - (5 - n) * 5,
+                bytes: 400,
+                ack_eliciting: true,
+                frames: [FrameId(n)].into_iter().collect(),
+            })
+            .unwrap();
+        }
+        // cwnd = 10*MSS = 12000; bytes_in_flight = 2400.
+        assert_eq!(r.bytes_in_flight(), 2400);
+        // ACK only packet 5 at now=5100. PACKET_THRESHOLD=3: 5-0=5>=3,
+        // 5-1=4>=3, 5-2=3>=3 -> 0,1,2 lost; 3,4 remain outstanding.
+        let out = r.on_ack(7, &ack_of(5), 5_100, 0).unwrap();
+        assert_eq!(out.acked_packets, vec![5]);
+        assert_eq!(out.lost_packets, vec![0, 1, 2]);
+        // Retransmit frames are the stable FrameIds of lost packets' last
+        // outstanding copies.
+        assert_eq!(out.retransmit_frames, vec![FrameId(0), FrameId(1), FrameId(2)]);
+        // bytes_in_flight = packets 3,4 still outstanding = 800.
+        assert_eq!(r.bytes_in_flight(), 800);
+        // One aggregate Reno reduction: acked(400) grew cwnd 12000→12400
+        // (slow-start below ssthresh=MAX), then lost(1200) collapsed
+        // ssthresh = 12400/2 = 6200, cwnd = 6200. 800 in flight + 5400 fits
+        // exactly; 5401 does not.
+        assert!(r.can_send(5400), "6200 cwnd admits 800+5400");
+        assert!(!r.can_send(5401), "aggregate loss collapsed cwnd to 6200");
+        // H-I4-116 control: a subsequent loss-free ACK is a no-op for Reno.
+        let out2 = r.on_ack(7, &ack_of(4), 11_000, 0).unwrap();
+        assert!(out2.lost_packets.is_empty());
+        assert!(r.can_send(5200), "loss-free ACK preserves cwnd");
+    }
+
+    #[test]
     fn ack_retires_bytes_in_flight_exactly_once_and_emits_no_session_evidence() {
         let mut r = recovery();
         r.on_sent(sent(0, 100, &[0])).unwrap();
