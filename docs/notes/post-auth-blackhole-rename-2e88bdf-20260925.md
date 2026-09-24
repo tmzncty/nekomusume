@@ -1,4 +1,4 @@
-# Post-auth blackhole seam rename — H-I4-121 closure note
+# Post-auth blackhole seam rename — H-I4-121 closure note (final source SHA 2e88bdf)
 
 Developer-owned companion to reviewer notes
 `docs/reviews/h-i4-121-rootless-hard-loss-evidence-boundary-20260924.md`
