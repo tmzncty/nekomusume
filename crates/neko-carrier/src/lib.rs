@@ -1221,6 +1221,11 @@ pub struct FaultInjectCarrier<C: Carrier> {
     sent: std::sync::Mutex<u64>,
     seed: std::sync::Mutex<u64>,
     closed: std::sync::Mutex<bool>,
+    // R-MBOX-REORDER-DELAY: bounded one-record reorder buffer. `pending`
+    // holds at most one withheld record; the next send releases it AFTER the
+    // current record, producing an adjacent-pair swap. The buffer never
+    // holds more than one record regardless of send count.
+    pending: std::sync::Mutex<Option<Vec<u8>>>,
 }
 impl<C: Carrier> FaultInjectCarrier<C> {
     pub fn new(inner: C, policy: FaultPolicy, seed: u64) -> Result<Self, CarrierError> {
@@ -1233,6 +1238,7 @@ impl<C: Carrier> FaultInjectCarrier<C> {
             sent: std::sync::Mutex::new(0),
             seed: std::sync::Mutex::new(seed),
             closed: std::sync::Mutex::new(false),
+            pending: std::sync::Mutex::new(None),
         })
     }
     fn draw(&self) -> u8 {
@@ -1249,6 +1255,15 @@ impl<C: Carrier> FaultInjectCarrier<C> {
     }
     pub fn policy(&self) -> FaultPolicy {
         self.policy
+    }
+    /// R-MBOX-REORDER-DELAY: whether the bounded one-record reorder buffer
+    /// currently withholds a record (0 or 1). Fixture observability only;
+    /// not a production capacity metric.
+    pub fn pending_len(&self) -> usize {
+        self.pending
+            .lock()
+            .map(|p| if p.is_some() { 1 } else { 0 })
+            .unwrap_or(0)
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1380,6 +1395,190 @@ mod fault_inject_tests {
         f2.send(b"lost2").unwrap();
         assert_eq!(b2.recv().unwrap(), None);
     }
+
+    #[test]
+    fn reorder_swaps_adjacent_pairs_and_is_bounded() {
+        // R-MBOX-REORDER-DELAY: `reorder` withholds one record in a bounded
+        // one-record pending slot; the next surviving record releases the
+        // withheld one AFTER itself — an adjacent-pair swap. Deterministic
+        // for any seed; the pending slot never holds more than one record.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                reorder: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        assert_eq!(f.pending_len(), 0);
+        f.send(b"m0").unwrap();
+        assert_eq!(
+            f.pending_len(),
+            1,
+            "m0 must be withheld in the pending slot"
+        );
+        f.send(b"m1").unwrap();
+        assert_eq!(f.pending_len(), 0, "the swap must release the pending slot");
+        f.send(b"m2").unwrap();
+        assert_eq!(f.pending_len(), 1);
+        f.send(b"m3").unwrap();
+        assert_eq!(f.pending_len(), 0);
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m0".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m3".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m2".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+    }
+
+    #[test]
+    fn reorder_with_loss_keeps_buffer_bounded_and_deterministic() {
+        // R-MBOX-REORDER-DELAY: dropped records never enter the reorder
+        // buffer, and a dropped send does NOT release the withheld record —
+        // the next SURVIVING record releases it after itself. one_way drops
+        // even-indexed sends deterministically: m0 dropped, m1 buffered, m2
+        // dropped (m1 still withheld), m3 releases m1 after itself.
+        // Deterministic for any seed.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                reorder: true,
+                one_way: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f.send(b"m0").unwrap(); // dropped (one_way)
+        assert_eq!(
+            f.pending_len(),
+            0,
+            "dropped records must not enter the buffer"
+        );
+        f.send(b"m1").unwrap(); // buffered
+        assert_eq!(f.pending_len(), 1);
+        f.send(b"m2").unwrap(); // dropped; m1 stays withheld
+        assert_eq!(
+            f.pending_len(),
+            1,
+            "a dropped send must not release the withheld record"
+        );
+        f.send(b"m3").unwrap(); // releases m1 after m3
+        assert_eq!(f.pending_len(), 0);
+        assert_eq!(b.recv().unwrap(), Some(b"m3".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+    }
+
+    #[test]
+    fn duplicate_reorder_combined_multiplicity_and_ordering() {
+        // R-MBOX-REORDER-DELAY: combined duplicate + reorder — each delivered
+        // record (both the current one and the released pending one) is
+        // duplicated exactly once; the adjacent-pair swap still holds with
+        // each pair duplicated. Deterministic for any seed.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                duplicate: true,
+                reorder: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f.send(b"m0").unwrap();
+        f.send(b"m1").unwrap();
+        f.send(b"m2").unwrap();
+        f.send(b"m3").unwrap();
+        // m1 m1 m0 m0 m3 m3 m2 m2
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m0".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m0".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m3".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m3".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m2".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m2".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+    }
+
+    #[test]
+    fn delay_ms_lower_bound_is_bounded_and_configured() {
+        // R-MBOX-REORDER-DELAY: delay_ms sleeps at send time on the sending
+        // side. Assert only a small configured LOWER bound (1ms per send)
+        // plus final liveness; no wall-clock upper bound (outer repository
+        // test timeout governs). Two sends with delay_ms=2 must take at
+        // least 2ms total.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                delay_ms: 2,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        let start = std::time::Instant::now();
+        f.send(b"m0").unwrap();
+        f.send(b"m1").unwrap();
+        assert!(
+            start.elapsed() >= std::time::Duration::from_millis(4),
+            "two 2ms sends must take at least 4ms total"
+        );
+        assert_eq!(b.recv().unwrap(), Some(b"m0".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+    }
+
+    #[test]
+    fn duplicate_emits_exact_multiplicity_and_ordering() {
+        // R-MBOX-REORDER-DELAY: `duplicate` emits exactly two consecutive
+        // copies of every surviving record. No record is duplicated that was
+        // dropped by loss/blackhole/close/one_way; the two copies are
+        // adjacent in the delivery order.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                duplicate: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        assert_eq!(f.pending_len(), 0);
+        f.send(b"m0").unwrap();
+        f.send(b"m1").unwrap();
+        assert_eq!(b.recv().unwrap(), Some(b"m0".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m0".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+    }
 }
 
 impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
@@ -1415,7 +1614,36 @@ impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
                 self.policy.delay_ms as u64,
             ));
         }
-        self.inner.send(message)
+        // Delivery point: `duplicate` emits exactly two copies of every
+        // surviving record; `reorder` withholds one record in the bounded
+        // pending slot and releases it AFTER the next surviving record
+        // (adjacent-pair swap). Both are deterministic and bounded; dropped
+        // records (loss/blackhole/one_way/close) never reach this point and
+        // never touch the reorder buffer.
+        let deliver = |msg: &[u8]| -> Result<(), CarrierError> {
+            if self.policy.duplicate {
+                self.inner.send(msg)?;
+            }
+            self.inner.send(msg)
+        };
+        if self.policy.reorder {
+            let mut pending = self
+                .pending
+                .lock()
+                .map_err(|_| CarrierError::StatePoisoned)?;
+            match pending.take() {
+                Some(prev) => {
+                    deliver(message)?;
+                    deliver(&prev)
+                }
+                None => {
+                    *pending = Some(message.to_vec());
+                    Ok(())
+                }
+            }
+        } else {
+            deliver(message)
+        }
     }
     fn recv(&self) -> Result<Option<Vec<u8>>, CarrierError> {
         self.inner.recv()
