@@ -2583,6 +2583,128 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
 }
 
 #[test]
+fn executable_loopback_hard_udp_loss_drives_tcp_failover() {
+    // R-MBOX-ROOTLESS-LOSS: rootless hard-UDP-loss model — the server receives
+    // UDP datagrams but never replies (--drop-all-udp), so the client's UDP
+    // path is a hard black hole. Health evidence drives TCP failover; the
+    // Session must retain bounded transition evidence and no duplicate
+    // delivery. Local user-space only; no tc/netem/netns.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("hard-loss-server");
+    let cp = tmp("hard-loss-client");
+    let sk = key(bin, &sp);
+    let ck = key(bin, &cp);
+    let (udp_lease, tcp_lease) = failover_port_leases();
+    let udp = udp_lease.port();
+    let tcp = tcp_lease.port();
+    udp_lease.release();
+    tcp_lease.release();
+    let server = Command::new(bin)
+        .args([
+            "failover-server",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &ck,
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "5",
+            "--udp-bind",
+            &format!("127.0.0.1:{udp}"),
+            "--tcp-bind",
+            &format!("127.0.0.1:{tcp}"),
+            "--drop-all-udp",
+            "--diagnostic",
+            "--experiment-id",
+            "hard-loss-server",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let server = ready_failover_server(server);
+    let out = bounded_client_output(
+        Command::new(bin).args([
+            "failover-client",
+            "--addr",
+            "127.0.0.1",
+            "--udp-port",
+            &udp.to_string(),
+            "--tcp-port",
+            &tcp.to_string(),
+            "--server-key",
+            &sk,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "3",
+            "--bytes",
+            "16",
+            "--duration",
+            "3",
+            "--automatic-health-failover",
+            "--cold-health-failover",
+            "--diagnostic",
+            "--experiment-id",
+            "hard-loss-client",
+        ]),
+        Duration::from_secs(12),
+    );
+    let (server_status, server_log) = finish_server(server);
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+    let client_log = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "stdout={client_log} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(server_status.success(), "server stdout={server_log}");
+    // Hard UDP loss -> health evidence drives failover; no controlled stop.
+    assert!(
+        !client_log.contains("carrier_event name=controlled_udp_stop"),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains("carrier_event name=udp_health_failed"),
+        "UDP health must fail under hard loss: {client_log}"
+    );
+    assert!(client_log.contains("\"state\":\"failed\""), "{client_log}");
+    // Session retained through TCP fallback; bounded transition evidence.
+    assert!(
+        client_log.contains("\"fallback_class\":\"cold\""),
+        "{client_log}"
+    );
+    assert_eq!(
+        client_log
+            .matches("\"event\":\"tcp_delivery_ack_validated\"")
+            .count(),
+        2,
+        "bounded TCP resume ACKs: {client_log}"
+    );
+    assert!(
+        !server_log.contains("duplicates="),
+        "server must not report an unmeasured duplicate constant: {server_log}"
+    );
+    assert!(
+        server_log.contains("records=3 application_bytes_total=48"),
+        "all 3 records delivered over TCP fallback: {server_log}"
+    );
+    assert!(
+        server_log.contains("failover_mode=hard_udp_loss"),
+        "{server_log}"
+    );
+}
+
+#[test]
 fn executable_loopback_health_threshold_drives_udp_to_tcp() {
     let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = env!("CARGO_BIN_EXE_neko-cli");

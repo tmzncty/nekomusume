@@ -1235,6 +1235,12 @@ fn failover_server(args: &[String]) {
     if cease_udp_replies_after.is_some_and(|point| point == 0 || point >= count) {
         fail("UDP reply cessation point outside 1..count");
     }
+    // R-MBOX-ROOTLESS-LOSS: rootless hard-UDP-loss seam — the server receives
+    // UDP datagrams but never sends a UDP reply, modeling a path where all
+    // outbound UDP from the peer is silently dropped. Unlike
+    // --cease-udp-replies-after (N replies then silence), this is hard loss
+    // from the first datagram. Local user-space only; no tc/netem/netns.
+    let drop_all_udp = args.iter().any(|a| a == "--drop-all-udp");
     let mut udp_replies = 0usize;
     // Bounded one-peer pre-auth cache. It is discarded only after authentication.
     let mut pending: Option<PendingUdpNegotiation> = None;
@@ -1679,8 +1685,8 @@ fn failover_server(args: &[String]) {
                                     0,
                                     ",\"offset\":0",
                                 );
-                            } else if cease_udp_replies_after
-                                .is_none_or(|point| udp_replies < point)
+                            } else if !drop_all_udp
+                                && cease_udp_replies_after.is_none_or(|point| udp_replies < point)
                             {
                                 // M-R9-008 P3: malformed #1 -> malformed #2 ->
                                 // Carrier packet ACK -> malformed #3. The
@@ -2375,7 +2381,9 @@ fn failover_server(args: &[String]) {
                     );
                     fail("migration-back terminal milestone missing")
                 }
-                let mode = if cease_udp_replies_after.is_some() {
+                let mode = if drop_all_udp {
+                    "hard_udp_loss"
+                } else if cease_udp_replies_after.is_some() {
                     "automatic_health_failure"
                 } else {
                     "controlled_udp_stop"
@@ -2386,7 +2394,7 @@ fn failover_server(args: &[String]) {
                     app.len(),
                     hex(&app),
                     mode,
-                    cease_udp_replies_after.is_none(),
+                    !drop_all_udp && cease_udp_replies_after.is_none(),
                     udp_local_port,
                     tcp_local_port
                 );

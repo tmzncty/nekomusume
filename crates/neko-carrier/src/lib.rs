@@ -1328,6 +1328,58 @@ mod fault_inject_tests {
             CarrierError::InvalidLimits
         );
     }
+
+    #[test]
+    fn one_way_udp_reply_cessation_and_hard_loss_are_deterministic() {
+        // R-MBOX-ROOTLESS-LOSS: model UDP reply cessation (one-way silence)
+        // and hard UDP loss using the existing local fake-peer seam — no
+        // host route/firewall/netns mutation required.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+
+        // One-way silence: every second send is dropped, so the peer sees
+        // only odd-numbered messages — models a path where replies cease.
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                one_way: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f.send(b"m0").unwrap();
+        f.send(b"m1").unwrap();
+        f.send(b"m2").unwrap();
+        f.send(b"m3").unwrap();
+        f.send(b"m4").unwrap();
+        // send indices 0,2,4 dropped; 1,3 delivered.
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m3".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+
+        // Hard loss: loss_percent=100 drops every send deterministically.
+        let (a2, b2) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f2 = FaultInjectCarrier::new(
+            a2,
+            FaultPolicy {
+                loss_percent: 100,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f2.send(b"lost").unwrap();
+        f2.send(b"lost2").unwrap();
+        assert_eq!(b2.recv().unwrap(), None);
+    }
 }
 
 impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
