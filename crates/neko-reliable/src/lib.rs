@@ -374,12 +374,16 @@ impl Recovery {
             }
         }
         let delay = self.rtt.loss_delay_us();
+        // H-I4-118: a stale/duplicate ACK for an older retired packet must not
+        // time-threshold NEWER in-flight packets (n > largest) — the ACK
+        // frontier bounds which packet numbers can be loss-candidates.
         let lost: Vec<u64> = self
             .sent
             .iter()
             .filter_map(|(&n, p)| {
-                ((largest.saturating_sub(n) >= PACKET_THRESHOLD)
-                    || (delay > 0 && now_us.saturating_sub(p.sent_at_us) >= delay))
+                (n <= largest
+                    && ((largest.saturating_sub(n) >= PACKET_THRESHOLD)
+                        || (delay > 0 && now_us.saturating_sub(p.sent_at_us) >= delay)))
                     .then_some(n)
             })
             .collect();
@@ -821,6 +825,33 @@ mod tests {
         assert!(x.lost_packets.is_empty());
         assert_eq!(r.in_flight(), 2);
     }
+    #[test]
+    fn stale_ack_does_not_time_threshold_newer_packets() {
+        // H-I4-118: a legal duplicate/stale ACK for an already-retired older
+        // packet must not time-threshold NEWER in-flight packets (n > largest).
+        let mut r = Recovery::default();
+        r.rtt.update(8_000, 0);
+        // Packet 0 sent at t=0, ACKed at t=2000, retired.
+        r.on_sent(packet(0, 0, 7)).unwrap();
+        let mut a0 = AckRanges::new(1).unwrap();
+        a0.insert(0).unwrap();
+        let _ = r.on_ack(&a0, 2_000, 0).unwrap();
+        // Newer packets 1..=4 sent later, still in flight.
+        r.on_sent(packet(1, 5_000, 8)).unwrap();
+        r.on_sent(packet(2, 10_000, 9)).unwrap();
+        r.on_sent(packet(3, 15_000, 10)).unwrap();
+        r.on_sent(packet(4, 20_000, 11)).unwrap();
+        // A stale duplicate ACK for packet 0 (largest=0 <= largest_sent=4)
+        // arrives at t=50000 — its largest does not cover the newer packets.
+        let out = r.on_ack(&a0, 50_000, 0).unwrap();
+        assert_eq!(out.acked_packets.len(), 0, "stale ACK retires nothing new");
+        assert!(
+            out.lost_packets.is_empty(),
+            "stale ACK must not time-threshold newer in-flight packets"
+        );
+        assert_eq!(r.in_flight(), 4, "newer packets remain in flight");
+    }
+
     #[test]
     fn time_threshold_and_reno_pacing() {
         let mut r = Recovery::default();
