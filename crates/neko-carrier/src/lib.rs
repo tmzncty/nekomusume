@@ -5153,6 +5153,35 @@ mod path_recovery_tests {
     }
 
     #[test]
+    fn loss_free_ack_preserves_congestion_window() {
+        // H-I4-116: a clean ACK outcome (released_lost == 0) must not collapse
+        // the Reno congestion window through PathRecovery.
+        let mut r = recovery();
+        // Initial cwnd = 10 * mss = 12000. Send + ACK one packet loss-free.
+        r.on_sent(sent(0, 400, &[0])).unwrap();
+        let out = r.on_ack(7, &ack_of(0), 10_000, 0).unwrap();
+        assert_eq!(out.acked_packets, vec![0]);
+        assert!(
+            out.lost_packets.is_empty(),
+            "loss-free ACK must not mark loss"
+        );
+        // If lost(0) collapsed cwnd (10*mss=12000 -> ssthresh=cwnd/2=6000), a
+        // subsequent can_send(11900) would fail. lost(0) is a no-op, so cwnd
+        // remains 12000 and 11900 is admissible.
+        assert!(
+            r.can_send(11_900),
+            "loss-free ACK must not collapse congestion window"
+        );
+        // Positive loss still reduces: a second packet loss triggers Reno.
+        let mut r2 = recovery();
+        r2.on_sent(sent(0, 400, &[0])).unwrap();
+        r2.on_sent(sent(1, 400, &[1])).unwrap();
+        // ACK only packet 1; packet 0 remains in flight (not lost here).
+        let out2 = r2.on_ack(7, &ack_of(1), 10_000, 0).unwrap();
+        assert!(out2.lost_packets.is_empty());
+    }
+
+    #[test]
     fn ack_retires_bytes_in_flight_exactly_once_and_emits_no_session_evidence() {
         let mut r = recovery();
         r.on_sent(sent(0, 100, &[0])).unwrap();
