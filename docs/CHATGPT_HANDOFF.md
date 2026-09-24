@@ -1,99 +1,63 @@
-# ChatGPT reviewer handoff — rootless middlebox/reachability queue active
+# ChatGPT reviewer handoff — middlebox/reachability queue active
 
 ## Current repository truth
 
 - Synchronize to current `main` before work. Exact code/tests/reachable commits/current specs outrank this handoff, chat memory and stale checkbox state.
-- **Latest developer-owned source/test anchor:** reachable `62d59141dfe30ea1412e9e9d330c5c21c697f7f9` (`test(carrier): R-MBOX-ROOTLESS-LOSS ...`). Later movement through the latest reviewer commits is documentation/review navigation only unless a newer developer source/test commit appears.
-- **H-I4-121 is OPEN / FRONT — HIGH release-item-4 evidence reliability.** Reviewer correction is reachable at `docs/reviews/h-i4-121-rootless-hard-loss-evidence-boundary-20260924.md` (review commit `13c87dfe2cd08fbb269168b1911a2db05284546f`). Exact source disproves the prior review/handoff wording that `--drop-all-udp` means “server never sends a UDP reply” or “reply blackhole from the first datagram”: version-selection and Noise handshake replies are still sent without consulting that flag, and reliable-UDP Carrier ACK sends are also outside its guard. The process regression actually proves a post-authenticated/application-reply blackhole followed by health-driven cold TCP fallback. Separately, `FaultInjectCarrier(loss_percent=100)` proves deterministic all-send loss only at the in-memory Carrier seam.
-- The earlier `docs/reviews/independent-r-mbox-rootless-loss-62d5914-20260924.md` no-finding remains historical reviewer source review, but its specific “from first datagram / hard UDP black hole” interpretation is superseded by H-I4-121. Do not silently promote that older sentence into accepted release evidence.
-- **R-MBOX-ROOTLESS-LOSS is not evidence-closed.** No reachable developer-local exact-tree gate/provenance for `62d5914...` is present, and provenance alone is no longer sufficient: the evidence-truth repair must land first, then the final repaired source SHA must receive the normal exact-tree gate/provenance.
-- GitHub combined status for `62d5914...` exposes no status entries and no PR-triggered workflow run was visible in the reviewer pass. This is not hosted CI evidence.
-- **H-I4-120 is CLOSED.** `9e79e6b...` restored the authorized pre-gate production `Recovery::on_ack` baseline; `4511e4f...` made the disputed non-ack-eliciting ACK regression semantics-neutral. Reachable developer-local exact-tree provenance remains in `docs/notes/check-gate-4511e4f-20260924.md`.
-- **H-I4-119 remains MAINTAINER / CORE ACK-PTO SEMANTICS.** Do not choose between any-newly-acked reset and ack-eliciting-only reset. Current rollback baseline is the last authorized implementation state, not a final semantic decision.
-- Release/security packet remains current through the latest prior grouped reconciliation; the R-MBOX queue is research/test-support and does not change release/security/governance flags.
-- Residual item-4 policy/external map remains current: H-I4-119, D019, retained-history capacity, RSEC-001/adversarial-load suitability, restart/rollback replay safety, signing/key-custody/SBOM/publication, independent external review, and RC/freeze/release/production authority remain policy/external/dependency classes.
-- Thirteen-surface owner history remains the baseline inventory, but the R-MBOX source/test movement means exact-current CLI/carrier/process-owner reuse must be checked rather than mechanically inherited.
-- PR #4 (`research: Define reproducible middlebox and reachability simulation plan`) remains merged as reachable `f7bf1f0d2b55ab69834c119cfc6310c9a2dce0be`; it creates real dependency-ready local research/test-support work and does not freeze architecture or create release/security approval.
-- Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` remain unchanged.
-- **`READY_LIVE: none`.** Continue deterministic local/rootless work. Do not repeat HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track merely because a VPS is rented.
+- **Current repository HEAD reviewed:** `cd0817424703c13d25ee900aca19a57d6071e572`.
+- **Latest developer-owned source/test anchor reviewed:** `bb686ce0068da411943a33af6664fc373acbfe47`.
+- **H-I4-120 is CLOSED.** `9e79e6b...` restored the authorized pre-gate Recovery baseline and `4511e4f...` made the disputed regression semantics-neutral. Reachable developer-local exact-tree provenance remains valid for that tree.
+- **H-I4-119 remains MAINTAINER / CORE ACK-PTO SEMANTICS.** Do not choose between any-newly-acked reset and ack-eliciting-only reset. The current baseline is authorized implementation state only, not a final semantic decision.
+- **H-I4-121 / H-I4-122 / H-I4-123 are CLOSED on the current source/test chain.** The final process seam is precisely `--drop-post-auth-delivery-acks`: it suppresses Session DeliveryAck only, not version negotiation, Noise handshake, or reliable-UDP Carrier packet ACKs. `bb686ce...` fixes the reliable-UDP replay-cardinality mismatch by deriving the retained DeliveryAck-await width from the same logical ownership partition as the client and adds an exact replay-identity regression.
+- Reachable developer-local exact-tree provenance for `bb686ce...` is in `docs/notes/check-gate-bb686ce-20260925.md`: full `scripts/check.sh` exit 0, `git diff --check` exit 0, clean detached tree, exact UTC start/end, Linux x86_64, stable Rust 1.98.0. GitHub combined status for `bb686ce...` currently exposes no status entries; do not call this hosted CI.
+- Exact-current reviewer source/control-flow pass found no new BLOCKER/HIGH in the H-I4-121/122/123 closure chain.
+- Evidence boundary remains narrow: `FaultInjectCarrier(loss_percent=100)` is deterministic Carrier-level all-send loss at the in-memory seam only. Historical `FaultPolicy::one_way` is alternating-send suppression on one wrapped endpoint, not a directional topology model.
+- Release/security packet remains an evidence index, not release authority. Release items **3 and 4 remain incomplete**. `RELEASE_CANDIDATE=false`, `PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false`.
+- **READY_LIVE: none.** Do not repeat existing HY2, warm failover, periodic/soak, package lifecycle, migration-back, endpoint/key migration, IPv6, PLPMTUD or Experimental Track runs without a new concrete unresolved real-network question.
 
-## FRONT — H-I4-121 evidence-truth repair + exact-tree provenance
+## FRONT — R-MBOX-REORDER-DELAY
 
-The source/test slice exists at `62d5914...`, but its machine/human classification overclaims the injected path condition. Current committed semantics determine a narrow repair; no maintainer policy choice is required.
+This is dependency-ready local research/test-support work from `docs/research/middlebox-reachability-and-network-behavior.md`.
 
-1. Re-read exact-current `docs/research/middlebox-reachability-and-network-behavior.md`, `docs/carrier-architecture.md`, `crates/neko-carrier/src/lib.rs`, `crates/neko-cli/src/main.rs`, `crates/neko-cli/tests/probe.rs`, `docs/reviews/h-i4-121-rootless-hard-loss-evidence-boundary-20260924.md`, standing authorization, and this handoff.
-2. If a newer developer source/test commit already exists, review/repair that exact current tree instead of mechanically editing stale `62d5914...`.
-3. Preserve what the code really proves:
-   - `FaultInjectCarrier(loss_percent=100)` is deterministic Carrier-level all-send loss evidence;
-   - the process/local-socket scenario succeeds through UDP negotiation/authentication and then suppresses authenticated application-level UDP replies, driving health failure and cold TCP fallback.
-4. Make the smallest evidence-truth repair. The process test/comments/diagnostic must stop saying that the server “never sends a UDP reply”, that the blackhole begins “from the first datagram”, or that the observed process path is literal all-UDP hard loss while negotiation/handshake replies are still emitted. Prefer a precise label such as `post_auth_udp_reply_blackhole` / `udp_application_reply_blackhole` and a correspondingly precise test/comment. Do not change Session/Carrier/ACK/crypto/wire architecture or invent timer/readiness/hysteresis/capacity values merely to preserve the old label.
-5. The machine-readable `failover_mode=hard_udp_loss` label must not survive unchanged if the implementation continues to allow negotiation/handshake UDP replies. Either narrow the label to the actual post-auth/application-reply condition, or—only if dependency-compatible with the intended test—implement a separate literal all-response suppression scenario. Do not silently turn this existing failover regression into a startup-negotiation experiment. A true UDP-unavailable-from-start question may remain a separate bounded research slice.
-6. Preserve the useful process assertions: bounded child ownership, `udp_health_failed`, cold fallback classification, complete 3-record/48-byte TCP delivery, and no fabricated duplicate metric. Keep the Carrier-level `loss_percent=100` positive control explicitly separate from process/topology evidence.
-7. Commit/push the repaired source/test SHA. On the **final pushed repaired source SHA**, run in a safe clean checkout/worktree:
+Exact-current fact:
 
-```text
-PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
-git diff --check
-```
+- `FaultPolicy` already exposes `duplicate`, `reorder`, and `delay_ms`.
+- `FaultInjectCarrier::send` currently applies `delay_ms`, loss/blackhole/close/alternating-send behavior, but does **not** consult `duplicate` or `reorder`.
+- Therefore duplicate/reorder behavior is not yet implemented evidence. Treat this as an implementation gap, not as an existing capability and not as a production defect.
 
-Verify clean tree and persist reachable exact-tree provenance containing exact SHA, exact UTC start/end, both exit codes, OS/arch and stable Rust version. Do not fabricate metadata. This repair does not imply decoder/parser/crypto-framing change; do not run fuzz mechanically unless the actual diff expands into those owners.
-8. If the gate exposes another concrete current-semantics defect, repair it before closure and rerun the final pushed exact-tree gate. If green, close H-I4-121/R-MBOX-ROOTLESS-LOSS with the corrected evidence boundary and **continue immediately** to R-MBOX-REORDER-DELAY in the same agent run. Reviewer cadence is not a work-ticket boundary.
+Closure contract:
+
+1. Re-read exact-current `crates/neko-carrier/src/lib.rs`, the middlebox/reachability research plan, current carrier architecture, current status/release packet and this handoff.
+2. Reuse/extend `FaultInjectCarrier`; do not create a parallel impairment framework.
+3. Make reorder + delay deterministic and bounded for the scenario. The coding agent may choose the smallest test-support representation allowed by `AGENTS.md` (for example a one-record bounded reorder buffer or another equally small explicit ordering model), but the exact semantics must be encoded in focused regressions rather than only comments.
+4. Preserve existing blackhole/loss/close behavior and the current evidence boundary for `one_way`.
+5. If `duplicate` is activated in the same coherent slice, assert exact multiplicity and ordering. Do not let duplicate/reorder silently alter Session/Carrier production semantics.
+6. Keep configured delay small and bounded in tests. Do not invent a new production timer/readiness/hysteresis/congestion/security/capacity policy merely to implement the fixture.
+7. Add positive and negative deterministic tests that can prove the chosen reorder/delay behavior is actually exercised. Avoid flaky wall-clock upper-bound assertions; if elapsed time is used, rely only on a small configured lower-bound condition and the outer repository test timeout.
+8. Commit/push the source/test slice, then continue immediately to the next READY slice; reviewer cadence is not a work-ticket boundary.
+9. After the final pushed developer source SHA for a coherent group, run:
+   `PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh`
+   `git diff --check`
+   verify clean tree and persist reachable exact-tree provenance with exact SHA, UTC start/end, exit codes, OS/arch and stable Rust version.
+10. No decoder/parser/crypto-framing change is implied; do not run fuzz mechanically unless the actual diff expands into those owners.
 
 ## Dependency-ordered rolling queue
 
-1. **H-I4-121 / R-MBOX-ROOTLESS-LOSS closure — FRONT.** Evidence-truth repair + final repaired-SHA exact-tree local gate/provenance. Do not close from stale `62d5914...` provenance alone.
-2. **R-MBOX-REORDER-DELAY.** Extend/reuse the same deterministic local seam for bounded reorder + delay. Challenge transition/order semantics without inventing production timer, performance, readiness, hysteresis or congestion policy. Prefer existing `FaultInjectCarrier`/loopback/failover owners; do not create a parallel network framework.
-3. **R-MBOX-MTU.** Model a local oversized-datagram/MTU-drop boundary without changing system interface MTU, PLPMTUD policy or wire framing. Keep packet-size/path evidence separate from Session delivery.
-4. **R-MBOX-CLEAN-RECOVERY.** Controlled loss followed by a clean path; prove recovery/validation according to existing Carrier semantics and no duplicate Session delivery. Do not invent a new migration/readiness threshold.
-5. **R-MBOX-REPEATED-FAILOVER.** Bounded repeated failover/recovery transitions; assert exactly one active carrier, valid generation ownership, no duplicate delivery and diagnostic transition order. Reuse current CarrierState/manager semantics and existing process ownership helpers.
-6. **R-MBOX-RESOURCE.** Bounded repeated-transition resource fixture reusing existing observability/resource helpers. Challenge ownership convergence and monotonic leaks in live endpoints/session entries/in-flight recovery work. This is **not** a capacity-pressure benchmark; do not invent RSS/FD/security/capacity numbers.
-7. **R-MBOX-TRANSITION-MATRIX.** Reconcile injected impairment -> exact Carrier/Session event/state expectations and record tested vs unresolved boundaries. Evidence/spec support only; no new architecture ADR merely for bookkeeping.
-8. **Grouped release/item-4 factual reconciliation** after 3–4 coherent R-MBOX slices or immediately after any important repair. Preserve evidence-class boundaries and all policy/external gates.
-9. **Moved-owner refill.** Because the R-MBOX slice moved `neko-cli/src/main.rs`, `neko-carrier/src/lib.rs` test-support ownership and process tests, check whether prior CLI/process/carrier bounded review claims materially depend on changed lines. If yes, add a focused delta challenge; if not, record exact scoped reuse. Any later semantic movement in Recovery, CarrierState/manager, Session/flow-control, adapters, observability, package/build, CLI/process/resource or security/pre-auth owners invalidates corresponding reuse and creates fresh bounded review work.
-10. **Repository-wide 13-surface refill.** Keep unreviewed/moved implemented owners live as review-support while item 4 remains incomplete. A no-finding narrow seam never means queue exhausted.
-11. **CONDITIONAL LIVE.** Only if new code/instrumentation/hypothesis/path condition creates a concrete unresolved real-network question within standing VPS authorization. Current classification remains `READY_LIVE: none`.
-12. **FINAL repository-wide reconciliation before any `queue exhausted` statement.** Queue exhaustion is currently false. It becomes legal only after the real R-MBOX queue is completed/blocked and the broad 13-surface inventory again shows no unreviewed/moved implemented owner, no defect, no READY review-support, no READY live question, and every residual is genuinely policy/external/environment/release-authority gated.
+1. **R-MBOX-REORDER-DELAY — FRONT.** Reuse `FaultInjectCarrier`; activate real deterministic bounded reorder/delay evidence and optionally the already-declared duplicate control in the same small fixture seam.
+2. **R-MBOX-MTU.** Model a local oversized-datagram / packet-size drop boundary without changing interface MTU, PLPMTUD policy or wire framing.
+3. **R-MBOX-CLEAN-RECOVERY.** Controlled loss followed by a clean path; prove recovery/validation under existing Carrier semantics and no duplicate Session delivery.
+4. **Grouped release/item-4 factual reconciliation.** After the three slices above, refresh release-packet facts and evidence boundaries; do not rewrite policy or release flags.
+5. **R-MBOX-REPEATED-FAILOVER.** Bounded repeated failover/recovery transitions; assert single-active ownership, valid generation transitions, no duplicate delivery and event order.
+6. **R-MBOX-RESOURCE.** Bounded repeated-transition resource ownership; check convergence / absence of monotonic leaked in-flight/session/path state. Do not turn this into capacity-pressure benchmarking or invent limits.
+7. **R-MBOX-TRANSITION-MATRIX.** Reconcile injected impairment classes against current Carrier/Session state/event expectations and exact tested/unresolved boundaries.
+8. **Pre-auth/security owner-diff reuse check.** Re-read only if source ownership moved; D019 remains a maintainer/security-policy gate.
+9. **Package/reproducibility/build owner-diff reuse check.** Cargo manifests/lock/features/native hooks/scripts and exact package operators.
+10. **Observability/adapters owner-diff reuse check.** Event/counter/high-water semantics plus Memory/UDP/TCP close/error/resource semantics.
+11. **FairScheduler + SessionRuntime moved-owner challenge.** Multi-stream/session+stream flow-control, lifecycle/resource/window/DeliveryAck accounting.
+12. **CLI/process/cross-platform + algorithmic boundedness.** Exit/JSON/human contract, child/socket/thread ownership and bounded algorithms; no pressure benchmark.
+13. **Recovery repaired-owner refill.** Re-check post-H-I4-116/117/118 deltas while explicitly excluding the unresolved H-I4-119 policy seam.
+14. **Repository-wide thirteen-surface refill.** Queue exhaustion is valid only if every implemented core surface has current bounded review/no-finding or a real external/policy gate.
+15. **Conditional live only.** Create READY_LIVE work only if a new source/instrumentation/hypothesis/path condition leaves a concrete unresolved owned-endpoint network question.
 
-The queue contains real current work; do not inflate it with checker/schema/framework/docs filler. If the agent completes coherent slices rapidly with low defect rate, refill from actual moved owners, the transition matrix and remaining item-4 surfaces rather than waiting for the next reviewer.
+## Stop / escalation boundary
 
-## Standing 13-surface inventory requirement
-
-Every meaningful refill must verify whether each surface still has a dedicated reachable independent bounded review or a materially moved owner:
-
-1. `neko-reliable` UDP recovery — ACK range/future/stale ACK/loss/retransmit/RTT/PTO/persistent congestion/Reno/fault simulation;
-2. `neko-carrier` `CarrierState` — generation/validation/hysteresis/single-active/drain/fail/activate;
-3. Concurrent Carrier Manager / health / migration-back;
-4. FairScheduler / multi-stream / Session + stream flow-control accounting;
-5. Memory/UDP/TCP carrier adapter close/error/resource semantics;
-6. `SessionRuntime` lifecycle/resource/window/DeliveryAck accounting;
-7. `neko-observe` projection/event/counter/high-water correctness;
-8. package/reproducibility/operator scripts;
-9. dependency/build manifests/lock/features/build/native hooks/unsafe inheritance;
-10. cross-platform CLI/process-test semantics;
-11. CLI exit-code / JSON / human-output contract;
-12. algorithmic resource boundedness without capacity-pressure benchmark or invented policy values;
-13. release packet factual consistency/evidence boundary.
-
-A narrow no-finding never means repository-wide queue exhaustion.
-
-## Review -> repair / provenance contract
-
-For every bounded slice: read exact-current owner source/tests + applicable spec/ADR/status claim; state the invariant; try to falsify it with source reasoning and focused deterministic tests. If a concrete defect exists and current committed semantics decide the answer, make the smallest repair + positive/negative regression + commit/push, then run the final pushed developer source SHA through:
-
-```text
-PYTHONDONTWRITEBYTECODE=1 bash scripts/check.sh
-git diff --check
-```
-
-and verify a clean tree. Persist a reachable exact-tree provenance record with exact SHA, exact UTC start/end, exit codes, OS/arch and stable Rust version. Hosted CI is separate cross-evidence and never a wait condition. Wire decoder/parser/crypto-framing changes additionally use the pinned fuzz toolchain and required decode build/run; do not run fuzz mechanically for unrelated code.
-
-If no defect is found, record a scope-precise independent bounded no-finding note naming owners inspected, commands/tests if actually run, exclusions and exact reachable anchor. Do not change code merely to manufacture review churn.
-
-## Evidence discipline / stop conditions
-
-- Developer-reported local CI, persisted developer-local provenance, reviewer source/control-flow review, reviewer-local generic OS checks, hosted CI, live WAN evidence and performance conclusions are distinct classes.
-- Accepted exact-tree provenance must anchor a GitHub-resolvable pushed SHA and contain required exact metadata; never publish local-only/unreachable SHA as shared evidence and never fabricate missing timestamps/toolchain details.
-- Never decide H-I4-119/core ACK-PTO semantics; D019; TTL/LRU/history/capacity/security values; signing/key-custody/SBOM/publication; previous frozen release policy; core Session/Carrier/ACK/crypto/wire architecture; destructive/canonical migration; RC/freeze/release/production authority.
-- Do not automatically mutate host/production route/firewall/DNS/proxy/tunnel/qdisc or rely on privileged network setup. The current R-MBOX queue is deliberately rootless first.
-- A correctness/security/evidence BLOCKER/HIGH becomes FRONT when current semantics determine a repair. If it requires a core semantic/policy choice, keep it as maintainer/spec gate and continue unrelated READY work; do not let an unauthorized implementation silently convert a gate into a decision.
-- Normal progression does not require administrator notification. Notify only for unresolved BLOCKER/HIGH requiring maintainer choice, core architecture/destructive migration, policy/value decisions, authorization expansion/new credentials/third-party/production actions, adversarial-load benchmark conditions requiring maintainer choice, or a genuine release-phase transition.
+Do not ask the maintainer for ordinary local design choices covered by current specs/AGENTS. Escalate only for BLOCKER/HIGH that cannot be automatically repaired, H-I4-119/core ACK-PTO semantics, D019 or other policy/value decisions, core Session/Carrier/ACK/crypto/wire architecture changes, destructive/canonical migration, authorization beyond the standing VPS boundary, production/third-party/new-credential permissions, adversarial-load/benchmark conditions requiring maintainer choice, or entry into a new release stage.
