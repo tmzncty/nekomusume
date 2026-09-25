@@ -716,6 +716,58 @@ mod tests {
         assert_eq!(r.pto_us(1_000, 25_000, 0), 286_250);
         assert_eq!(r.pto_us(1_000, 25_000, 2), 1_145_000);
     }
+    #[test]
+    fn loss_delay_is_ceiling_nine_eighths_of_max_latest_smoothed() {
+        // docs/spec/m2-udp-recovery.md: time-threshold loss uses 9/8 of
+        // max(latest RTT, smoothed RTT). Pin each factor independently:
+        // the max operand (both orderings), the 9/8 ratio, and the ceiling.
+        // smoothed > latest: base must be smoothed.
+        let mut r = RttEstimator::default();
+        r.update(100_000, 0);
+        r.update(20_000, 0);
+        assert_eq!((r.latest_us, r.smoothed_us), (20_000, 90_000));
+        assert_eq!(r.loss_delay_us(), 101_250);
+        // latest > smoothed: base must be latest.
+        let mut r = RttEstimator::default();
+        r.update(20_000, 0);
+        r.update(100_000, 0);
+        assert_eq!((r.latest_us, r.smoothed_us), (100_000, 30_000));
+        assert_eq!(r.loss_delay_us(), 112_500);
+        // Non-multiple of 8 rounds up (1001 * 9 / 8 = 1126.125 -> 1127).
+        let mut r = RttEstimator::default();
+        r.update(1_001, 0);
+        assert_eq!(r.loss_delay_us(), 1_127);
+        // Uninitialized estimator has zero loss delay (time threshold off).
+        assert_eq!(RttEstimator::default().loss_delay_us(), 0);
+    }
+    #[test]
+    fn time_threshold_loss_boundary_is_inclusive() {
+        // An outstanding packet whose age equals loss_delay exactly is lost;
+        // one microsecond younger is not. Packet threshold is not reached
+        // (largest - 0 = 1 < PACKET_THRESHOLD), so only time can declare loss.
+        // RTT: prior 8_000 sample plus an 8_000 ACK sample keeps latest and
+        // smoothed at 8_000, so loss_delay = 9_000.
+        let mut r = Recovery::default();
+        r.rtt.update(8_000, 0);
+        r.on_sent(packet(0, 0, 7)).unwrap();
+        r.on_sent(packet(1, 1_000, 8)).unwrap();
+        let mut a = AckRanges::new(1).unwrap();
+        a.insert(1).unwrap();
+        let out = r.on_ack(&a, 9_000, 0).unwrap();
+        assert_eq!(r.rtt.loss_delay_us(), 9_000);
+        assert_eq!(out.acked_packets, vec![1]);
+        assert_eq!(out.lost_packets, vec![0], "age == loss_delay is lost");
+        // Negative control: same shape, packet 0 is 8_999us old at ACK time.
+        let mut r = Recovery::default();
+        r.rtt.update(8_000, 0);
+        r.on_sent(packet(0, 0, 7)).unwrap();
+        r.on_sent(packet(1, 999, 8)).unwrap();
+        let out = r.on_ack(&a, 8_999, 0).unwrap();
+        assert_eq!(r.rtt.loss_delay_us(), 9_000);
+        assert_eq!(out.acked_packets, vec![1]);
+        assert!(out.lost_packets.is_empty(), "age < loss_delay is not lost");
+        assert_eq!(r.in_flight(), 1);
+    }
     fn packet(n: u64, t: u64, f: u64) -> SentPacket {
         SentPacket {
             number: n,
