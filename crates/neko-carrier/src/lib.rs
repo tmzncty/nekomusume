@@ -1613,6 +1613,112 @@ mod fault_inject_tests {
     }
 
     #[test]
+    fn reorder_swap_first_half_failure_restores_pending() {
+        // Swap atomicity, first half: when the caller's current record is
+        // rejected by the inner carrier BEFORE any copy is delivered, the
+        // withheld record returns to the slot untouched — no swap happens,
+        // nothing of the current record is delivered, and a later send
+        // completes the pending swap. (The queue must be full for a
+        // first-half failure: a withheld record lives in the slot, not the
+        // queue, so the queue is filled by a prior successful swap whose
+        // output has not been drained.)
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 10,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                reorder: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        // Fill the queue with a successful swap (A then B: B out, A out —
+        // 5+5=10, queue full, slot empty).
+        f.send(b"AAAAA").unwrap();
+        f.send(b"BBBBB").unwrap();
+        assert_eq!(f.pending_len(), 0);
+        // Load the slot with C (withheld; queue stays full).
+        f.send(b"CCCC").unwrap();
+        assert_eq!(f.pending_len(), 1);
+        // First-half failure: D is rejected with zero copies delivered
+        // (queue 10/10); C returns to the slot, nothing new is delivered.
+        assert!(matches!(f.send(b"DD"), Err(CarrierError::BufferFull)));
+        assert_eq!(
+            f.pending_len(),
+            1,
+            "first-half failure must restore the withheld record"
+        );
+        assert_eq!(b.recv().unwrap(), Some(b"BBBBB".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"AAAAA".to_vec()));
+        assert_eq!(
+            b.recv().unwrap(),
+            None,
+            "nothing else delivered on the failed swap"
+        );
+        // Drain done; the retry completes the swap pairwise.
+        f.send(b"DD").unwrap();
+        assert_eq!(f.pending_len(), 0);
+        assert_eq!(b.recv().unwrap(), Some(b"DD".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"CCCC".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+    }
+
+    #[test]
+    fn duplicate_partial_delivery_never_exceeds_two_copies() {
+        // Duplicate multiplicity under inner-carrier failure, second half:
+        // when the withheld record's SECOND copy is rejected (first copy
+        // already in flight), the slot stays empty — restoring would make
+        // a retry deliver three total copies, violating the documented
+        // exactly-two multiplicity. The record is under-delivered but in
+        // flight; the error is surfaced; the receiver sees exactly the
+        // copies that were admitted.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            // Queue 10 bytes.
+            max_queue_bytes: 10,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                duplicate: true,
+                reorder: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        // Stage 1: m0 (6B) withheld; queue 0/10.
+        f.send(b"m00000").unwrap();
+        assert_eq!(f.pending_len(), 1);
+        // Stage 2: swap with 2-byte m1. First half: 2+2=4 -> queue 4/10.
+        // Second half: m0 first copy 6 -> 4+6=10 fits (queue 10/10); m0
+        // SECOND copy 6 -> 16 > 10 REJECTED with one copy in flight: slot
+        // stays EMPTY (partial delivery, exactly-two preserved), error
+        // surfaced.
+        assert!(matches!(f.send(b"m1"), Err(CarrierError::BufferFull)));
+        assert_eq!(
+            f.pending_len(),
+            0,
+            "partial delivery does not restore (exactly-two holds)"
+        );
+        // Receiver sees: m1 twice, then m0 exactly ONCE (under-delivered
+        // but in flight; the fixture never re-delivers it).
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m00000".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+        // Stage 3: slot empty — a fresh send is a plain first-half record:
+        // withheld, pending 1.
+        f.send(b"m2").unwrap();
+        assert_eq!(f.pending_len(), 1);
+    }
+
+    #[test]
     fn mtu_boundary_drops_oversized_only() {
         // R-MBOX-MTU: a send strictly exceeding max_payload_bytes is
         // dropped at the seam; a send exactly at the boundary passes.
@@ -2444,14 +2550,30 @@ impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
         // Delivery point: `duplicate` emits exactly two copies of every
         // surviving record; `reorder` withholds one record in the bounded
         // pending slot and releases it AFTER the next surviving record
-        // (adjacent-pair swap). Both are deterministic and bounded; dropped
-        // records (loss/blackhole/one_way/close) never reach this point and
-        // never touch the reorder buffer.
-        let deliver = |msg: &[u8]| -> Result<(), CarrierError> {
+        // adjacent-pair swap). Both are deterministic and bounded; dropped
+        // records (loss/blackhole/one_way/close/oversized/window) never
+        // reach this point and never touch the reorder buffer.
+        // deliver_copies returns how many copies reached the inner carrier
+        // before the result, so the swap branch can distinguish a clean
+        // failure (0 copies — safe to restore the withheld record for
+        // retry) from a partial duplicate delivery (1 copy in flight —
+        // restoring would exceed the documented exactly-two multiplicity
+        // on retry).
+        let deliver_copies = |msg: &[u8]| -> (usize, Result<(), CarrierError>) {
             if self.policy.duplicate {
-                self.inner.send(msg)?;
+                if let Err(e) = self.inner.send(msg) {
+                    return (0, Err(e));
+                }
+                match self.inner.send(msg) {
+                    Ok(()) => (2, Ok(())),
+                    Err(e) => (1, Err(e)),
+                }
+            } else {
+                match self.inner.send(msg) {
+                    Ok(()) => (1, Ok(())),
+                    Err(e) => (0, Err(e)),
+                }
             }
-            self.inner.send(msg)
         };
         if self.policy.reorder {
             let mut pending = self
@@ -2460,15 +2582,29 @@ impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
                 .map_err(|_| CarrierError::StatePoisoned)?;
             match pending.take() {
                 Some(prev) => {
-                    deliver(message)?;
-                    // Swap atomicity: if delivering the withheld record
-                    // fails (e.g. inner carrier BufferFull/Closed), put it
-                    // back so no surviving record is ever silently dropped
-                    // by the fixture — the next send retries the swap. The
-                    // just-delivered current record stays delivered; the
-                    // error is propagated to the caller.
-                    if let Err(e) = deliver(&prev) {
+                    // First half: the caller's current record. On failure
+                    // the withheld record has not been delivered at all, so
+                    // it always returns to the slot (no multiplicity risk).
+                    // The caller's record may be partially delivered in
+                    // duplicate mode; whether to retry it is the caller's
+                    // decision, signalled by the error.
+                    if let (_, Err(e)) = deliver_copies(message) {
                         *pending = Some(prev);
+                        return Err(e);
+                    }
+                    // Second half: the withheld (fixture-owned) record.
+                    // Restore it ONLY when no copy reached the inner
+                    // carrier — a clean retry then delivers exactly two
+                    // copies in total. After a partial duplicate delivery
+                    // (one copy in flight) the slot stays empty: the record
+                    // is under-delivered but in flight and the error is
+                    // surfaced; restoring would make a retry exceed the
+                    // exactly-two multiplicity.
+                    let (copies, res) = deliver_copies(&prev);
+                    if let Err(e) = res {
+                        if copies == 0 {
+                            *pending = Some(prev);
+                        }
                         return Err(e);
                     }
                     Ok(())
@@ -2479,7 +2615,7 @@ impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
                 }
             }
         } else {
-            deliver(message)
+            deliver_copies(message).1
         }
     }
     fn recv(&self) -> Result<Option<Vec<u8>>, CarrierError> {
