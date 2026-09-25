@@ -1369,6 +1369,44 @@ mod fault_inject_tests {
     }
 
     #[test]
+    fn generated_fault_sequence_is_deterministic_and_bounded() {
+        // D057 contract pin: the seeded event generator is a deterministic
+        // test input source producing only the eleven declared FaultEvent
+        // kinds, capped at 4096 events, stable across calls and processes.
+        // A determinism change (LCG constants, event order, cap) must fail
+        // here rather than silently invalidating every downstream
+        // state-machine input that would ever consume this generator.
+        let a = generated_fault_sequence(42, 64);
+        let b = generated_fault_sequence(42, 64);
+        assert_eq!(a, b, "same seed must reproduce the exact sequence");
+        assert_eq!(a.len(), 64);
+        let c = generated_fault_sequence(43, 64);
+        assert_ne!(a, c, "different seeds must differ");
+        // Cap: lengths beyond 4096 are clamped, never allocating unbounded.
+        assert_eq!(generated_fault_sequence(7, 5000).len(), 4096);
+        assert_eq!(generated_fault_sequence(7, 4096).len(), 4096);
+        assert_eq!(generated_fault_sequence(7, 4095).len(), 4095);
+        assert!(generated_fault_sequence(7, 0).is_empty());
+        // Only the eleven declared event kinds ever appear.
+        for ev in &a {
+            assert!(matches!(
+                ev,
+                FaultEvent::Insert
+                    | FaultEvent::Send
+                    | FaultEvent::Loss
+                    | FaultEvent::Uncertain
+                    | FaultEvent::GenerationChange
+                    | FaultEvent::Duplicate
+                    | FaultEvent::OldAck
+                    | FaultEvent::NewAck
+                    | FaultEvent::Drain
+                    | FaultEvent::Fail
+                    | FaultEvent::Activate
+            ));
+        }
+    }
+
+    #[test]
     fn one_way_udp_reply_cessation_and_hard_loss_are_deterministic() {
         // R-MBOX-ROOTLESS-LOSS: model UDP reply cessation (one-way silence)
         // and hard UDP loss using the existing local fake-peer seam — no
