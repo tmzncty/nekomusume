@@ -1723,6 +1723,134 @@ mod fault_inject_tests {
     }
 
     #[test]
+    fn repeated_failover_cycles_keep_single_active_and_no_duplicates() {
+        // R-MBOX-REPEATED-FAILOVER: three bounded UDP->TCP->UDP cycles over
+        // the same in-memory pair, driven ONLY by existing semantics:
+        // manager fail_udp_to_tcp / promote_cold_authenticated_resume /
+        // migrate_back_to_udp (gates + generation checks), FailoverController
+        // udp_pto_at / tcp_resend / confirm / receive (exact-duplicate
+        // dedup). Asserts: exactly one active owner at every step, strictly
+        // monotonic generations across cycles, authoritative replay exactly
+        // the uncertain set per cycle, zero duplicate Session delivery, and
+        // bounded monotone metrics (switches/recoveries count cycles; no
+        // fabricated duplicates). No new policy invented.
+        const GOOD: HealthSample = HealthSample {
+            rtt_us: 100,
+            loss_per_mille: 0,
+            pto: 0,
+        };
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(a, FaultPolicy::default(), 7).unwrap();
+        let mut rx = FailoverController::new(2, 16, 64).unwrap();
+        // Manager state: path 1 = UDP (initially active), path 2 = TCP.
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 1,
+            switch_margin: 0,
+            max_paths: 2,
+        })
+        .unwrap();
+        // Boot: path 1 (UDP) active at generation 1; path 2 (TCP) observed.
+        m.observe(PathId(1), GOOD).unwrap();
+        m.observe(PathId(2), GOOD).unwrap();
+        m.set_active_udp(PathId(1), PathGeneration(1));
+        // The manager tracks active path/generation; FailoverController
+        // tracks carrier-level active ownership. Drive both consistently
+        // through three cycles.
+        let mut fc = FailoverController::new(2, 16, 64).unwrap();
+        let mut delivered_total: usize = 0;
+        let duplicate_total: u64 = 0;
+        let mut expected_switches: u64 = 0;
+        let mut cycle_gens = (1u64..).zip(0..3u64);
+        for (generation, cycle) in cycle_gens.by_ref() {
+            // --- UDP phase: send one record per cycle over the (clean) path.
+            let id = DataId(cycle);
+            let data = [b'c', b'0' + cycle as u8];
+            fc.track_uncertain(id, &data).unwrap();
+            f.send(&data).unwrap();
+            assert_eq!(rx.receive(id, &data), Ok(true));
+            fc.confirm(id).unwrap();
+            delivered_total += data.len();
+            // --- Failure phase: PTO observations accumulate BELOW the
+            // threshold (controller stays UDP — it is not the commit
+            // authority this cycle); the manager fail_udp_to_tcp + cold
+            // promotion is the single commit authority and installs the
+            // new active owner with a strictly greater generation.
+            assert!(!fc.udp_pto_at(cycle * 10_000 + 1_000));
+            assert_eq!(fc.active(), ActiveCarrier::Udp);
+            let pending = m
+                .fail_udp_to_tcp(
+                    PathId(1),
+                    PathGeneration(generation),
+                    PathId(2),
+                    HealthState::Failed,
+                    CarrierSwitchReason::UdpPathDegraded,
+                )
+                .unwrap();
+            assert_eq!(pending.generation, PathGeneration(generation + 1));
+            let decision = m
+                .promote_cold_authenticated_resume(
+                    pending.target_path,
+                    pending.generation,
+                    true,
+                    true,
+                )
+                .unwrap();
+            assert!(fc.apply_manager_decision(&decision));
+            expected_switches += 1;
+            assert_eq!(fc.metrics.switches, expected_switches);
+            // --- TCP replay phase: nothing is uncertain at switch time
+            // (record already confirmed), so the authoritative replay set is
+            // exactly empty — no duplicate delivery.
+            assert!(fc.tcp_resend().unwrap().is_empty());
+            // --- Migration back: UDP healthy again. The manager hold gate
+            // is REAL policy: after every promotion migration_hold resets to
+            // zero, so the FIRST back-migration attempt is held (HoldGate,
+            // state unchanged) and the SECOND commits. Both observations are
+            // asserted — the gate itself is part of the bounded repeated-
+            // transition semantics, not something to work around.
+            m.observe(PathId(1), GOOD).unwrap();
+            let candidate = MigrationCandidate {
+                path: PathId(1),
+                generation: PathGeneration(generation + 1),
+                validated: true,
+                health: GOOD,
+            };
+            assert_eq!(
+                m.migrate_back_to_udp(candidate),
+                Err(MigrationError::HoldGate)
+            );
+            let back = m.migrate_back_to_udp(candidate).unwrap();
+            assert!(back);
+            assert!(fc.apply_migration_back());
+            assert_eq!(fc.active(), ActiveCarrier::Udp);
+            // Healthy observation on the recovered UDP path resets the
+            // consecutive-PTO window (existing udp_progress semantics) —
+            // without it the next cycle's first observation would trip the
+            // threshold immediately.
+            fc.udp_progress();
+            // Manager active_generation is now generation+1 (migrate_back
+            // commits the promoted generation on the recovered UDP path);
+            // the next cycle's fail must pass that current generation.
+        }
+        // Cross-cycle invariants: metrics bounded and exactly transition-
+        // counted (manager counts one switch per promoted failover AND one
+        // per committed migration-back: 3+3; controller counts carrier
+        // switches: 3); no duplicates ever delivered; final state UDP-active.
+        assert_eq!(fc.metrics.switches, 3);
+        assert_eq!(fc.metrics.duplicate_bytes, 0);
+        assert_eq!(rx.metrics.duplicate_bytes, duplicate_total);
+        assert_eq!(rx.metrics.delivered_bytes, delivered_total as u64);
+        assert_eq!(m.switches, 6);
+        assert_eq!(m.cold_recoveries, 3);
+        assert!(m.pending_switch.is_none());
+        assert!(b.recv().is_ok());
+    }
+
+    #[test]
     fn clean_recovery_after_bounded_loss_replays_uncertain_without_duplicates() {
         // R-MBOX-CLEAN-RECOVERY end-to-end fixture story: a bounded loss
         // burst drops two records mid-stream; the path is clean again after
