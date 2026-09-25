@@ -1570,6 +1570,49 @@ mod fault_inject_tests {
     }
 
     #[test]
+    fn reorder_swap_failure_restores_pending_atomically() {
+        // R-MBOX-REORDER-DELAY follow-up: swap atomicity at the delivery
+        // seam. When the inner carrier rejects the second half of a swap
+        // (BufferFull here), the withheld record must be restored to the
+        // pending slot rather than silently dropped — the fixture never
+        // loses a surviving record. The first half (the current record)
+        // stays delivered; the caller sees the error; the next send
+        // retries the swap.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            // Queue capacity 12 bytes: one 8-byte record + one 4-byte
+            // record fit, but two 8-byte records do not — the second
+            // deliver of a full-size swap hits BufferFull.
+            max_queue_bytes: 12,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                reorder: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f.send(b"m0123456").unwrap(); // 8 bytes, withheld in pending
+        assert_eq!(f.pending_len(), 1);
+        // The swap: m1 is delivered, m0's redelivery hits BufferFull and
+        // must be restored — error surfaced, no silent loss.
+        assert!(matches!(f.send(b"m1234567"), Err(CarrierError::BufferFull)));
+        assert_eq!(f.pending_len(), 1, "withheld record restored, not lost");
+        // Drain the queue; the next send retries the swap and succeeds.
+        assert_eq!(b.recv().unwrap(), Some(b"m1234567".to_vec()));
+        // Retry with a short record: 4 + 8 = 12 bytes fits, the swap
+        // completes and the restored withheld record is finally delivered.
+        f.send(b"m234").unwrap(); // swap: m234 out, m0 (restored) after
+        assert_eq!(f.pending_len(), 0);
+        assert_eq!(b.recv().unwrap(), Some(b"m234".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m0123456".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+    }
+
+    #[test]
     fn mtu_boundary_drops_oversized_only() {
         // R-MBOX-MTU: a send strictly exceeding max_payload_bytes is
         // dropped at the seam; a send exactly at the boundary passes.
@@ -2418,7 +2461,17 @@ impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
             match pending.take() {
                 Some(prev) => {
                     deliver(message)?;
-                    deliver(&prev)
+                    // Swap atomicity: if delivering the withheld record
+                    // fails (e.g. inner carrier BufferFull/Closed), put it
+                    // back so no surviving record is ever silently dropped
+                    // by the fixture — the next send retries the swap. The
+                    // just-delivered current record stays delivered; the
+                    // error is propagated to the caller.
+                    if let Err(e) = deliver(&prev) {
+                        *pending = Some(prev);
+                        return Err(e);
+                    }
+                    Ok(())
                 }
                 None => {
                     *pending = Some(message.to_vec());
