@@ -1210,6 +1210,12 @@ pub struct FaultPolicy {
     pub duplicate: bool,
     pub reorder: bool,
     pub delay_ms: u32,
+    /// R-MBOX close-after: at send index N the seam CLOSES the carrier —
+    /// a visible transport-close transition distinct from blackhole's
+    /// silent drop. From index N on, send returns Closed (matching
+    /// UdpLoopback/Tcp close semantics) and recv drains to None; a
+    /// withheld reorder record at close time is discarded with the
+    /// connection (no silent stranding in the pending slot).
     pub close_after: Option<u64>,
     pub one_way: bool,
     /// R-MBOX-MTU: local oversized-packet drop boundary. A send whose
@@ -1267,7 +1273,6 @@ impl<C: Carrier> FaultInjectCarrier<C> {
     }
     fn blocked(&self, sent: u64) -> bool {
         self.policy.blackhole_after.is_some_and(|n| sent >= n)
-            || self.policy.close_after.is_some_and(|n| sent >= n)
     }
     pub fn inner(&self) -> &C {
         &self.inner
@@ -1716,6 +1721,74 @@ mod fault_inject_tests {
         // withheld, pending 1.
         f.send(b"m2").unwrap();
         assert_eq!(f.pending_len(), 1);
+    }
+
+    #[test]
+    fn close_after_is_a_visible_transport_close() {
+        // Self-directed Track-A: close_after is a VISIBLE transport-close
+        // transition, distinct from blackhole_after's silent drop. At send
+        // index N the seam closes: the triggering send returns Closed,
+        // subsequent sends return Closed (idempotent), recv drains already
+        // queued records then returns None, and a withheld reorder record
+        // is discarded with the connection — never silently stranded in
+        // the pending slot.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                close_after: Some(2),
+                reorder: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f.send(b"m0").unwrap(); // index 0: withheld in pending
+        assert_eq!(f.pending_len(), 1);
+        f.send(b"m1").unwrap(); // index 1: swap — m1 then m0 both delivered
+        assert_eq!(f.pending_len(), 0);
+        // Index 2 reaches close_after: visible close. The pending slot is
+        // empty here; the close discards it (no-op) and returns Closed.
+        assert_eq!(f.send(b"m2"), Err(CarrierError::Closed));
+        // Subsequent sends: Closed, idempotent (counter keeps advancing
+        // but the flag short-circuits).
+        assert_eq!(f.send(b"m3"), Err(CarrierError::Closed));
+        // Already-queued records drain, then None.
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m0".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+
+        // Withheld-record discard: a fresh pair, a record withheld, then
+        // the close arrives BEFORE a second surviving send releases it.
+        let (a2, b2) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f2 = FaultInjectCarrier::new(
+            a2,
+            FaultPolicy {
+                close_after: Some(1),
+                reorder: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f2.send(b"x0").unwrap(); // index 0: withheld
+        assert_eq!(f2.pending_len(), 1);
+        assert_eq!(f2.send(b"x1"), Err(CarrierError::Closed)); // close
+        assert_eq!(
+            f2.pending_len(),
+            0,
+            "close discards the withheld record with the connection"
+        );
+        assert_eq!(b2.recv().unwrap(), None, "nothing was ever delivered");
+        assert_eq!(f2.send(b"x2"), Err(CarrierError::Closed));
     }
 
     #[test]
@@ -2522,6 +2595,24 @@ impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
         let sent = *count;
         *count = count.saturating_add(1);
         drop(count);
+        // close_after: a visible transport close at send index N. The send
+        // that reaches the trigger itself closes and returns Closed; a
+        // withheld reorder record is discarded with the connection.
+        if self.policy.close_after.is_some_and(|n| sent >= n) {
+            let mut closed = self
+                .closed
+                .lock()
+                .map_err(|_| CarrierError::StatePoisoned)?;
+            if !*closed {
+                *closed = true;
+                drop(closed);
+                let _ = self.inner.close();
+                if let Ok(mut pending) = self.pending.lock() {
+                    *pending = None;
+                }
+            }
+            return Err(CarrierError::Closed);
+        }
         if *self
             .closed
             .lock()
