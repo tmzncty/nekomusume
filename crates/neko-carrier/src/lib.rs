@@ -1221,6 +1221,16 @@ pub struct FaultPolicy {
     /// (never enter the reorder buffer, never release a withheld record,
     /// never duplicated). `None` (default) = no boundary.
     pub max_payload_bytes: Option<usize>,
+    /// R-MBOX-CLEAN-RECOVERY: bounded transient loss burst. Sends whose
+    /// send index falls in `[start, end)` (start inclusive, end exclusive)
+    /// are dropped; the path is clean again from index `end`. Unlike
+    /// `blackhole_after` (permanent from N) or `one_way` (permanent
+    /// alternation), this models controlled loss FOLLOWED BY a clean path.
+    /// Window drops are drop-class: identical semantics to
+    /// loss/blackhole/one_way (never enter the reorder buffer, never
+    /// release a withheld record, never duplicated). `None` (default) =
+    /// no window. An empty window (`start >= end`) drops nothing.
+    pub loss_window: Option<(u64, u64)>,
 }
 
 #[derive(Debug)]
@@ -1623,6 +1633,174 @@ mod fault_inject_tests {
     }
 
     #[test]
+    fn loss_window_drops_bounded_burst_then_clean_path() {
+        // R-MBOX-CLEAN-RECOVERY: loss_window drops sends whose index falls
+        // in [start, end) — a bounded transient burst — and the path is
+        // clean again from index `end`. Unlike blackhole_after (permanent
+        // from N), later sends pass. An empty window drops nothing.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                loss_window: Some((2, 4)),
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f.send(b"m0").unwrap(); // index 0: clean
+        f.send(b"m1").unwrap(); // index 1: clean
+        f.send(b"m2").unwrap(); // index 2: dropped (window)
+        f.send(b"m3").unwrap(); // index 3: dropped (window)
+        f.send(b"m4").unwrap(); // index 4: clean again
+        f.send(b"m5").unwrap(); // index 5: clean
+        assert_eq!(b.recv().unwrap(), Some(b"m0".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m4".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m5".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+        // Empty window (start >= end) drops nothing.
+        let (a2, b2) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f2 = FaultInjectCarrier::new(
+            a2,
+            FaultPolicy {
+                loss_window: Some((5, 5)),
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f2.send(b"m0").unwrap();
+        f2.send(b"m1").unwrap();
+        assert_eq!(b2.recv().unwrap(), Some(b"m0".to_vec()));
+        assert_eq!(b2.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b2.recv().unwrap(), None);
+    }
+
+    #[test]
+    fn loss_window_drop_is_drop_class_not_reorder_class() {
+        // R-MBOX-CLEAN-RECOVERY: a window-dropped send never enters the
+        // reorder buffer and never releases a withheld record — identical
+        // drop-class semantics to loss/blackhole/one_way/oversized.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                reorder: true,
+                loss_window: Some((2, 3)),
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f.send(b"m1").unwrap(); // index 0: buffered in the pending slot
+        assert_eq!(f.pending_len(), 1);
+        f.send(b"m2").unwrap(); // index 1: releases m1 after m2
+        assert_eq!(f.pending_len(), 0);
+        f.send(b"d1").unwrap(); // index 2: window-dropped; nothing buffered
+        assert_eq!(f.pending_len(), 0);
+        f.send(b"m4").unwrap(); // index 3: clean again — buffered
+        assert_eq!(f.pending_len(), 1);
+        f.send(b"m5").unwrap(); // index 4: releases m4 after m5
+        assert_eq!(f.pending_len(), 0);
+        assert_eq!(b.recv().unwrap(), Some(b"m2".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m5".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m4".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+    }
+
+    #[test]
+    fn clean_recovery_after_bounded_loss_replays_uncertain_without_duplicates() {
+        // R-MBOX-CLEAN-RECOVERY end-to-end fixture story: a bounded loss
+        // burst drops two records mid-stream; the path is clean again after
+        // the window. Recovery uses ONLY existing semantics: the sender
+        // tracks every sent record as uncertain, confirms what the receiver
+        // got (reverse path clean), the unconfirmed pair accumulates PTOs
+        // and trips the EXISTING hard-failure failover, tcp_resend returns
+        // exactly the still-uncertain set, the replay rides the now-clean
+        // path, and the receiver's exact-duplicate dedup guarantees NO
+        // duplicate Session delivery. No new retransmission/timer/readiness
+        // policy is invented (H-I4-119 untouched).
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                loss_window: Some((1, 3)),
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        // Sender-side failover state: existing API, existing thresholds.
+        let mut fc = FailoverController::new(2, 8, 64).unwrap();
+        let records = [
+            (DataId(0), b"r0".as_slice()),
+            (DataId(1), b"r1".as_slice()),
+            (DataId(2), b"r2".as_slice()),
+            (DataId(3), b"r3".as_slice()),
+            (DataId(4), b"r4".as_slice()),
+            (DataId(5), b"r5".as_slice()),
+        ];
+        // Receiver-side session dedup state: existing receive() semantics.
+        let mut rx = FailoverController::new(2, 8, 64).unwrap();
+        for (id, data) in records {
+            fc.track_uncertain(id, data).unwrap();
+            f.send(data).unwrap();
+        }
+        // Indices: 0 clean, 1-2 dropped (window), 3-5 clean.
+        for (id, data) in [records[0], records[3], records[4], records[5]] {
+            assert_eq!(rx.receive(id, data), Ok(true));
+            fc.confirm(id).unwrap(); // reverse ACK path is clean
+        }
+        // The dropped pair never got ACKed: two PTO observations trip the
+        // existing hard-failure threshold (hard_failure_ptos=2).
+        assert!(!fc.udp_pto_at(1_000));
+        assert!(fc.udp_pto_at(2_000));
+        assert_eq!(fc.active(), ActiveCarrier::Tcp);
+        // Authoritative replay set is exactly the still-uncertain pair.
+        let resend = fc.tcp_resend().unwrap();
+        assert_eq!(
+            resend,
+            vec![(DataId(1), b"r1".to_vec()), (DataId(2), b"r2".to_vec())]
+        );
+        // Replay rides the now-clean path (window ended at index 3; these
+        // are sends 6 and 7). First delivery of each: exactly once.
+        for (id, data) in resend.iter() {
+            f.send(data).unwrap();
+            assert_eq!(rx.receive(*id, data), Ok(true));
+        }
+        // An idempotent duplicate replay of r1 arrives late: deduped.
+        assert_eq!(rx.receive(DataId(1), b"r1"), Ok(false));
+        fc.confirm(DataId(1)).unwrap();
+        fc.confirm(DataId(2)).unwrap();
+        // Recovery complete: nothing left uncertain, no duplicate Session
+        // delivery (all six first-deliveries true; exactly one deliberate
+        // duplicate observation counted).
+        assert_eq!(fc.tcp_resend().unwrap(), Vec::<(DataId, Vec<u8>)>::new());
+        assert_eq!(rx.metrics.delivered_bytes, 12);
+        assert_eq!(rx.metrics.duplicate_bytes, 2);
+        assert_eq!(rx.metrics.switches, 0);
+        assert!(b.recv().is_ok());
+    }
+
+    #[test]
     fn duplicate_emits_exact_multiplicity_and_ordering() {
         // R-MBOX-REORDER-DELAY: `duplicate` emits exactly two consecutive
         // copies of every surviving record. No record is duplicated that was
@@ -1679,6 +1857,10 @@ impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
                 .policy
                 .max_payload_bytes
                 .is_some_and(|max| message.len() > max)
+            || self
+                .policy
+                .loss_window
+                .is_some_and(|(start, end)| sent >= start && sent < end)
         {
             return Ok(());
         }
