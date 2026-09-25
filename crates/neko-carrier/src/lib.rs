@@ -2205,6 +2205,89 @@ mod concurrent_tests {
     }
 
     #[test]
+    fn uncertain_capacity_conversion_bounded_at_assign_time() {
+        // R-MBOX self-directed Track-A pin: the layered capacity invariant.
+        // assign() bounds TOTAL retained ranges/bytes (rejecting when
+        // len == max_uncertain_ranges or bytes > max_uncertain_bytes), so
+        // the switch/fail conversion to uncertain can reach EXACTLY the
+        // configured bounds but never exceed them. The
+        // ensure_uncertain_capacity check at the activate/fail boundary
+        // tolerates equality (strict-exceeds) and is subsumed by the
+        // assign-time bound: via public API composition it is a defensive
+        // invariant, not a reachable rejection path. This test pins the
+        // reachable truth — if assign's bound is ever weakened, this pin
+        // surfaces the semantic change.
+        let mut tight = limits();
+        tight.max_uncertain_ranges = 2;
+        tight.max_uncertain_bytes = 16;
+        let mut m = ConcurrentCarrierManager::new(tight).unwrap();
+        warm_activate(&mut m, udp_key(1), CarrierKind::Udp, 0);
+        // Two ranges at exactly the byte bound (8 + 8 == 16).
+        let id1 = LogicalRangeId {
+            stream: 1,
+            offset: 0,
+        };
+        let id2 = LogicalRangeId {
+            stream: 2,
+            offset: 0,
+        };
+        m.assign(id1, b"12345678").unwrap();
+        m.assign(id2, b"12345678").unwrap();
+        // A third range is rejected AT ASSIGN TIME (len == max ranges) —
+        // the enforced capacity invariant.
+        assert_eq!(
+            m.assign(
+                LogicalRangeId {
+                    stream: 3,
+                    offset: 0
+                },
+                b"x"
+            ),
+            Err(ConcurrentError::Capacity)
+        );
+        // Warm a replacement and soft-switch: BOTH ranges convert to
+        // uncertain at exactly the bounds (2 ranges == max, 16 bytes ==
+        // max). The boundary check tolerates equality — accepted.
+        m.register(tcp_key(1), CarrierKind::Tcp).unwrap();
+        m.observe_readiness(tcp_key(1), true, true, 10).unwrap();
+        m.observe_readiness(tcp_key(1), true, true, 11).unwrap();
+        m.activate(tcp_key(1), SwitchReason::UdpPathDegraded, 20, false)
+            .unwrap();
+        assert_eq!(m.uncertain_ranges(), 2);
+        assert_eq!(m.state(udp_key(1)).unwrap(), ConcurrentPathState::Draining);
+        // Hard-fail the new active with both ranges still unconfirmed:
+        // conversion again lands exactly at the bounds — accepted, both
+        // retained as uncertain under no active owner.
+        m.fail(tcp_key(1), SwitchReason::CarrierError, 30).unwrap();
+        assert_eq!(m.active(), None);
+        assert_eq!(m.uncertain_ranges(), 2);
+        // Recovery: the failed TCP path accepts a NEW generation (its
+        // previous generation is Failed); UDP gen 1 is still Draining and
+        // cannot re-register until drained. The fresh TCP generation warms
+        // (after the failure, so recovery is Cold) and activates; then the
+        // drain deadline replays BOTH still-uncertain old-owner ranges onto
+        // the new sole owner; confirming both releases the full retention.
+        m.register(tcp_key(2), CarrierKind::Tcp).unwrap();
+        m.observe_readiness(tcp_key(2), true, true, 40).unwrap();
+        m.observe_readiness(tcp_key(2), true, true, 41).unwrap();
+        let event = m
+            .activate(tcp_key(2), SwitchReason::UdpPathDegraded, 42, true)
+            .unwrap();
+        assert_eq!(event.recovery_class, Some(RecoveryClass::Cold));
+        let replay = m.finish_drain(udp_key(1), 130).unwrap();
+        assert_eq!(replay.len(), 2);
+        for r in replay {
+            m.confirm(r.id).unwrap();
+        }
+        assert_eq!(m.uncertain_ranges(), 0);
+        assert_eq!(m.state(udp_key(1)).unwrap(), ConcurrentPathState::Failed);
+        // Post-release the same capacities accept fresh assignments, and
+        // the drained UDP path can register a new generation again.
+        m.assign(id1, b"fresh-1").unwrap();
+        m.register(udp_key(2), CarrierKind::Udp).unwrap();
+    }
+
+    #[test]
     fn hard_failure_retains_uncertain_and_reassigns_to_new_owner() {
         // R-MBOX self-directed Track-A scenario: hard failure of the active
         // path with an unconfirmed range in flight. Ownership is removed
