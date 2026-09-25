@@ -717,6 +717,56 @@ mod tests {
         assert_eq!(r.pto_us(1_000, 25_000, 2), 1_145_000);
     }
     #[test]
+    fn rtt_update_ack_delay_min_and_zero_sample_branches() {
+        // ack_delay is subtracted only when sample - min >= ack_delay
+        // (inclusive), and min_us tracks the true minimum.
+        let mut r = RttEstimator::default();
+        r.update(10_000, 0);
+        // sample - min == ack_delay: inclusive, adjusted = 10_000.
+        r.update(12_000, 2_000);
+        assert_eq!((r.smoothed_us, r.variance_us), (10_000, 3_750));
+        // sample - min < ack_delay: ack_delay NOT subtracted (adjusted 11_000).
+        r.update(11_000, 5_000);
+        assert_eq!((r.smoothed_us, r.variance_us), (10_125, 3_062));
+        assert_eq!(r.min_us, 10_000);
+        // min_us decreases on a smaller sample and then gates adjustment.
+        let mut q = RttEstimator::default();
+        q.update(20_000, 0);
+        q.update(10_000, 0);
+        assert_eq!(q.min_us, 10_000);
+        q.update(13_000, 3_000); // 13_000 - min(10_000) == 3_000 -> adjusted 10_000
+        assert_eq!((q.latest_us, q.smoothed_us), (13_000, 17_656));
+        // A zero sample is ignored entirely, initialized or not.
+        let before = q;
+        q.update(0, 0);
+        assert_eq!(q, before);
+        let mut z = RttEstimator::default();
+        z.update(0, 0);
+        assert_eq!(z, RttEstimator::default());
+        assert_eq!(z.pto_us(1_000, 25_000, 0), 1_000_000);
+    }
+    #[test]
+    fn pto_granularity_floor_uninitialized_base_and_backoff_cap() {
+        // Uninitialized: fixed 1s base, independent of inputs, with backoff.
+        let u = RttEstimator::default();
+        assert_eq!(u.pto_us(5_000, 25_000, 0), 1_000_000);
+        assert_eq!(u.pto_us(5_000, 25_000, 2), 4_000_000);
+        // Granularity floors the variance term when 4*var < granularity.
+        let mut g = RttEstimator::default();
+        g.update(1_000, 0); // smoothed 1_000, variance 500 -> 4*var = 2_000
+        assert_eq!(g.pto_us(5_000, 0, 0), 6_000);
+        assert_eq!(g.pto_us(1_000, 0, 0), 3_000);
+        // Backoff exponent is capped at 63 without saturating a unit base.
+        let mut one = RttEstimator::default();
+        one.update(1, 0); // smoothed 1, variance 0
+        assert_eq!(one.pto_us(0, 0, 0), 1);
+        assert_eq!(one.pto_us(0, 0, 63), 1u64 << 63);
+        assert_eq!(one.pto_us(0, 0, 64), 1u64 << 63);
+        assert_eq!(one.pto_us(0, 0, u32::MAX), 1u64 << 63);
+        // Larger bases saturate instead of wrapping.
+        assert_eq!(g.pto_us(5_000, 0, 63), u64::MAX);
+    }
+    #[test]
     fn loss_delay_is_ceiling_nine_eighths_of_max_latest_smoothed() {
         // docs/spec/m2-udp-recovery.md: time-threshold loss uses 9/8 of
         // max(latest RTT, smoothed RTT). Pin each factor independently:
