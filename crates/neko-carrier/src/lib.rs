@@ -1792,6 +1792,55 @@ mod fault_inject_tests {
     }
 
     #[test]
+    fn explicit_close_discards_withheld_and_rejects_sends_visibly() {
+        // Self-directed Track-A: explicit Carrier::close() mirrors the
+        // close_after semantics — a withheld reorder record is discarded
+        // with the connection (never stranded), and post-close sends
+        // return a visible Err(Closed) instead of a silent drop or a
+        // false reorder-mode Ok(()).
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                reorder: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f.send(b"x0").unwrap(); // withheld
+        assert_eq!(f.pending_len(), 1);
+        f.close().unwrap();
+        assert_eq!(
+            f.pending_len(),
+            0,
+            "close discards the withheld record with the connection"
+        );
+        // Post-close: visible rejection (not silent drop, not false Ok).
+        assert_eq!(f.send(b"x1"), Err(CarrierError::Closed));
+        assert_eq!(f.send(b"x2"), Err(CarrierError::Closed));
+        // The record withheld at close time was never delivered.
+        assert_eq!(b.recv().unwrap(), None);
+        // Without reorder the same visible rejection holds: no false
+        // success on a closed connection.
+        let (a2, b2) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f2 = FaultInjectCarrier::new(a2, FaultPolicy::default(), 7).unwrap();
+        f2.send(b"ok").unwrap();
+        f2.close().unwrap();
+        assert_eq!(f2.send(b"late"), Err(CarrierError::Closed));
+        assert_eq!(b2.recv().unwrap(), Some(b"ok".to_vec()));
+        assert_eq!(b2.recv().unwrap(), None);
+    }
+
+    #[test]
     fn mtu_boundary_drops_oversized_only() {
         // R-MBOX-MTU: a send strictly exceeding max_payload_bytes is
         // dropped at the seam; a send exactly at the boundary passes.
@@ -2613,11 +2662,18 @@ impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
             }
             return Err(CarrierError::Closed);
         }
+        // Post-close (explicit close() or an earlier close_after trigger):
+        // a visible closed rejection, not a silent drop — without this a
+        // reorder-mode send with an empty slot would buffer the record and
+        // return a false Ok(()) on a closed connection.
         if *self
             .closed
             .lock()
             .map_err(|_| CarrierError::StatePoisoned)?
-            || self.blocked(sent)
+        {
+            return Err(CarrierError::Closed);
+        }
+        if self.blocked(sent)
             || (self.policy.one_way && sent % 2 == 0)
             || self
                 .policy
@@ -2713,6 +2769,16 @@ impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
         self.inner.recv()
     }
     fn close(&self) -> Result<(), CarrierError> {
+        // Mirror the close_after semantics: set the closed flag so
+        // post-close sends get a visible Err(Closed) instead of a silent
+        // drop or a false reorder-mode Ok(()), discard a withheld reorder
+        // record with the connection, then close the inner carrier.
+        if let Ok(mut closed) = self.closed.lock() {
+            *closed = true;
+        }
+        if let Ok(mut pending) = self.pending.lock() {
+            *pending = None;
+        }
         self.inner.close()
     }
 }
