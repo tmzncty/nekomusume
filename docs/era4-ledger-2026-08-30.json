@@ -305,7 +305,7 @@
         "docs/local-deterministic-harness-review-f5814ca-20260911.md"
       ],
       "classification": "ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION",
-      "classification_basis": "current deterministic workspace/property/process/harness regressions and repeated clean exact-tree scripts/check.sh gates already answer the declared bounded fault/regression-harness question; no specific missing runtime failure mode is identified, and this is not fuzz completeness, WAN, reliability, performance or security proof"
+      "classification_basis": "current deterministic workspace/property/process/harness regressions and repeated clean exact-tree scripts/check.sh gates already answer the declared bounded fault/regression-harness question; exact 21c1a61/f8d6ab4/1cc267e add the R-MBOX deterministic in-memory impairment fixtures: FaultInjectCarrier now covers loss_percent, blackhole_after, close_after, one_way, reorder (bounded one-record pending slot, adjacent-pair swap, drop-class isolation), duplicate (exact multiplicity at the delivery point), delay_ms (bounded lower-bound test), max_payload_bytes (strict-exceeds oversized drop, drop-only, no fragmentation/PTB/PLPMTUD/interface-MTU change) and loss_window (bounded transient burst [start,end) followed by a clean path, driving the existing track_uncertain/confirm/PTO-failover/tcp_resend/exact-duplicate-receive recovery chain); every primitive has focused deterministic regressions (96/96 neko-carrier lib tests); no production retransmission/timer/readiness/hysteresis/congestion policy was invented; no specific missing runtime"
     },
     {
       "id": "N",

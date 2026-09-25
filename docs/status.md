@@ -263,3 +263,50 @@ At the reviewed tree, every Era-4 ledger row has one closed classification in `d
 - `GOVERNANCE_GATE`: P, S, U, V, W. Release item 3 remains unchecked; natural loss remains unchecked; governance flags remain false/closed as previously recorded.
 
 The historical bed2940 outer invocation (local `NEKO_BIN` preflight) and the exact `61a6490` C outer invocation (local port-range preflight) remain separate, with zero VPS deployments and zero cleanup residue. No historical artifact is rewritten, and no private endpoint, credential, or topology is recorded here.
+
+### R-MBOX deterministic impairment fixture reconciliation (2026-09-25)
+
+Factual reconciliation of the R-MBOX-REORDER-DELAY / R-MBOX-MTU /
+R-MBOX-CLEAN-RECOVERY slices into the release-evidence record. Facts only:
+no policy, classification, or release flag changed (`RELEASE_CANDIDATE=false`,
+`PRODUCTION_READY=false`, `FREEZE=false`, `RELEASED=false` unchanged).
+
+Exact current `FaultInjectCarrier` (`crates/neko-carrier/src/lib.rs`) seam
+capabilities, each pinned by focused deterministic regressions at the
+reachable gate SHAs `21c1a61` / `f8d6ab4` / `1cc267e` (provenance notes
+`docs/notes/check-gate-21c1a61-20260925.md`, `-f8d6ab4-20260925.md`,
+`-1cc267e-20260925.md`; 96/96 neko-carrier lib tests):
+
+- `loss_percent` (seeded), `blackhole_after`, `close_after`, `one_way`
+  (alternating-send suppression): pre-existing, unchanged.
+- `reorder` (new): bounded one-record pending slot; a surviving record is
+  withheld and released after the NEXT surviving record (adjacent-pair
+  swap); `pending_len` is the bounded-slot observable.
+- `duplicate` (new): exactly two consecutive copies per surviving record at
+  the delivery point.
+- `delay_ms`: pre-existing send-time sleep, now covered by a lower-bound
+  test (2×2ms ≥ 4ms) with no wall-clock upper bound.
+- `max_payload_bytes` (new): strict-exceeds oversized drop; drop-only — no
+  fragmentation, no PTB/ICMP feedback, no interface-MTU change, no PLPMTUD
+  policy, no wire-framing change.
+- `loss_window` (new): bounded transient burst `[start, end)` followed by a
+  clean path from index `end`; the end-to-end regression drives the existing
+  `track_uncertain` / `confirm` / PTO-threshold failover / `tcp_resend` /
+  exact-duplicate `receive` recovery chain with no duplicate Session
+  delivery.
+
+Evidence boundary, stated precisely (H-I4-121/122/123 lesson): all of the
+above are deterministic in-memory Carrier-seam fixtures. They are not
+network-topology models, not directional path models, not WAN/middlebox
+observations, not performance evidence, and not release claims. Drop-class
+sends (loss/blackhole/close/one_way/oversized/window) never enter the
+reorder buffer and never release a withheld record. No production
+retransmission/timer/readiness/hysteresis/congestion/capacity policy was
+invented; H-I4-119 (core ACK-PTO semantics) and D019 remain untouched.
+`READY_LIVE: none` is unchanged.
+
+Era-4 ledger track M (`deterministic fault and regression harness`)
+classification remains `ALREADY_SUFFICIENT_FOR_BOUNDED_QUESTION`; only its
+`classification_basis` text was refreshed to record the new fixture
+capabilities and gate SHAs. No other ledger row, policy note, or governance
+flag was modified.
