@@ -767,6 +767,70 @@ mod tests {
         assert_eq!(g.pto_us(5_000, 0, 63), u64::MAX);
     }
     #[test]
+    fn reno_window_transitions_are_exact() {
+        // mss == 0 is rejected.
+        assert_eq!(Reno::new(0), Err(Error::InvalidLimit));
+        // Slow start: cwnd < ssthresh grows by acked bytes.
+        let mut c = Reno::new(1_000).unwrap();
+        c.ssthresh = 12_000;
+        c.acked(1_000);
+        assert_eq!(c.cwnd, 11_000);
+        c.acked(1_000);
+        assert_eq!(c.cwnd, 12_000);
+        // cwnd == ssthresh is congestion avoidance: += mss * b / cwnd.
+        c.acked(6_000); // 1_000 * 6_000 / 12_000 = 500
+        assert_eq!(c.cwnd, 12_500);
+        // Loss halves to ssthresh, floored at 2 MSS.
+        let mut l = Reno::new(1_000).unwrap();
+        l.sent(5_000);
+        l.lost(1_000);
+        assert_eq!(
+            (l.ssthresh, l.cwnd, l.bytes_in_flight),
+            (5_000, 5_000, 4_000)
+        );
+        l.cwnd = 3_000;
+        l.lost(1_000);
+        assert_eq!((l.ssthresh, l.cwnd), (2_000, 2_000));
+        // Persistent congestion collapses both ssthresh and cwnd to 2 MSS.
+        let mut p = Reno::new(1_000).unwrap();
+        p.on_persistent_congestion();
+        assert_eq!((p.ssthresh, p.cwnd), (2_000, 2_000));
+        // Pacing interval rounds up: 100 * 1_000 / 10_000 -> 10; 7 * 1 / 10_000 -> 1.
+        let r = Reno::new(1_000).unwrap();
+        assert_eq!(r.pacing_interval_us(100, 1_000), 10);
+        assert_eq!(r.pacing_interval_us(7, 1), 1);
+    }
+    #[test]
+    fn pto_probe_cap_zero_limit_and_single_persistent_congestion_event() {
+        let mut r = Recovery::default();
+        for n in 0..4 {
+            r.on_sent(packet(n, n * 1_000, 10 + n)).unwrap();
+        }
+        // max_probe_frames == 0 is rejected without advancing pto_count.
+        assert_eq!(r.on_pto(0), Err(Error::InvalidLimit));
+        assert_eq!(r.pto_count, 0);
+        // Probe set is capped and oldest-FrameId-first.
+        assert_eq!(r.on_pto(2).unwrap(), vec![FrameId(10), FrameId(11)]);
+        assert_eq!(r.on_pto(8).unwrap().len(), 4);
+        assert_eq!(r.persistent_congestion_events, 0);
+        // Threshold crossing (pto_count == 3) counts exactly once; further
+        // PTOs in the same streak do not accumulate events.
+        r.on_pto(1).unwrap();
+        assert_eq!((r.pto_count, r.persistent_congestion_events), (3, 1));
+        r.on_pto(1).unwrap();
+        r.on_pto(1).unwrap();
+        assert_eq!((r.pto_count, r.persistent_congestion_events), (5, 1));
+    }
+    #[test]
+    fn pto_deadline_is_anchored_at_oldest_outstanding_packet() {
+        let mut r = Recovery::default();
+        assert_eq!(r.next_pto_deadline_us(1_000, 0), None);
+        r.rtt.update(1_000, 0); // smoothed 1_000, 4*var = 2_000 -> pto 3_000
+        r.on_sent(packet(0, 10_000, 1)).unwrap();
+        r.on_sent(packet(1, 50_000, 2)).unwrap();
+        assert_eq!(r.next_pto_deadline_us(1_000, 0), Some(13_000));
+    }
+    #[test]
     fn loss_delay_is_ceiling_nine_eighths_of_max_latest_smoothed() {
         // docs/spec/m2-udp-recovery.md: time-threshold loss uses 9/8 of
         // max(latest RTT, smoothed RTT). Pin each factor independently:
