@@ -1151,6 +1151,36 @@ mod tests {
         assert_eq!(x.lost_packets, vec![0]);
     }
     #[test]
+    fn ack_range_limits_single_point_and_superset_merges_are_exact() {
+        // Single-point ranges are valid; inverted ranges are not.
+        assert_eq!(AckRange::new(5, 5), Ok(AckRange { start: 5, end: 5 }));
+        assert_eq!(
+            AckRanges::from_ranges(1, &[AckRange { start: 3, end: 2 }]),
+            Err(Error::InvalidRange)
+        );
+        // max_ranges bounds: 0 and HARD_MAX+1 rejected, HARD_MAX accepted.
+        assert_eq!(AckRanges::new(0), Err(Error::InvalidLimit));
+        assert!(AckRanges::new(HARD_MAX_ACK_RANGES).is_ok());
+        assert_eq!(
+            AckRanges::new(HARD_MAX_ACK_RANGES + 1),
+            Err(Error::InvalidLimit)
+        );
+        // A contained range never shrinks the enclosing range's end.
+        let b = AckRanges::from_ranges(
+            2,
+            &[
+                AckRange { start: 0, end: 10 },
+                AckRange { start: 2, end: 3 },
+            ],
+        )
+        .unwrap();
+        assert_eq!(b.ranges(), &[AckRange { start: 0, end: 10 }]);
+        // Incremental insert of a point left of a wider range keeps its end.
+        let mut a = AckRanges::from_ranges(2, &[AckRange { start: 1, end: 10 }]).unwrap();
+        a.insert(0).unwrap();
+        assert_eq!(a.ranges(), &[AckRange { start: 0, end: 10 }]);
+    }
+    #[test]
     fn huge_ack_range_is_constant_work_and_canonical() {
         let a = AckRanges::from_ranges(1, &[AckRange::new(0, u64::MAX).unwrap()]).unwrap();
         assert_eq!(
@@ -1563,6 +1593,85 @@ mod plpmtud_tests {
     }
 
     #[test]
+    fn ack_id_binding_and_loss_run_reset_on_ack() {
+        let mut p = Plpmtud::new(config(), 5).unwrap();
+        // Build a base-loss run of 2 (threshold 3).
+        assert!(!p.observe_confirmed_size_loss(1200));
+        assert!(!p.observe_confirmed_size_loss(1200));
+        let q = p.start_probe().unwrap();
+        assert_eq!((q.id, q.size), (0, 1350));
+        // Wrong probe id is stale even with matching generation and size.
+        assert_eq!(
+            p.acknowledge(q.id + 1, 5, q.size),
+            Err(PlpmtudError::StaleAck)
+        );
+        assert_eq!(p.outstanding(), Some(q));
+        // A valid ACK resets the loss run: two more losses do not trigger.
+        assert_eq!(p.acknowledge(q.id, 5, q.size), Ok(false));
+        assert!(!p.observe_confirmed_size_loss(1200));
+        assert!(!p.observe_confirmed_size_loss(1200));
+        assert!(p.observe_confirmed_size_loss(1200));
+    }
+    #[test]
+    fn blackhole_counts_at_confirmed_size_and_clears_probe_and_run() {
+        let mut p = Plpmtud::new(config(), 1).unwrap();
+        // Above confirmed: not counted. Exactly confirmed: counted.
+        assert!(!p.observe_confirmed_size_loss(1201));
+        let q = p.start_probe().unwrap();
+        assert!(!p.observe_confirmed_size_loss(1200));
+        assert!(!p.observe_confirmed_size_loss(1200));
+        assert_eq!(p.outstanding(), Some(q));
+        assert!(p.observe_confirmed_size_loss(1200));
+        // Fallback discards the outstanding probe and restarts the run.
+        assert_eq!(p.outstanding(), None);
+        assert_eq!((p.confirmed_mtu(), p.upper_bound()), (1200, 1500));
+        assert!(!p.observe_confirmed_size_loss(1200));
+    }
+    #[test]
+    fn emsgsize_ceiling_defaults_below_attempt_and_is_floored_at_confirmed() {
+        let mut p = Plpmtud::new(config(), 1).unwrap();
+        // No reported MTU: ceiling is attempted - 1.
+        assert_eq!(p.on_emsgsize(1400, None), PmtuSendOutcome::RetryAt(1200));
+        assert_eq!(p.upper_bound(), 1399);
+        // A reported MTU below confirmed never drops upper below confirmed.
+        assert_eq!(
+            p.on_emsgsize(1300, Some(1000)),
+            PmtuSendOutcome::RetryAt(1200)
+        );
+        assert_eq!(p.upper_bound(), 1200);
+        assert!(p.converged());
+    }
+    #[test]
+    fn reset_generation_restores_upper_probe_budget_and_loss_run() {
+        let mut c = config();
+        c.max_probes = 1;
+        let mut p = Plpmtud::new(c, 1).unwrap();
+        p.start_probe().unwrap();
+        p.timeout().unwrap();
+        p.timeout().unwrap();
+        assert_eq!(p.upper_bound(), 1349);
+        assert_eq!(p.start_probe(), Err(PlpmtudError::ProbeLimit));
+        assert!(!p.observe_confirmed_size_loss(1200));
+        assert!(!p.observe_confirmed_size_loss(1200));
+        p.reset_generation(9);
+        assert_eq!(
+            (p.generation(), p.confirmed_mtu(), p.upper_bound()),
+            (9, 1200, 1500)
+        );
+        let q = p.start_probe().unwrap();
+        assert_eq!((q.path_generation, q.size), (9, 1350));
+        assert!(!p.observe_confirmed_size_loss(1200));
+        assert!(!p.observe_confirmed_size_loss(1200));
+        assert!(p.observe_confirmed_size_loss(1200));
+    }
+    #[test]
+    fn path_limits_require_both_ceilings_and_apply_protocol_ceiling() {
+        assert!(PathMtuLimits::new(IpVersion::V4, 1500, 575).is_none());
+        let l = PathMtuLimits::new(IpVersion::V4, 1500, 1400).unwrap();
+        assert_eq!(l.max_datagram_bytes(1500), 1372);
+        assert_eq!(l.max_datagram_bytes(1300), 1272);
+    }
+    #[test]
     fn invalid_configurations_fail_closed() {
         for c in [
             PlpmtudConfig {
@@ -1809,6 +1918,37 @@ mod fec_tests {
         assert_eq!(b.mark_missing(2), Err(FecError::IndexOutOfRange));
         b.mark_missing(0).unwrap();
         assert_eq!(b.mark_missing(0), Err(FecError::Duplicate));
+    }
+    #[test]
+    fn fec_config_and_symbol_count_bounds_are_exact() {
+        let sym = |n: usize, len: usize| vec![vec![1u8; len]; n];
+        let c = |block_size, symbol_size, max_blocks| FecConfig {
+            block_size,
+            symbol_size,
+            max_blocks,
+        };
+        assert!(FecBlock::encode(c(32, 1, 1), 0, &sym(32, 1)).is_ok());
+        assert_eq!(
+            FecBlock::encode(c(33, 1, 1), 0, &sym(33, 1)),
+            Err(FecError::InvalidConfig)
+        );
+        assert_eq!(
+            FecBlock::encode(c(2, 0, 1), 0, &sym(2, 0)),
+            Err(FecError::InvalidConfig)
+        );
+        assert_eq!(
+            FecBlock::encode(c(2, 2, 0), 0, &sym(2, 2)),
+            Err(FecError::InvalidConfig)
+        );
+        // Too few symbols for the configured block size is rejected.
+        assert_eq!(
+            FecBlock::encode(c(3, 2, 1), 0, &sym(2, 2)),
+            Err(FecError::InvalidConfig)
+        );
+        // Recovering a complete block is an explicit error.
+        let mut b = FecBlock::encode(c(2, 2, 1), 0, &sym(2, 2)).unwrap();
+        assert_eq!(b.recover_one(), Err(FecError::Empty));
+        assert!(b.complete());
     }
     #[test]
     fn parity_overhead_is_one_symbol_per_block() {
