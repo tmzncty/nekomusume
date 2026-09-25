@@ -1,5 +1,12 @@
 # Exact-tree check.sh provenance — cdfe943 (2026-09-25)
 
+**Corrected in part by
+[`docs/notes/erratum-concurrent-coverage-claim-cdfe943-20260925.md`](erratum-concurrent-coverage-claim-cdfe943-20260925.md):**
+the commit message's "zero unit coverage" claim is wrong — the
+`concurrent_manager_tests` module already provided direct dedicated
+coverage; cdfe943's true increment is listed there. The gate execution
+evidence below remains valid for this tree.
+
 Developer-local exact-tree gate on the final reachable pushed SHA for the
 self-directed Track-A slice: ConcurrentCarrierManager in-flight
 path-replacement coverage.
