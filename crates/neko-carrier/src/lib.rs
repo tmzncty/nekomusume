@@ -4410,6 +4410,64 @@ mod manager_tests {
         assert_eq!(h.observe(PathId(2), GOOD), Err(HealthError::ResourceLimit));
     }
     #[test]
+    fn scheduler_limits_are_exact_and_reopen_is_idempotent() {
+        let lim = |max_streams, max_session_bytes, max_stream_bytes| FlowLimits {
+            max_streams,
+            max_session_bytes,
+            max_stream_bytes,
+        };
+        for bad in [lim(0, 8, 8), lim(1, 0, 8), lim(1, 8, 0)] {
+            assert_eq!(FairScheduler::new(bad).err(), Some(FlowError::InvalidLimit));
+        }
+        let mut s = FairScheduler::new(lim(2, 6, 4)).unwrap();
+        s.open(StreamId(1), StreamPriority::Bulk).unwrap();
+        s.enqueue(StreamId(1), b"ab").unwrap();
+        // Re-opening an existing stream is Ok and keeps its queue.
+        assert_eq!(s.open(StreamId(1), StreamPriority::Interactive), Ok(()));
+        s.open(StreamId(2), StreamPriority::Bulk).unwrap();
+        // Exactly max_streams open: the next distinct stream is refused.
+        assert_eq!(
+            s.open(StreamId(3), StreamPriority::Bulk),
+            Err(FlowError::TooManyStreams)
+        );
+        assert_eq!(s.enqueue(StreamId(1), b""), Err(FlowError::EmptyData));
+        // Stream limit is inclusive: 2 + 2 == 4 is accepted, one more is not.
+        s.enqueue(StreamId(1), b"cd").unwrap();
+        assert_eq!(s.enqueue(StreamId(1), b"e"), Err(FlowError::StreamLimit));
+        // Session limit is inclusive: 4 + 2 == 6 accepted, one more refused
+        // even though the per-stream limit of stream 2 still has room.
+        s.enqueue(StreamId(2), b"fg").unwrap();
+        assert_eq!(s.enqueue(StreamId(2), b"h"), Err(FlowError::SessionLimit));
+        let snap: Vec<_> = s.snapshots().collect();
+        assert_eq!(snap[0].priority, StreamPriority::Bulk);
+        assert_eq!((snap[0].queued_bytes, snap[0].max_bytes), (4, 4));
+        // Dequeue releases session budget so a new enqueue fits again.
+        assert_eq!(s.next_frame(), Some((StreamId(1), b"ab".to_vec())));
+        s.enqueue(StreamId(2), b"h").unwrap();
+    }
+    #[test]
+    fn scheduler_is_fifo_per_stream_and_round_robin_across_streams() {
+        let mut s = FairScheduler::new(FlowLimits::default()).unwrap();
+        s.open(StreamId(1), StreamPriority::Bulk).unwrap();
+        s.open(StreamId(2), StreamPriority::Bulk).unwrap();
+        for f in [b"a1", b"a2"] {
+            s.enqueue(StreamId(1), f).unwrap();
+        }
+        for f in [b"b1", b"b2"] {
+            s.enqueue(StreamId(2), f).unwrap();
+        }
+        let order: Vec<_> = std::iter::from_fn(|| s.next_frame()).collect();
+        assert_eq!(
+            order,
+            vec![
+                (StreamId(1), b"a1".to_vec()),
+                (StreamId(2), b"b1".to_vec()),
+                (StreamId(1), b"a2".to_vec()),
+                (StreamId(2), b"b2".to_vec()),
+            ]
+        );
+    }
+    #[test]
     fn bulk_does_not_starve_interactive() {
         let mut s = FairScheduler::new(FlowLimits {
             max_streams: 2,
