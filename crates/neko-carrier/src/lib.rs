@@ -2087,6 +2087,193 @@ mod fault_inject_tests {
     }
 }
 
+#[cfg(test)]
+mod concurrent_tests {
+    use super::*;
+
+    fn limits() -> ConcurrentLimits {
+        ConcurrentLimits {
+            k_ready: 2,
+            min_active_dwell_ms: 0,
+            voluntary_cooldown_ms: 0,
+            drain_timeout_ms: 100,
+            max_paths: 2,
+            max_uncertain_ranges: 4,
+            max_uncertain_bytes: 64,
+            max_switch_events: 8,
+        }
+    }
+
+    fn udp_key(generation: u64) -> ConcurrentPathKey {
+        ConcurrentPathKey {
+            path: PathId(1),
+            generation: PathGeneration(generation),
+        }
+    }
+
+    fn tcp_key(generation: u64) -> ConcurrentPathKey {
+        ConcurrentPathKey {
+            path: PathId(2),
+            generation: PathGeneration(generation),
+        }
+    }
+
+    /// Register + warm + activate a path and make it active. Returns the
+    /// manager with `key` active.
+    fn warm_activate(
+        m: &mut ConcurrentCarrierManager,
+        key: ConcurrentPathKey,
+        kind: CarrierKind,
+        now_ms: u64,
+    ) {
+        m.register(key, kind).unwrap();
+        m.observe_readiness(key, true, true, now_ms).unwrap();
+        m.observe_readiness(key, true, true, now_ms).unwrap();
+        assert_eq!(m.state(key).unwrap(), ConcurrentPathState::Warm);
+        m.activate(key, SwitchReason::UdpPathDegraded, now_ms, false)
+            .unwrap();
+        assert_eq!(m.state(key).unwrap(), ConcurrentPathState::Active);
+    }
+
+    #[test]
+    fn path_replacement_with_in_flight_ranges_drains_and_replays() {
+        // R-MBOX self-directed Track-A scenario: "path replacement while
+        // Session data is in flight". A range assigned on the UDP path is
+        // still unconfirmed when the manager activates a replacement TCP
+        // path. The old path enters Draining with a bounded deadline; the
+        // unconfirmed range stays retained as old-owner uncertain; at the
+        // drain deadline it is replayed onto the new sole active owner with
+        // a stable id/bytes identity, and confirmation releases retention.
+        let mut m = ConcurrentCarrierManager::new(limits()).unwrap();
+        warm_activate(&mut m, udp_key(1), CarrierKind::Udp, 0);
+        // One in-flight range on the active UDP path.
+        let id = LogicalRangeId {
+            stream: 1,
+            offset: 0,
+        };
+        m.assign(id, b"hello").unwrap();
+        assert_eq!(m.uncertain_ranges(), 0);
+        // Warm the replacement TCP path.
+        m.register(tcp_key(1), CarrierKind::Tcp).unwrap();
+        m.observe_readiness(tcp_key(1), true, true, 10).unwrap();
+        m.observe_readiness(tcp_key(1), true, true, 11).unwrap();
+        // Replace the active path (soft switch; old path Draining).
+        let event = m
+            .activate(tcp_key(1), SwitchReason::UdpPathDegraded, 20, false)
+            .unwrap();
+        assert_eq!(event.from, Some(udp_key(1)));
+        assert_eq!(event.to, Some(tcp_key(1)));
+        assert_eq!(event.active_epoch, 2);
+        assert_eq!(m.state(udp_key(1)).unwrap(), ConcurrentPathState::Draining);
+        assert_eq!(m.state(tcp_key(1)).unwrap(), ConcurrentPathState::Active);
+        // The in-flight range is retained as old-owner uncertain; a new
+        // assign on the replacement path cannot collide with it.
+        assert_eq!(m.uncertain_ranges(), 1);
+        assert_eq!(
+            m.assign(id, b"hello"),
+            Ok(()),
+            "idempotent same-bytes reassign"
+        );
+        assert_eq!(
+            m.assign(id, b"other"),
+            Err(ConcurrentError::Conflict),
+            "conflicting bytes for a live id are rejected"
+        );
+        // Before the drain deadline the old-owner range cannot replay.
+        assert_eq!(
+            m.finish_drain(udp_key(1), 119),
+            Err(ConcurrentError::DrainPending)
+        );
+        // At the deadline exactly the old-owner uncertain range replays
+        // onto the new active owner, id/bytes stable.
+        let replay = m.finish_drain(udp_key(1), 120).unwrap();
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].id, id);
+        assert_eq!(replay[0].bytes, b"hello".to_vec());
+        assert_eq!(m.uncertain_ranges(), 0);
+        // The old path is now Failed; re-registering a NEW generation of it
+        // is allowed (path replacement lifecycle).
+        assert_eq!(m.state(udp_key(1)).unwrap(), ConcurrentPathState::Failed);
+        m.register(udp_key(2), CarrierKind::Udp).unwrap();
+        // Confirming the replayed range releases its retention.
+        m.confirm(id).unwrap();
+        assert_eq!(
+            m.confirm(id),
+            Err(ConcurrentError::NotFound),
+            "double-confirm of a released range is rejected"
+        );
+    }
+
+    #[test]
+    fn hard_failure_retains_uncertain_and_reassigns_to_new_owner() {
+        // R-MBOX self-directed Track-A scenario: hard failure of the active
+        // path with an unconfirmed range in flight. Ownership is removed
+        // immediately (active becomes None); the unconfirmed range is
+        // retained as uncertain; after a replacement warms and activates,
+        // replay_uncertain reassigns it to the new sole owner and
+        // confirmation releases retention. Event ordering and epochs are
+        // exact.
+        let mut m = ConcurrentCarrierManager::new(limits()).unwrap();
+        warm_activate(&mut m, udp_key(1), CarrierKind::Udp, 0);
+        let id = LogicalRangeId {
+            stream: 1,
+            offset: 7,
+        };
+        m.assign(id, b"payload").unwrap();
+        // Hard-fail the active path.
+        let event = m
+            .fail(udp_key(1), SwitchReason::UdpBlackhole, 5)
+            .unwrap()
+            .expect("hard failure of the active path emits an event");
+        assert_eq!(event.from, Some(udp_key(1)));
+        assert_eq!(event.to, None);
+        assert_eq!(event.reason, SwitchReason::UdpBlackhole);
+        assert_eq!(m.active(), None);
+        assert_eq!(m.state(udp_key(1)).unwrap(), ConcurrentPathState::Failed);
+        assert_eq!(
+            m.uncertain_ranges(),
+            1,
+            "unconfirmed range retained as uncertain"
+        );
+        // No active owner: assign and replay are rejected (fail-closed).
+        assert_eq!(
+            m.assign(
+                LogicalRangeId {
+                    stream: 1,
+                    offset: 8
+                },
+                b"x"
+            ),
+            Err(ConcurrentError::NoActive)
+        );
+        assert_eq!(m.replay_uncertain(), Err(ConcurrentError::NoActive));
+        // Replacement warms and activates; the retained range reassigns.
+        m.register(tcp_key(1), CarrierKind::Tcp).unwrap();
+        m.observe_readiness(tcp_key(1), true, true, 10).unwrap();
+        m.observe_readiness(tcp_key(1), true, true, 11).unwrap();
+        let ev2 = m
+            .activate(tcp_key(1), SwitchReason::UdpPathDegraded, 12, false)
+            .unwrap();
+        // The replacement warmed AFTER the failure, so recovery is Cold.
+        assert_eq!(ev2.recovery_class, Some(RecoveryClass::Cold));
+        let replay = m.replay_uncertain().unwrap();
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].id, id);
+        assert_eq!(replay[0].bytes, b"payload".to_vec());
+        assert_eq!(m.uncertain_ranges(), 0);
+        m.confirm(id).unwrap();
+        // Final: exactly three switch events recorded (initial activation,
+        // hard failure, replacement activation), epochs 1, 1 and 2.
+        assert_eq!(m.events().len(), 3);
+        assert_eq!(m.events()[0].active_epoch, 1);
+        assert_eq!(m.events()[0].to, Some(udp_key(1)));
+        assert_eq!(m.events()[1].from, Some(udp_key(1)));
+        assert_eq!(m.events()[1].to, None);
+        assert_eq!(m.events()[2].active_epoch, 2);
+        assert_eq!(m.events()[2].to, Some(tcp_key(1)));
+    }
+}
+
 impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
     fn kind(&self) -> CarrierKind {
         self.inner.kind()
