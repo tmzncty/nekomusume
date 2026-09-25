@@ -695,6 +695,287 @@ mod tests {
         assert_eq!(terminal, 1, "lines={lines:?}");
     }
 
+    fn lines(p: &Producer) -> Vec<String> {
+        p.events().map(Event::to_json_line).collect()
+    }
+    #[test]
+    fn capacity_bounds_follow_contract_range() {
+        // Contract: producer capacity is declared in [1, 1024].
+        assert!(Producer::new(SessionId(1), 0).is_none());
+        assert_eq!(Producer::new(SessionId(1), 1).unwrap().capacity(), 1);
+        assert_eq!(
+            Producer::new(SessionId(1), MAX_EVENTS).unwrap().capacity(),
+            1024
+        );
+        assert!(Producer::new(SessionId(1), MAX_EVENTS + 1).is_none());
+    }
+    #[test]
+    fn health_transition_only_on_change_and_failed_is_error() {
+        let s = HealthSample {
+            rtt_us: 1,
+            loss_per_mille: 0,
+            pto: 0,
+        };
+        let mut p = Producer::new(SessionId(1), 16).unwrap();
+        p.record_health(
+            1,
+            1,
+            PathId(1),
+            Some(HealthState::Healthy),
+            HealthState::Healthy,
+            s,
+        );
+        assert_eq!(p.retained(), 1, "same state: sample only, no transition");
+        p.record_health(
+            2,
+            1,
+            PathId(1),
+            Some(HealthState::Healthy),
+            HealthState::Degraded,
+            s,
+        );
+        let l = lines(&p);
+        assert_eq!(l.len(), 3);
+        assert!(l[1].contains("\"health_state\":\"degraded\""));
+        assert!(l[2].contains("carrier.health_transition"));
+        assert!(l[2].contains("\"severity\":\"info\""));
+        assert!(l[2].contains("\"previous_health_state\":\"healthy\""));
+        p.record_health(
+            3,
+            1,
+            PathId(1),
+            Some(HealthState::Degraded),
+            HealthState::Failed,
+            s,
+        );
+        let l = lines(&p);
+        assert!(l[4].contains("carrier.health_transition"));
+        assert!(l[4].contains("\"severity\":\"error\""));
+    }
+    #[test]
+    fn switch_reason_vocabulary_and_kind_are_contract_exact() {
+        let cases = [
+            (SwitchReason::UdpBlackhole, "pto_threshold"),
+            (SwitchReason::UdpPathDegraded, "health_failed"),
+            (SwitchReason::TcpReadyPreferred, "migration_preferred"),
+            (SwitchReason::AddressChange, "path_unavailable"),
+            (SwitchReason::OperatorRequest, "operator_requested"),
+            (SwitchReason::CarrierError, "carrier_error"),
+        ];
+        for (reason, name) in cases {
+            assert_eq!(switch_reason(reason), name);
+        }
+        assert_eq!(carrier_kind(CarrierKind::Tcp), "tcp");
+        assert_eq!(carrier_kind(CarrierKind::Udp), "udp");
+        let mut m = ConcurrentCarrierManager::new(ConcurrentLimits {
+            k_ready: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        let key = ConcurrentPathKey {
+            path: PathId(5),
+            generation: PathGeneration(2),
+        };
+        m.register(key, CarrierKind::Tcp).unwrap();
+        m.observe_readiness(key, true, true, 1).unwrap();
+        let ev = m
+            .activate(key, SwitchReason::OperatorRequest, 2, true)
+            .unwrap();
+        let mut p = Producer::new(SessionId(1), 8).unwrap();
+        p.record_switch(&m, ev);
+        let l = lines(&p);
+        assert!(l[0].contains("carrier.switch_completed"));
+        assert!(l[0].contains("\"carrier_kind\":\"tcp\""));
+        assert!(l[0].contains("\"switch_reason\":\"operator_requested\""));
+        assert!(l[0].contains("\"path_id\":\"path:5:g2\""));
+    }
+    #[test]
+    fn failed_switch_correlates_from_path_and_warns() {
+        let mut m = ConcurrentCarrierManager::new(ConcurrentLimits {
+            k_ready: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        let from = ConcurrentPathKey {
+            path: PathId(7),
+            generation: PathGeneration(3),
+        };
+        m.register(from, CarrierKind::Udp).unwrap();
+        m.observe_readiness(from, true, true, 1).unwrap();
+        m.activate(from, SwitchReason::OperatorRequest, 2, true)
+            .unwrap();
+        let ev = m
+            .fail(from, SwitchReason::CarrierError, 9)
+            .unwrap()
+            .expect("failing the active path yields a switch event");
+        assert_eq!((ev.from, ev.to), (Some(from), None));
+        let mut p = Producer::new(SessionId(1), 8).unwrap();
+        p.record_switch(&m, ev);
+        let l = lines(&p);
+        assert!(l[0].contains("carrier.switch_failed"));
+        assert!(l[0].contains("\"severity\":\"warn\""));
+        assert!(l[0].contains("\"outcome\":\"failed\""));
+        // Correlation falls back to the from-path when there is no target.
+        assert!(l[0].contains("\"carrier_id\":\"carrier:7\""));
+        assert!(l[0].contains("\"path_generation\":3"));
+    }
+    #[test]
+    fn recovery_ack_emits_rtt_and_loss_only_with_evidence() {
+        let mut p = Producer::new(SessionId(1), 8).unwrap();
+        let r = Recovery::new(4, 2).unwrap();
+        p.record_recovery_ack(1, 1, PathId(1), &r, &RecoveryResult::default());
+        assert_eq!(
+            p.retained(),
+            0,
+            "no RTT sample and no loss: nothing emitted"
+        );
+        let mut r = Recovery::new(4, 2).unwrap();
+        r.on_sent(SentPacket {
+            number: 0,
+            sent_at_us: 0,
+            bytes: 10,
+            ack_eliciting: true,
+            frames: vec![FrameId(1)],
+        })
+        .unwrap();
+        let ack = AckRanges::from_ranges(1, &[AckRange { start: 0, end: 0 }]).unwrap();
+        let res = r.on_ack(&ack, 5_000, 0).unwrap();
+        p.record_recovery_ack(2, 1, PathId(1), &r, &res);
+        let l = lines(&p);
+        assert_eq!(l.len(), 1);
+        assert!(l[0].contains("recovery.rtt_updated"));
+        assert!(l[0].contains("\"latest_rtt_us\":5000"));
+    }
+    #[test]
+    fn pto_total_counts_each_record_pto() {
+        let mut p = Producer::new(SessionId(1), 8).unwrap();
+        let r = Recovery::new(4, 2).unwrap();
+        p.record_pto(1, 1, PathId(1), &r, 0);
+        p.record_pto(2, 1, PathId(1), &r, 0);
+        assert_eq!(p.pto_total(), 2);
+        assert!(lines(&p)[1].contains("\"pto_total\":2"));
+    }
+    #[test]
+    fn datagram_deltas_are_relative_to_previous_snapshot() {
+        let mut p = Producer::new(SessionId(1), 64).unwrap();
+        let c1 = DatagramCounters {
+            admitted: 2,
+            ..Default::default()
+        };
+        p.record_datagrams(1, c1);
+        let c2 = DatagramCounters {
+            admitted: 3,
+            ..Default::default()
+        };
+        p.record_datagrams(2, c2);
+        let admitted = lines(&p)
+            .iter()
+            .filter(|l| l.contains("datagram.admitted"))
+            .count();
+        assert_eq!(admitted, 3, "second snapshot contributes only the delta");
+    }
+    fn diag(p: &Producer) -> Vec<String> {
+        lines(p)
+            .into_iter()
+            .filter(|l| l.contains("diagnostic.events_dropped"))
+            .collect()
+    }
+    #[test]
+    fn clamped_datagram_deltas_are_counted_and_reported_exactly() {
+        // capacity 4, delta 5 of one kind: 4 emitted, 1 clamped. The clamped
+        // remainder is counted and triggers the coalesced diagnostic, which
+        // then evicts 2 retained events: dropped_total = 1 + 2 = 3.
+        let kinds = [
+            DatagramCounters {
+                admitted: 5,
+                ..Default::default()
+            },
+            DatagramCounters {
+                dropped: 5,
+                ..Default::default()
+            },
+            DatagramCounters {
+                rejected_oversize: 5,
+                ..Default::default()
+            },
+        ];
+        for c in kinds {
+            let mut p = Producer::new(SessionId(1), 4).unwrap();
+            p.record_datagrams(1, c);
+            assert_eq!(p.dropped_total(), 3, "{c:?}");
+            let d = diag(&p);
+            assert_eq!(d.len(), 1, "{c:?}");
+            assert!(
+                d[0].contains("\"dropped_total\":3,\"oldest_sequence\":2"),
+                "{d:?}"
+            );
+        }
+    }
+    #[test]
+    fn sequence_exhaustion_counts_every_refused_event() {
+        let mut p = Producer::new(SessionId(9), 4).unwrap();
+        p.next_sequence = u64::MAX;
+        for _ in 0..3 {
+            let c = p.session_correlation();
+            p.push(1, "session.started", "info", c, "{}".into());
+        }
+        assert_eq!(p.retained(), 1);
+        assert_eq!(p.dropped_total(), 3);
+    }
+    #[test]
+    fn drop_report_never_takes_the_final_sequence() {
+        // An eviction that lands exactly as next_sequence reaches u64::MAX must
+        // not emit a diagnostic at u64::MAX; that value is reserved for the
+        // single resource.limit_hit marker.
+        let mut p = Producer::new(SessionId(9), 1).unwrap();
+        let c = p.session_correlation();
+        p.push(1, "session.started", "info", c, "{}".into());
+        p.next_sequence = u64::MAX - 1;
+        let c = p.session_correlation();
+        p.push(2, "session.started", "info", c, "{}".into());
+        let seqs: Vec<u64> = p.events().map(|e| e.sequence).collect();
+        assert_eq!(seqs, vec![u64::MAX - 1]);
+        assert!(diag(&p).is_empty());
+        let c = p.session_correlation();
+        p.push(3, "session.started", "info", c, "{}".into());
+        let evs: Vec<_> = p.events().collect();
+        assert_eq!(evs.len(), 1);
+        assert_eq!(
+            (evs[0].sequence, evs[0].event),
+            (u64::MAX, "resource.limit_hit")
+        );
+    }
+    #[test]
+    fn scheduler_high_water_marks_are_monotonic_maxima() {
+        let mut p = Producer::new(SessionId(1), 16).unwrap();
+        let mut s = FairScheduler::new(Default::default()).unwrap();
+        s.open(neko_carrier::StreamId(1), StreamPriority::Bulk)
+            .unwrap();
+        s.open(neko_carrier::StreamId(2), StreamPriority::Bulk)
+            .unwrap();
+        s.enqueue(neko_carrier::StreamId(1), b"abcd").unwrap();
+        p.record_scheduler(1, &s, None, false);
+        assert_eq!(p.resource_high_water(), (2, 4));
+        let mut small = FairScheduler::new(Default::default()).unwrap();
+        small
+            .open(neko_carrier::StreamId(9), StreamPriority::Bulk)
+            .unwrap();
+        p.record_scheduler(2, &small, None, false);
+        assert_eq!(p.resource_high_water(), (2, 4), "maxima never regress");
+    }
+    #[test]
+    fn stream_correlation_is_serialized() {
+        let c = Correlation {
+            session_id: "session:1".into(),
+            stream_id: Some("stream:4".into()),
+            carrier_id: None,
+            path_id: None,
+        };
+        assert_eq!(
+            correlation_json(&c),
+            "{\"session_id\":\"session:1\",\"stream_id\":\"stream:4\"}"
+        );
+    }
     #[test]
     fn sequence_exhaustion_emits_limit_hit_and_never_duplicates() {
         // Drive next_sequence to the u64::MAX boundary, then overflow with
