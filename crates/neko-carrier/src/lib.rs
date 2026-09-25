@@ -1212,6 +1212,15 @@ pub struct FaultPolicy {
     pub delay_ms: u32,
     pub close_after: Option<u64>,
     pub one_way: bool,
+    /// R-MBOX-MTU: local oversized-packet drop boundary. A send whose
+    /// message length strictly exceeds this bound is dropped at the seam —
+    /// modeling a path that drops oversized datagrams. This models DROP
+    /// only: no fragmentation, no ICMP/PTB feedback, no interface MTU
+    /// change, no PLPMTUD policy, no wire-framing change. Oversized drops
+    /// follow the same drop-class semantics as loss/blackhole/one_way
+    /// (never enter the reorder buffer, never release a withheld record,
+    /// never duplicated). `None` (default) = no boundary.
+    pub max_payload_bytes: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -1551,6 +1560,69 @@ mod fault_inject_tests {
     }
 
     #[test]
+    fn mtu_boundary_drops_oversized_only() {
+        // R-MBOX-MTU: a send strictly exceeding max_payload_bytes is
+        // dropped at the seam; a send exactly at the boundary passes.
+        // Modeling DROP only — no fragmentation, no PTB/ICMP feedback, no
+        // interface-MTU/PLPMTUD/wire-framing change.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 16,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                max_payload_bytes: Some(4),
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f.send(b"m0!").unwrap(); // 3 bytes <= 4: passes
+        f.send(b"toolong").unwrap(); // 7 bytes > 4: dropped
+        f.send(b"m2!!").unwrap(); // exactly 4 bytes: passes
+        assert_eq!(b.recv().unwrap(), Some(b"m0!".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m2!!".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+    }
+
+    #[test]
+    fn mtu_drop_is_drop_class_not_reorder_class() {
+        // R-MBOX-MTU: an oversized drop never enters the reorder buffer
+        // and never releases a withheld record — identical drop-class
+        // semantics to loss/blackhole/one_way.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 16,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                reorder: true,
+                max_payload_bytes: Some(4),
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        f.send(b"m1").unwrap(); // 2 bytes: buffered in the pending slot
+        assert_eq!(f.pending_len(), 1);
+        f.send(b"oversized").unwrap(); // 8 bytes: dropped; m1 stays withheld
+        assert_eq!(
+            f.pending_len(),
+            1,
+            "an oversized drop must not release the withheld record"
+        );
+        f.send(b"m3").unwrap(); // 2 bytes: releases m1 after m3
+        assert_eq!(f.pending_len(), 0);
+        assert_eq!(b.recv().unwrap(), Some(b"m3".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"m1".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+    }
+
+    #[test]
     fn duplicate_emits_exact_multiplicity_and_ordering() {
         // R-MBOX-REORDER-DELAY: `duplicate` emits exactly two consecutive
         // copies of every surviving record. No record is duplicated that was
@@ -1603,6 +1675,10 @@ impl<C: Carrier> Carrier for FaultInjectCarrier<C> {
             .map_err(|_| CarrierError::StatePoisoned)?
             || self.blocked(sent)
             || (self.policy.one_way && sent % 2 == 0)
+            || self
+                .policy
+                .max_payload_bytes
+                .is_some_and(|max| message.len() > max)
         {
             return Ok(());
         }
