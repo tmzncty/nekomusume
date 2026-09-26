@@ -617,6 +617,182 @@ mod carrier_state_boundary_tests {
     }
 
     #[test]
+    fn limits_defaults_are_exact() {
+        // The defaults were never asserted: every existing test builds explicit
+        // limits. They are the values a production caller gets by omission, so
+        // each field is pinned.
+        let h = Hysteresis::default();
+        assert_eq!(h.min_dwell_events, 2);
+        assert_eq!(h.k_successes, 2);
+        let l = Limits::default();
+        assert_eq!(l.max_paths, 8);
+        assert_eq!(l.hysteresis, h);
+        // And they really are the operative bounds: the 9th path is refused.
+        let mut s = CarrierState::new(Limits::default());
+        for id in 1..=8u64 {
+            assert_eq!(
+                s.apply(CarrierEvent::PathAdded {
+                    path: PathId(id),
+                    carrier: CarrierKind::Udp,
+                    generation: PathGeneration(1),
+                }),
+                Ok(()),
+                "path {id} is within the default bound"
+            );
+        }
+        assert_eq!(
+            s.apply(CarrierEvent::PathAdded {
+                path: PathId(9),
+                carrier: CarrierKind::Udp,
+                generation: PathGeneration(1),
+            }),
+            Err(PathError::ResourceLimit)
+        );
+    }
+
+    #[test]
+    fn snapshot_carries_the_full_paths_map_and_active_identity() {
+        // `snapshot().paths` was never inspected: the helpers read `path()`
+        // instead, so a snapshot that dropped or altered the map was invisible.
+        let mut s = activated();
+        add(&mut s, Q, 4);
+        let snap = s.snapshot();
+        assert_eq!(snap.paths.len(), 2);
+        assert_eq!(snap.active, Some((P, PathGeneration(1))));
+        assert_eq!(snap.active_epoch, 1);
+        // The snapshot's records agree with the live accessor, field by field.
+        for id in [P, Q] {
+            assert_eq!(snap.paths.get(&id), s.path(id), "path {id:?}");
+        }
+        let p = snap.paths.get(&P).unwrap();
+        assert_eq!(p.carrier, CarrierKind::Udp);
+        assert_eq!(p.generation, PathGeneration(1));
+        assert_eq!(p.validation, PathValidationState::Validated);
+        assert_eq!(p.state, PathState::Active);
+        // A snapshot is a copy: mutating the state afterwards leaves it alone.
+        s.apply(CarrierEvent::BeginDrain {
+            path: Q,
+            generation: PathGeneration(4),
+        })
+        .unwrap_err();
+        assert_eq!(snap.paths.get(&Q).unwrap().state, PathState::Candidate);
+    }
+
+    #[test]
+    fn activation_requires_a_validated_path_even_when_both_gates_are_zero() {
+        // With min_dwell_events = 0 and k_successes = 0 the hysteresis gate is
+        // vacuous, so the validation gate is the ONLY thing that keeps an
+        // unvalidated candidate from being activated. Nothing exercised that.
+        let mut s = state(0, 0);
+        add(&mut s, P, 1);
+        assert_eq!(
+            record(&s, P),
+            (PathValidationState::Candidate, PathState::Candidate, 0, 0)
+        );
+        // Still just a candidate: validation has not completed.
+        assert_eq!(activate(&mut s, P, 1), Err(PathError::ValidationRequired));
+        assert_eq!(s.active(), None);
+        // Once the challenge is validated, activation succeeds.
+        sent(&mut s, P, 1).unwrap();
+        validated(&mut s, P, 1).unwrap();
+        activate(&mut s, P, 1).unwrap();
+        assert_eq!(s.active(), Some((P, PathGeneration(1))));
+    }
+
+    #[test]
+    fn a_failed_path_cannot_be_reactivated() {
+        // The activation state gate: once a path has failed it is terminal for
+        // activation, even though its validation stays Validated, its success
+        // count is still above the gate and the active slot is free. Without the
+        // gate the state machine silently resurrects a failed path.
+        let mut s = state(1, 1);
+        add(&mut s, P, 1);
+        sent(&mut s, P, 1).unwrap();
+        validated(&mut s, P, 1).unwrap();
+        feedback(&mut s, P, 1, PacketFeedbackKind::Ack).unwrap();
+        activate(&mut s, P, 1).unwrap();
+        s.apply(CarrierEvent::BeginDrain {
+            path: P,
+            generation: PathGeneration(1),
+        })
+        .unwrap();
+        s.apply(CarrierEvent::Fail {
+            path: P,
+            generation: PathGeneration(1),
+        })
+        .unwrap();
+        // The path is failed, still validated, and the active slot is empty.
+        assert_eq!(record(&s, P).0, PathValidationState::Validated);
+        assert_eq!(record(&s, P).1, PathState::Failed);
+        assert_eq!(s.active(), None);
+        assert_eq!(
+            activate(&mut s, P, 1),
+            Err(PathError::InvalidTransition),
+            "a failed path is not activatable"
+        );
+        assert_eq!(s.active(), None);
+        assert_eq!(record(&s, P).1, PathState::Failed);
+    }
+
+    #[test]
+    fn pto_degrades_only_the_active_path() {
+        // PTO is health/probe evidence for the path it was observed on, and it
+        // must only degrade that path when it is the ACTIVE one - otherwise a
+        // standby candidate would be poisoned by probing. The existing
+        // "degrades only the active path" test covers Loss and Reordered but not
+        // PTO.
+        let mut s = state(1, 1);
+        add(&mut s, P, 1);
+        sent(&mut s, P, 1).unwrap();
+        validated(&mut s, P, 1).unwrap();
+        // P is validated but NOT active: a PTO must not degrade it.
+        assert_eq!(record(&s, P).1, PathState::Candidate);
+        s.apply(CarrierEvent::PtoExpired {
+            path: P,
+            generation: PathGeneration(1),
+        })
+        .unwrap();
+        assert_eq!(
+            record(&s, P).1,
+            PathState::Candidate,
+            "PTO on a non-active path is not a degradation"
+        );
+        // Once the path is active, a PTO degrades it.
+        feedback(&mut s, P, 1, PacketFeedbackKind::Ack).unwrap();
+        activate(&mut s, P, 1).unwrap();
+        assert_eq!(record(&s, P).1, PathState::Active);
+        s.apply(CarrierEvent::PtoExpired {
+            path: P,
+            generation: PathGeneration(1),
+        })
+        .unwrap();
+        assert_eq!(
+            record(&s, P).1,
+            PathState::Degraded,
+            "PTO on the active path degrades it"
+        );
+    }
+
+    #[test]
+    fn path_added_records_the_declared_carrier_kind() {
+        // The carrier kind is stored as declared; nothing asserted it beyond the
+        // single `Udp` the helper hard-codes.
+        let mut s = state(1, 1);
+        s.apply(CarrierEvent::PathAdded {
+            path: P,
+            carrier: CarrierKind::Quic,
+            generation: PathGeneration(2),
+        })
+        .unwrap();
+        let r = s.path(P).unwrap();
+        assert_eq!(r.carrier, CarrierKind::Quic);
+        assert_eq!(r.generation, PathGeneration(2));
+        assert_eq!(r.validation, PathValidationState::Candidate);
+        assert_eq!(r.state, PathState::Candidate);
+        assert_eq!((r.successes, r.dwell_events), (0, 0));
+    }
+
+    #[test]
     fn carrier_state_drain_fail_and_activation_gates_are_exact() {
         let mut s = activated();
         assert_eq!(record(&s, P).1, PathState::Active);
