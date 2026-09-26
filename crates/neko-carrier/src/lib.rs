@@ -8136,6 +8136,199 @@ mod concurrent_manager_tests {
         assert_eq!(state.active_source_tag(), 11);
     }
 
+    fn base_limits() -> ConcurrentLimits {
+        ConcurrentLimits {
+            k_ready: 2,
+            min_active_dwell_ms: 5,
+            voluntary_cooldown_ms: 10,
+            drain_timeout_ms: 3,
+            max_paths: 3,
+            max_uncertain_ranges: 2,
+            max_uncertain_bytes: 8,
+            max_switch_events: 8,
+        }
+    }
+
+    #[test]
+    fn every_zero_limit_is_rejected() {
+        let zeroed: [fn(&mut ConcurrentLimits); 6] = [
+            |l| l.k_ready = 0,
+            |l| l.drain_timeout_ms = 0,
+            |l| l.max_paths = 0,
+            |l| l.max_uncertain_ranges = 0,
+            |l| l.max_uncertain_bytes = 0,
+            |l| l.max_switch_events = 0,
+        ];
+        for (i, zero) in zeroed.iter().enumerate() {
+            let mut limits = base_limits();
+            zero(&mut limits);
+            assert!(
+                matches!(
+                    ConcurrentCarrierManager::new(limits),
+                    Err(ConcurrentError::InvalidLimit)
+                ),
+                "limit {i}"
+            );
+        }
+        // Dwell and cooldown may be zero.
+        let mut limits = base_limits();
+        limits.min_active_dwell_ms = 0;
+        limits.voluntary_cooldown_ms = 0;
+        assert!(ConcurrentCarrierManager::new(limits).is_ok());
+    }
+
+    #[test]
+    fn register_capacity_and_generation_rules_are_exact() {
+        let mut m = manager();
+        let key = |path, generation| ConcurrentPathKey {
+            path: PathId(path),
+            generation: PathGeneration(generation),
+        };
+        m.register(key(1, 2), CarrierKind::Udp).unwrap();
+        m.register(key(2, 1), CarrierKind::Tcp).unwrap();
+        m.register(key(3, 1), CarrierKind::Tcp).unwrap();
+        // Exactly max_paths (3) distinct paths fit.
+        assert_eq!(
+            m.register(key(4, 1), CarrierKind::Tcp),
+            Err(ConcurrentError::Capacity)
+        );
+        // A live path cannot be replaced by a newer generation.
+        assert_eq!(
+            m.register(key(1, 3), CarrierKind::Udp),
+            Err(ConcurrentError::IllegalState)
+        );
+        m.fail(key(1, 2), SwitchReason::CarrierError, 0).unwrap();
+        // Even once failed: an older or the same generation is refused ...
+        assert_eq!(
+            m.register(key(1, 1), CarrierKind::Udp),
+            Err(ConcurrentError::OldGeneration)
+        );
+        assert_eq!(
+            m.register(key(1, 2), CarrierKind::Udp),
+            Err(ConcurrentError::GenerationMismatch)
+        );
+        assert_eq!(m.state(key(1, 2)), Ok(ConcurrentPathState::Failed));
+        // ... while a newer one replaces it at capacity, fresh in Standby.
+        m.register(key(1, 3), CarrierKind::Udp).unwrap();
+        assert_eq!(m.state(key(1, 3)), Ok(ConcurrentPathState::Standby));
+        assert_eq!(m.state(key(1, 2)), Err(ConcurrentError::OldGeneration));
+        assert_eq!(m.state(key(9, 1)), Err(ConcurrentError::UnknownPath));
+    }
+
+    #[test]
+    fn readiness_requires_both_proofs_and_is_refused_outside_standby_or_warm() {
+        let mut m = manager();
+        m.register(UDP, CarrierKind::Udp).unwrap();
+        m.register(TCP, CarrierKind::Tcp).unwrap();
+        m.observe_readiness(UDP, true, true, 0).unwrap();
+        // Unadmitted evidence resets the streak just like unauthenticated.
+        m.observe_readiness(UDP, true, false, 1).unwrap();
+        assert_eq!(
+            m.observe_readiness(UDP, true, true, 2).unwrap(),
+            ConcurrentPathState::Standby
+        );
+        assert_eq!(
+            m.observe_readiness(UDP, true, true, 3).unwrap(),
+            ConcurrentPathState::Warm
+        );
+        m.activate(UDP, SwitchReason::OperatorRequest, 4, false)
+            .unwrap();
+        assert_eq!(
+            m.observe_readiness(UDP, true, true, 5),
+            Err(ConcurrentError::IllegalState)
+        );
+        warm(&mut m, TCP, 5);
+        m.activate(TCP, SwitchReason::UdpBlackhole, 7, true)
+            .unwrap();
+        assert_eq!(m.state(UDP), Ok(ConcurrentPathState::Draining));
+        assert_eq!(
+            m.observe_readiness(UDP, true, true, 8),
+            Err(ConcurrentError::IllegalState)
+        );
+        m.fail(UDP, SwitchReason::CarrierError, 8).unwrap();
+        assert_eq!(
+            m.observe_readiness(UDP, true, true, 9),
+            Err(ConcurrentError::IllegalState)
+        );
+    }
+
+    #[test]
+    fn range_count_bound_is_exact() {
+        let mut m = manager();
+        m.register(UDP, CarrierKind::Udp).unwrap();
+        warm(&mut m, UDP, 0);
+        m.activate(UDP, SwitchReason::OperatorRequest, 2, false)
+            .unwrap();
+        let id = |offset| LogicalRangeId { stream: 7, offset };
+        m.assign(id(0), b"a").unwrap();
+        m.assign(id(1), b"b").unwrap();
+        assert_eq!(m.assign(id(2), b"c"), Err(ConcurrentError::Capacity));
+    }
+
+    #[test]
+    fn finish_drain_replays_only_the_draining_owner_and_requires_draining() {
+        let mut m = manager();
+        let third = ConcurrentPathKey {
+            path: PathId(30),
+            generation: PathGeneration(1),
+        };
+        m.register(UDP, CarrierKind::Udp).unwrap();
+        m.register(TCP, CarrierKind::Tcp).unwrap();
+        m.register(third, CarrierKind::Tcp).unwrap();
+        assert_eq!(m.finish_drain(TCP, 100), Err(ConcurrentError::IllegalState));
+        warm(&mut m, UDP, 0);
+        warm(&mut m, TCP, 0);
+        warm(&mut m, third, 0);
+        let r1 = LogicalRangeId {
+            stream: 1,
+            offset: 0,
+        };
+        let r2 = LogicalRangeId {
+            stream: 2,
+            offset: 0,
+        };
+        m.activate(UDP, SwitchReason::OperatorRequest, 2, false)
+            .unwrap();
+        m.assign(r1, b"one").unwrap();
+        m.activate(TCP, SwitchReason::UdpBlackhole, 3, true)
+            .unwrap();
+        m.assign(r2, b"two").unwrap();
+        m.activate(third, SwitchReason::CarrierError, 4, true)
+            .unwrap();
+        // Both drained owners have uncertain ranges; UDP's drain replays
+        // only r1, and a finished (Failed) path cannot be drained again.
+        assert_eq!(m.uncertain_ranges(), 2);
+        assert_eq!(
+            m.finish_drain(UDP, 6).unwrap(),
+            vec![ReplayRange {
+                id: r1,
+                bytes: b"one".to_vec()
+            }]
+        );
+        assert_eq!(m.uncertain_ranges(), 1);
+        assert_eq!(m.finish_drain(UDP, 7), Err(ConcurrentError::IllegalState));
+    }
+
+    #[test]
+    fn switch_event_log_keeps_exactly_the_newest_max_switch_events() {
+        let mut limits = base_limits();
+        limits.max_switch_events = 2;
+        let mut m = ConcurrentCarrierManager::new(limits).unwrap();
+        m.register(UDP, CarrierKind::Udp).unwrap();
+        m.register(TCP, CarrierKind::Tcp).unwrap();
+        warm(&mut m, UDP, 0);
+        warm(&mut m, TCP, 0);
+        m.activate(UDP, SwitchReason::OperatorRequest, 2, false)
+            .unwrap();
+        m.fail(UDP, SwitchReason::CarrierError, 3).unwrap();
+        m.activate(TCP, SwitchReason::UdpBlackhole, 4, true)
+            .unwrap();
+        let events = m.events();
+        assert_eq!(events.len(), 2);
+        assert_eq!((events[0].from, events[0].to), (Some(UDP), None));
+        assert_eq!((events[1].from, events[1].to), (None, Some(TCP)));
+    }
+
     #[test]
     fn cooldown_and_uncertain_capacity_rejections_are_atomic() {
         let mut m = manager();
