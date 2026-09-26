@@ -8384,6 +8384,176 @@ mod path_recovery_tests {
     }
 
     #[test]
+    fn runtime_pacing_interval_is_the_recovery_deadline_and_not_a_constant() {
+        // `pacing_interval_us` is the deterministic deadline callers honor
+        // between admissions. It was never called by any test, so it could have
+        // been a constant or off by one. An RTT sample makes it non-zero, which
+        // is what lets the exact value be pinned.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        // No RTT sample yet: the deadline is zero.
+        assert_eq!(rt.pacing_interval_us(400), 0);
+        rt.on_packet_sent(0, 0, 400, FrameId(1), b"x").unwrap();
+        let mut a = neko_reliable::AckRanges::new(4).unwrap();
+        a.insert(0).unwrap();
+        rt.apply_ack(&a, 1_000_000, 0).unwrap();
+        // smoothed RTT is now the 1s sample, so the deadline is
+        // rtt * bytes / cwnd, which scales with the byte count.
+        let p400 = rt.pacing_interval_us(400);
+        let p1 = rt.pacing_interval_us(1);
+        assert!(p400 > 0, "an RTT sample must produce a positive deadline");
+        // Exact value: the deadline is ceil(rtt * bytes / cwnd) with the sample
+        // RTT of 1_000_000 us and the initial Reno window of 12_400 bytes
+        // (mss 1200: 12_000 initial plus the 400 bytes just acked).
+        assert_eq!(p400, 32_259);
+        assert_eq!(p1, 81);
+        assert!(
+            p1 > 0 && p1 < p400,
+            "the deadline scales with the send size"
+        );
+        assert_eq!(
+            rt.pacing_interval_us(0),
+            0,
+            "a zero-byte send paces at zero"
+        );
+    }
+
+    #[test]
+    fn teardown_gates_activation_and_readiness_recording() {
+        // H-R9-066: a torn-down runtime records no new readiness and performs no
+        // activation transition. Both guards are observable through the manager.
+        let mut live = ReliableUdpRuntime::new(1, 1200).unwrap();
+        assert_eq!(
+            live.manager().state(live.tcp).unwrap(),
+            ConcurrentPathState::Standby
+        );
+        live.ready_standby(0);
+        assert_eq!(
+            live.manager().state(live.tcp).unwrap(),
+            ConcurrentPathState::Warm,
+            "readiness still works before teardown"
+        );
+
+        // Readiness after teardown must not manufacture a warm standby.
+        let mut a = ReliableUdpRuntime::new(1, 1200).unwrap();
+        a.teardown();
+        a.ready_standby(100);
+        assert_eq!(
+            a.manager().state(a.tcp).unwrap(),
+            ConcurrentPathState::Standby,
+            "a torn-down runtime records no readiness"
+        );
+
+        // Activation after teardown must not install an active path. The path
+        // is warmed first: otherwise the manager's own NotReady precondition
+        // refuses the activation and would mask the terminal gate.
+        let mut b = ReliableUdpRuntime::new(1, 1200).unwrap();
+        let udp = b.path;
+        for t in 0..3u64 {
+            b.manager_mut()
+                .unwrap()
+                .observe_readiness(udp, true, true, t)
+                .unwrap();
+        }
+        assert_eq!(
+            b.manager().state(udp).unwrap(),
+            ConcurrentPathState::Warm,
+            "the path is warm before teardown"
+        );
+        b.teardown();
+        b.activate_udp(100);
+        assert_eq!(
+            b.manager().active(),
+            None,
+            "a torn-down runtime performs no activation"
+        );
+    }
+
+    #[test]
+    fn retained_frames_reflects_plaintext_ownership() {
+        // `retained_frames` is the observable projection of the plaintext
+        // owner; it had only ever been asserted at zero (after a teardown), so
+        // it could have reported a constant.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        assert_eq!(rt.retained_frames(), 0);
+        rt.on_packet_sent(0, 0, 400, FrameId(1), b"first").unwrap();
+        assert_eq!(rt.retained_frames(), 1);
+        rt.on_packet_sent(1, 1_000, 400, FrameId(2), b"second")
+            .unwrap();
+        assert_eq!(rt.retained_frames(), 2);
+        // A retransmit of an already-retained frame adds no new ownership.
+        rt.on_retransmit_sent(2, 2_000, 400, FrameId(1)).unwrap();
+        assert_eq!(rt.retained_frames(), 2);
+        // Teardown drops the whole plaintext owner.
+        rt.teardown();
+        assert_eq!(rt.retained_frames(), 0);
+    }
+
+    #[test]
+    fn the_warm_instant_decides_the_recovery_class_of_a_later_switch() {
+        // `ready_standby` records the warm transition at a timestamp that a
+        // later activation compares against the failure instant to classify the
+        // recovery as Warm or Cold. Because the observation timestamps are
+        // offset per attempt, that instant is the third observation's time.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        let (udp, tcp) = (rt.path, rt.tcp);
+        rt.ready_standby(100);
+        // Warm up and activate UDP so there is an active path to fail.
+        for t in 0..3u64 {
+            rt.manager_mut()
+                .unwrap()
+                .observe_readiness(udp, true, true, t)
+                .unwrap();
+        }
+        rt.manager_mut()
+            .unwrap()
+            .activate(udp, SwitchReason::OperatorRequest, 0, false)
+            .unwrap();
+        assert_eq!(rt.manager().active(), Some(udp));
+        // Fail the active path at 101 ms. The standby became warm at 102 ms
+        // (100 + the last offset), so it is cold with respect to that failure;
+        // had the warm instant been the bare 100 ms it would read as warm.
+        rt.manager_mut()
+            .unwrap()
+            .fail(udp, SwitchReason::UdpBlackhole, 101)
+            .unwrap();
+        // The voluntary cooldown is 10_000 ms from the first switch, so the
+        // failover has to be issued at or after that.
+        rt.manager_mut()
+            .unwrap()
+            .activate(tcp, SwitchReason::UdpBlackhole, 10_000, false)
+            .unwrap();
+        let ev = rt.manager().events().last().unwrap();
+        assert_eq!(ev.recovery_class, Some(RecoveryClass::Cold));
+    }
+
+    #[test]
+    fn abandon_retransmit_drops_its_packet_frame_ownership() {
+        // H-R9-051/052: abandoning a retransmit removes that packet copy's
+        // packet->frame entry, so no later rollback can act on it. Without the
+        // removal, a second abandon for the same packet number would still see
+        // the orphaned frame and release its retained plaintext.
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.on_packet_sent(0, 0, 400, FrameId(1), b"real").unwrap();
+        rt.on_retransmit_sent(100, 2_000_000, 400, FrameId(1))
+            .unwrap();
+        assert_eq!(rt.retained_frames(), 1);
+        // Abandon the original: frame 1 is still carried by packet 100, so its
+        // plaintext must stay retained.
+        assert!(rt.abandon_sent(0));
+        assert_eq!(rt.retained_frames(), 1);
+        // Abandon the retransmit: its packet->frame ownership is dropped.
+        assert!(rt.abandon_retransmit(100));
+        // A further rollback for the same packet number finds nothing to do and
+        // therefore must not release the retained plaintext.
+        assert!(!rt.abandon_sent(100));
+        assert_eq!(
+            rt.retained_frames(),
+            1,
+            "abandoning a retransmit must not leave a frame reachable by a later rollback"
+        );
+    }
+
+    #[test]
     fn retransmit_requires_retained_ownership_and_teardown_is_deterministic() {
         let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
         let before = rt.in_flight();
