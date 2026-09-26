@@ -9387,6 +9387,138 @@ mod concurrent_manager_tests {
     }
 
     #[test]
+    fn endpoint_rebind_new_rejects_each_zero_of_its_tuple() {
+        // Each of the three must be non-zero, and the dedicated error class is
+        // reported. Nothing asserted the guards or the class.
+        for (tag, session, epoch) in [(0u64, 7001u64, 1u64), (11, 0, 1), (11, 7001, 0)] {
+            assert_eq!(
+                EndpointRebindState::new(tag, PathId(1), PathGeneration(3), session, epoch).err(),
+                Some(EndpointRebindError::TupleMismatch),
+                "tag={tag} session={session} epoch={epoch}"
+            );
+        }
+        // One is the smallest legal value on every axis.
+        assert!(EndpointRebindState::new(1, PathId(1), PathGeneration(3), 1, 1).is_ok());
+    }
+
+    #[test]
+    fn endpoint_rebind_arm_challenge_requires_a_pending_candidate_and_one_fresh_challenge() {
+        let candidate = EndpointRebindCandidate {
+            source_tag: 22,
+            path: PathId(1),
+            generation: PathGeneration(4),
+        };
+        // A zero challenge is refused even with a pending candidate.
+        let mut state =
+            EndpointRebindState::new(11, PathId(1), PathGeneration(3), 7001, 1).unwrap();
+        state.observe_candidate(candidate).unwrap();
+        assert_eq!(
+            state.arm_challenge(0),
+            Err(EndpointRebindError::TupleMismatch)
+        );
+        // Arming works once...
+        assert_eq!(state.arm_challenge(9), Ok(()));
+        // ...but a second arm is refused rather than silently replacing it.
+        assert_eq!(
+            state.arm_challenge(10),
+            Err(EndpointRebindError::TupleMismatch)
+        );
+        // The first challenge is the armed one, so a response for the second is
+        // a mismatch (this also proves the second arm did not take effect).
+        assert_eq!(
+            state.validate_and_promote(candidate, 7001, 1, 10),
+            Err(EndpointRebindError::ChallengeMismatch)
+        );
+        // With no candidate there is nothing to arm.
+        let mut empty =
+            EndpointRebindState::new(11, PathId(1), PathGeneration(3), 7001, 1).unwrap();
+        assert_eq!(
+            empty.arm_challenge(9),
+            Err(EndpointRebindError::TupleMismatch)
+        );
+    }
+
+    #[test]
+    fn endpoint_rebind_candidate_and_path_are_visible_before_promotion() {
+        // `candidate()` and `active_path()` were never asserted non-trivial: the
+        // existing tests only checked `candidate().is_none()`, which passes even
+        // if the accessor always returns None.
+        let candidate = EndpointRebindCandidate {
+            source_tag: 22,
+            path: PathId(1),
+            generation: PathGeneration(4),
+        };
+        let mut state =
+            EndpointRebindState::new(11, PathId(1), PathGeneration(3), 7001, 1).unwrap();
+        assert_eq!(state.active_path(), PathId(1));
+        assert_eq!(state.candidate(), None);
+        assert_eq!(state.retired_source_tag(), None);
+        state.observe_candidate(candidate).unwrap();
+        assert_eq!(state.candidate(), Some(candidate));
+        state.arm_challenge(9).unwrap();
+        state.validate_and_promote(candidate, 7001, 1, 9).unwrap();
+        assert_eq!(state.candidate(), None);
+        assert_eq!(state.active_path(), PathId(1));
+        assert_eq!(state.active_source_tag(), 22);
+    }
+
+    #[test]
+    fn endpoint_rebind_same_generation_is_a_tuple_mismatch_not_an_old_generation() {
+        // A new source at the *same* generation is refused as a tuple mismatch,
+        // because the successor must be exactly one generation ahead. Reading
+        // the age check as inclusive would report the wrong class.
+        let mut state =
+            EndpointRebindState::new(11, PathId(1), PathGeneration(3), 7001, 1).unwrap();
+        assert_eq!(
+            state.observe_candidate(EndpointRebindCandidate {
+                source_tag: 12,
+                path: PathId(1),
+                generation: PathGeneration(3),
+            }),
+            Err(EndpointRebindError::TupleMismatch)
+        );
+        // One generation behind is the old-generation class.
+        assert_eq!(
+            state.observe_candidate(EndpointRebindCandidate {
+                source_tag: 12,
+                path: PathId(1),
+                generation: PathGeneration(2),
+            }),
+            Err(EndpointRebindError::OldGeneration)
+        );
+    }
+
+    #[test]
+    fn endpoint_rebind_promotion_requires_the_exact_candidate_as_the_response() {
+        // The armed challenge alone is not enough: the response must also equal
+        // the pending candidate exactly, so a different endpoint cannot ride an
+        // armed challenge into ownership.
+        let candidate = EndpointRebindCandidate {
+            source_tag: 22,
+            path: PathId(1),
+            generation: PathGeneration(4),
+        };
+        let mut state =
+            EndpointRebindState::new(11, PathId(1), PathGeneration(3), 7001, 1).unwrap();
+        state.observe_candidate(candidate).unwrap();
+        state.arm_challenge(9).unwrap();
+        // Right challenge, wrong endpoint.
+        assert_eq!(
+            state.validate_and_promote(
+                EndpointRebindCandidate {
+                    source_tag: 23,
+                    ..candidate
+                },
+                7001,
+                1,
+                9
+            ),
+            Err(EndpointRebindError::ChallengeMismatch)
+        );
+        assert_eq!(state.active_source_tag(), 11, "no ownership change");
+    }
+
+    #[test]
     fn endpoint_rebind_requires_fresh_exact_challenge_and_promotes_atomically() {
         let mut state =
             EndpointRebindState::new(11, PathId(1), PathGeneration(3), 7001, 1).unwrap();
