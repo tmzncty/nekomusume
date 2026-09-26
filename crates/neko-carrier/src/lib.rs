@@ -4671,6 +4671,133 @@ mod manager_tests {
         assert_eq!(m.switches, 2);
     }
     #[test]
+    fn manager_limits_and_path_capacity_are_exact() {
+        let lim = |min_hold_events, switch_margin, max_paths| ManagerLimits {
+            min_hold_events,
+            switch_margin,
+            max_paths,
+        };
+        assert!(matches!(
+            CarrierManager::new(lim(0, 0, 1)),
+            Err(FlowError::InvalidLimit)
+        ));
+        assert!(matches!(
+            CarrierManager::new(lim(1, 0, 0)),
+            Err(FlowError::InvalidLimit)
+        ));
+        // Exactly max_paths distinct paths fit; the next new one does not.
+        let mut m = CarrierManager::new(lim(1, 0, 2)).unwrap();
+        m.observe(PathId(1), GOOD).unwrap();
+        m.observe(PathId(2), GOOD).unwrap();
+        assert_eq!(m.observe(PathId(3), GOOD), Err(FlowError::TooManyStreams));
+        // set_active_tcp refuses a path the manager has never observed.
+        assert_eq!(
+            m.set_active_tcp(PathId(3), PathGeneration(1)),
+            Err(MigrationError::GenerationMismatch)
+        );
+        assert_eq!(m.active(), None);
+    }
+    #[test]
+    fn choose_never_selects_an_unhealthy_path() {
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 1,
+            switch_margin: 0,
+            max_paths: 2,
+        })
+        .unwrap();
+        // BAD scores higher than a slow healthy path but is ineligible.
+        m.observe(PathId(1), BAD).unwrap();
+        assert_eq!(m.choose(), None);
+        m.observe(
+            PathId(2),
+            HealthSample {
+                rtt_us: 10_000,
+                loss_per_mille: 0,
+                pto: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(m.choose(), Some(PathId(2)));
+    }
+    #[test]
+    fn choose_hold_accumulates_through_calls_and_margin_is_inclusive() {
+        // Path 2 is exactly switch_margin (10) better than path 1. Nothing
+        // pokes `hold`: the switch must come from choose() itself, on the
+        // min_hold_events-th (3rd) call after path 2 became best.
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 3,
+            switch_margin: 10,
+            max_paths: 2,
+        })
+        .unwrap();
+        let rtt = |rtt_us| HealthSample {
+            rtt_us,
+            loss_per_mille: 0,
+            pto: 0,
+        };
+        m.observe(PathId(1), rtt(100)).unwrap();
+        assert_eq!(m.choose(), Some(PathId(1)));
+        assert_eq!(m.switches, 1);
+        m.observe(PathId(2), rtt(90)).unwrap();
+        for call in 1..=3 {
+            assert_eq!(m.choose(), Some(PathId(1)), "hold call {call}");
+        }
+        assert_eq!(m.choose(), Some(PathId(2)));
+        assert_eq!(m.switches, 2);
+        // The switch resets hold: a new better path again needs 3 holds.
+        m.observe(PathId(1), rtt(80)).unwrap();
+        for call in 1..=3 {
+            assert_eq!(m.choose(), Some(PathId(2)), "post-switch hold {call}");
+        }
+        assert_eq!(m.choose(), Some(PathId(1)));
+        assert_eq!(m.switches, 3);
+    }
+    #[test]
+    fn choose_margin_blocks_a_smaller_improvement_and_best_active_resets_hold() {
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 2,
+            switch_margin: 10,
+            max_paths: 2,
+        })
+        .unwrap();
+        let rtt = |rtt_us| HealthSample {
+            rtt_us,
+            loss_per_mille: 0,
+            pto: 0,
+        };
+        m.observe(PathId(1), rtt(100)).unwrap();
+        assert_eq!(m.choose(), Some(PathId(1)));
+        // 9 < margin: never switches however long it holds.
+        m.observe(PathId(2), rtt(91)).unwrap();
+        for _ in 0..5 {
+            assert_eq!(m.choose(), Some(PathId(1)));
+        }
+        // Active becomes best again: hold resets to 0 ...
+        m.observe(PathId(2), rtt(200)).unwrap();
+        assert_eq!(m.choose(), Some(PathId(1)));
+        // ... so a qualifying candidate needs the full 2 holds again.
+        m.observe(PathId(2), rtt(50)).unwrap();
+        assert_eq!(m.choose(), Some(PathId(1)));
+        assert_eq!(m.choose(), Some(PathId(1)));
+        assert_eq!(m.choose(), Some(PathId(2)));
+        assert_eq!(m.switches, 2);
+    }
+    #[test]
+    fn choose_leaves_an_active_path_without_a_sample_after_hold() {
+        // A UDP-active path the manager never observed has no current score;
+        // after min_hold_events the best healthy observed path takes over.
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 1,
+            switch_margin: 1_000_000,
+            max_paths: 2,
+        })
+        .unwrap();
+        m.set_active_udp(PathId(9), PathGeneration(1));
+        m.observe(PathId(1), GOOD).unwrap();
+        assert_eq!(m.choose(), Some(PathId(9)));
+        assert_eq!(m.choose(), Some(PathId(1)));
+    }
+    #[test]
     fn changing_best_path_does_not_accumulate_hold_across_candidates() {
         let mut m = CarrierManager::new(ManagerLimits {
             min_hold_events: 3,
