@@ -1128,6 +1128,63 @@ mod memory_pair_tests {
     }
 
     #[test]
+    fn equal_message_and_queue_limits_are_valid_and_admit_one_full_message() {
+        // max_message_bytes == max_queue_bytes is a legal configuration: one
+        // message may fill the queue exactly. Rejecting it would be an
+        // off-by-one in limit validation, not a policy decision.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 4,
+            max_queue_bytes: 4,
+        })
+        .unwrap();
+        assert_eq!(a.send(b"1234"), Ok(()));
+        // The queue is exactly full: one more byte is refused, and a message
+        // larger than the message limit is refused as too large regardless.
+        assert_eq!(a.send(b"5"), Err(CarrierError::BufferFull));
+        assert_eq!(a.send(b"12345"), Err(CarrierError::MessageTooLarge));
+        // Draining restores the whole budget.
+        assert_eq!(b.recv().unwrap(), Some(b"1234".to_vec()));
+        assert_eq!(a.send(b"1234"), Ok(()));
+        // One byte over the queue limit remains invalid.
+        assert!(matches!(
+            MemoryPair::new(MemoryLimits {
+                max_message_bytes: 5,
+                max_queue_bytes: 4,
+            }),
+            Err(MemoryPairError::InvalidLimits)
+        ));
+    }
+
+    #[test]
+    fn draining_restores_the_exact_byte_budget() {
+        // queue_bytes is the running sum of the queued message lengths; it must
+        // be charged on send and released by exactly the drained length, or the
+        // byte budget would drift away from the queue's real contents.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 2,
+            max_queue_bytes: 4,
+        })
+        .unwrap();
+        a.send(b"ab").unwrap();
+        a.send(b"cd").unwrap();
+        // 2 + 2 = 4, exactly full.
+        assert_eq!(a.send(b"e"), Err(CarrierError::BufferFull));
+        assert_eq!(b.recv().unwrap(), Some(b"ab".to_vec()));
+        // One drained message releases exactly its two bytes.
+        assert_eq!(a.send(b"e"), Ok(()));
+        assert_eq!(b.recv().unwrap(), Some(b"cd".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"e".to_vec()));
+        assert_eq!(b.recv().unwrap(), None);
+        // Fully drained: the whole four-byte budget is available again, so two
+        // maximum-size messages fit once more.
+        assert_eq!(a.send(b"zz"), Ok(()));
+        assert_eq!(a.send(b"yy"), Ok(()));
+        assert_eq!(a.send(b"xx"), Err(CarrierError::BufferFull));
+        assert_eq!(b.recv().unwrap(), Some(b"zz".to_vec()));
+        assert_eq!(b.recv().unwrap(), Some(b"yy".to_vec()));
+    }
+
+    #[test]
     fn close_is_idempotent_and_preserves_queued_data() {
         let (a, b) = pair();
         a.send(b"data").unwrap();
