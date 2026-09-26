@@ -819,6 +819,115 @@ mod tests {
         x.confirm_received(1, 0, c(1, 0, 1)).unwrap();
         assert_eq!(x.watermark(1), 2)
     }
+    #[test]
+    fn insert_limits_are_inclusive_at_the_exact_boundary() {
+        // max_connection_bytes: the exact total is admitted, one byte more is not.
+        let mut bytes = DeliveryLedger::new(Limits {
+            max_connection_bytes: 8,
+            ..l().limits
+        });
+        assert_eq!(
+            bytes.insert(1, 0, &[7; 8], c(1, 0, 1)),
+            Ok(DeliveryState::Unsent)
+        );
+        assert_eq!(
+            bytes.insert(1, 8, &[7; 1], c(1, 0, 1)),
+            Err(LedgerError::ConnectionLimit)
+        );
+
+        // max_offset_jump and max_reorder are inclusive too: the watermark plus
+        // the configured limit is accepted, one offset further is refused.
+        let mut jump = DeliveryLedger::new(Limits {
+            max_reorder: 100,
+            max_offset_jump: 100,
+            ..l().limits
+        });
+        assert_eq!(
+            jump.insert(1, 100, b"a", c(1, 0, 1)),
+            Ok(DeliveryState::Unsent)
+        );
+        assert_eq!(
+            jump.insert(1, 101, b"a", c(1, 0, 1)),
+            Err(LedgerError::OffsetJump)
+        );
+
+        let mut reorder = DeliveryLedger::new(Limits {
+            max_reorder: 10,
+            max_offset_jump: 1000,
+            ..l().limits
+        });
+        assert_eq!(
+            reorder.insert(1, 10, b"a", c(1, 0, 1)),
+            Ok(DeliveryState::Unsent)
+        );
+        assert_eq!(
+            reorder.insert(1, 11, b"a", c(1, 0, 1)),
+            Err(LedgerError::ReorderLimit)
+        );
+    }
+    #[test]
+    fn empty_ranges_contained_duplicates_and_repeat_transitions_are_pinned() {
+        let mut x = l();
+        // An empty range is refused and leaves no segment or stream behind.
+        assert_eq!(
+            x.insert(1, 0, b"", c(1, 0, 1)),
+            Err(LedgerError::EmptyRange)
+        );
+        assert_eq!(x.segments().count(), 0);
+        assert_eq!(x.watermark(1), 0);
+
+        // A range fully contained in an existing segment merges into it: the
+        // union of the existing ranges still covers the whole merged result.
+        x.insert(1, 0, b"abcdefgh", c(1, 0, 1)).unwrap();
+        assert_eq!(
+            x.insert(1, 2, b"cdef", c(1, 0, 1)),
+            Ok(DeliveryState::Unsent)
+        );
+        assert_eq!(x.segments().count(), 1);
+        assert_eq!(x.segments().next().unwrap().data, b"abcdefgh");
+
+        // The same holds for an advanced segment: the contained duplicate is
+        // idempotent and preserves the state instead of being read as a hole.
+        x.mark_in_flight(1, 0).unwrap();
+        assert_eq!(
+            x.insert(1, 2, b"cdef", c(1, 0, 1)),
+            Ok(DeliveryState::InFlight)
+        );
+        assert_eq!(
+            x.insert(1, 4, b"efgh", c(1, 0, 1)),
+            Ok(DeliveryState::InFlight)
+        );
+        assert_eq!(x.segments().next().unwrap().state, DeliveryState::InFlight);
+
+        // A repeated in-flight transition is not idempotent.
+        assert_eq!(x.mark_in_flight(1, 0), Err(LedgerError::InvalidTransition));
+    }
+    #[test]
+    fn path_generation_regression_is_rejected_but_advance_is_allowed() {
+        let mut x = DeliveryLedger::new(Limits {
+            max_reorder: 1024,
+            max_connection_bytes: 1024,
+            max_offset_jump: 1024,
+            ..l().limits
+        });
+        x.insert(1, 0, b"abcd", c(1, 0, 3)).unwrap();
+        // A path generation may advance on its own.
+        assert_eq!(
+            x.insert(1, 4, b"efgh", c(1, 0, 4)),
+            Ok(DeliveryState::Unsent)
+        );
+        // It may never regress, neither alone nor inside a mixed migration that
+        // advances the delivery epoch; the refused inserts commit nothing.
+        assert_eq!(
+            x.insert(1, 8, b"ijkl", c(1, 0, 3)),
+            Err(LedgerError::OldEpoch)
+        );
+        assert_eq!(
+            x.insert(1, 8, b"ijkl", c(2, 0, 2)),
+            Err(LedgerError::OldEpoch)
+        );
+        assert_eq!(x.segments().count(), 2);
+    }
 }
 
 /// M3-alpha bounded Session runtime state. Carrier I/O is deliberately outside
