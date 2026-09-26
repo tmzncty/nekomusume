@@ -775,6 +775,71 @@ mod session_tests {
         assert!(r.receive_first(&first, ctx(0)).is_err());
     }
     #[test]
+    fn payload_ceilings_are_inclusive_on_both_the_reliable_and_unreliable_paths() {
+        let (mut a, mut b) = pair();
+        // Reliable: exactly MAX_RECORD_PLAINTEXT is the largest sealable record
+        // and it must round-trip; one byte more is refused.
+        let full = vec![7u8; MAX_RECORD_PLAINTEXT];
+        let r = a.seal(&full).unwrap();
+        assert_eq!(r.len(), 8 + RECORD_CONTEXT_LEN + MAX_RECORD_PLAINTEXT + 16);
+        assert_eq!(b.open(&r).unwrap(), full);
+        assert!(a.seal(&vec![7u8; MAX_RECORD_PLAINTEXT + 1]).is_err());
+        // Unreliable: the datagram ceiling applies before sealing, and a
+        // max-size datagram must still survive open_unreliable's own bound.
+        let d = a
+            .seal_unreliable(&vec![9u8; MAX_UNRELIABLE_DATAGRAM])
+            .unwrap();
+        assert_eq!(
+            b.open_unreliable(&d).unwrap(),
+            vec![9u8; MAX_UNRELIABLE_DATAGRAM]
+        );
+        assert!(
+            a.seal_unreliable(&vec![9u8; MAX_UNRELIABLE_DATAGRAM + 1])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn an_empty_payload_round_trips() {
+        // With a zero-length payload the authenticated body is exactly the
+        // record context, so the context-length check is at its boundary and
+        // must accept equality rather than refuse it.
+        let (mut a, mut b) = pair();
+        let r = a.seal(b"").unwrap();
+        assert_eq!(r.len(), 8 + RECORD_CONTEXT_LEN + 16);
+        assert_eq!(b.open(&r).unwrap(), b"");
+    }
+
+    #[test]
+    fn the_record_sequence_is_big_endian_and_advances_across_records() {
+        // A single record cannot show the sequence encoding (record 0 is all
+        // zero bytes under either byte order), so take the second record.
+        let (mut a, mut b) = pair();
+        let r0 = a.seal(b"first").unwrap();
+        let r1 = a.seal(b"second").unwrap();
+        assert_eq!(&r0[..8], &0u64.to_be_bytes());
+        assert_eq!(&r1[..8], &1u64.to_be_bytes());
+        // Both open in order; the second would be a replay if its sequence
+        // byte order or presence were wrong.
+        assert_eq!(b.open(&r0).unwrap(), b"first");
+        assert_eq!(b.open(&r1).unwrap(), b"second");
+    }
+
+    #[test]
+    fn the_session_replay_window_spans_the_full_configured_width() {
+        // Four records sealed, delivered out of order: the newest first, then
+        // one that is three sequence numbers behind. A full-width window must
+        // still hold that bit; a one-wide window would classify it as too old.
+        let (mut a, mut b) = pair();
+        let records: Vec<Vec<u8>> = (0..4).map(|_| a.seal(b"x").unwrap()).collect();
+        assert_eq!(b.open(&records[3]).unwrap(), b"x");
+        assert_eq!(b.open(&records[0]).unwrap(), b"x");
+        // Repeating one is still a replay, and repeating the newest is too.
+        assert!(b.open(&records[0]).is_err());
+        assert!(b.open(&records[3]).is_err());
+    }
+
+    #[test]
     fn prologue_mismatch_and_oversize_fail_uniformly() {
         let initiator = LocalIdentity::generate().unwrap();
         let responder = LocalIdentity::generate().unwrap();
@@ -2459,6 +2524,74 @@ mod resume_tests {
         assert_eq!(guard.attach(b"peer", &wrong, 99), Err(SessionRejected));
         assert_eq!(guard.attach(b"other", &claim(6), 99), Err(SessionRejected));
         assert_eq!(guard.attach(b"peer", &claim(6), 101), Err(SessionRejected));
+    }
+
+    #[test]
+    fn resume_binding_decode_accepts_only_the_exact_encoded_length() {
+        let good = claim(4);
+        let encoded = good.encode();
+        assert_eq!(encoded.len(), 65);
+        assert_eq!(ResumeBinding::decode(&encoded).unwrap(), good);
+        // Shorter and longer inputs are both refused rather than silently
+        // decoded from a prefix.
+        assert!(ResumeBinding::decode(&encoded[..64]).is_err());
+        let mut longer = encoded.to_vec();
+        longer.push(0);
+        assert!(ResumeBinding::decode(&longer).is_err());
+    }
+
+    #[test]
+    fn resume_guard_rejects_a_binding_that_cannot_advance() {
+        // An empty peer identity, a saturated path generation (whose successor
+        // is unrepresentable) and an over-long negotiation binding are all
+        // refused at construction.
+        assert!(ResumeGuard::new(b"", &claim(4)).is_err());
+        let mut saturated = claim(4);
+        saturated.path_generation = u64::MAX;
+        assert!(ResumeGuard::new(b"peer", &saturated).is_err());
+        // The negotiation binding bound is inclusive at 256.
+        assert!(ResumeGuard::new_with_negotiation(b"peer", &claim(4), &vec![0u8; 256]).is_ok());
+        assert!(ResumeGuard::new_with_negotiation(b"peer", &claim(4), &vec![0u8; 257]).is_err());
+    }
+
+    #[test]
+    fn resume_guard_checks_every_claim_field() {
+        let mut guard = ResumeGuard::new(b"peer", &claim(4)).unwrap();
+        let ok = claim(5);
+        assert_eq!(guard.attach(b"peer", &ok, 99), Ok(()));
+        // The guard advances by exactly one generation, so the next claim is 6.
+        assert_eq!(guard.attach(b"peer", &claim(6), 99), Ok(()));
+        // Each field is compared, one at a time, against a fresh guard.
+        let mut wrong_session = claim(5);
+        wrong_session.session_id = 8;
+        let mut wrong_epoch = claim(5);
+        wrong_epoch.delivery_epoch = 4;
+        let mut wrong_phase = claim(5);
+        wrong_phase.key_phase = 0;
+        let mut wrong_token = claim(5);
+        wrong_token.token = [1; 32];
+        for wrong in [wrong_session, wrong_epoch, wrong_phase, wrong_token] {
+            let mut g = ResumeGuard::new(b"peer", &claim(4)).unwrap();
+            assert_eq!(
+                g.attach(b"peer", &wrong, 99),
+                Err(SessionRejected),
+                "{wrong:?}"
+            );
+            // The rejected claim must not have advanced the guard.
+            assert_eq!(g.attach(b"peer", &claim(5), 99), Ok(()));
+        }
+        // A generation that skips ahead is refused.
+        let mut g = ResumeGuard::new(b"peer", &claim(4)).unwrap();
+        assert_eq!(g.attach(b"peer", &claim(6), 99), Err(SessionRejected));
+    }
+
+    #[test]
+    fn resume_guard_expiry_includes_the_deadline_instant() {
+        // claim() expires at 100 ms; the deadline instant itself is still valid.
+        let mut guard = ResumeGuard::new(b"peer", &claim(4)).unwrap();
+        assert_eq!(guard.attach(b"peer", &claim(5), 100), Ok(()));
+        let mut guard = ResumeGuard::new(b"peer", &claim(4)).unwrap();
+        assert_eq!(guard.attach(b"peer", &claim(5), 101), Err(SessionRejected));
     }
 
     #[test]
