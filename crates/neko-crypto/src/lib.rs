@@ -2515,3 +2515,338 @@ mod resume_tests {
         );
     }
 }
+
+/// Boundary pins for the pure-logic crypto/session primitives: nonce and
+/// replay windows, trust authorization, record context binding, prologue
+/// bounds and the pre-auth byte/packet budgets. These are security-relevant
+/// fail-closed edges, so each one is asserted exactly rather than sampled.
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+
+    fn rc(
+        epoch: u64,
+        key_phase: u8,
+        path_generation: u64,
+        stream_id: u64,
+        direction: u8,
+    ) -> RecordContext {
+        RecordContext {
+            delivery_epoch: epoch,
+            key_phase,
+            path_generation,
+            stream_id,
+            direction,
+        }
+    }
+    fn identities() -> (LocalIdentity, LocalIdentity, TrustPolicy) {
+        let initiator = LocalIdentity::generate().unwrap();
+        let responder = LocalIdentity::generate().unwrap();
+        let policy = TrustPolicy::new(vec![TrustRecord {
+            version: 1,
+            public_key: initiator.public_key().to_vec(),
+            scope: b"echo".to_vec(),
+            status: TrustStatus::Active,
+        }]);
+        (initiator, responder, policy)
+    }
+    /// A handshake pair whose two sides commit to the given contexts.
+    fn session_pair(
+        initiator_ctx: RecordContext,
+        responder_ctx: RecordContext,
+    ) -> (SecureSession, SecureSession) {
+        let (initiator, responder, policy) = identities();
+        let mut init =
+            InitiatorHandshake::new(&initiator, responder.public_key(), b"echo", b"dom").unwrap();
+        let first = init.first_message().unwrap();
+        let resp = ResponderHandshake::new(&responder, policy, b"dom").unwrap();
+        let (response, rs) = resp.receive_first(&first, responder_ctx).unwrap();
+        let is = init.finish(&response, initiator_ctx).unwrap();
+        (is, rs)
+    }
+    fn limits(
+        input_bytes: usize,
+        input_packets: u8,
+        response_bytes: usize,
+        response_packets: u8,
+    ) -> PreauthLimits {
+        PreauthLimits {
+            max_input_bytes: input_bytes,
+            max_input_packets: input_packets,
+            max_response_bytes: response_bytes,
+            max_response_packets: response_packets,
+        }
+    }
+
+    #[test]
+    fn nonce_manager_accessors_and_terminal_exhaustion_are_exact() {
+        let mut n = NonceManager::new(5);
+        assert_eq!(n.next_value(), 5);
+        assert!(!n.is_exhausted());
+        assert_eq!(n.next_nonce(), Ok(5));
+        assert_eq!(n.next_value(), 6);
+        assert!(!n.is_exhausted());
+
+        // Exhaustion is terminal: the last value is emitted, then every
+        // further request fails without reusing or wrapping the counter.
+        let mut last = NonceManager::new(u64::MAX);
+        assert_eq!(last.next_nonce(), Ok(u64::MAX));
+        assert!(last.is_exhausted());
+        assert_eq!(last.next_nonce(), Err(CryptoError::NonceExhausted));
+        assert_eq!(last.next_value(), u64::MAX);
+    }
+
+    #[test]
+    fn replay_window_shift_edges_and_accessors_are_exact() {
+        assert!(ReplayWindow::new(0).is_err());
+        assert!(ReplayWindow::new(MAX_REPLAY_WINDOW + 1).is_err());
+        assert!(ReplayWindow::new(MAX_REPLAY_WINDOW).is_ok());
+        assert_eq!(ReplayWindow::new(4).unwrap().highest(), None);
+
+        // A shift of exactly the full width starts a fresh window: only the
+        // newest sequence is marked seen, so a repeat is a replay, not a
+        // silently accepted duplicate.
+        let mut w = ReplayWindow::new(4).unwrap();
+        assert_eq!(w.accept(10), Ok(()));
+        assert_eq!(w.accept(14), Ok(()));
+        assert_eq!(w.accept(14), Err(CryptoError::Replay));
+
+        // A partial shift keeps the previous marks and sets the newest bit.
+        let mut p = ReplayWindow::new(4).unwrap();
+        assert_eq!(p.accept(10), Ok(()));
+        assert_eq!(p.accept(11), Ok(()));
+        assert_eq!(p.accept(11), Err(CryptoError::Replay));
+        assert_eq!(p.highest(), Some(11));
+
+        // The maximum width is usable, including a shift of exactly 64.
+        let mut full = ReplayWindow::new(MAX_REPLAY_WINDOW).unwrap();
+        assert_eq!(full.accept(0), Ok(()));
+        assert_eq!(full.accept(MAX_REPLAY_WINDOW), Ok(()));
+        assert_eq!(full.accept(MAX_REPLAY_WINDOW), Err(CryptoError::Replay));
+        assert_eq!(full.highest(), Some(MAX_REPLAY_WINDOW));
+    }
+
+    #[test]
+    fn trust_policy_requires_version_one_active_status_exact_key_and_scope() {
+        let (initiator, _, _) = identities();
+        let key = initiator.public_key().to_vec();
+        let record =
+            |version: u16, status: TrustStatus, public_key: Vec<u8>, scope: &[u8]| TrustRecord {
+                version,
+                public_key,
+                scope: scope.to_vec(),
+                status,
+            };
+
+        // An empty policy authorizes nothing.
+        assert!(TrustPolicy::new(vec![]).authorize(&key, b"echo").is_err());
+        // Only version 1 is accepted.
+        for version in [0u16, 2] {
+            assert!(
+                TrustPolicy::new(vec![record(
+                    version,
+                    TrustStatus::Active,
+                    key.clone(),
+                    b"echo"
+                )])
+                .authorize(&key, b"echo")
+                .is_err(),
+                "version {version} must not authorize"
+            );
+        }
+        // A matching key and scope is not enough while the record is revoked.
+        assert!(
+            TrustPolicy::new(vec![record(1, TrustStatus::Revoked, key.clone(), b"echo")])
+                .authorize(&key, b"echo")
+                .is_err()
+        );
+        // A different identity of the same length is not a match.
+        let other = LocalIdentity::generate().unwrap().public_key().to_vec();
+        assert_eq!(other.len(), key.len());
+        assert!(
+            TrustPolicy::new(vec![record(1, TrustStatus::Active, other.clone(), b"echo")])
+                .authorize(&key, b"echo")
+                .is_err()
+        );
+        // One exact match anywhere in the policy is sufficient.
+        assert!(
+            TrustPolicy::new(vec![
+                record(1, TrustStatus::Active, other, b"echo"),
+                record(1, TrustStatus::Active, key.clone(), b"echo"),
+            ])
+            .authorize(&key, b"echo")
+            .is_ok()
+        );
+        assert!(
+            TrustPolicy::new(vec![record(1, TrustStatus::Active, key.clone(), b"nope")])
+                .authorize(&key, b"echo")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn every_record_context_field_is_bound_into_the_record() {
+        let base = || rc(7, 0, 3, 11, 0);
+        let variants = [
+            ("delivery_epoch", rc(8, 0, 3, 11, 0)),
+            ("key_phase", rc(7, 1, 3, 11, 0)),
+            ("path_generation", rc(7, 0, 4, 11, 0)),
+            ("stream_id", rc(7, 0, 3, 12, 0)),
+            ("direction", rc(7, 0, 3, 11, 1)),
+        ];
+        for (field, other) in variants {
+            let (mut sender, mut receiver) = session_pair(base(), other);
+            let record = sender.seal(b"bound").unwrap();
+            assert_eq!(
+                receiver.open(&record),
+                Err(SessionRejected),
+                "a {field} mismatch must be rejected"
+            );
+        }
+        // The identical context still round-trips.
+        let (mut sender, mut receiver) = session_pair(base(), base());
+        let record = sender.seal(b"same").unwrap();
+        assert_eq!(receiver.open(&record).unwrap(), b"same");
+    }
+
+    #[test]
+    fn prologue_domain_and_binding_bounds_are_exact() {
+        let (initiator, responder, _) = identities();
+
+        // The application domain is required and bounded at 128 bytes.
+        assert!(
+            InitiatorHandshake::new(&initiator, responder.public_key(), b"echo", b"")
+                .map(|_| ())
+                .is_err()
+        );
+        let domain_at_limit = vec![b'z'; 128];
+        let domain_over_limit = vec![b'z'; 129];
+        assert!(
+            InitiatorHandshake::new_with_prologue_binding(
+                &initiator,
+                responder.public_key(),
+                b"echo",
+                &domain_at_limit,
+                b"x",
+            )
+            .is_ok()
+        );
+        assert!(
+            InitiatorHandshake::new_with_prologue_binding(
+                &initiator,
+                responder.public_key(),
+                b"echo",
+                &domain_over_limit,
+                b"x",
+            )
+            .is_err()
+        );
+
+        // The transcript binding is bounded at 256 bytes.
+        let binding_at_limit = vec![b'b'; 256];
+        let binding_over_limit = vec![b'b'; 257];
+        assert!(
+            InitiatorHandshake::new_with_prologue_binding(
+                &initiator,
+                responder.public_key(),
+                b"echo",
+                b"dom",
+                &binding_at_limit,
+            )
+            .is_ok()
+        );
+        assert!(
+            InitiatorHandshake::new_with_prologue_binding(
+                &initiator,
+                responder.public_key(),
+                b"echo",
+                b"dom",
+                &binding_over_limit,
+            )
+            .is_err()
+        );
+
+        // An empty binding must fall back to the plain prologue so that a
+        // plain initiator interoperates with a binding-aware responder.
+        let (initiator, responder, policy) = identities();
+        let mut plain =
+            InitiatorHandshake::new(&initiator, responder.public_key(), b"echo", b"dom").unwrap();
+        let first = plain.first_message().unwrap();
+        let aware =
+            ResponderHandshake::new_with_prologue_binding(&responder, policy, b"dom", b"").unwrap();
+        assert!(aware.receive_first(&first, rc(7, 0, 3, 11, 0)).is_ok());
+    }
+
+    #[test]
+    fn preauth_input_and_response_budget_edges_are_exact() {
+        // Zero is refused in every limit.
+        for bad in [
+            limits(0, 4, 2048, 4),
+            limits(8192, 0, 2048, 4),
+            limits(8192, 4, 0, 4),
+            limits(8192, 4, 2048, 0),
+        ] {
+            assert_eq!(PreauthBudget::new(bad).map(|_| ()), Err(SessionRejected));
+        }
+
+        // The input packet allowance is enforced independently of bytes.
+        let mut packets = PreauthBudget::new(limits(8192, 4, 2048, 4)).unwrap();
+        for _ in 0..4 {
+            packets.begin_input_record(1).unwrap();
+        }
+        assert_eq!(
+            packets.begin_input_record(1).map(|_| ()),
+            Err(SessionRejected)
+        );
+
+        // Response bytes are capped by max_response_bytes even when the
+        // amplification allowance (three times the charged input) would be
+        // larger, and several input packets keep the packet allowance from
+        // masking that byte cap.
+        let mut amp = PreauthBudget::new(limits(8192, 8, 2048, 8)).unwrap();
+        for _ in 0..4 {
+            amp.charge_input(700).unwrap();
+        }
+        assert_eq!(amp.charge_response(2048), Ok(()));
+        assert_eq!(amp.charge_response(1), Err(SessionRejected));
+
+        // The response packet allowance is the smaller of the charged input
+        // packets and max_response_packets.
+        let mut allowance = PreauthBudget::new(limits(8192, 8, 100_000, 2)).unwrap();
+        for _ in 0..3 {
+            allowance.charge_input(10).unwrap();
+        }
+        assert_eq!(allowance.charge_response(1), Ok(()));
+        assert_eq!(allowance.charge_response(1), Ok(()));
+        assert_eq!(allowance.charge_response(1), Err(SessionRejected));
+
+        // An unbacked rollback fails closed rather than saturating: a charged
+        // packet is present, but the byte amount is not.
+        let mut rollback = PreauthBudget::new(limits(8192, 4, 2048, 4)).unwrap();
+        rollback.begin_input_record(1).unwrap();
+        rollback.charge_response(1).unwrap();
+        assert_eq!(rollback.rollback_input(5), Err(SessionRejected));
+        assert_eq!(rollback.rollback_response(5), Err(SessionRejected));
+
+        // A completed permit is closed: neither extend nor complete again.
+        let mut record = PreauthBudget::new(limits(8192, 4, 2048, 4)).unwrap();
+        let mut permit = record.begin_input_record(1).unwrap();
+        assert_eq!(record.complete_input_record(&mut permit), Ok(()));
+        assert_eq!(
+            record.extend_input_record(&mut permit, 1),
+            Err(SessionRejected)
+        );
+        assert_eq!(
+            record.complete_input_record(&mut permit),
+            Err(SessionRejected)
+        );
+        // Abandoning is likewise one-shot.
+        let mut abandon = PreauthBudget::new(limits(8192, 4, 2048, 4)).unwrap();
+        let mut permit = abandon.begin_input_record(1).unwrap();
+        assert_eq!(abandon.abandon_input_record(&mut permit), Ok(()));
+        assert_eq!(
+            abandon.abandon_input_record(&mut permit),
+            Err(SessionRejected)
+        );
+    }
+}
