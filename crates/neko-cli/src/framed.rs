@@ -245,6 +245,12 @@ mod tests {
         }
     }
 
+    /// A clock pinned to `base` for every poll, so multi-step reads are not
+    /// cut off by an exhausted tick list.
+    fn pinned(base: Instant) -> impl FnMut() -> Instant {
+        move || base
+    }
+
     fn times(base: Instant, millis: &[u64]) -> impl FnMut() -> Instant {
         let mut values: VecDeque<_> = millis
             .iter()
@@ -508,6 +514,349 @@ mod tests {
                 )
                 .unwrap(),
             FrameRead::Truncated
+        );
+    }
+
+    #[test]
+    fn staged_reader_deadline_and_eof_outcomes_match_the_non_staged_reader() {
+        let base = Instant::now();
+        let deadline = base + Duration::from_millis(10);
+        // No partial frame buffered: the deadline is a Deadline, not a truncation.
+        let mut input = ScriptedRead(VecDeque::from([Step::Timeout]));
+        let mut framed = FramedReader::new(8);
+        assert_eq!(
+            framed
+                .read_until_staged_with_clock(
+                    &mut input,
+                    deadline,
+                    &mut |_| Ok(()),
+                    times(base, &[0, 10]),
+                )
+                .unwrap(),
+            FrameRead::Deadline
+        );
+        // A half-read header at the deadline is Truncated, not Deadline.
+        let mut input = ScriptedRead(VecDeque::from([Step::Bytes(vec![0, 0]), Step::Timeout]));
+        let mut framed = FramedReader::new(8);
+        assert_eq!(
+            framed
+                .read_until_staged_with_clock(
+                    &mut input,
+                    deadline,
+                    &mut |_| Ok(()),
+                    times(base, &[0, 1, 10]),
+                )
+                .unwrap(),
+            FrameRead::Truncated
+        );
+        // A declared body with no bytes yet is likewise Truncated.
+        let mut input = ScriptedRead(VecDeque::from([
+            Step::Bytes(3u32.to_be_bytes().to_vec()),
+            Step::Timeout,
+        ]));
+        let mut framed = FramedReader::new(8);
+        assert_eq!(
+            framed
+                .read_until_staged_with_clock(
+                    &mut input,
+                    deadline,
+                    &mut |_| Ok(()),
+                    times(base, &[0, 1, 10]),
+                )
+                .unwrap(),
+            FrameRead::Truncated
+        );
+        // A clean EOF with nothing buffered is CleanEof, not a deadline expiry.
+        let mut input = ScriptedRead(VecDeque::from([Step::Eof]));
+        let mut framed = FramedReader::new(8);
+        assert_eq!(
+            framed
+                .read_until_staged_with_clock(&mut input, deadline, &mut |_| Ok(()), pinned(base),)
+                .unwrap(),
+            FrameRead::CleanEof
+        );
+    }
+
+    #[test]
+    fn staged_reader_tolerates_poll_timeouts_while_completing_a_frame() {
+        let base = Instant::now();
+        let mut input = ScriptedRead(VecDeque::from([
+            Step::Bytes(vec![0]),
+            Step::Timeout,
+            Step::Bytes(vec![0, 0, 2]),
+            Step::Timeout,
+            Step::Bytes(b"ab".to_vec()),
+        ]));
+        let mut framed = FramedReader::new(8);
+        let mut stages = Vec::new();
+        assert_eq!(
+            framed
+                .read_until_staged_with_clock(
+                    &mut input,
+                    base + Duration::from_secs(1),
+                    &mut |stage| {
+                        stages.push(stage);
+                        Ok(())
+                    },
+                    times(base, &[0, 1, 2, 3, 4]),
+                )
+                .unwrap(),
+            FrameRead::Complete(b"ab".to_vec())
+        );
+        assert_eq!(
+            stages,
+            vec![
+                FrameStage::Header { bytes: 4, work: 64 },
+                FrameStage::Body {
+                    bytes: 2,
+                    work: 4096
+                },
+                FrameStage::Complete,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_frame_of_exactly_the_maximum_length_is_accepted_on_both_readers() {
+        let base = Instant::now();
+        let payload = b"abcd";
+        for staged in [false, true] {
+            let mut wire = (payload.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(payload);
+            let mut input = ScriptedRead(VecDeque::from([Step::Bytes(wire)]));
+            let mut framed = FramedReader::new(4);
+            let got = if staged {
+                framed
+                    .read_until_staged_with_clock(
+                        &mut input,
+                        base + Duration::from_secs(1),
+                        &mut |_| Ok(()),
+                        pinned(base),
+                    )
+                    .unwrap()
+            } else {
+                framed
+                    .read_until_with_clock(&mut input, base + Duration::from_secs(1), pinned(base))
+                    .unwrap()
+            };
+            assert_eq!(got, FrameRead::Complete(payload.to_vec()));
+            // One byte more than the maximum is refused before allocating.
+            let mut input =
+                ScriptedRead(VecDeque::from([Step::Bytes(5u32.to_be_bytes().to_vec())]));
+            let mut framed = FramedReader::new(4);
+            let err = if staged {
+                framed
+                    .read_until_staged_with_clock(
+                        &mut input,
+                        base + Duration::from_secs(1),
+                        &mut |_| Ok(()),
+                        pinned(base),
+                    )
+                    .unwrap_err()
+            } else {
+                framed
+                    .read_until_with_clock(&mut input, base + Duration::from_secs(1), pinned(base))
+                    .unwrap_err()
+            };
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        }
+    }
+
+    #[test]
+    fn a_reader_reused_for_a_second_frame_starts_clean() {
+        let base = Instant::now();
+        // Two frames back to back on the SAME reader: the first frame must not
+        // leave any buffered state behind, or the second read would see a
+        // stale header counter and truncate.
+        let mut input = ScriptedRead(VecDeque::from([
+            Step::Bytes(2u32.to_be_bytes().to_vec()),
+            Step::Bytes(b"ab".to_vec()),
+            Step::Bytes(0u32.to_be_bytes().to_vec()),
+            Step::Bytes(1u32.to_be_bytes().to_vec()),
+            Step::Bytes(b"z".to_vec()),
+        ]));
+        let mut framed = FramedReader::new(8);
+        for expected in [b"ab".to_vec(), Vec::new(), b"z".to_vec()] {
+            assert_eq!(
+                framed
+                    .read_until_with_clock(&mut input, base + Duration::from_secs(1), pinned(base),)
+                    .unwrap(),
+                FrameRead::Complete(expected)
+            );
+        }
+        // The staged reader must reuse just as cleanly.
+        let mut input = ScriptedRead(VecDeque::from([
+            Step::Bytes(1u32.to_be_bytes().to_vec()),
+            Step::Bytes(b"q".to_vec()),
+            Step::Bytes(1u32.to_be_bytes().to_vec()),
+            Step::Bytes(b"r".to_vec()),
+        ]));
+        let mut framed = FramedReader::new(8);
+        for expected in [b"q".to_vec(), b"r".to_vec()] {
+            assert_eq!(
+                framed
+                    .read_until_staged_with_clock(
+                        &mut input,
+                        base + Duration::from_secs(1),
+                        &mut |_| Ok(()),
+                        pinned(base),
+                    )
+                    .unwrap(),
+                FrameRead::Complete(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn set_max_frame_len_applies_later_and_refuses_a_partial_frame() {
+        let base = Instant::now();
+        // A 6-byte frame is refused by the construction limit of 4...
+        let mut framed = FramedReader::new(4);
+        let mut input = ScriptedRead(VecDeque::from([
+            Step::Bytes(6u32.to_be_bytes().to_vec()),
+            Step::Bytes(b"abcdef".to_vec()),
+        ]));
+        assert_eq!(
+            framed
+                .read_until_with_clock(&mut input, base + Duration::from_secs(1), pinned(base))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        // ...and accepted once the limit is raised.
+        let mut framed = FramedReader::new(4);
+        framed.set_max_frame_len(6).unwrap();
+        let mut input = ScriptedRead(VecDeque::from([
+            Step::Bytes(6u32.to_be_bytes().to_vec()),
+            Step::Bytes(b"abcdef".to_vec()),
+        ]));
+        assert_eq!(
+            framed
+                .read_until_with_clock(&mut input, base + Duration::from_secs(1), pinned(base))
+                .unwrap(),
+            FrameRead::Complete(b"abcdef".to_vec())
+        );
+        // A truncated read leaves a partial frame buffered: the limit must not
+        // be changeable, and the refusal must leave the old limit in force.
+        let mut framed = FramedReader::new(4);
+        let mut input = ScriptedRead(VecDeque::from([Step::Bytes(vec![0, 0])]));
+        assert_eq!(
+            framed
+                .read_until_with_clock(
+                    &mut input,
+                    base + Duration::from_millis(5),
+                    times(base, &[0, 5]),
+                )
+                .unwrap(),
+            FrameRead::Truncated
+        );
+        assert_eq!(
+            framed.set_max_frame_len(64).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        // Still limited by the original 4: completing the buffered header with
+        // a declared length of 9 is refused.
+        let mut input = ScriptedRead(VecDeque::from([Step::Bytes(vec![9, 0])]));
+        assert_eq!(
+            framed
+                .read_until_with_clock(
+                    &mut input,
+                    base + Duration::from_millis(5),
+                    times(base, &[0, 5]),
+                )
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn a_zero_length_frame_is_complete_on_both_readers() {
+        let base = Instant::now();
+        let mut input = ScriptedRead(VecDeque::from([Step::Bytes(0u32.to_be_bytes().to_vec())]));
+        let mut framed = FramedReader::new(8);
+        assert_eq!(
+            framed
+                .read_until_with_clock(&mut input, base + Duration::from_secs(1), pinned(base))
+                .unwrap(),
+            FrameRead::Complete(Vec::new())
+        );
+    }
+
+    #[test]
+    fn a_reader_that_finished_a_frame_is_not_partial() {
+        let base = Instant::now();
+        // After a completed frame the reader holds no buffered state, so an
+        // already-expired deadline is a Deadline - not a truncation of the
+        // frame that was just returned.
+        let mut framed = FramedReader::new(8);
+        let mut input = ScriptedRead(VecDeque::from([
+            Step::Bytes(2u32.to_be_bytes().to_vec()),
+            Step::Bytes(b"ab".to_vec()),
+        ]));
+        assert_eq!(
+            framed
+                .read_until_with_clock(&mut input, base + Duration::from_secs(1), pinned(base))
+                .unwrap(),
+            FrameRead::Complete(b"ab".to_vec())
+        );
+        assert_eq!(
+            framed
+                .read_until_with_clock(
+                    &mut input,
+                    base + Duration::from_millis(10),
+                    times(base, &[10]),
+                )
+                .unwrap(),
+            FrameRead::Deadline
+        );
+
+        let mut framed = FramedReader::new(8);
+        let mut input = ScriptedRead(VecDeque::from([
+            Step::Bytes(2u32.to_be_bytes().to_vec()),
+            Step::Bytes(b"ab".to_vec()),
+        ]));
+        assert_eq!(
+            framed
+                .read_until_staged_with_clock(
+                    &mut input,
+                    base + Duration::from_secs(1),
+                    &mut |_| Ok(()),
+                    pinned(base),
+                )
+                .unwrap(),
+            FrameRead::Complete(b"ab".to_vec())
+        );
+        assert_eq!(
+            framed
+                .read_until_staged_with_clock(
+                    &mut input,
+                    base + Duration::from_millis(10),
+                    &mut |_| Ok(()),
+                    times(base, &[10]),
+                )
+                .unwrap(),
+            FrameRead::Deadline
+        );
+
+        // A zero-length frame must likewise leave no residue behind.
+        let mut framed = FramedReader::new(8);
+        let mut input = ScriptedRead(VecDeque::from([Step::Bytes(0u32.to_be_bytes().to_vec())]));
+        assert_eq!(
+            framed
+                .read_until_with_clock(&mut input, base + Duration::from_secs(1), pinned(base))
+                .unwrap(),
+            FrameRead::Complete(Vec::new())
+        );
+        assert_eq!(
+            framed
+                .read_until_with_clock(
+                    &mut input,
+                    base + Duration::from_millis(10),
+                    times(base, &[10]),
+                )
+                .unwrap(),
+            FrameRead::Deadline
         );
     }
 }
