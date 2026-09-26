@@ -1928,6 +1928,149 @@ mod preauth_tests {
     }
 
     #[test]
+    fn preauth_limits_consistency_laws_and_zero_guards_are_exact() {
+        let base = process_limits();
+        // The base is itself valid, and it contains two equalities (queue
+        // per-source == global, idle timeout == max lifetime), so the laws are
+        // inclusive bounds rather than strict ones.
+        assert!(ProcessPreauthAdmission::new(base, 0).is_ok());
+        assert_eq!(base.max_queue_per_source, base.max_queue_global);
+        assert_eq!(base.idle_timeout_ms, base.max_lifetime_ms);
+
+        // Each per-source/global pairing is a law that must hold.
+        let laws: [fn(&mut ProcessPreauthLimits); 5] = [
+            |l| l.max_states_per_source = l.max_states_global + 1,
+            |l| l.max_memory_per_state = l.max_memory_global + 1,
+            |l| l.max_queue_per_source = l.max_queue_global + 1,
+            |l| l.idle_timeout_ms = l.max_lifetime_ms + 1,
+            |l| l.response_send_deadline_ms = l.max_lifetime_ms + 1,
+        ];
+        for mutate in laws {
+            let mut l = base;
+            mutate(&mut l);
+            assert_eq!(
+                ProcessPreauthAdmission::new(l, 0).err(),
+                Some(SessionRejected)
+            );
+        }
+        // Zero is refused for the window and rate fields too - a zero window
+        // would mean "never roll" and a zero rate would mean "no work at all".
+        let guards: [fn(&mut ProcessPreauthLimits); 4] = [
+            |l| l.admission_window_ms = 0,
+            |l| l.max_work_per_packet = 0,
+            |l| l.max_input_bytes_per_window = 0,
+            |l| l.max_response_packets_per_window = 0,
+        ];
+        for mutate in guards {
+            let mut l = base;
+            mutate(&mut l);
+            assert_eq!(
+                ProcessPreauthAdmission::new(l, 0).err(),
+                Some(SessionRejected)
+            );
+        }
+    }
+
+    #[test]
+    fn admit_state_bounds_are_exact() {
+        let mut a = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        // A state must reserve something: zero memory is refused.
+        assert_eq!(a.admit_state(b"s", 0, 0).err(), Some(SessionRejected));
+        // An empty source identity is refused.
+        assert_eq!(a.admit_state(b"", 1, 0).err(), Some(SessionRejected));
+        // 256 bytes of source identity is legal; 257 is not.
+        assert!(a.admit_state(&[7u8; 256], 1, 0).is_ok());
+        assert_eq!(
+            a.admit_state(&[8u8; 257], 1, 0).err(),
+            Some(SessionRejected)
+        );
+        // The per-state memory ceiling is inclusive.
+        let mut b = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        assert!(b.admit_state(b"s", 4, 0).is_ok());
+        assert_eq!(b.admit_state(b"t", 5, 0).err(), Some(SessionRejected));
+    }
+
+    #[test]
+    fn the_first_admitted_state_id_is_zero() {
+        let mut a = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        assert_eq!(a.admit_state(b"s", 1, 0).unwrap(), PreauthStateId(0));
+        assert_eq!(a.admit_state(b"t", 1, 0).unwrap(), PreauthStateId(1));
+    }
+
+    #[test]
+    fn releasing_a_state_returns_its_per_source_slot() {
+        let mut a = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = a.admit_state(b"same", 1, 0).unwrap();
+        assert_eq!(a.admit_state(b"same", 1, 0).err(), Some(SessionRejected));
+        a.release(id).unwrap();
+        assert_eq!((a.live_states(), a.memory_bytes()), (0, 0));
+        // The per-source count really went back down, so the same source can be
+        // admitted again.
+        assert!(a.admit_state(b"same", 1, 0).is_ok());
+    }
+
+    #[test]
+    fn window_rollover_releases_the_charged_response_budget() {
+        let mut l = process_limits();
+        l.admission_window_ms = 10;
+        let mut a = ProcessPreauthAdmission::new(l, 0).unwrap();
+        let id = a.admit_state(b"s", 1, 0).unwrap();
+        a.charge_input(id, 1, 1, 0).unwrap();
+        let _ = a.charge_response(id, 1, 0).unwrap();
+        assert_eq!(a.response_accounting(), (1, 1));
+        // A call at exactly the window width starts a fresh window, and the
+        // charged response budget is released with it.
+        let _ = a.admit_state(b"t", 1, 10).unwrap();
+        assert_eq!(a.response_accounting(), (0, 0));
+    }
+
+    #[test]
+    fn the_admission_window_starts_at_the_construction_time() {
+        let mut l = process_limits();
+        l.admission_window_ms = 10;
+        l.max_input_bytes_per_source = 1;
+        l.max_input_bytes_per_window = 2;
+        let mut a = ProcessPreauthAdmission::new(l, 5).unwrap();
+        // Two rounds from the same source, released in between so the
+        // per-source counter clears each time; the shared window counter is
+        // what accumulates.
+        for _ in 0..2 {
+            let id = a.admit_state(b"s", 1, 5).unwrap();
+            a.charge_input(id, 1, 0, 5).unwrap();
+            a.release(id).unwrap();
+        }
+        // At t=10 only five milliseconds have elapsed since construction, so
+        // the window must not have rolled and the ceiling still holds.
+        let id = a.admit_state(b"s", 1, 10).unwrap();
+        assert_eq!(a.charge_input(id, 1, 0, 10).err(), Some(SessionRejected));
+    }
+
+    #[test]
+    fn live_refuses_the_lifetime_boundary() {
+        // Keep the idle clock fresh so only the lifetime limit can be due.
+        let mut a = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = a.admit_state(b"s", 1, 0).unwrap();
+        a.charge_input(id, 1, 1, 150).unwrap();
+        // now == created_at + max_lifetime is already expired (>=), while one
+        // millisecond earlier the state is still live.
+        assert_eq!(a.charge_input(id, 1, 1, 200).err(), Some(SessionRejected));
+        let mut b = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = b.admit_state(b"s", 1, 0).unwrap();
+        b.charge_input(id, 1, 1, 150).unwrap();
+        assert!(b.charge_input(id, 1, 1, 199).is_ok());
+    }
+
+    #[test]
+    fn a_clock_reading_before_the_progress_mark_is_refused() {
+        let mut a = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = a.admit_state(b"s", 1, 0).unwrap();
+        a.charge_input(id, 1, 1, 5).unwrap();
+        // A reading before the last progress must be refused rather than
+        // treated as a negative idle period.
+        assert_eq!(a.charge_input(id, 1, 1, 3).err(), Some(SessionRejected));
+    }
+
+    #[test]
     fn process_admission_limits_are_atomic_and_source_scoped() {
         let mut admission = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
         let a = admission.admit_state(b"source-a", 4, 0).unwrap();
