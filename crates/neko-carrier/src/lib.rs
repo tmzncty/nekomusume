@@ -6316,6 +6316,202 @@ mod health_evidence_tests {
     }
 
     #[test]
+    fn event_evidence_json_covers_every_state_and_cause() {
+        // The events branch of `json` (and its cause mapping, its own key names,
+        // and the progress arm with no cause) had never been asserted - the only
+        // existing json assertion has an empty events array. This drives all four
+        // state names, both failure causes and a progress event.
+        use HealthFailureCause as Cause;
+        use HealthObservation as Obs;
+        let mut e = CarrierHealthEvidence::new(
+            HealthLimits {
+                degrade_after: 2,
+                fail_after: 4,
+                recover_after: 2,
+                max_paths: 4,
+            },
+            HealthEvidenceLimits { max_samples: 16 },
+        )
+        .unwrap();
+        // A path whose very first evidence is a single failure is still Unknown:
+        // one bad observation is below degrade_after.
+        assert_eq!(
+            e.observe_event(PathId(8), Obs::Failure(Cause::MeasuredSample)),
+            Ok(HealthState::Unknown)
+        );
+        // A second path walks Healthy -> Degraded -> Failed.
+        assert_eq!(
+            e.observe_event(PathId(7), Obs::Progress),
+            Ok(HealthState::Healthy)
+        );
+        assert_eq!(
+            e.observe_event(
+                PathId(7),
+                Obs::Failure(Cause::AuthenticatedDeliveryAckTimeout)
+            ),
+            Ok(HealthState::Healthy)
+        );
+        assert_eq!(
+            e.observe_event(PathId(7), Obs::Failure(Cause::MeasuredSample)),
+            Ok(HealthState::Degraded)
+        );
+        assert_eq!(
+            e.observe_event(PathId(7), Obs::Failure(Cause::MeasuredSample)),
+            Ok(HealthState::Degraded)
+        );
+        assert_eq!(
+            e.observe_event(PathId(7), Obs::Failure(Cause::MeasuredSample)),
+            Ok(HealthState::Failed)
+        );
+        assert!(
+            e.samples().is_empty(),
+            "events must not fabricate metric samples"
+        );
+        // Transitions are recorded only where the state actually changed.
+        assert_eq!(
+            e.transitions(),
+            &[
+                HealthTransitionEvidence {
+                    path: PathId(7),
+                    from: HealthState::Healthy,
+                    to: HealthState::Degraded
+                },
+                HealthTransitionEvidence {
+                    path: PathId(7),
+                    from: HealthState::Degraded,
+                    to: HealthState::Failed
+                },
+            ]
+        );
+        assert_eq!(
+            e.json(),
+            concat!(
+                "{\"samples\":[],\"events\":[",
+                "{\"path\":8,\"event\":\"failure\",\"cause\":\"measured_sample\",\"state\":\"unknown\"},",
+                "{\"path\":7,\"event\":\"progress\",\"state\":\"healthy\"},",
+                "{\"path\":7,\"event\":\"failure\",\"cause\":\"authenticated_delivery_ack_timeout\",\"state\":\"healthy\"},",
+                "{\"path\":7,\"event\":\"failure\",\"cause\":\"measured_sample\",\"state\":\"degraded\"},",
+                "{\"path\":7,\"event\":\"failure\",\"cause\":\"measured_sample\",\"state\":\"degraded\"},",
+                "{\"path\":7,\"event\":\"failure\",\"cause\":\"measured_sample\",\"state\":\"failed\"}",
+                "],\"transitions\":[",
+                "{\"path\":7,\"from\":\"healthy\",\"to\":\"degraded\"},",
+                "{\"path\":7,\"from\":\"degraded\",\"to\":\"failed\"}",
+                "]}"
+            )
+        );
+    }
+
+    #[test]
+    fn event_ring_drops_the_oldest_at_the_sample_bound() {
+        // `observe_event` shares the sample bound for its own ring; nothing ever
+        // drove an event ring past its capacity, so the eviction was free.
+        let mut e = CarrierHealthEvidence::new(
+            HealthLimits::default(),
+            HealthEvidenceLimits { max_samples: 2 },
+        )
+        .unwrap();
+        for path in 1..=3u64 {
+            e.observe_event(PathId(path), HealthObservation::Progress)
+                .unwrap();
+        }
+        assert_eq!(e.events().len(), 2, "the ring is bounded by max_samples");
+        assert_eq!(
+            e.events().iter().map(|x| x.path).collect::<Vec<_>>(),
+            vec![PathId(2), PathId(3)],
+            "the oldest event is the one evicted"
+        );
+        // The same holds for the metric ring.
+        let mut s = CarrierHealthEvidence::new(
+            HealthLimits::default(),
+            HealthEvidenceLimits { max_samples: 2 },
+        )
+        .unwrap();
+        let sample = |rtt| HealthSample {
+            rtt_us: rtt,
+            loss_per_mille: 0,
+            pto: 0,
+        };
+        for rtt in [1u64, 2, 3] {
+            s.observe(PathId(1), sample(rtt)).unwrap();
+        }
+        assert_eq!(
+            s.samples()
+                .iter()
+                .map(|x| x.sample.rtt_us)
+                .collect::<Vec<_>>(),
+            vec![2, 3],
+            "the oldest sample is evicted"
+        );
+    }
+
+    #[test]
+    fn transition_ring_shares_the_sample_bound_for_both_entry_points() {
+        // Transitions are bounded by the SAME `max_samples` budget, from both
+        // `observe` and `observe_event`; neither eviction had a witness.
+        let tight = HealthLimits {
+            degrade_after: 1,
+            fail_after: 2,
+            recover_after: 1,
+            max_paths: 2,
+        };
+        // Event entry point: five observations producing four state changes.
+        let mut e =
+            CarrierHealthEvidence::new(tight, HealthEvidenceLimits { max_samples: 2 }).unwrap();
+        use HealthFailureCause as Cause;
+        for obs in [
+            HealthObservation::Progress,
+            HealthObservation::Failure(Cause::MeasuredSample),
+            HealthObservation::Failure(Cause::MeasuredSample),
+            HealthObservation::Progress,
+            HealthObservation::Progress,
+        ] {
+            e.observe_event(PathId(1), obs).unwrap();
+        }
+        assert_eq!(
+            e.transitions(),
+            &[
+                HealthTransitionEvidence {
+                    path: PathId(1),
+                    from: HealthState::Failed,
+                    to: HealthState::Degraded
+                },
+                HealthTransitionEvidence {
+                    path: PathId(1),
+                    from: HealthState::Degraded,
+                    to: HealthState::Healthy
+                },
+            ],
+            "only the newest transitions survive the shared bound"
+        );
+        // Metric entry point: the same eviction applies.
+        let mut s =
+            CarrierHealthEvidence::new(tight, HealthEvidenceLimits { max_samples: 2 }).unwrap();
+        let good = HealthSample {
+            rtt_us: 1,
+            loss_per_mille: 0,
+            pto: 0,
+        };
+        let bad = HealthSample {
+            rtt_us: 1,
+            loss_per_mille: 500,
+            pto: 0,
+        };
+        for sample in [good, bad, bad, good, good] {
+            s.observe(PathId(1), sample).unwrap();
+        }
+        assert_eq!(
+            s.transitions().len(),
+            2,
+            "the metric path shares the same transition bound"
+        );
+        assert_eq!(
+            s.transitions()[1].to,
+            HealthState::Healthy,
+            "the newest transition is retained"
+        );
+    }
+
+    #[test]
     fn evidence_rejects_zero_bound_without_mutation() {
         assert_eq!(
             CarrierHealthEvidence::new(
