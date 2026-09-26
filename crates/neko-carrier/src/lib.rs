@@ -8923,3 +8923,152 @@ mod concurrent_manager_tests {
         assert_eq!(m.state(third), Ok(ConcurrentPathState::Warm));
     }
 }
+
+#[cfg(test)]
+mod failover_controller_boundary_tests {
+    use super::*;
+
+    fn decision(from: ActiveCarrier, to: ActiveCarrier) -> CarrierSwitchDecision {
+        CarrierSwitchDecision {
+            from,
+            to,
+            failed_path: PathId(1),
+            active_path: PathId(2),
+            generation: PathGeneration(1),
+            reason: CarrierSwitchReason::UdpPathDegraded,
+        }
+    }
+
+    #[test]
+    fn failover_limits_and_uncertain_bounds_are_exact() {
+        // Zero is invalid for each limit.
+        assert_eq!(
+            FailoverController::new(0, 1, 8).map(|_| ()),
+            Err(FailoverError::InvalidLimit)
+        );
+        assert_eq!(
+            FailoverController::new(2, 0, 8).map(|_| ()),
+            Err(FailoverError::InvalidLimit)
+        );
+        assert_eq!(
+            FailoverController::new(2, 1, 0).map(|_| ()),
+            Err(FailoverError::InvalidLimit)
+        );
+
+        // The entry bound admits exactly max_uncertain_entries entries.
+        let mut entries = FailoverController::new(2, 2, 1024).unwrap();
+        assert_eq!(entries.track_uncertain(DataId(0), b"aa"), Ok(()));
+        assert_eq!(entries.track_uncertain(DataId(1), b"bb"), Ok(()));
+        assert_eq!(
+            entries.track_uncertain(DataId(2), b"cc"),
+            Err(FailoverError::Capacity)
+        );
+        // An exact repeat is idempotent, different bytes for the same id conflict.
+        assert_eq!(entries.track_uncertain(DataId(0), b"aa"), Ok(()));
+        assert_eq!(
+            entries.track_uncertain(DataId(0), b"zz"),
+            Err(FailoverError::Conflict)
+        );
+
+        // The byte bound is inclusive: exactly max_uncertain_bytes fits.
+        let mut bytes = FailoverController::new(2, 2, 4).unwrap();
+        assert_eq!(bytes.track_uncertain(DataId(0), b"aaaa"), Ok(()));
+        assert_eq!(
+            bytes.track_uncertain(DataId(1), b"bbbb"),
+            Err(FailoverError::Capacity)
+        );
+
+        // Confirming an entry releases exactly its bytes for reuse.
+        let mut reuse = FailoverController::new(2, 4, 8).unwrap();
+        reuse.track_uncertain(DataId(0), b"aaaa").unwrap();
+        reuse.track_uncertain(DataId(1), b"bbbb").unwrap();
+        reuse.confirm(DataId(0)).unwrap();
+        assert_eq!(reuse.track_uncertain(DataId(2), b"cccc"), Ok(()));
+        assert_eq!(
+            reuse.track_uncertain(DataId(3), b"dddd"),
+            Err(FailoverError::Capacity)
+        );
+        assert_eq!(reuse.confirm(DataId(9)), Err(FailoverError::NotFound));
+    }
+
+    #[test]
+    fn failover_pto_escalation_metrics_and_clock_are_exact() {
+        // The hard-failure threshold counts consecutive PTOs and reports one
+        // switch plus one recovery event with the elapsed latency.
+        let mut f = FailoverController::new(2, 1, 8).unwrap();
+        assert!(!f.udp_pto_at(10));
+        assert_eq!(f.active(), ActiveCarrier::Udp);
+        assert!(f.udp_pto_at(11));
+        assert_eq!(f.active(), ActiveCarrier::Tcp);
+        assert_eq!(f.metrics.switches, 1);
+        assert_eq!(f.metrics.recovery_events, 1);
+        assert_eq!(f.metrics.last_recovery_latency_us, Some(1));
+        // Once on TCP, PTO evidence cannot switch again.
+        assert!(!f.udp_pto_at(12));
+        assert_eq!(f.metrics.switches, 1);
+
+        // A backwards clock reports no latency rather than a zero one.
+        let mut back = FailoverController::new(2, 1, 8).unwrap();
+        assert!(!back.udp_pto_at(10));
+        assert!(back.udp_pto_at(5));
+        assert_eq!(back.metrics.last_recovery_latency_us, None);
+
+        // Progress clears the failure origin, so the next escalation
+        // measures from its own first PTO.
+        let mut progress = FailoverController::new(1, 1, 8).unwrap();
+        assert!(progress.udp_pto_at(10));
+        assert!(progress.apply_migration_back());
+        progress.udp_progress();
+        assert!(progress.udp_pto_at(20));
+        assert_eq!(progress.metrics.last_recovery_latency_us, Some(0));
+        progress.record_recovery_latency(7);
+        assert_eq!(progress.metrics.last_recovery_latency_us, Some(7));
+    }
+
+    #[test]
+    fn failover_manager_decision_gates_and_order_are_exact() {
+        // A manager decision is applied only for the exact UDP-to-TCP
+        // transition of the single active owner.
+        let mut m = FailoverController::new(2, 1, 8).unwrap();
+        assert!(!m.apply_manager_decision(&decision(ActiveCarrier::Tcp, ActiveCarrier::Tcp)));
+        assert!(!m.apply_manager_decision(&decision(ActiveCarrier::Udp, ActiveCarrier::Udp)));
+        assert_eq!(m.metrics.switches, 0);
+        assert!(m.apply_manager_decision(&decision(ActiveCarrier::Udp, ActiveCarrier::Tcp)));
+        assert_eq!(m.active(), ActiveCarrier::Tcp);
+        assert_eq!(m.metrics.switches, 1);
+        assert_eq!(m.metrics.recovery_events, 1);
+        // A second decision while already on TCP is refused and does not move
+        // the metrics.
+        assert!(!m.apply_manager_decision(&decision(ActiveCarrier::Udp, ActiveCarrier::Tcp)));
+        assert_eq!(m.metrics.switches, 1);
+
+        // Resend is only available on the TCP owner, and it is ordered by id.
+        let mut pending = FailoverController::new(2, 4, 8).unwrap();
+        pending.track_uncertain(DataId(1), b"b").unwrap();
+        pending.track_uncertain(DataId(0), b"a").unwrap();
+        assert_eq!(pending.tcp_resend(), Err(FailoverError::WrongCarrier));
+        assert!(pending.apply_manager_decision(&decision(ActiveCarrier::Udp, ActiveCarrier::Tcp)));
+        assert_eq!(
+            pending.tcp_resend().unwrap(),
+            vec![(DataId(0), b"a".to_vec()), (DataId(1), b"b".to_vec())]
+        );
+    }
+
+    #[test]
+    fn failover_receive_capacity_and_duplicate_accounting_are_exact() {
+        let mut r = FailoverController::new(2, 4, 8).unwrap();
+        assert_eq!(r.receive(DataId(0), b"xyz"), Ok(true));
+        assert_eq!(r.receive(DataId(0), b"xyz"), Ok(false));
+        assert_eq!(r.receive(DataId(0), b"other"), Err(FailoverError::Conflict));
+        assert_eq!(r.metrics.delivered_bytes, 3);
+        assert_eq!(r.metrics.duplicate_bytes, 3);
+
+        // The delivery history is bounded by the same entry limit.
+        let mut capped = FailoverController::new(2, 1, 8).unwrap();
+        assert_eq!(capped.receive(DataId(0), b"x"), Ok(true));
+        assert_eq!(
+            capped.receive(DataId(1), b"y"),
+            Err(FailoverError::Capacity)
+        );
+    }
+}
