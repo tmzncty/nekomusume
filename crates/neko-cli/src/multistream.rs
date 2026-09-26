@@ -429,3 +429,116 @@ pub fn run(args: &[String]) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// A connected loopback TCP pair, returned as (reader side, writer side).
+    fn pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let client = TcpStream::connect(address).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        (server, client)
+    }
+
+    #[test]
+    fn bounds_are_inclusive_and_the_total_is_one_mib() {
+        assert!(bounds(1, 1, 1).is_ok());
+        assert!(bounds(0, 1, 1).is_err());
+        assert!(bounds(MAX_STREAMS, 1, 1).is_ok());
+        assert!(bounds(MAX_STREAMS + 1, 1, 1).is_err());
+        assert!(bounds(1, MAX_RECORDS, 1).is_ok());
+        assert!(bounds(1, MAX_RECORDS + 1, 1).is_err());
+        assert!(bounds(1, 0, 1).is_err());
+        assert!(bounds(1, 1, MAX_BYTES).is_ok());
+        assert!(bounds(1, 1, MAX_BYTES + 1).is_err());
+        assert!(bounds(1, 1, 0).is_err());
+        // The largest individually-legal product is exactly the 1 MiB ceiling.
+        assert_eq!(MAX_STREAMS * MAX_RECORDS * MAX_BYTES, 1 << 20);
+        assert!(bounds(MAX_STREAMS, MAX_RECORDS, MAX_BYTES).is_ok());
+    }
+
+    #[test]
+    fn hex_decode_requires_exactly_64_ascii_hex_digits() {
+        assert_eq!(hex_decode(&"ab".repeat(32)).unwrap(), vec![0xab; 32]);
+        assert_eq!(hex_decode(&"AB".repeat(32)).unwrap(), vec![0xab; 32]);
+        assert_eq!(hex_decode(&"09".repeat(32)).unwrap(), vec![0x09; 32]);
+        // Wrong lengths are refused, in both directions.
+        assert!(hex_decode(&"ab".repeat(31)).is_err());
+        assert!(hex_decode(&"a".repeat(63)).is_err());
+        assert!(hex_decode(&"a".repeat(65)).is_err());
+        assert!(hex_decode(&"ab".repeat(33)).is_err());
+        // Right length, not hex.
+        assert!(hex_decode(&"zz".repeat(32)).is_err());
+        // Right length, not ASCII: the length check alone must not admit it,
+        // and byte slicing must not split a multi-byte character.
+        let mixed = format!("a{}{}", "\u{e9}".repeat(31), "b");
+        assert_eq!(mixed.len(), 64);
+        assert!(!mixed.is_ascii());
+        assert!(hex_decode(&mixed).is_err());
+    }
+
+    #[test]
+    fn option_and_arg_read_the_following_value_only() {
+        let a = args(&["multistream", "--streams", "5", "--port", "40090"]);
+        assert_eq!(option(&a, "--streams"), Some("5".to_string()));
+        assert_eq!(option(&a, "--port"), Some("40090".to_string()));
+        assert_eq!(option(&a, "--absent"), None);
+        assert_eq!(option(&args(&["--streams"]), "--streams"), None);
+        assert_eq!(arg(&a, "--streams", 7), 5);
+        assert_eq!(arg(&a, "--records", 7), 7);
+        assert_eq!(arg(&args(&["--streams", "1"]), "--streams", 7), 1);
+    }
+
+    #[test]
+    fn config_defaults_match_the_documented_bounds() {
+        assert_eq!(config(&args(&[])), (2, 3, 32, 1 << 20, 96));
+        // The stream window default is three times the byte size.
+        assert_eq!(config(&args(&["--bytes", "64"])), (2, 3, 64, 1 << 20, 192));
+    }
+
+    #[test]
+    fn limits_are_scaled_from_the_frame_configuration() {
+        let l = limits(2, 3, 32, 1 << 20, 96);
+        assert_eq!(l.max_streams, 2);
+        assert_eq!(l.max_queue_records, 7);
+        assert_eq!(l.max_queue_bytes, 1 << 20);
+        assert_eq!(l.max_total_bytes, 192);
+        assert_eq!(l.max_record_bytes, 32);
+        assert_eq!(l.max_stream_window, 96);
+        assert_eq!(l.max_session_window, 1 << 20);
+    }
+
+    #[test]
+    fn frames_carry_a_big_endian_length_and_are_bounded() {
+        assert_eq!(MAX_FRAME, 4096 + 8 + neko_crypto::RECORD_CONTEXT_LEN + 16);
+        let (mut server, mut client) = pair();
+        frame_write(&mut client, b"hello").unwrap();
+        assert_eq!(frame_read(&mut server).unwrap(), b"hello");
+        // A frame of exactly MAX_FRAME bytes is legal: the writer side must
+        // accept it, and the reader side must accept the declared length.
+        let payload = vec![0xab_u8; MAX_FRAME];
+        let writer = std::thread::spawn(move || {
+            frame_write(&mut client, &payload).unwrap();
+            client
+        });
+        assert_eq!(frame_read(&mut server).unwrap().len(), MAX_FRAME);
+        let mut client = writer.join().unwrap();
+        // One byte past the bound is refused on the write side without writing.
+        assert!(frame_write(&mut client, &vec![0_u8; MAX_FRAME + 1]).is_err());
+        // And on the read side, where a declared-overlong frame is refused
+        // rather than consumed.
+        let (mut server2, mut client2) = pair();
+        client2
+            .write_all(&((MAX_FRAME + 1) as u32).to_be_bytes())
+            .unwrap();
+        client2.write_all(&vec![0_u8; MAX_FRAME + 1]).unwrap();
+        assert!(frame_read(&mut server2).is_err());
+    }
+}

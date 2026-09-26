@@ -700,6 +700,97 @@ mod tests {
         );
     }
     #[test]
+    fn config_bounds_are_inclusive_at_both_edges() {
+        // Every numeric bound is an inclusive window; the rejecting values sit
+        // exactly one past each edge.
+        assert!(config(&args(&["periodic-client", "--port", "40080"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--port", "40100"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--port", "40079"])).is_err());
+        assert!(config(&args(&["periodic-client", "--port", "40101"])).is_err());
+        assert!(config(&args(&["periodic-client", "--bytes", "1"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--bytes", "0"])).is_err());
+        assert!(config(&args(&["periodic-client", "--bytes", "1200"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--bytes", "1201"])).is_err());
+        assert!(config(&args(&["periodic-client", "--count", "1"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--count", "0"])).is_err());
+        assert!(config(&args(&["periodic-client", "--count", "600"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--count", "601"])).is_err());
+        assert!(config(&args(&["periodic-client", "--duration", "600"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--duration", "601"])).is_err());
+        assert!(config(&args(&["periodic-client", "--interval-ms", "100"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--interval-ms", "5000"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--interval-ms", "5001"])).is_err());
+        assert!(config(&args(&["periodic-client", "--setup-timeout-ms", "1"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--setup-timeout-ms", "0"])).is_err());
+        assert!(config(&args(&["periodic-client", "--setup-timeout-ms", "10000"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--setup-timeout-ms", "10001"])).is_err());
+        assert!(config(&args(&["periodic-client", "--ack-timeout-ms", "1"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--ack-timeout-ms", "0"])).is_err());
+        assert!(config(&args(&["periodic-client", "--ack-timeout-ms", "10000"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--ack-timeout-ms", "10001"])).is_err());
+        // No reachable (bytes, count) pair exceeds the total-byte ceiling:
+        // 1200 * 600 = 720000 < 1048576, so the total check is unreachable.
+        assert_eq!(MAX_BYTES * MAX_COUNT, 720_000);
+        const { assert!(MAX_BYTES * MAX_COUNT < MAX_TOTAL_BYTES) };
+    }
+
+    #[test]
+    fn ack_matches_pins_session_stream_offset_and_len() {
+        let expected = OutboundRecord {
+            stream: STREAM,
+            offset: 7,
+            data: vec![0u8; 5],
+        };
+        let ack = |session: SessionId, stream: StreamId, offset: u64, len: usize| {
+            ProcessMessage::DeliveryAck {
+                session,
+                stream,
+                offset,
+                len,
+            }
+            .encode()
+            .unwrap()
+        };
+        assert!(ack_matches(&ack(SESSION, STREAM, 7, 5), &expected));
+        // Every field is load-bearing, not just a subset of them.
+        assert!(!ack_matches(&ack(SessionId(7202), STREAM, 7, 5), &expected));
+        assert!(!ack_matches(&ack(SESSION, StreamId(2), 7, 5), &expected));
+        assert!(!ack_matches(&ack(SESSION, STREAM, 8, 5), &expected));
+        assert!(!ack_matches(&ack(SESSION, STREAM, 7, 6), &expected));
+        // Only a DeliveryAck counts: another message type or a garbage payload
+        // never matches.
+        let data = ProcessMessage::Data {
+            session: SESSION,
+            record: expected.clone(),
+        }
+        .encode()
+        .unwrap();
+        assert!(!ack_matches(&data, &expected));
+        assert!(!ack_matches(b"garbage", &expected));
+    }
+
+    #[test]
+    fn limits_are_derived_from_the_config() {
+        let cfg = config(&args(&["periodic-client", "--bytes", "32", "--count", "3"])).unwrap();
+        let limits = limits(cfg);
+        assert_eq!(limits.max_streams, 1);
+        assert_eq!(limits.max_queue_records, 5);
+        assert_eq!(limits.max_queue_bytes, 128);
+        assert_eq!(limits.max_total_bytes, 192);
+        assert_eq!(limits.max_record_bytes, 32);
+        assert_eq!(limits.max_stream_window, 96);
+        assert_eq!(limits.max_session_window, 96);
+    }
+
+    #[test]
+    fn percentile_clamps_an_over_range_rank_into_bounds() {
+        // A rank past the last element clamps to the last element instead of
+        // indexing out of range.
+        assert_eq!(percentile(&[1, 2, 3, 100], 150, 100), 100);
+        assert_eq!(percentile(&[7], 100, 100), 7);
+    }
+
+    #[test]
     fn percentile_is_nearest_rank() {
         assert_eq!(percentile(&[1, 2, 3, 100], 50, 100), 2);
         assert_eq!(percentile(&[1, 2, 3, 100], 95, 100), 100);
