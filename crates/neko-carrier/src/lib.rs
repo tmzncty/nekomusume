@@ -3482,6 +3482,184 @@ mod tcp_failover_tests {
         TcpCarrier::close(&a).unwrap();
     }
     #[test]
+    fn tcp_limits_are_validated_at_both_edges() {
+        // A zero frame ceiling cannot carry a length prefix plus a frame.
+        assert!(matches!(
+            TcpLoopbackPair::new(TcpLimits { max_frame_bytes: 0 }),
+            Err(TcpError::InvalidLimits)
+        ));
+        // u32::MAX is exactly representable in the 4-byte prefix, so it is the
+        // largest legal ceiling...
+        let huge = u32::MAX as usize;
+        assert!(
+            TcpLoopbackPair::new(TcpLimits {
+                max_frame_bytes: huge
+            })
+            .is_ok()
+        );
+        // ...and one byte past it is not, because the prefix could not carry it.
+        assert!(matches!(
+            TcpLoopbackPair::new(TcpLimits {
+                max_frame_bytes: huge + 1
+            }),
+            Err(TcpError::InvalidLimits)
+        ));
+    }
+
+    #[test]
+    fn tcp_sockets_are_configured_for_bounded_blocking_io() {
+        let (a, b) = TcpLoopbackPair::new(TcpLimits { max_frame_bytes: 8 }).unwrap();
+        for endpoint in [&a, &b] {
+            let stream = endpoint.stream.lock().unwrap();
+            // Small frames must not be delayed by Nagle aggregation, and every
+            // blocking read/write must carry a finite deadline so a silent peer
+            // cannot park the caller forever.
+            assert!(stream.nodelay().unwrap(), "nodelay must be set");
+            assert_eq!(
+                stream.read_timeout().unwrap(),
+                Some(std::time::Duration::from_secs(1))
+            );
+            assert_eq!(
+                stream.write_timeout().unwrap(),
+                Some(std::time::Duration::from_secs(1))
+            );
+        }
+    }
+
+    #[test]
+    fn tcp_carrier_impl_projects_the_contract_exactly() {
+        let (a, _b) = TcpLoopbackPair::new(TcpLimits { max_frame_bytes: 4 }).unwrap();
+        assert_eq!(Carrier::kind(&a), CarrierKind::Tcp);
+        // Unlike the datagram carrier, TCP claims reliability AND ordering; the
+        // projection must not understate what callers may rely on.
+        assert_eq!(
+            Carrier::properties(&a),
+            CarrierProperties {
+                message_boundaries: true,
+                reliable: true,
+                ordered: true,
+            }
+        );
+        assert_eq!(
+            Carrier::limits(&a),
+            CarrierLimits {
+                max_message_bytes: 4,
+                max_buffered_bytes: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn tcp_carrier_trait_delegates_to_the_frame_path() {
+        let (a, b) = TcpLoopbackPair::new(TcpLimits { max_frame_bytes: 8 }).unwrap();
+        Carrier::send(&a, b"ok").unwrap();
+        assert_eq!(Carrier::recv(&b).unwrap(), Some(b"ok".to_vec()));
+        // The frame ceiling is reported through the same mapping.
+        assert_eq!(
+            Carrier::send(&a, b"123456789"),
+            Err(CarrierError::MessageTooLarge)
+        );
+        Carrier::close(&a).unwrap();
+        Carrier::close(&a).unwrap();
+        // The Carrier surface surfaces the frame path's own closed error.
+        assert_eq!(Carrier::send(&a, b"x"), Err(CarrierError::Closed));
+        assert_eq!(Carrier::recv(&a), Err(CarrierError::Closed));
+    }
+
+    #[test]
+    fn tcp_error_conversions_and_messages_are_exact() {
+        assert_eq!(
+            CarrierError::from(TcpError::InvalidLimits),
+            CarrierError::InvalidLimits
+        );
+        assert_eq!(
+            CarrierError::from(TcpError::FrameTooLarge),
+            CarrierError::MessageTooLarge
+        );
+        assert_eq!(CarrierError::from(TcpError::Closed), CarrierError::Closed);
+        assert_eq!(
+            CarrierError::from(TcpError::Truncated),
+            CarrierError::Truncated
+        );
+        assert_eq!(
+            CarrierError::from(TcpError::StatePoisoned),
+            CarrierError::StatePoisoned
+        );
+        assert_eq!(
+            CarrierError::from(TcpError::Io(std::io::Error::other("x"))),
+            CarrierError::Io
+        );
+        assert_eq!(TcpError::InvalidLimits.to_string(), "invalid TCP limits");
+        assert_eq!(
+            TcpError::FrameTooLarge.to_string(),
+            "TCP frame exceeds limit"
+        );
+        assert_eq!(TcpError::Closed.to_string(), "TCP endpoint closed");
+        assert_eq!(TcpError::Truncated.to_string(), "TCP frame truncated");
+    }
+
+    #[test]
+    fn a_closed_tcp_endpoint_reports_closed_not_an_io_failure() {
+        let (a, _b) = TcpLoopbackPair::new(TcpLimits { max_frame_bytes: 8 }).unwrap();
+        TcpCarrier::close(&a).unwrap();
+        // Once closed, the endpoint owns the decision: both directions report
+        // Closed rather than leaking whatever the shutdown socket happens to
+        // return. Repeated close stays idempotent.
+        TcpCarrier::close(&a).unwrap();
+        assert!(matches!(a.send_frame(b"x"), Err(TcpError::Closed)));
+        assert!(matches!(a.recv_frame(), Err(TcpError::Closed)));
+    }
+
+    #[test]
+    fn close_is_visible_to_the_peer_as_a_truncation() {
+        let (a, b) = TcpLoopbackPair::new(TcpLimits { max_frame_bytes: 8 }).unwrap();
+        // Closing shuts down BOTH directions, so the peer observes EOF at the
+        // next frame boundary rather than blocking until its read deadline.
+        TcpCarrier::close(&a).unwrap();
+        assert!(matches!(b.recv_frame(), Err(TcpError::Truncated)));
+    }
+
+    #[test]
+    fn recv_rejects_an_oversize_declared_frame() {
+        use std::io::Write;
+        let (a, b) = TcpLoopbackPair::new(TcpLimits { max_frame_bytes: 8 }).unwrap();
+        // A declared length past the ceiling must be refused before any body
+        // allocation or read.
+        {
+            let mut stream = a.stream.lock().unwrap();
+            stream.write_all(&9u32.to_be_bytes()).unwrap();
+            stream.flush().unwrap();
+        }
+        assert!(matches!(b.recv_frame(), Err(TcpError::FrameTooLarge)));
+    }
+
+    #[test]
+    fn recv_classifies_a_cut_header_and_a_cut_body_as_truncated() {
+        use std::io::Write;
+        // Two bytes then EOF: the 4-byte length prefix never completes.
+        let (a, b) = TcpLoopbackPair::new(TcpLimits { max_frame_bytes: 8 }).unwrap();
+        {
+            let mut stream = a.stream.lock().unwrap();
+            stream.write_all(&[0, 0]).unwrap();
+            stream.flush().unwrap();
+            stream.shutdown(std::net::Shutdown::Write).unwrap();
+        }
+        assert!(matches!(b.recv_frame(), Err(TcpError::Truncated)));
+
+        // A complete length prefix then a short body: the frame is cut inside
+        // its payload, which must read as truncation rather than a valid frame.
+        let (a, b) = TcpLoopbackPair::new(TcpLimits { max_frame_bytes: 8 }).unwrap();
+        {
+            let mut stream = a.stream.lock().unwrap();
+            stream.write_all(&5u32.to_be_bytes()).unwrap();
+            stream.write_all(b"ab").unwrap();
+            stream.flush().unwrap();
+            stream.shutdown(std::net::Shutdown::Write).unwrap();
+        }
+        assert!(matches!(b.recv_frame(), Err(TcpError::Truncated)));
+    }
+
+    #[test]
     fn capabilities_do_not_duplicate_tcp_packet_ack() {
         let capabilities = [UDP_CAPABILITIES, TCP_CAPABILITIES];
         assert!(capabilities[0].packet_feedback);
