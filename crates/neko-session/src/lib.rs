@@ -1940,6 +1940,83 @@ mod datagram_runtime_tests {
         assert_eq!(r.receive(), Err(DatagramError::Terminal));
         assert_eq!(r.counters().opened, 0);
     }
+
+    #[test]
+    fn the_queue_delivers_in_send_order() {
+        // An unreliable datagram queue still preserves the order of the records
+        // it admits: FIFO in, FIFO out. A single-slot queue could not show this,
+        // so the capacity here is deliberately deeper than the traffic.
+        let mut r = DatagramRuntime::new(4, 4).unwrap();
+        for p in [&b"a"[..], b"bb", b"ccc"] {
+            r.send(p).unwrap();
+        }
+        assert_eq!(r.queued(), 3);
+        assert_eq!(r.receive().unwrap().unwrap().payload, b"a");
+        assert_eq!(r.receive().unwrap().unwrap().payload, b"bb");
+        assert_eq!(r.receive().unwrap().unwrap().payload, b"ccc");
+        assert_eq!(r.receive().unwrap(), None);
+        assert_eq!(r.queued(), 0);
+    }
+
+    #[test]
+    fn zero_limits_are_refused_with_the_dedicated_error() {
+        // Both zero cases report the same dedicated variant, not a generic one.
+        assert_eq!(
+            DatagramRuntime::new(0, 1).err(),
+            Some(DatagramError::QueueFull)
+        );
+        assert_eq!(
+            DatagramRuntime::new(1, 0).err(),
+            Some(DatagramError::QueueFull)
+        );
+        // One is the smallest legal capacity on both axes.
+        let mut r = DatagramRuntime::new(1, 1).unwrap();
+        assert_eq!(r.queued(), 0);
+        assert_eq!(r.send(b"z"), Ok(()));
+        assert_eq!(r.queued(), 1);
+    }
+
+    #[test]
+    fn close_clears_the_queue_and_reports_terminal_both_ways() {
+        let mut r = DatagramRuntime::new(4, 4).unwrap();
+        r.send(b"a").unwrap();
+        r.send(b"b").unwrap();
+        assert_eq!(r.queued(), 2);
+        // Closing discards what was queued: this queue has no delivery promise.
+        r.close();
+        assert_eq!(r.queued(), 0);
+        assert_eq!(r.receive(), Err(DatagramError::Terminal));
+        // A send after close is terminal AND counted as dropped.
+        let before = r.counters().dropped;
+        assert_eq!(r.send(b"c"), Err(DatagramError::Terminal));
+        assert_eq!(r.counters().dropped, before + 1);
+        assert_eq!(r.counters().offered, 3, "every attempt is offered");
+        assert_eq!(r.counters().admitted, 2, "close discards the admitted two");
+    }
+
+    #[test]
+    fn oversize_is_counted_apart_from_dropped_while_queue_full_counts_both() {
+        // An oversize payload is refused before admission and is NOT part of the
+        // generic `dropped` counter; a queue-full refusal IS. The observer layer
+        // depends on `queue_dropped` being a subset of `dropped`, so the two
+        // failure classes must not be conflated.
+        let mut r = DatagramRuntime::new(1, 2).unwrap();
+        assert_eq!(r.send(b"abc"), Err(DatagramError::Oversize));
+        let c = r.counters();
+        assert_eq!(c.rejected_oversize, 1);
+        assert_eq!(c.dropped, 0, "oversize is not a generic drop");
+        assert_eq!(c.queue_dropped, 0);
+        assert_eq!(c.admitted, 0);
+        // Fill the single slot, then overflow it.
+        assert_eq!(r.send(b"ab"), Ok(()));
+        assert_eq!(r.send(b"cd"), Err(DatagramError::QueueFull));
+        let c = r.counters();
+        assert_eq!(c.queue_dropped, 1);
+        assert_eq!(c.dropped, 1, "a queue-full refusal is a generic drop");
+        assert_eq!(c.rejected_oversize, 1, "still just the one oversize");
+        assert_eq!(c.admitted, 1);
+        assert_eq!(c.offered, 3);
+    }
 }
 
 #[cfg(test)]
@@ -2159,6 +2236,43 @@ mod runtime_tests {
             e[0].to_json_line(),
             "{\"schema\":1,\"seq\":0,\"at_ms\":0,\"session\":9,\"stream\":null,\"kind\":\"session_opened\"}"
         );
+    }
+
+    #[test]
+    fn observable_event_json_distinguishes_adjacent_fields() {
+        // seq and at_ms are DIFFERENT here on purpose: the neighbouring-field
+        // assertion above uses zero for both, so a swap between them would be
+        // invisible to it. `stream` is also Some, which that test never covers.
+        let mut r = SessionRuntime::new(SessionId(37), limits(), 0).unwrap();
+        r.open_stream(StreamId(4), 3).unwrap();
+        let e: Vec<_> = r.observable_events().collect();
+        let last = e.last().unwrap();
+        assert_eq!(last.seq, 1);
+        assert_eq!(last.at_ms, 3);
+        assert_eq!(
+            last.to_json_line(),
+            "{\"schema\":1,\"seq\":1,\"at_ms\":3,\"session\":37,\"stream\":null,\"kind\":\"stream_opened\"}"
+        );
+    }
+
+    #[test]
+    fn every_runtime_event_kind_has_its_own_stable_name() {
+        let mut r = SessionRuntime::new(SessionId(5), limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 1).unwrap();
+        r.cancel(2).unwrap();
+        let names: Vec<&str> = r.observable_events().map(|e| e.kind.name()).collect();
+        // Cancelling a live runtime is the terminal Error transition.
+        assert!(names.contains(&"error"), "{names:?}");
+        // Distinct kinds never share a name.
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        let before = sorted.len();
+        sorted.dedup();
+        assert_eq!(sorted.len(), before, "duplicate kind names in {names:?}");
+        // And the representative names are exact, not merely unique.
+        assert_eq!(RuntimeEventKind::SessionOpened.name(), "session_opened");
+        assert_eq!(RuntimeEventKind::Error.name(), "error");
+        assert_eq!(RuntimeEventKind::Resumed.name(), "resumed");
     }
 
     #[test]
