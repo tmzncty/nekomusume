@@ -177,4 +177,52 @@ mod tests {
             .unwrap();
         assert!((before..=after).contains(&observed));
     }
+
+    #[test]
+    fn transport_and_version_labels_are_exact() {
+        assert_eq!(Transport::Tcp.as_str(), "tcp");
+        assert_eq!(Transport::Udp.as_str(), "udp");
+        assert_eq!(IpVersion::V4.as_str(), "ipv4");
+        assert_eq!(IpVersion::V6.as_str(), "ipv6");
+    }
+
+    #[test]
+    fn validate_windows_are_inclusive_and_reject_zero() {
+        let target: SocketAddr = "127.0.0.1:40080".parse().unwrap();
+        assert_eq!(MAX_TIMEOUT_MS, 5_000);
+        assert_eq!(MAX_PAYLOAD_BYTES, 1_200);
+        assert!(validate(target, IpVersion::V4, 1, 1).is_ok());
+        assert!(validate(target, IpVersion::V4, MAX_TIMEOUT_MS, 1).is_ok());
+        assert!(validate(target, IpVersion::V4, MAX_TIMEOUT_MS + 1, 1).is_err());
+        assert!(validate(target, IpVersion::V4, 0, 1).is_err());
+        assert!(validate(target, IpVersion::V4, 1, MAX_PAYLOAD_BYTES).is_ok());
+        assert!(validate(target, IpVersion::V4, 1, MAX_PAYLOAD_BYTES + 1).is_err());
+        assert!(validate(target, IpVersion::V4, 1, 0).is_err());
+        // A zero port is refused even on an otherwise-legal loopback target.
+        let zero_port: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        assert!(validate(zero_port, IpVersion::V4, 1, 1).is_err());
+        // The v6 loopback is accepted only with the matching version.
+        let v6: SocketAddr = "[::1]:40080".parse().unwrap();
+        assert!(validate(v6, IpVersion::V6, 1, 1).is_ok());
+        assert!(validate(v6, IpVersion::V4, 1, 1).is_err());
+        assert!(validate(target, IpVersion::V6, 1, 1).is_err());
+    }
+
+    #[test]
+    fn the_refusal_artifact_marks_the_scope_and_privilege_flags() {
+        let s = run(
+            Transport::Udp,
+            IpVersion::V4,
+            "127.0.0.1:0".parse().unwrap(),
+            1,
+            1,
+        );
+        assert!(s.contains("\"scope\":\"local-loopback\""));
+        assert!(s.contains("\"privileged\":false"));
+        assert!(s.contains("\"raw_protocol\":false"));
+        assert!(s.contains("\"third_party_scan\":false"));
+        assert!(s.contains("\"transport\":\"udp\""));
+        assert!(s.contains("\"ip_version\":\"ipv4\""));
+        assert!(s.contains("\"reachable\":false"));
+    }
 }

@@ -246,4 +246,100 @@ mod tests {
             HealthState::Healthy
         );
     }
+
+    #[test]
+    fn the_deadline_gate_expires_at_exactly_the_deadline() {
+        let start = Instant::now();
+        let mut ev = evidence();
+        let mut window = HealthObservationWindow::new(start, SECOND, 8);
+        assert_eq!(window.started_at(), start);
+        assert_eq!(window.deadline(), start + SECOND);
+        // Observing *at* the deadline takes the expiry path, not the datagram
+        // path: a permitted-progress datagram there must NOT be recorded as
+        // progress (which would restart the window and report Healthy).
+        assert_eq!(
+            window
+                .observe(
+                    HealthDatagram::PermittedProgress,
+                    start + SECOND,
+                    &mut ev,
+                    PATH
+                )
+                .unwrap(),
+            Some(HealthState::Unknown)
+        );
+        // The same holds when the junk budget is already exhausted: expiry must
+        // win over the admission-budget error.
+        let mut ev2 = evidence();
+        let mut window2 = HealthObservationWindow::new(start, SECOND, 0);
+        assert_eq!(
+            window2
+                .observe(HealthDatagram::WrongPeer, start + SECOND, &mut ev2, PATH)
+                .unwrap(),
+            Some(HealthState::Unknown)
+        );
+    }
+
+    #[test]
+    fn expire_refuses_before_the_deadline_and_changes_nothing() {
+        let start = Instant::now();
+        let mut evidence = evidence();
+        let mut window = HealthObservationWindow::new(start, SECOND, 8);
+        assert_eq!(
+            window.expire(start + Duration::from_millis(999), &mut evidence, PATH),
+            Err(HealthWindowError::NotExpired)
+        );
+        // A refused expiry leaves the window and the evidence untouched.
+        assert_eq!(window.started_at(), start);
+        assert_eq!(window.deadline(), start + SECOND);
+        assert_eq!(evidence.events().len(), 0);
+    }
+
+    #[test]
+    fn progress_restart_rebases_the_start_and_clears_the_junk_budget() {
+        let start = Instant::now();
+        let mut evidence = evidence();
+        let mut window = HealthObservationWindow::new(start, SECOND, 2);
+        for _ in 0..2 {
+            assert_eq!(
+                window
+                    .observe(HealthDatagram::WrongPeer, start, &mut evidence, PATH)
+                    .unwrap(),
+                None
+            );
+        }
+        assert_eq!(
+            window.observe(HealthDatagram::WrongPeer, start, &mut evidence, PATH),
+            Err(HealthWindowError::AdmissionBudgetExhausted { ignored: 2 })
+        );
+        let progress = start + Duration::from_millis(10);
+        assert_eq!(
+            window
+                .observe(
+                    HealthDatagram::PermittedProgress,
+                    progress,
+                    &mut evidence,
+                    PATH
+                )
+                .unwrap(),
+            Some(HealthState::Healthy)
+        );
+        // The restart rebases the start instant (not the deadline)...
+        assert_eq!(window.started_at(), progress);
+        assert_eq!(window.deadline(), progress + SECOND);
+        // ...and clears the junk budget, so the same two junks are admitted
+        // again and only the third is refused.
+        for _ in 0..2 {
+            assert_eq!(
+                window
+                    .observe(HealthDatagram::WrongPeer, progress, &mut evidence, PATH)
+                    .unwrap(),
+                None
+            );
+        }
+        assert_eq!(
+            window.observe(HealthDatagram::WrongPeer, progress, &mut evidence, PATH),
+            Err(HealthWindowError::AdmissionBudgetExhausted { ignored: 2 })
+        );
+    }
 }

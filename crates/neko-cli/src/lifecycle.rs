@@ -145,4 +145,52 @@ mod tests {
         lifecycle.stopped();
         assert_eq!(lifecycle.state(), State::Stopped);
     }
+
+    #[test]
+    fn a_new_lifecycle_starts_and_every_state_name_is_exact() {
+        let lifecycle = Lifecycle::new();
+        assert_eq!(lifecycle.state(), State::Starting);
+        assert!(!lifecycle.readiness());
+        assert_eq!(State::Starting.as_str(), "STARTING");
+        assert_eq!(State::Ready.as_str(), "READY");
+        assert_eq!(State::Draining.as_str(), "DRAINING");
+        assert_eq!(State::Stopped.as_str(), "STOPPED");
+        assert_eq!(State::Failed.as_str(), "FAILED");
+    }
+
+    #[test]
+    fn readiness_requires_the_ready_state_not_only_the_prerequisites() {
+        let lifecycle = Lifecycle::new();
+        for prerequisite in PREREQUISITES {
+            lifecycle.satisfy(prerequisite);
+        }
+        // Every prerequisite is met, but the service was never finalized, so it
+        // is not yet ready - and draining drops readiness even though the
+        // prerequisites stay satisfied.
+        assert!(!lifecycle.readiness());
+        assert_eq!(lifecycle.finalize_readiness(), Ok(()));
+        assert!(lifecycle.readiness());
+        lifecycle.drain();
+        assert_eq!(lifecycle.state(), State::Draining);
+        assert!(!lifecycle.readiness());
+    }
+
+    #[test]
+    fn failure_is_distinct_from_a_clean_stop() {
+        let failed = Lifecycle::new();
+        assert_eq!(failed.finalize_readiness(), Err(()));
+        assert_eq!(failed.state(), State::Failed);
+        failed.failed();
+        assert_eq!(failed.state(), State::Failed);
+
+        let stopped = Lifecycle::new();
+        for prerequisite in PREREQUISITES {
+            stopped.satisfy(prerequisite);
+        }
+        assert_eq!(stopped.finalize_readiness(), Ok(()));
+        stopped.stopped();
+        assert_eq!(stopped.state(), State::Stopped);
+        stopped.failed();
+        assert_eq!(stopped.state(), State::Failed);
+    }
 }
