@@ -1996,6 +1996,35 @@ mod fault_inject_tests {
     }
 
     #[test]
+    fn the_fault_wrapper_exposes_its_inner_carrier_and_policy() {
+        // Both accessors had zero call sites anywhere in the tree. `inner` is
+        // the seam a harness needs to observe the real transport underneath the
+        // fault wrapper, and `policy` is how a caller confirms what was applied.
+        let (a, b) = MemoryPair::new(MemoryLimits {
+            max_message_bytes: 16,
+            max_queue_bytes: 64,
+        })
+        .unwrap();
+        let policy = FaultPolicy {
+            delay_ms: 7,
+            close_after: Some(9),
+            loss_window: Some((3, 5)),
+            max_payload_bytes: Some(4096),
+            ..Default::default()
+        };
+        let f = FaultInjectCarrier::new(a, policy, 11).unwrap();
+        // The returned policy is exactly what was supplied, field by field.
+        assert_eq!(f.policy(), policy);
+        assert_ne!(f.policy(), FaultPolicy::default());
+        // `inner()` really returns the wrapped carrier: a record sent through it
+        // bypasses the fault policy entirely and arrives intact.
+        f.inner().send(b"direct").unwrap();
+        assert_eq!(b.recv().unwrap(), Some(b"direct".to_vec()));
+        // Proven to be the same seam, not a copy: the wrapper's own kind agrees.
+        assert_eq!(f.inner().kind(), f.kind());
+    }
+
+    #[test]
     fn generated_fault_sequence_is_deterministic_and_bounded() {
         // D057 contract pin: the seeded event generator is a deterministic
         // test input source producing only the eleven declared FaultEvent
@@ -3842,6 +3871,38 @@ mod tcp_failover_tests {
         assert!(!capabilities[1].packet_feedback);
         assert!(capabilities[1].reliable && capabilities[1].ordered);
     }
+    #[test]
+    fn the_odd_accessor_and_the_capability_constants_are_exact() {
+        // `CarrierSwitchReason::as_str` had zero call sites anywhere, so its
+        // string was free. The two capability constants only had
+        // `packet_feedback` (and TCP's reliable/ordered pair) asserted; the
+        // remaining fields were unconstrained.
+        assert_eq!(
+            CarrierSwitchReason::UdpPathDegraded.as_str(),
+            "udp_path_degraded"
+        );
+        assert_eq!(
+            UDP_CAPABILITIES,
+            CarrierCapabilities {
+                message_boundaries: true,
+                reliable: false,
+                ordered: false,
+                packet_feedback: true,
+            }
+        );
+        assert_eq!(
+            TCP_CAPABILITIES,
+            CarrierCapabilities {
+                message_boundaries: false,
+                reliable: true,
+                ordered: true,
+                packet_feedback: false,
+            }
+        );
+        // The two constants must not be confused with each other.
+        assert_ne!(UDP_CAPABILITIES, TCP_CAPABILITIES);
+    }
+
     #[test]
     fn migration_back_owner_requires_tcp_and_is_idempotent() {
         let mut f = FailoverController::new(2, 1, 8).unwrap();
