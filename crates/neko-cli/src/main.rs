@@ -6273,6 +6273,34 @@ mod cli_regression_tests {
     }
 
     #[test]
+    fn diagnostic_and_json_modes_require_the_exact_flag() {
+        let a = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        // Exact flag matching: a heuristic prefix or a value form is not a mode.
+        assert!(diagnostic_mode(&a(&["--diagnostic"])));
+        assert!(diagnostic_mode(&a(&["cmd", "--diagnostic"])));
+        assert!(!diagnostic_mode(&a(&["cmd"])));
+        assert!(!diagnostic_mode(&a(&["--diagnostic=1"])));
+        assert!(!diagnostic_mode(&a(&["--diag"])));
+        assert!(json_mode(&a(&["--json"])));
+        assert!(!json_mode(&a(&["--json=1"])));
+        assert!(!json_mode(&a(&["--jsonl"])));
+    }
+
+    #[test]
+    fn experiment_ids_accept_the_documented_alphabet_and_lengths() {
+        let a = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let id = |v: &str| diagnostic_id(&a(&["--experiment-id", v]));
+        // Digits, both letter cases, and all three punctuation characters are
+        // part of the alphabet - dropping any of them would refuse valid ids.
+        assert_eq!(id("abcd1234"), "abcd1234");
+        assert_eq!(id("ABCDefgh"), "ABCDefgh");
+        assert_eq!(id("exp.2026-09_26"), "exp.2026-09_26");
+        // Both length edges are inside the window.
+        assert_eq!(id("12345678").len(), 8);
+        assert_eq!(id(&"a".repeat(72)).len(), 72);
+    }
+
+    #[test]
     fn json_mode_is_detected_without_affecting_address_family() {
         assert!(json_mode(&["probe".into(), "--json".into()]));
         assert_eq!(
