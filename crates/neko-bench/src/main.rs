@@ -205,6 +205,33 @@ mod tests {
     }
 
     #[test]
+    fn unsorted_samples_are_ordered_before_any_order_statistic_is_read() {
+        // Order statistics are only meaningful on a sorted sample, and the
+        // existing convention test feeds ascending values that are already
+        // sorted - so these inputs are deliberately shuffled.
+        let s = stat(vec![5, 1, 4, 2, 3], 0);
+        assert_eq!(s.n, 5);
+        assert_eq!(
+            s.median, 3,
+            "median is the lower-middle of the sorted sample"
+        );
+        assert_eq!(s.p95, 5, "p95 is the top of the sorted sample");
+    }
+
+    #[test]
+    fn only_the_failing_kind_is_counted_as_a_failure() {
+        // Asymmetric counts (3 successes, 7 failures) so the two outcomes
+        // cannot be confused by a symmetric fixture.
+        let mut call = 0usize;
+        let s = sample(10, || {
+            call += 1;
+            if call <= 3 { Ok(()) } else { Err(()) }
+        });
+        assert_eq!(s.n, 3, "only successes are timed");
+        assert_eq!(s.failures, 7, "only failures are counted as failures");
+    }
+
+    #[test]
     fn empty_distribution_reports_zero_not_panic() {
         let s = stat(Vec::new(), 3);
         assert_eq!(s.n, 0);
