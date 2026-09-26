@@ -1201,6 +1201,53 @@ mod tests {
         assert_eq!(r.pto_count, 1);
     }
     #[test]
+    fn simulation_bounds_are_exact_and_the_error_class_is_invalid_limit() {
+        // Zero frames is refused rather than silently returning an empty
+        // result, and both simulators report the dedicated error class.
+        assert_eq!(simulate_delivery(0, 0, false), Err(Error::InvalidLimit));
+        assert_eq!(
+            simulate_fault_profile(0, FaultProfile::default()),
+            Err(Error::InvalidLimit)
+        );
+        // The ceiling is inclusive: 100_000 is the largest accepted input and
+        // one more is refused by the same class.
+        assert!(simulate_delivery(100_000, 0, false).is_ok());
+        assert_eq!(
+            simulate_delivery(100_001, 0, false),
+            Err(Error::InvalidLimit)
+        );
+        assert!(simulate_fault_profile(100_000, FaultProfile::default()).is_ok());
+        assert_eq!(
+            simulate_fault_profile(100_001, FaultProfile::default()),
+            Err(Error::InvalidLimit)
+        );
+    }
+
+    #[test]
+    fn the_drop_period_selects_the_exact_nth_frame_not_a_shifted_one() {
+        // The existing sweep uses periods that divide its 1000 frames evenly,
+        // so every division of the sequence drops the same NUMBER of frames and
+        // the choice of frame is invisible. Here 10 frames with a period of 3
+        // drops 3 frames when the period is measured as (n + 1) % 3 but 4 when
+        // it is measured as n % 3, so the count alone separates the two.
+        let x = simulate_delivery(10, 3, false).unwrap();
+        assert_eq!((x.delivered, x.retransmitted, x.rounds), (10, 3, 2));
+        let y = simulate_fault_profile(
+            10,
+            FaultProfile {
+                drop_every: 3,
+                ..FaultProfile::default()
+            },
+        )
+        .unwrap();
+        assert_eq!((y.delivered, y.retransmitted, y.rounds), (10, 3, 2));
+        // A period that divides the span evenly keeps the count at the exact
+        // quotient for both, which is why the sweep could not tell them apart.
+        let z = simulate_delivery(12, 4, false).unwrap();
+        assert_eq!((z.delivered, z.retransmitted), (12, 3));
+    }
+
+    #[test]
     fn fault_profiles_cover_burst_reorder_blackhole_and_clock() {
         let x = simulate_fault_profile(
             100,
