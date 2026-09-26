@@ -1265,7 +1265,10 @@ mod memory_pair_tests {
 
 #[cfg(test)]
 mod udp_loopback_tests {
-    use super::{UdpCarrier, UdpError, UdpLimits, UdpLoopbackPair};
+    use super::{
+        CarrierError, CarrierKind, CarrierLimits, CarrierProperties, UdpCarrier, UdpError,
+        UdpLimits, UdpLoopbackPair,
+    };
     #[test]
     fn loopback_preserves_boundaries_empty_and_would_block() {
         let (a, b) = UdpLoopbackPair::new(UdpLimits {
@@ -1297,6 +1300,167 @@ mod udp_loopback_tests {
         assert!(a.recv_datagram().unwrap().is_none());
         b.send_datagram(b"ok").unwrap();
         assert!(a.recv_datagram().unwrap().is_none());
+    }
+
+    #[test]
+    fn recv_surfaces_a_peer_refusal_as_an_io_error_not_would_block() {
+        let (a, b) = UdpLoopbackPair::new(UdpLimits {
+            max_datagram_bytes: 8,
+        })
+        .unwrap();
+        a.send_datagram(b"x").unwrap();
+        assert_eq!(b.recv_datagram().unwrap(), Some(b"x".to_vec()));
+        // The peer's socket disappears; the next datagram draws an ICMP
+        // unreachable, which a connected socket reports on a later receive.
+        // "The peer refused" is terminal and must not be flattened into the
+        // retryable would-block that means "nothing queued yet".
+        drop(b);
+        let _ = a.send_datagram(b"y");
+        let mut observed = None;
+        for _ in 0..40 {
+            match a.recv_datagram() {
+                Err(UdpError::WouldBlock) => {
+                    std::thread::sleep(std::time::Duration::from_millis(5))
+                }
+                other => {
+                    observed = Some(other);
+                    break;
+                }
+            }
+        }
+        match observed {
+            Some(Err(UdpError::Io(_))) => {}
+            other => panic!("expected the peer refusal as an I/O error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pair_limits_are_validated_and_reported_exactly() {
+        // A zero datagram ceiling is refused with the dedicated invalid-limits
+        // error, not with a generic transport error.
+        assert!(matches!(
+            UdpLoopbackPair::new(UdpLimits {
+                max_datagram_bytes: 0
+            }),
+            Err(UdpError::InvalidLimits)
+        ));
+        // A one-byte ceiling is the smallest legal configuration.
+        let (a, b) = UdpLoopbackPair::new(UdpLimits {
+            max_datagram_bytes: 1,
+        })
+        .unwrap();
+        a.send_datagram(b"x").unwrap();
+        assert_eq!(b.recv_datagram().unwrap(), Some(b"x".to_vec()));
+        assert!(matches!(
+            a.send_datagram(b"xy"),
+            Err(UdpError::MessageTooLarge)
+        ));
+    }
+
+    #[test]
+    fn carrier_impl_projects_the_udp_contract_exactly() {
+        use super::Carrier;
+        let (a, _b) = UdpLoopbackPair::new(UdpLimits {
+            max_datagram_bytes: 4,
+        })
+        .unwrap();
+        assert_eq!(Carrier::kind(&a), CarrierKind::Udp);
+        // UDP keeps message boundaries but is neither reliable nor ordered;
+        // claiming either would let a caller build ordering on nothing.
+        assert_eq!(
+            Carrier::properties(&a),
+            CarrierProperties {
+                message_boundaries: true,
+                reliable: false,
+                ordered: false,
+            }
+        );
+        assert_eq!(
+            Carrier::limits(&a),
+            CarrierLimits {
+                max_message_bytes: 4,
+                max_buffered_bytes: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn carrier_trait_delegates_to_the_datagram_path() {
+        use super::Carrier;
+        let (a, b) = UdpLoopbackPair::new(UdpLimits {
+            max_datagram_bytes: 4,
+        })
+        .unwrap();
+        // Empty and a normal datagram round-trip through the Carrier surface.
+        assert!(matches!(Carrier::recv(&b), Err(CarrierError::WouldBlock)));
+        Carrier::send(&a, b"ok").unwrap();
+        assert_eq!(Carrier::recv(&b).unwrap(), Some(b"ok".to_vec()));
+        // The oversize guard reports MessageTooLarge through the same mapping.
+        assert_eq!(
+            Carrier::send(&a, b"12345"),
+            Err(CarrierError::MessageTooLarge)
+        );
+        // Closing is delegated, idempotent, and recv becomes a clean None.
+        Carrier::close(&a).unwrap();
+        Carrier::close(&a).unwrap();
+        assert_eq!(Carrier::recv(&a).unwrap(), None);
+        // A send on a closed endpoint is an I/O failure (the socket refuses),
+        // not a fabricated "closed" classification.
+        assert!(matches!(Carrier::send(&a, b"x"), Err(CarrierError::Io)));
+        // The datagram surface reports the socket's own refusal unchanged.
+        match a.send_datagram(b"x") {
+            Err(UdpError::Io(e)) => assert_eq!(
+                e.kind(),
+                std::io::ErrorKind::NotConnected,
+                "the closed-endpoint refusal keeps its socket error kind"
+            ),
+            other => panic!("expected an I/O refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn send_reports_an_oversize_for_the_socket_as_io_not_would_block() {
+        let (a, _b) = UdpLoopbackPair::new(UdpLimits {
+            max_datagram_bytes: 70_000,
+        })
+        .unwrap();
+        // The endpoint's own ceiling admits this, but no UDP datagram can carry
+        // it: the socket error must be preserved as an I/O failure rather than
+        // being rewritten as a retryable would-block.
+        let err = a.send_datagram(&vec![0_u8; 70_000]).unwrap_err();
+        assert!(matches!(err, UdpError::Io(_)), "{err:?}");
+    }
+
+    #[test]
+    fn recv_reports_an_oversize_datagram_instead_of_truncating_it() {
+        // Asymmetric ceilings are not reachable through `new` (both endpoints
+        // share one limit), so build the pair from the crate-visible endpoint
+        // constructor: a 4-byte receiver and a 16-byte sender.
+        let la = std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let lb = std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        la.connect(lb.local_addr().unwrap()).unwrap();
+        lb.connect(la.local_addr().unwrap()).unwrap();
+        la.set_nonblocking(true).unwrap();
+        lb.set_nonblocking(true).unwrap();
+        let a = UdpLoopbackPair::endpoint(
+            la,
+            UdpLimits {
+                max_datagram_bytes: 4,
+            },
+        );
+        let b = UdpLoopbackPair::endpoint(
+            lb,
+            UdpLimits {
+                max_datagram_bytes: 16,
+            },
+        );
+        // Exactly at the receiver ceiling: delivered intact.
+        b.send_datagram(b"abcd").unwrap();
+        assert_eq!(a.recv_datagram().unwrap(), Some(b"abcd".to_vec()));
+        // One byte over: the receiver must report it as too large rather than
+        // silently returning a truncated datagram.
+        b.send_datagram(b"abcde").unwrap();
+        assert!(matches!(a.recv_datagram(), Err(UdpError::MessageTooLarge)));
     }
 }
 
