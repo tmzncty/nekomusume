@@ -8193,6 +8193,56 @@ mod path_recovery_tests {
     }
 
     #[test]
+    fn ack_tracker_range_cap_is_the_wire_hard_cap_and_overflow_is_atomic() {
+        // The tracker bounds its range set to the wire's hard cap (32), so an
+        // encoded payload always fits the canonical grammar. Nothing asserted
+        // the cap, so it could have been lowered silently.
+        let mut t = PacketAckTracker::new(7);
+        assert!(!t.has_observations());
+        // 32 disjoint single-point ranges fill the set exactly.
+        for n in 0..32u64 {
+            t.observe_packet(7, n * 2, true).unwrap();
+        }
+        assert!(t.has_observations());
+        let full = t.build_ack(0).unwrap();
+        assert_eq!(full.ranges.len(), 32, "the cap is exactly 32 ranges");
+        assert_eq!(full.largest_observed, 62);
+        // Consume the pending obligation so the next assertion can tell whether
+        // a rejected observation created a new one.
+        assert!(t.take_ack(0).is_some());
+        assert!(!t.pending_ack());
+        // The 33rd disjoint range is reported, not silently dropped.
+        assert_eq!(
+            t.observe_packet(7, 64, true),
+            Err(AckTrackerError::RangeLimit)
+        );
+        // And the rejection is atomic: neither the largest observation nor the
+        // pending obligation moved.
+        assert_eq!(t.build_ack(0).unwrap().largest_observed, 62);
+        assert!(!t.pending_ack());
+    }
+
+    #[test]
+    fn ack_tracker_build_ack_is_delay_passthrough_and_observations_are_reported() {
+        // `build_ack` renders the current state regardless of any pending
+        // obligation, and `has_observations` tracks the observation, not the
+        // obligation - the two are independent.
+        let mut t = PacketAckTracker::new(3);
+        assert!(t.build_ack(77).is_none());
+        assert!(!t.has_observations());
+        // An ACK-only packet creates no obligation but IS an observation.
+        t.observe_packet(3, 9, false).unwrap();
+        assert!(t.has_observations());
+        assert!(!t.pending_ack());
+        assert_eq!(t.build_ack(77).unwrap().ack_delay_us, 77);
+        assert_eq!(t.build_ack(77).unwrap().largest_observed, 9);
+        // build_ack does not consume the obligation.
+        t.observe_packet(3, 10, true).unwrap();
+        assert_eq!(t.build_ack(1).unwrap().largest_observed, 10);
+        assert!(t.pending_ack());
+    }
+
+    #[test]
     fn reliable_udp_runtime_orchestrates_send_ack_loss_and_auto_fallback() {
         let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
         rt.ready_standby(0);
@@ -8756,6 +8806,67 @@ mod path_recovery_tests {
         buf.clear();
         assert_eq!(buf.retained(), 0);
         assert_eq!(buf.retained_bytes(), 0);
+    }
+
+    #[test]
+    fn retransmit_buffer_rejects_a_zero_bound_with_the_dedicated_class() {
+        // A zero frame or byte bound is refused up front rather than creating a
+        // buffer that can never retain anything.
+        assert_eq!(
+            RetransmitBuffer::new(0, 8).err(),
+            Some(RetransmitError::Capacity)
+        );
+        assert_eq!(
+            RetransmitBuffer::new(8, 0).err(),
+            Some(RetransmitError::Capacity)
+        );
+        assert!(RetransmitBuffer::new(1, 1).is_ok());
+    }
+
+    #[test]
+    fn retransmit_buffer_byte_boundaries_are_inclusive() {
+        // A single frame of exactly the byte bound is accepted; one byte more is
+        // FrameTooLarge (a per-frame bound, distinct from the aggregate one).
+        let mut b = RetransmitBuffer::new(4, 8).unwrap();
+        b.track(FrameId(0), b"12345678").unwrap();
+        assert_eq!(b.retained_bytes(), 8);
+        assert_eq!(
+            b.track(FrameId(1), b"123456789"),
+            Err(RetransmitError::FrameTooLarge)
+        );
+        // The aggregate bound is also inclusive: exactly filling it is fine.
+        let mut c = RetransmitBuffer::new(4, 8).unwrap();
+        c.track(FrameId(0), b"1234").unwrap();
+        c.track(FrameId(1), b"5678").unwrap();
+        assert_eq!(c.retained_bytes(), 8);
+        assert_eq!(c.track(FrameId(2), b"x"), Err(RetransmitError::Capacity));
+        // Releasing makes room again for the exact same amount.
+        assert!(c.release(FrameId(0)));
+        c.track(FrameId(2), b"wxyz").unwrap();
+        assert_eq!(c.retained_bytes(), 8);
+    }
+
+    #[test]
+    fn retransmit_buffer_retained_bytes_track_accumulation_and_release() {
+        // `retained_bytes` is the byte accounting that the capacity check is
+        // driven by; it was only ever asserted at zero (after a clear), so it
+        // could have reported the frame count or stopped accumulating.
+        let mut b = RetransmitBuffer::new(8, 64).unwrap();
+        assert_eq!((b.retained(), b.retained_bytes()), (0, 0));
+        b.track(FrameId(0), b"aaaa").unwrap();
+        b.track(FrameId(1), b"bbbbbb").unwrap();
+        assert_eq!((b.retained(), b.retained_bytes()), (2, 10));
+        // Re-tracking identical bytes must not double-count.
+        b.track(FrameId(0), b"aaaa").unwrap();
+        assert_eq!(b.retained_bytes(), 10);
+        // Releasing subtracts exactly that frame's bytes, and a second release
+        // is a no-op that must not go negative.
+        assert!(b.release(FrameId(1)));
+        assert_eq!((b.retained(), b.retained_bytes()), (1, 4));
+        assert!(!b.release(FrameId(1)));
+        assert_eq!(b.retained_bytes(), 4);
+        b.clear();
+        assert_eq!((b.retained(), b.retained_bytes()), (0, 0));
     }
 
     #[test]
