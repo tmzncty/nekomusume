@@ -3043,3 +3043,349 @@ mod d064_readiness_codec_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod runtime_contract_boundary_tests {
+    use super::*;
+
+    fn lim() -> RuntimeLimits {
+        RuntimeLimits {
+            max_streams: 4,
+            ..RuntimeLimits::default()
+        }
+    }
+    fn kinds(r: &SessionRuntime) -> Vec<&'static str> {
+        r.events().map(|e| e.kind.name()).collect()
+    }
+    fn data(session: u64, stream: u64, offset: u64, payload: Vec<u8>) -> ProcessMessage {
+        ProcessMessage::Data {
+            session: SessionId(session),
+            record: OutboundRecord {
+                stream: StreamId(stream),
+                offset,
+                data: payload,
+            },
+        }
+    }
+
+    #[test]
+    fn runtime_limits_reject_zero_and_above_hard_ceiling() {
+        for limits in [
+            RuntimeLimits {
+                max_streams: 0,
+                ..RuntimeLimits::default()
+            },
+            RuntimeLimits {
+                max_queue_records: 0,
+                ..RuntimeLimits::default()
+            },
+            RuntimeLimits {
+                max_queue_records: HARD_MAX_RUNTIME_QUEUE_RECORDS + 1,
+                ..RuntimeLimits::default()
+            },
+            RuntimeLimits {
+                max_queue_bytes: HARD_MAX_RUNTIME_QUEUE_BYTES + 1,
+                ..RuntimeLimits::default()
+            },
+            RuntimeLimits {
+                max_record_bytes: 0,
+                ..RuntimeLimits::default()
+            },
+            RuntimeLimits {
+                idle_timeout_ms: 0,
+                ..RuntimeLimits::default()
+            },
+        ] {
+            assert_eq!(
+                SessionRuntime::new(SessionId(1), limits, 0).map(|_| ()),
+                Err(RuntimeError::InvalidLimits),
+                "limits {limits:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn open_stream_identity_ceiling_and_duplicate_are_exact() {
+        let mut r = SessionRuntime::new(SessionId(1), lim(), 0).unwrap();
+        assert_eq!(r.open_stream(StreamId(MAX_RUNTIME_STREAM_ID), 0), Ok(()));
+        assert_eq!(
+            r.open_stream(StreamId(MAX_RUNTIME_STREAM_ID + 1), 0),
+            Err(RuntimeError::InvalidStreamId)
+        );
+        assert_eq!(
+            r.open_stream(StreamId(MAX_RUNTIME_STREAM_ID), 0),
+            Err(RuntimeError::InvalidTransition)
+        );
+        // A repeated close is idempotent and emits no second close event.
+        assert_eq!(r.close_stream(StreamId(MAX_RUNTIME_STREAM_ID), 0), Ok(()));
+        assert_eq!(r.close_stream(StreamId(MAX_RUNTIME_STREAM_ID), 0), Ok(()));
+        assert_eq!(
+            kinds(&r),
+            vec!["session_opened", "stream_opened", "stream_closed"]
+        );
+    }
+
+    #[test]
+    fn queue_send_empty_send_and_total_byte_boundary_are_exact() {
+        let mut e = SessionRuntime::new(SessionId(1), lim(), 0).unwrap();
+        e.open_stream(StreamId(1), 0).unwrap();
+        // An empty send is a no-op that reports the current offset.
+        assert_eq!(e.queue_send(StreamId(1), b"", 0), Ok(0));
+        assert_eq!(e.queued_records(), 0);
+        assert_eq!(e.queued_bytes(), 0);
+        assert_eq!(e.total_bytes(), 0);
+
+        // max_total_bytes is inclusive, and total_bytes counts exactly the
+        // accepted bytes.
+        let mut t = SessionRuntime::new(
+            SessionId(1),
+            RuntimeLimits {
+                max_total_bytes: 8,
+                max_queue_bytes: 1024,
+                max_session_window: 1024,
+                max_stream_window: 1024,
+                ..lim()
+            },
+            0,
+        )
+        .unwrap();
+        t.open_stream(StreamId(1), 0).unwrap();
+        assert_eq!(t.queue_send(StreamId(1), &[0; 8], 0), Ok(0));
+        assert_eq!(t.total_bytes(), 8);
+        assert_eq!(
+            t.queue_send(StreamId(1), &[1], 0),
+            Err(RuntimeError::TotalLimit)
+        );
+    }
+
+    #[test]
+    fn receive_record_boundary_and_duplicate_dedup_are_exact() {
+        let mut r = SessionRuntime::new(
+            SessionId(1),
+            RuntimeLimits {
+                max_record_bytes: 4,
+                ..lim()
+            },
+            0,
+        )
+        .unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        assert_eq!(
+            r.receive(
+                InboundRecord {
+                    stream: StreamId(1),
+                    offset: 0,
+                    data: vec![0; 4],
+                },
+                0
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            r.receive(
+                InboundRecord {
+                    stream: StreamId(1),
+                    offset: 4,
+                    data: vec![0; 5],
+                },
+                0
+            ),
+            Err(RuntimeError::RecordTooLarge)
+        );
+        // An exact replay of an already-received record is deduplicated.
+        assert_eq!(
+            r.receive(
+                InboundRecord {
+                    stream: StreamId(1),
+                    offset: 0,
+                    data: vec![0; 4],
+                },
+                0
+            ),
+            Ok(())
+        );
+        assert!(kinds(&r).contains(&"duplicate_dedup"));
+    }
+
+    #[test]
+    fn delivery_ack_repeat_and_window_release_are_exact() {
+        let mut a = SessionRuntime::new(SessionId(1), lim(), 0).unwrap();
+        a.open_stream(StreamId(1), 0).unwrap();
+        a.queue_send(StreamId(1), &[1, 2, 3], 0).unwrap();
+        a.pop_send(0).unwrap();
+        assert_eq!(a.delivery_ack(StreamId(1), 0, 3, 0), Ok(()));
+        assert_eq!(
+            kinds(&a),
+            vec![
+                "session_opened",
+                "stream_opened",
+                "data_queued",
+                "ack_released",
+                "resumed",
+                "delivery_ack"
+            ]
+        );
+        // Re-acknowledging the same confirmed range is a no-op that reports
+        // only the ACK event: no window is released a second time.
+        assert_eq!(a.delivery_ack(StreamId(1), 0, 3, 0), Ok(()));
+        assert_eq!(
+            kinds(&a),
+            vec![
+                "session_opened",
+                "stream_opened",
+                "data_queued",
+                "ack_released",
+                "resumed",
+                "delivery_ack",
+                "delivery_ack"
+            ]
+        );
+
+        // The released session window is reusable by the next send.
+        let mut w = SessionRuntime::new(
+            SessionId(1),
+            RuntimeLimits {
+                max_session_window: 4,
+                max_stream_window: 4,
+                ..lim()
+            },
+            0,
+        )
+        .unwrap();
+        w.open_stream(StreamId(1), 0).unwrap();
+        w.queue_send(StreamId(1), &[1, 2, 3], 0).unwrap();
+        w.pop_send(0).unwrap();
+        w.delivery_ack(StreamId(1), 0, 3, 0).unwrap();
+        assert_eq!(w.queue_send(StreamId(1), &[4, 5, 6], 0), Ok(3));
+    }
+
+    #[test]
+    fn idle_and_close_deadline_boundaries_are_exact() {
+        let mut i = SessionRuntime::new(
+            SessionId(1),
+            RuntimeLimits {
+                idle_timeout_ms: 10,
+                ..lim()
+            },
+            0,
+        )
+        .unwrap();
+        i.open_stream(StreamId(1), 0).unwrap();
+        assert_eq!(i.tick(9), Ok(()));
+        assert_eq!(i.state(), RuntimeState::Open);
+        assert_eq!(i.tick(10), Err(RuntimeError::IdleTimeout));
+        assert_eq!(i.state(), RuntimeState::Closed);
+
+        // An operation that crosses the idle boundary fails closed with the
+        // idle error, not with the later unknown-stream error.
+        let mut c = SessionRuntime::new(
+            SessionId(1),
+            RuntimeLimits {
+                idle_timeout_ms: 10,
+                ..lim()
+            },
+            0,
+        )
+        .unwrap();
+        c.open_stream(StreamId(1), 0).unwrap();
+        assert_eq!(
+            c.queue_send(StreamId(1), &[1], 10),
+            Err(RuntimeError::IdleTimeout)
+        );
+        assert_eq!(c.state(), RuntimeState::Closed);
+
+        // The graceful-close deadline fires at exactly close_timeout_ms.
+        let mut d = SessionRuntime::new(
+            SessionId(1),
+            RuntimeLimits {
+                close_timeout_ms: 5,
+                ..lim()
+            },
+            0,
+        )
+        .unwrap();
+        assert_eq!(d.close_graceful(0), Ok(()));
+        assert_eq!(d.state(), RuntimeState::Closing);
+        assert_eq!(d.tick(4), Ok(()));
+        assert_eq!(d.state(), RuntimeState::Closing);
+        assert_eq!(d.tick(5), Ok(()));
+        assert_eq!(d.state(), RuntimeState::Closed);
+    }
+
+    #[test]
+    fn process_message_lengths_are_exact_at_the_frame_boundary() {
+        // A 4096-byte frame is admitted; a Data record has a 30-byte header, so
+        // 4066 payload bytes reach the limit exactly.
+        let at_limit = data(1, 1, 0, vec![7; 4066]);
+        let encoded = at_limit.encode().unwrap();
+        assert_eq!(encoded.len(), PROCESS_FRAME_MAX);
+        assert_eq!(ProcessMessage::decode(&encoded), Ok(at_limit.clone()));
+        assert_eq!(
+            data(1, 1, 0, vec![7; 4067]).encode(),
+            Err(ProcessCodecError::TooLarge)
+        );
+
+        // The Data length field is exact: trailing bytes are malformed, both
+        // for a frame at the size limit (where the frame bound alone would not
+        // decide it) and for a short frame well inside the bound.
+        let mut trailing = encoded;
+        trailing.push(0);
+        assert_eq!(
+            ProcessMessage::decode(&trailing),
+            Err(ProcessCodecError::Malformed)
+        );
+        let short = data(1, 1, 0, vec![7, 8]);
+        let short_bytes = short.encode().unwrap();
+        assert_eq!(short_bytes.len(), 32);
+        let mut short_trailing = short_bytes;
+        short_trailing.push(0);
+        assert_eq!(
+            ProcessMessage::decode(&short_trailing),
+            Err(ProcessCodecError::Malformed)
+        );
+
+        // DeliveryAck and Resume accept exactly 36 and 69 bytes.
+        let ack = ProcessMessage::DeliveryAck {
+            session: SessionId(1),
+            stream: StreamId(1),
+            offset: 0,
+            len: 3,
+        };
+        let ack_bytes = ack.encode().unwrap();
+        assert_eq!(ack_bytes.len(), 36);
+        assert_eq!(ProcessMessage::decode(&ack_bytes), Ok(ack));
+        let mut ack_extra = ack_bytes;
+        ack_extra.push(0);
+        assert_eq!(
+            ProcessMessage::decode(&ack_extra),
+            Err(ProcessCodecError::Malformed)
+        );
+
+        let resume = ProcessMessage::Resume {
+            binding: ResumeWireBinding {
+                session_id: SessionId(1),
+                delivery_epoch: 0,
+                key_phase: 0,
+                path_generation: 0,
+                expires_at_ms: 0,
+                token: [0; 32],
+            },
+        };
+        let resume_bytes = resume.encode().unwrap();
+        assert_eq!(resume_bytes.len(), 69);
+        assert_eq!(ProcessMessage::decode(&resume_bytes), Ok(resume));
+        let mut resume_extra = resume_bytes;
+        resume_extra.push(0);
+        assert_eq!(
+            ProcessMessage::decode(&resume_extra),
+            Err(ProcessCodecError::Malformed)
+        );
+    }
+
+    #[test]
+    fn datagram_runtime_rejects_zero_limits() {
+        assert!(DatagramRuntime::new(0, 1).is_err());
+        assert!(DatagramRuntime::new(1, 0).is_err());
+        assert!(DatagramRuntime::new(1, 1).is_ok());
+    }
+}
