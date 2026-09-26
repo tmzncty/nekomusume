@@ -695,6 +695,145 @@ mod tests {
         assert_eq!(terminal, 1, "lines={lines:?}");
     }
 
+    #[test]
+    fn health_state_labels_are_exact_for_every_state() {
+        let s = HealthSample {
+            rtt_us: 1,
+            loss_per_mille: 0,
+            pto: 0,
+        };
+        for (state, label) in [
+            (HealthState::Unknown, "unknown"),
+            (HealthState::Healthy, "healthy"),
+            (HealthState::Degraded, "degraded"),
+            (HealthState::Failed, "failed"),
+        ] {
+            let mut p = Producer::new(SessionId(1), 4).unwrap();
+            // No previous state: exactly one sample line, no transition.
+            p.record_health(1, 1, PathId(1), None, state, s);
+            let l = lines(&p);
+            assert_eq!(l.len(), 1, "sample only when there is no previous state");
+            assert!(
+                l[0].contains(&format!("\"health_state\":\"{label}\"")),
+                "state {state:?} must serialize as {label}: {}",
+                l[0]
+            );
+        }
+        // The transition line carries the same vocabulary for both sides.
+        let mut p = Producer::new(SessionId(1), 4).unwrap();
+        p.record_health(
+            1,
+            1,
+            PathId(1),
+            Some(HealthState::Unknown),
+            HealthState::Failed,
+            s,
+        );
+        let l = lines(&p);
+        assert!(
+            l[1].contains("\"previous_health_state\":\"unknown\""),
+            "{}",
+            l[1]
+        );
+        assert!(l[1].contains("\"health_state\":\"failed\""), "{}", l[1]);
+    }
+
+    #[test]
+    fn scheduler_priority_labels_and_counters_are_exact_for_both_priorities() {
+        let mut scheduler = FairScheduler::new(Default::default()).unwrap();
+        scheduler
+            .open(neko_carrier::StreamId(1), StreamPriority::Interactive)
+            .unwrap();
+        scheduler.enqueue(neko_carrier::StreamId(1), b"a").unwrap();
+        scheduler
+            .open(neko_carrier::StreamId(2), StreamPriority::Bulk)
+            .unwrap();
+        scheduler.enqueue(neko_carrier::StreamId(2), b"bb").unwrap();
+        let mut p = Producer::new(SessionId(1), 8).unwrap();
+        p.record_scheduler(
+            1,
+            &scheduler,
+            Some((neko_carrier::StreamId(1), StreamPriority::Interactive)),
+            false,
+        );
+        p.record_scheduler(
+            2,
+            &scheduler,
+            Some((neko_carrier::StreamId(2), StreamPriority::Bulk)),
+            false,
+        );
+        let l = lines(&p);
+        assert!(l[0].contains("\"priority\":\"interactive\""), "{}", l[0]);
+        assert!(l[0].contains("\"stream_id\":\"stream:1\""), "{}", l[0]);
+        assert!(l[1].contains("\"priority\":\"bulk\""), "{}", l[1]);
+        assert!(l[1].contains("\"stream_id\":\"stream:2\""), "{}", l[1]);
+        // The counters follow the same split as the labels.
+        assert_eq!(p.dequeue_totals(), (1, 1, 0));
+    }
+
+    #[test]
+    fn unnamed_switch_reasons_fall_back_to_the_hysteresis_label() {
+        // Every reason without a named vocabulary entry maps to the default
+        // "recovery_hysteresis"; the named-vocabulary test never exercises it.
+        for reason in [
+            SwitchReason::DrainDeadline,
+            SwitchReason::ResumeRejected,
+            SwitchReason::Shutdown,
+            SwitchReason::Other(7),
+        ] {
+            assert_eq!(switch_reason(reason), "recovery_hysteresis", "{reason:?}");
+        }
+        // Control: the named arm is unchanged.
+        assert_eq!(switch_reason(SwitchReason::UdpBlackhole), "pto_threshold");
+    }
+
+    #[test]
+    fn a_failed_switch_names_no_concrete_carrier_kind() {
+        let mut m = ConcurrentCarrierManager::new(ConcurrentLimits {
+            k_ready: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        let from = ConcurrentPathKey {
+            path: PathId(7),
+            generation: PathGeneration(3),
+        };
+        m.register(from, CarrierKind::Udp).unwrap();
+        m.observe_readiness(from, true, true, 1).unwrap();
+        m.activate(from, SwitchReason::OperatorRequest, 2, true)
+            .unwrap();
+        let ev = m
+            .fail(from, SwitchReason::CarrierError, 9)
+            .unwrap()
+            .expect("failing the active path yields a switch event");
+        assert_eq!(ev.to, None, "a failed switch has no target path");
+        let mut p = Producer::new(SessionId(1), 8).unwrap();
+        p.record_switch(&m, ev);
+        let l = lines(&p);
+        // There is no target path to name, so the kind is the neutral "other" -
+        // never a concrete carrier kind borrowed from the from-path.
+        assert!(l[0].contains("\"carrier_kind\":\"other\""), "{}", l[0]);
+        assert!(l[0].contains("\"outcome\":\"failed\""));
+        assert!(!l[0].contains("\"to_path_id\""), "{}", l[0]);
+    }
+
+    #[test]
+    fn declared_capacity_is_reported_and_never_exceeded() {
+        let mut p = Producer::new(SessionId(1), 5).unwrap();
+        assert_eq!(p.capacity(), 5);
+        let r = Recovery::new(4, 2).unwrap();
+        for i in 0..50u64 {
+            p.record_pto(i, 1, PathId(1), &r, 0);
+            assert!(
+                p.retained() <= p.capacity(),
+                "retained must never exceed the declared capacity"
+            );
+        }
+        // capacity() reports the declared contract value, not whichever buffer
+        // the ring happens to have allocated.
+        assert_eq!(p.capacity(), 5);
+    }
+
     fn lines(p: &Producer) -> Vec<String> {
         p.events().map(Event::to_json_line).collect()
     }
