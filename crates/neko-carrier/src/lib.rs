@@ -9072,3 +9072,127 @@ mod failover_controller_boundary_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod fault_inject_boundary_tests {
+    use super::*;
+    use crate::Carrier;
+
+    fn pair() -> (MemoryEndpoint, MemoryEndpoint) {
+        MemoryPair::new(MemoryLimits {
+            max_message_bytes: 8,
+            max_queue_bytes: 4096,
+        })
+        .unwrap()
+    }
+    fn drain(b: &MemoryEndpoint) -> Vec<Vec<u8>> {
+        let mut got = Vec::new();
+        while let Ok(Some(x)) = b.recv() {
+            got.push(x);
+        }
+        got
+    }
+    fn loss_stream(seed: u64, percent: u8, sends: u8) -> Vec<u8> {
+        let (a, b) = pair();
+        let f = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                loss_percent: percent,
+                ..Default::default()
+            },
+            seed,
+        )
+        .unwrap();
+        let mut delivered = Vec::new();
+        for i in 0..sends {
+            f.send(&[i]).unwrap();
+            if !drain(&b).is_empty() {
+                delivered.push(i);
+            }
+        }
+        delivered
+    }
+
+    #[test]
+    fn fault_injector_loss_stream_is_exactly_deterministic() {
+        // The fixture's draw sequence is part of its contract: for seed 0 and
+        // 50% loss exactly these send indices survive (7 of the first 16
+        // draws fall below 50), and every other send is dropped silently.
+        assert_eq!(loss_stream(0, 50, 16), vec![1, 2, 4, 7, 8, 9, 12, 14, 15]);
+        // A draw exactly equal to loss_percent is still delivered: the
+        // comparison is strictly below. With seed 0 the fourth draw is exactly
+        // 3, so 3% loss drops only the first send.
+        assert_eq!(
+            loss_stream(0, 3, 16),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        );
+    }
+
+    #[test]
+    fn fault_injector_duplicate_reorder_window_and_passthrough_are_exact() {
+        // Passthrough: the wrapper must not swallow a delivered record, and
+        // its own receive delegates to the inner carrier.
+        let (a, b) = pair();
+        let passthrough = FaultInjectCarrier::new(a, FaultPolicy::default(), 7).unwrap();
+        passthrough.send(b"hello").unwrap();
+        assert_eq!(drain(&b), vec![b"hello".to_vec()]);
+        let (a, b) = pair();
+        let delegating = FaultInjectCarrier::new(a, FaultPolicy::default(), 7).unwrap();
+        b.send(b"inbound").unwrap();
+        assert_eq!(delegating.recv().unwrap(), Some(b"inbound".to_vec()));
+
+        // Duplicate mode emits exactly two copies of every delivered record.
+        let (a, b) = pair();
+        let duplicate = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                duplicate: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        duplicate.send(b"dup").unwrap();
+        assert_eq!(drain(&b), vec![b"dup".to_vec(), b"dup".to_vec()]);
+
+        // Reorder mode withholds exactly one record and releases it after the
+        // next surviving record (an adjacent-pair swap); the bounded slot
+        // never holds more than one record.
+        let (a, b) = pair();
+        let reorder = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                reorder: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        reorder.send(b"first").unwrap();
+        assert!(drain(&b).is_empty());
+        assert_eq!(reorder.pending_len(), 1);
+        reorder.send(b"second").unwrap();
+        assert_eq!(drain(&b), vec![b"second".to_vec(), b"first".to_vec()]);
+        assert_eq!(reorder.pending_len(), 0);
+        reorder.send(b"third").unwrap();
+        assert!(drain(&b).is_empty());
+        assert_eq!(reorder.pending_len(), 1);
+
+        // A loss window drops exactly [start, end) and the path is clean from
+        // end on.
+        let (a, b) = pair();
+        let window = FaultInjectCarrier::new(
+            a,
+            FaultPolicy {
+                loss_window: Some((1, 3)),
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+        for i in 0..5u8 {
+            window.send(&[i]).unwrap();
+        }
+        assert_eq!(drain(&b), vec![vec![0], vec![3], vec![4]]);
+    }
+}
