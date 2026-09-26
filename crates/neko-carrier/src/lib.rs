@@ -476,6 +476,236 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod carrier_state_boundary_tests {
+    use super::*;
+
+    const P: PathId = PathId(1);
+    const Q: PathId = PathId(2);
+
+    fn state(k_successes: u32, min_dwell_events: u32) -> CarrierState {
+        CarrierState::new(Limits {
+            max_paths: 8,
+            hysteresis: Hysteresis {
+                min_dwell_events,
+                k_successes,
+            },
+        })
+    }
+    fn record(s: &CarrierState, p: PathId) -> (PathValidationState, PathState, u32, u32) {
+        let r = s.path(p).expect("path present");
+        (r.validation, r.state, r.successes, r.dwell_events)
+    }
+    fn add(s: &mut CarrierState, p: PathId, generation: u64) {
+        s.apply(CarrierEvent::PathAdded {
+            path: p,
+            carrier: CarrierKind::Udp,
+            generation: PathGeneration(generation),
+        })
+        .unwrap();
+    }
+    fn sent(s: &mut CarrierState, p: PathId, generation: u64) -> Result<(), PathError> {
+        s.apply(CarrierEvent::ChallengeSent {
+            path: p,
+            generation: PathGeneration(generation),
+        })
+    }
+    fn validated(s: &mut CarrierState, p: PathId, generation: u64) -> Result<(), PathError> {
+        s.apply(CarrierEvent::ChallengeValidated(PathValidated {
+            path: p,
+            generation: PathGeneration(generation),
+        }))
+    }
+    fn feedback(
+        s: &mut CarrierState,
+        p: PathId,
+        generation: u64,
+        kind: PacketFeedbackKind,
+    ) -> Result<(), PathError> {
+        s.apply(CarrierEvent::PacketFeedback(PacketFeedback {
+            path: p,
+            generation: PathGeneration(generation),
+            kind,
+        }))
+    }
+    fn activate(s: &mut CarrierState, p: PathId, generation: u64) -> Result<(), PathError> {
+        s.apply(CarrierEvent::Activate {
+            path: p,
+            generation: PathGeneration(generation),
+        })
+    }
+    /// A state with `P` validated, ACK-confirmed and active.
+    fn activated() -> CarrierState {
+        let mut s = state(1, 1);
+        add(&mut s, P, 1);
+        sent(&mut s, P, 1).unwrap();
+        validated(&mut s, P, 1).unwrap();
+        feedback(&mut s, P, 1, PacketFeedbackKind::Ack).unwrap();
+        activate(&mut s, P, 1).unwrap();
+        s
+    }
+
+    #[test]
+    fn carrier_state_challenge_dwell_and_success_bookkeeping_is_exact() {
+        let mut s = state(1, 1);
+        add(&mut s, P, 1);
+        assert_eq!(
+            record(&s, P),
+            (PathValidationState::Candidate, PathState::Candidate, 0, 0)
+        );
+        assert_eq!(s.snapshot().active, None);
+        assert_eq!(s.snapshot().active_epoch, 0);
+
+        sent(&mut s, P, 1).unwrap();
+        assert_eq!(
+            record(&s, P),
+            (PathValidationState::Validating, PathState::Validating, 0, 0)
+        );
+        validated(&mut s, P, 1).unwrap();
+        // Validation succeeds with no accumulated successes yet, and every
+        // later event ticks the dwell counter of the validated path.
+        assert_eq!(
+            record(&s, P),
+            (PathValidationState::Validated, PathState::Candidate, 0, 1)
+        );
+        // A second challenge on an already-validated path is refused.
+        assert_eq!(sent(&mut s, P, 1), Err(PathError::InvalidTransition));
+
+        // Activation without ACK evidence is gated.
+        assert_eq!(activate(&mut s, P, 1), Err(PathError::HysteresisGate));
+        feedback(&mut s, P, 1, PacketFeedbackKind::Ack).unwrap();
+        assert_eq!(
+            record(&s, P),
+            (PathValidationState::Validated, PathState::Candidate, 1, 2)
+        );
+    }
+
+    #[test]
+    fn carrier_state_feedback_degrades_only_the_active_path() {
+        let mut s = activated();
+
+        // A second path stays untouched by loss and reorder on an inactive
+        // path, and its own activation is refused while P is active.
+        add(&mut s, Q, 1);
+        assert_eq!(activate(&mut s, Q, 1), Err(PathError::ActivePathConflict));
+        feedback(&mut s, Q, 1, PacketFeedbackKind::Loss).unwrap();
+        feedback(&mut s, Q, 1, PacketFeedbackKind::Reordered).unwrap();
+        assert_eq!(
+            record(&s, Q),
+            (PathValidationState::Candidate, PathState::Candidate, 0, 0)
+        );
+
+        // Loss on the active path degrades it.
+        feedback(&mut s, P, 1, PacketFeedbackKind::Loss).unwrap();
+        assert_eq!(record(&s, P).1, PathState::Degraded);
+
+        // Reorder evidence degrades the active path too (checked on a fresh
+        // activation so the loss above cannot mask it).
+        let mut reorder = activated();
+        feedback(&mut reorder, P, 1, PacketFeedbackKind::Reordered).unwrap();
+        assert_eq!(record(&reorder, P).1, PathState::Degraded);
+
+        // PTO on the active path degrades it but never fails it.
+        let mut pto = activated();
+        pto.apply(CarrierEvent::PtoExpired {
+            path: P,
+            generation: PathGeneration(1),
+        })
+        .unwrap();
+        assert_eq!(record(&pto, P).1, PathState::Degraded);
+        assert_eq!(pto.active(), Some((P, PathGeneration(1))));
+    }
+
+    #[test]
+    fn carrier_state_drain_fail_and_activation_gates_are_exact() {
+        let mut s = activated();
+        assert_eq!(record(&s, P).1, PathState::Active);
+        assert_eq!(s.snapshot().active, Some((P, PathGeneration(1))));
+        assert_eq!(s.snapshot().active_epoch, 1);
+
+        // Only an active path may begin draining; a candidate may not.
+        add(&mut s, Q, 1);
+        assert_eq!(
+            s.apply(CarrierEvent::BeginDrain {
+                path: Q,
+                generation: PathGeneration(1)
+            }),
+            Err(PathError::InvalidTransition)
+        );
+        s.apply(CarrierEvent::BeginDrain {
+            path: P,
+            generation: PathGeneration(1),
+        })
+        .unwrap();
+        assert_eq!(record(&s, P).1, PathState::Draining);
+
+        // A draining path may fail, which also clears the active path.
+        s.apply(CarrierEvent::Fail {
+            path: P,
+            generation: PathGeneration(1),
+        })
+        .unwrap();
+        assert_eq!(record(&s, P).1, PathState::Failed);
+        assert_eq!(s.active(), None);
+
+        // A fresh activation increments the epoch a second time, and an
+        // active (non-degraded, non-draining) path cannot fail outright.
+        sent(&mut s, Q, 1).unwrap();
+        validated(&mut s, Q, 1).unwrap();
+        feedback(&mut s, Q, 1, PacketFeedbackKind::Ack).unwrap();
+        activate(&mut s, Q, 1).unwrap();
+        assert_eq!(s.snapshot().active, Some((Q, PathGeneration(1))));
+        assert_eq!(s.snapshot().active_epoch, 2);
+        assert_eq!(
+            s.apply(CarrierEvent::Fail {
+                path: Q,
+                generation: PathGeneration(1)
+            }),
+            Err(PathError::InvalidTransition)
+        );
+    }
+
+    #[test]
+    fn carrier_state_hysteresis_requires_both_gates() {
+        // Two successes are not enough while the dwell counter is short, and
+        // vice versa: the gate needs both.
+        let mut s = state(1, 3);
+        add(&mut s, P, 1);
+        sent(&mut s, P, 1).unwrap();
+        validated(&mut s, P, 1).unwrap();
+        feedback(&mut s, P, 1, PacketFeedbackKind::Ack).unwrap();
+        assert_eq!(record(&s, P).3, 2);
+        assert_eq!(activate(&mut s, P, 1), Err(PathError::HysteresisGate));
+        s.apply(CarrierEvent::SessionDelivery(SessionDelivery {
+            path: P,
+            generation: PathGeneration(1),
+        }))
+        .unwrap();
+        assert_eq!(record(&s, P).3, 3);
+        activate(&mut s, P, 1).unwrap();
+        assert_eq!(s.snapshot().active_epoch, 1);
+    }
+
+    #[test]
+    fn carrier_state_path_identity_and_generation_errors_are_exact() {
+        let mut s = state(1, 1);
+        add(&mut s, P, 3);
+        let delivery = |path: PathId, generation: u64| {
+            CarrierEvent::SessionDelivery(SessionDelivery {
+                path,
+                generation: PathGeneration(generation),
+            })
+        };
+        assert_eq!(
+            s.apply(delivery(PathId(9), 3)),
+            Err(PathError::PathNotFound)
+        );
+        assert_eq!(s.apply(delivery(P, 2)), Err(PathError::OldGeneration));
+        assert_eq!(s.apply(delivery(P, 4)), Err(PathError::GenerationMismatch));
+        assert_eq!(s.apply(delivery(P, 3)), Ok(()));
+    }
+}
+
 /// Resource limits shared by all carrier adapters. Fields describe the
 /// opaque message boundary exposed to Session, not a particular transport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
