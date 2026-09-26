@@ -4920,6 +4920,42 @@ mod manager_tests {
         assert_eq!(m.switches, 1);
         assert_eq!(m.migrate_back_to_udp(base), Err(MigrationError::NotTcp));
     }
+
+    #[test]
+    fn migrate_back_rejects_active_path_unhealthy_current_and_sets_generation() {
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 1,
+            switch_margin: 0,
+            max_paths: 3,
+        })
+        .unwrap();
+        m.observe(PathId(10), BAD).unwrap();
+        m.set_active_tcp(PathId(10), PathGeneration(7)).unwrap();
+        let base = MigrationCandidate {
+            path: PathId(20),
+            generation: PathGeneration(7),
+            validated: true,
+            health: GOOD,
+        };
+        // An unhealthy current path is not something to compare against.
+        assert_eq!(
+            m.migrate_back_to_udp(base),
+            Err(MigrationError::ScoreMargin)
+        );
+        assert_eq!(m.migration_hold(), 0);
+        m.observe(PathId(10), GOOD).unwrap();
+        assert_eq!(m.migrate_back_to_udp(base), Err(MigrationError::HoldGate));
+        assert_eq!(m.migration_hold(), 1);
+        assert_eq!(m.migrate_back_to_udp(base), Ok(true));
+        assert_eq!(m.migration_hold(), 0);
+        // The migrated-to generation is recorded as active.
+        assert_eq!(
+            m.prepare_warm_candidate(PathId(10), PathGeneration(7), 1, 1),
+            Err(MigrationError::OldGeneration)
+        );
+        m.prepare_warm_candidate(PathId(10), PathGeneration(8), 1, 1)
+            .unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -4970,6 +5006,290 @@ mod health_evidence_tests {
             resume_validated: true,
             resource_admitted: true,
         }
+    }
+
+    const GOOD: HealthSample = HealthSample {
+        rtt_us: 100,
+        loss_per_mille: 0,
+        pto: 0,
+    };
+
+    fn warmed_manager() -> CarrierManager {
+        let mut manager = active_manager();
+        for id in 1..=3 {
+            assert_eq!(
+                manager.observe_warm_candidate_readiness(warm_readiness(id)),
+                Ok(id == 3)
+            );
+        }
+        manager
+    }
+
+    #[test]
+    fn prepare_warm_candidate_requires_active_no_pending_and_newer_generation() {
+        let mut idle = CarrierManager::new(ManagerLimits {
+            min_hold_events: 1,
+            switch_margin: 0,
+            max_paths: 2,
+        })
+        .unwrap();
+        assert_eq!(
+            idle.prepare_warm_candidate(PathId(10), PathGeneration(2), 7001, 4),
+            Err(MigrationError::GenerationMismatch)
+        );
+        let mut manager = active_manager();
+        // Equal to the active generation (1) is not newer.
+        assert_eq!(
+            manager.prepare_warm_candidate(PathId(10), PathGeneration(1), 7001, 4),
+            Err(MigrationError::OldGeneration)
+        );
+        // Re-preparing restarts the readiness sequence from zero.
+        manager
+            .observe_warm_candidate_readiness(warm_readiness(1))
+            .unwrap();
+        manager
+            .observe_warm_candidate_readiness(warm_readiness(2))
+            .unwrap();
+        manager
+            .prepare_warm_candidate(PathId(10), PathGeneration(2), 7001, 4)
+            .unwrap();
+        assert_eq!(
+            manager.observe_warm_candidate_readiness(warm_readiness(3)),
+            Ok(false)
+        );
+        assert_eq!(manager.warm_candidate().unwrap().ready_observations, 1);
+        let (mut failed, _) = failed_manager();
+        assert_eq!(
+            failed.prepare_warm_candidate(PathId(10), PathGeneration(3), 7001, 4),
+            Err(MigrationError::GenerationMismatch)
+        );
+    }
+
+    #[test]
+    fn fail_warm_candidate_requires_exact_target_and_clears_it() {
+        let mut manager = warmed_manager();
+        assert_eq!(
+            manager.fail_warm_candidate(PathId(11), PathGeneration(2)),
+            Err(MigrationError::GenerationMismatch)
+        );
+        assert_eq!(
+            manager.fail_warm_candidate(PathId(10), PathGeneration(3)),
+            Err(MigrationError::GenerationMismatch)
+        );
+        assert!(manager.warm_candidate().is_some());
+        manager
+            .fail_warm_candidate(PathId(10), PathGeneration(2))
+            .unwrap();
+        assert_eq!(manager.warm_candidate(), None);
+        assert_eq!(
+            manager.fail_warm_candidate(PathId(10), PathGeneration(2)),
+            Err(MigrationError::GenerationMismatch)
+        );
+    }
+
+    #[test]
+    fn fail_udp_to_tcp_requires_active_exact_generation_and_failed_state() {
+        let mut manager = active_manager();
+        let fail = |m: &mut CarrierManager, path, generation, state| {
+            m.fail_udp_to_tcp(
+                PathId(path),
+                PathGeneration(generation),
+                PathId(10),
+                state,
+                CarrierSwitchReason::UdpPathDegraded,
+            )
+        };
+        assert_eq!(
+            fail(&mut manager, 8, 1, HealthState::Failed),
+            Err(MigrationError::NotTcp)
+        );
+        assert_eq!(
+            fail(&mut manager, 9, 0, HealthState::Failed),
+            Err(MigrationError::OldGeneration)
+        );
+        assert_eq!(
+            fail(&mut manager, 9, 2, HealthState::Failed),
+            Err(MigrationError::GenerationMismatch)
+        );
+        assert_eq!(
+            fail(&mut manager, 9, 1, HealthState::Degraded),
+            Err(MigrationError::GenerationMismatch)
+        );
+        assert_eq!(manager.active(), Some(PathId(9)));
+        assert_eq!(manager.pending_switch(), None);
+    }
+
+    #[test]
+    fn fail_udp_to_tcp_drops_a_mismatched_warm_candidate_and_resets_hold() {
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 3,
+            switch_margin: 0,
+            max_paths: 2,
+        })
+        .unwrap();
+        m.observe(PathId(9), GOOD).unwrap();
+        m.set_active_tcp(PathId(9), PathGeneration(1)).unwrap();
+        let back = MigrationCandidate {
+            path: PathId(20),
+            generation: PathGeneration(1),
+            validated: true,
+            health: GOOD,
+        };
+        assert_eq!(m.migrate_back_to_udp(back), Err(MigrationError::HoldGate));
+        assert_eq!(m.migration_hold(), 1);
+        // A candidate for another target is dropped at failure.
+        m.prepare_warm_candidate(PathId(11), PathGeneration(2), 7001, 4)
+            .unwrap();
+        m.fail_udp_to_tcp(
+            PathId(9),
+            PathGeneration(1),
+            PathId(10),
+            HealthState::Failed,
+            CarrierSwitchReason::UdpPathDegraded,
+        )
+        .unwrap();
+        assert_eq!(m.warm_candidate(), None);
+        assert_eq!(m.migration_hold(), 0);
+    }
+
+    #[test]
+    fn warm_promotion_checks_every_dimension() {
+        let mut manager = warmed_manager();
+        let pending = manager
+            .fail_udp_to_tcp(
+                PathId(9),
+                PathGeneration(1),
+                PathId(10),
+                HealthState::Failed,
+                CarrierSwitchReason::UdpPathDegraded,
+            )
+            .unwrap();
+        assert_eq!(pending.generation, PathGeneration(2));
+        for (path, session, epoch) in [(11, 7001, 4), (10, 7002, 4), (10, 7001, 5)] {
+            assert_eq!(
+                manager.promote_warm_authenticated_resume(
+                    PathId(path),
+                    PathGeneration(2),
+                    session,
+                    epoch
+                ),
+                Err(MigrationError::GenerationMismatch)
+            );
+        }
+        assert_eq!(manager.pending_switch(), Some(pending));
+        manager
+            .promote_warm_authenticated_resume(PathId(10), PathGeneration(2), 7001, 4)
+            .unwrap();
+        assert_eq!(manager.pending_switch(), None);
+        assert_eq!(manager.warm_candidate(), None);
+        // The promoted generation is now active: only a newer one may warm.
+        assert_eq!(
+            manager.prepare_warm_candidate(PathId(9), PathGeneration(2), 7001, 5),
+            Err(MigrationError::OldGeneration)
+        );
+    }
+
+    #[test]
+    fn warm_promotion_matches_pending_target_not_only_the_candidate() {
+        // A warm candidate at (11, gen 2) survives only if the pending switch
+        // agrees; with fallback 10 it is dropped, so promotion to 11 fails.
+        let mut manager = CarrierManager::new(ManagerLimits {
+            min_hold_events: 1,
+            switch_margin: 0,
+            max_paths: 2,
+        })
+        .unwrap();
+        manager.set_active_udp(PathId(9), PathGeneration(1));
+        manager
+            .prepare_warm_candidate(PathId(11), PathGeneration(2), 7001, 4)
+            .unwrap();
+        for id in 1..=3 {
+            manager
+                .observe_warm_candidate_readiness(ReadinessObservation {
+                    target_path: PathId(11),
+                    ..warm_readiness(id)
+                })
+                .unwrap();
+        }
+        manager
+            .fail_udp_to_tcp(
+                PathId(9),
+                PathGeneration(1),
+                PathId(10),
+                HealthState::Failed,
+                CarrierSwitchReason::UdpPathDegraded,
+            )
+            .unwrap();
+        assert_eq!(
+            manager.promote_warm_authenticated_resume(PathId(11), PathGeneration(2), 7001, 4),
+            Err(MigrationError::Unvalidated)
+        );
+        assert_eq!(manager.active(), None);
+    }
+
+    #[test]
+    fn cold_promotion_requires_exact_pending_and_both_proofs() {
+        let (mut manager, pending) = failed_manager();
+        assert_eq!(pending.generation, PathGeneration(2));
+        let cold = |m: &mut CarrierManager, path, generation, auth, resume| {
+            m.promote_cold_authenticated_resume(
+                PathId(path),
+                PathGeneration(generation),
+                auth,
+                resume,
+            )
+        };
+        assert_eq!(
+            cold(&mut manager, 10, 1, true, true),
+            Err(MigrationError::OldGeneration)
+        );
+        assert_eq!(
+            cold(&mut manager, 10, 3, true, true),
+            Err(MigrationError::GenerationMismatch)
+        );
+        assert_eq!(
+            cold(&mut manager, 11, 2, true, true),
+            Err(MigrationError::GenerationMismatch)
+        );
+        assert_eq!(
+            cold(&mut manager, 10, 2, false, true),
+            Err(MigrationError::Unvalidated)
+        );
+        assert_eq!(
+            cold(&mut manager, 10, 2, true, false),
+            Err(MigrationError::Unvalidated)
+        );
+        assert_eq!(manager.active(), None);
+        assert_eq!(manager.cold_recoveries, 0);
+        cold(&mut manager, 10, 2, true, true).unwrap();
+        assert_eq!(manager.active(), Some(PathId(10)));
+    }
+
+    #[test]
+    fn set_active_resets_migration_hold_and_udp_drops_warm_candidate() {
+        let mut m = CarrierManager::new(ManagerLimits {
+            min_hold_events: 3,
+            switch_margin: 0,
+            max_paths: 2,
+        })
+        .unwrap();
+        m.observe(PathId(9), GOOD).unwrap();
+        m.set_active_tcp(PathId(9), PathGeneration(1)).unwrap();
+        let back = MigrationCandidate {
+            path: PathId(20),
+            generation: PathGeneration(1),
+            validated: true,
+            health: GOOD,
+        };
+        m.migrate_back_to_udp(back).unwrap_err();
+        assert_eq!(m.migration_hold(), 1);
+        m.set_active_tcp(PathId(9), PathGeneration(1)).unwrap();
+        assert_eq!(m.migration_hold(), 0);
+
+        let mut manager = active_manager();
+        assert!(manager.warm_candidate().is_some());
+        manager.set_active_udp(PathId(9), PathGeneration(1));
+        assert_eq!(manager.warm_candidate(), None);
     }
 
     #[test]
