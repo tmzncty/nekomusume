@@ -4468,6 +4468,82 @@ mod manager_tests {
         );
     }
     #[test]
+    fn health_limits_thresholds_and_recovery_are_exact() {
+        let lim = |degrade_after, fail_after, recover_after, max_paths| HealthLimits {
+            degrade_after,
+            fail_after,
+            recover_after,
+            max_paths,
+        };
+        // recover_after 0 and max_paths 0 are invalid; fail_after may equal
+        // degrade_after.
+        assert!(matches!(
+            CarrierHealth::new(lim(2, 4, 0, 1)),
+            Err(HealthError::InvalidLimit)
+        ));
+        assert!(matches!(
+            CarrierHealth::new(lim(2, 4, 2, 0)),
+            Err(HealthError::InvalidLimit)
+        ));
+        let mut eq = CarrierHealth::new(lim(2, 2, 1, 1)).unwrap();
+        eq.observe(PathId(1), BAD).unwrap();
+        assert_eq!(eq.observe(PathId(1), BAD), Ok(HealthState::Failed));
+        // A known path keeps being observed at exactly max_paths.
+        let mut h = CarrierHealth::new(lim(2, 4, 2, 2)).unwrap();
+        h.observe(PathId(1), GOOD).unwrap();
+        h.observe(PathId(2), GOOD).unwrap();
+        assert_eq!(h.observe(PathId(1), GOOD), Ok(HealthState::Healthy));
+        assert_eq!(h.observe(PathId(3), GOOD), Err(HealthError::ResourceLimit));
+        // A good sample breaks the bad streak: bad, good, bad stays Healthy.
+        h.observe(PathId(1), BAD).unwrap();
+        h.observe(PathId(1), GOOD).unwrap();
+        assert_eq!(h.observe(PathId(1), BAD), Ok(HealthState::Healthy));
+        assert_eq!(h.path(PathId(1)).unwrap().consecutive_bad, 1);
+        // Degraded recovers after exactly recover_after good samples.
+        assert_eq!(h.observe(PathId(1), BAD), Ok(HealthState::Degraded));
+        assert_eq!(h.observe(PathId(1), GOOD), Ok(HealthState::Degraded));
+        assert_eq!(h.observe(PathId(1), GOOD), Ok(HealthState::Healthy));
+    }
+    #[test]
+    fn measured_sample_badness_thresholds_are_inclusive() {
+        // A sample is bad at pto >= 3 or loss >= 500 per mille (the same
+        // boundary PathScore::healthy uses). With degrade_after 1, one bad
+        // sample degrades; one good sample below both bounds does not.
+        let s = |pto, loss_per_mille| HealthSample {
+            rtt_us: 1,
+            loss_per_mille,
+            pto,
+        };
+        let lim = HealthLimits {
+            degrade_after: 1,
+            fail_after: 4,
+            recover_after: 2,
+            max_paths: 8,
+        };
+        for (i, (sample, expect)) in [
+            (s(2, 499), HealthState::Healthy),
+            (s(3, 0), HealthState::Degraded),
+            (s(0, 500), HealthState::Degraded),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut h = CarrierHealth::new(lim).unwrap();
+            h.observe(PathId(1), s(0, 0)).unwrap();
+            assert_eq!(h.observe(PathId(1), sample), Ok(expect), "case {i}");
+        }
+    }
+    #[test]
+    fn health_evidence_requires_nonzero_sample_bound() {
+        assert!(matches!(
+            CarrierHealthEvidence::new(
+                HealthLimits::default(),
+                HealthEvidenceLimits { max_samples: 0 }
+            ),
+            Err(HealthError::InvalidLimit)
+        ));
+    }
+    #[test]
     fn bulk_does_not_starve_interactive() {
         let mut s = FairScheduler::new(FlowLimits {
             max_streams: 2,
