@@ -839,6 +839,208 @@ mod session_tests {
         assert!(b.open(&records[3]).is_err());
     }
 
+    fn resume_binding_fixture() -> ResumeBinding {
+        ResumeBinding {
+            session_id: 5,
+            delivery_epoch: 2,
+            key_phase: 1,
+            path_generation: 3,
+            expires_at_ms: 1_000,
+            token: [4; 32],
+        }
+    }
+
+    fn trust_for(key: &[u8], scope: &[u8]) -> TrustPolicy {
+        TrustPolicy::new(vec![TrustRecord {
+            version: 1,
+            public_key: key.to_vec(),
+            scope: scope.to_vec(),
+            status: TrustStatus::Active,
+        }])
+    }
+
+    #[test]
+    fn each_initiator_constructor_has_its_own_scope_ceiling() {
+        let i = LocalIdentity::generate().unwrap();
+        let r = LocalIdentity::generate().unwrap();
+        let key = r.public_key();
+        let b = resume_binding_fixture();
+        // Plain: 1..=128.
+        assert!(InitiatorHandshake::new(&i, key, b"", b"dom").is_err());
+        assert!(InitiatorHandshake::new(&i, key, &[7u8; 128], b"dom").is_ok());
+        assert!(InitiatorHandshake::new(&i, key, &[7u8; 129], b"dom").is_err());
+        // Resumable: the resume binding shares the handshake payload, so the
+        // scope ceiling is tighter (1..=62) than the plain constructor's.
+        assert!(InitiatorHandshake::with_resume_binding(&i, key, b"", b"dom", &b).is_err());
+        assert!(InitiatorHandshake::with_resume_binding(&i, key, &[7u8; 62], b"dom", &b).is_ok());
+        assert!(InitiatorHandshake::with_resume_binding(&i, key, &[7u8; 63], b"dom", &b).is_err());
+        // Resumable with a negotiation binding: tighter again (1..=60), and the
+        // negotiation binding itself must be present and at most 256 bytes.
+        let nb = |n: usize| vec![7u8; n];
+        assert!(
+            InitiatorHandshake::with_resume_negotiation_binding(&i, key, b"", b"dom", &b, &nb(1))
+                .is_err()
+        );
+        assert!(
+            InitiatorHandshake::with_resume_negotiation_binding(
+                &i,
+                key,
+                &[7u8; 60],
+                b"dom",
+                &b,
+                &nb(1)
+            )
+            .is_ok()
+        );
+        assert!(
+            InitiatorHandshake::with_resume_negotiation_binding(
+                &i,
+                key,
+                &[7u8; 61],
+                b"dom",
+                &b,
+                &nb(1)
+            )
+            .is_err()
+        );
+        assert!(
+            InitiatorHandshake::with_resume_negotiation_binding(&i, key, b"s", b"dom", &b, &[])
+                .is_err()
+        );
+        assert!(
+            InitiatorHandshake::with_resume_negotiation_binding(
+                &i,
+                key,
+                b"s",
+                b"dom",
+                &b,
+                &nb(256)
+            )
+            .is_ok()
+        );
+        assert!(
+            InitiatorHandshake::with_resume_negotiation_binding(
+                &i,
+                key,
+                b"s",
+                b"dom",
+                &b,
+                &nb(257)
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn resume_negotiation_round_trip_binds_the_exact_transcript() {
+        // The responder reads the handshake payload into a 128-byte buffer, so
+        // a 6-byte scope leaves at most 54 bytes of negotiation binding: 1 + 6
+        // + 65 + 2 + 54 == 128 exactly. The length is also not a multiple of
+        // 256, so its big-endian prefix (0x0036) and a little-endian reading of
+        // it (0x3600) differ - a swapped or dropped prefix fails the check.
+        let nb = vec![0x5au8; 54];
+        let i = LocalIdentity::generate().unwrap();
+        let r = LocalIdentity::generate().unwrap();
+        let b = resume_binding_fixture();
+        let policy = trust_for(i.public_key(), b"resume");
+        let mut ih = InitiatorHandshake::with_resume_negotiation_binding(
+            &i,
+            r.public_key(),
+            b"resume",
+            b"dom",
+            &b,
+            &nb,
+        )
+        .unwrap();
+        let first = ih.first_message().unwrap();
+        let rh = ResponderHandshake::new_with_resume_negotiation_binding(&r, policy, b"dom", &nb)
+            .unwrap();
+        let (response, _session, remote, decoded) =
+            rh.receive_first_with_resume(&first, ctx(0)).unwrap();
+        // The responder recovered the peer identity and the exact binding.
+        assert_eq!(remote, i.public_key().to_vec());
+        assert_eq!(decoded, b);
+        // The initiator finishes - which only works if both sides derived the
+        // same negotiation-bound prologue.
+        assert!(ih.finish(&response, ctx(0)).is_ok());
+    }
+
+    #[test]
+    fn the_responder_payload_buffer_is_the_real_negotiation_ceiling() {
+        // One byte more than the 128-byte read buffer allows: the same scope
+        // can no longer be carried, even though the constructor's own limit
+        // (256) would admit it.
+        let i = LocalIdentity::generate().unwrap();
+        let r = LocalIdentity::generate().unwrap();
+        let b = resume_binding_fixture();
+        let policy = trust_for(i.public_key(), b"resume");
+        for (nb_len, expected_ok) in [(54usize, true), (55, false)] {
+            let nb = vec![0x5au8; nb_len];
+            let mut ih = InitiatorHandshake::with_resume_negotiation_binding(
+                &i,
+                r.public_key(),
+                b"resume",
+                b"dom",
+                &b,
+                &nb,
+            )
+            .unwrap();
+            let first = ih.first_message().unwrap();
+            let rh = ResponderHandshake::new_with_resume_negotiation_binding(
+                &r,
+                policy.clone(),
+                b"dom",
+                &nb,
+            )
+            .unwrap();
+            assert_eq!(
+                rh.receive_first_with_resume(&first, ctx(0)).is_ok(),
+                expected_ok,
+                "nb_len={nb_len}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_one_byte_scope_is_the_minimum_resumable_payload() {
+        // 1 (scope len) + 1 (scope) + 65 (binding) == 67, the exact minimum the
+        // responder's length floor must accept.
+        let i = LocalIdentity::generate().unwrap();
+        let r = LocalIdentity::generate().unwrap();
+        let b = resume_binding_fixture();
+        let policy = trust_for(i.public_key(), b"s");
+        let mut ih =
+            InitiatorHandshake::with_resume_binding(&i, r.public_key(), b"s", b"dom", &b).unwrap();
+        let first = ih.first_message().unwrap();
+        let rh = ResponderHandshake::new(&r, policy, b"dom").unwrap();
+        let (_response, _session, _remote, decoded) =
+            rh.receive_first_with_resume(&first, ctx(0)).unwrap();
+        assert_eq!(decoded, b);
+    }
+
+    #[test]
+    fn the_responder_refuses_a_peer_the_policy_does_not_authorize() {
+        let i = LocalIdentity::generate().unwrap();
+        let r = LocalIdentity::generate().unwrap();
+        let b = resume_binding_fixture();
+        // The policy trusts a DIFFERENT identity of the same key length.
+        let other = LocalIdentity::generate().unwrap();
+        // Plain path.
+        let mut ih = InitiatorHandshake::new(&i, r.public_key(), b"echo", b"dom").unwrap();
+        let first = ih.first_message().unwrap();
+        let rh =
+            ResponderHandshake::new(&r, trust_for(other.public_key(), b"echo"), b"dom").unwrap();
+        assert!(rh.receive_first(&first, ctx(0)).is_err());
+        // Resumable path: authorization happens before the response is written.
+        let mut ih =
+            InitiatorHandshake::with_resume_binding(&i, r.public_key(), b"echo", b"dom", &b)
+                .unwrap();
+        let first = ih.first_message().unwrap();
+        let rh =
+            ResponderHandshake::new(&r, trust_for(other.public_key(), b"echo"), b"dom").unwrap();
+        assert!(rh.receive_first_with_resume(&first, ctx(0)).is_err());
+    }
+
     #[test]
     fn prologue_mismatch_and_oversize_fail_uniformly() {
         let initiator = LocalIdentity::generate().unwrap();
@@ -2068,6 +2270,180 @@ mod preauth_tests {
         // A reading before the last progress must be refused rather than
         // treated as a negative idle period.
         assert_eq!(a.charge_input(id, 1, 1, 3).err(), Some(SessionRejected));
+    }
+
+    #[test]
+    fn dequeuing_returns_the_per_source_queue_slot() {
+        let mut l = process_limits();
+        l.max_queue_per_source = 1;
+        l.max_queue_global = 2;
+        let mut a = ProcessPreauthAdmission::new(l, 0).unwrap();
+        let id = a.admit_state(b"s", 1, 0).unwrap();
+        let first = a.enqueue(id, 0).unwrap();
+        assert_eq!(a.queued(), 1);
+        a.dequeue(first).unwrap();
+        assert_eq!(a.queued(), 0);
+        // The per-source slot was genuinely returned, not just the global
+        // counter: the same source can reserve again.
+        let second = a.enqueue(id, 0).unwrap();
+        a.dequeue(second).unwrap();
+    }
+
+    #[test]
+    fn completing_a_response_checks_the_controller_and_the_admission_instant() {
+        // A reading before the instant the response was admitted is refused,
+        // and one after the inclusive deadline is refused while the deadline
+        // instant itself is accepted.
+        let mut a = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = a.admit_state(b"s", 1, 0).unwrap();
+        a.charge_input(id, 1, 1, 0).unwrap();
+        let p = a.charge_response(id, 1, 10).unwrap();
+        assert_eq!(p.admitted_at_ms(), 10);
+        assert_eq!(p.deadline_ms(), 110);
+        assert_eq!(a.complete_response(p, 5).err(), Some(SessionRejected));
+
+        let mut b = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = b.admit_state(b"s", 1, 0).unwrap();
+        b.charge_input(id, 1, 1, 0).unwrap();
+        let p = b.charge_response(id, 1, 0).unwrap();
+        assert_eq!(p.deadline_ms(), 100);
+        assert_eq!(b.complete_response(p, 100), Ok(()));
+
+        let mut c = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = c.admit_state(b"s", 1, 0).unwrap();
+        c.charge_input(id, 1, 1, 0).unwrap();
+        let p = c.charge_response(id, 1, 0).unwrap();
+        assert_eq!(c.complete_response(p, 101).err(), Some(SessionRejected));
+
+        // A permit issued by another controller must be refused even when the
+        // foreign state id and attempt id both match a live local one.
+        let mut x = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let idx = x.admit_state(b"s", 1, 0).unwrap();
+        x.charge_input(idx, 1, 1, 0).unwrap();
+        let _own = x.charge_response(idx, 1, 0).unwrap();
+        let mut y = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let idy = y.admit_state(b"s", 1, 0).unwrap();
+        y.charge_input(idy, 1, 1, 0).unwrap();
+        let foreign = y.charge_response(idy, 1, 0).unwrap();
+        assert_eq!(x.complete_response(foreign, 0).err(), Some(SessionRejected));
+    }
+
+    #[test]
+    fn abandoning_a_response_leaves_the_accounting_charged_and_terminal() {
+        let mut a = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = a.admit_state(b"s", 1, 0).unwrap();
+        a.charge_input(id, 1, 1, 0).unwrap();
+        let p = a.charge_response(id, 1, 0).unwrap();
+        assert_eq!(a.response_accounting(), (1, 1));
+        a.abandon_response(p).unwrap();
+        // The charge is not refunded...
+        assert_eq!(a.response_accounting(), (1, 1));
+        // ...and the logical state is terminal, so it can never send again.
+        assert_eq!(a.charge_input(id, 1, 0, 0).err(), Some(SessionRejected));
+        assert_eq!(
+            a.charge_response(id, 1, 0).map(|_| ()).err(),
+            Some(SessionRejected)
+        );
+        // The state can still be released, which is how the charge is reclaimed.
+        a.release(id).unwrap();
+        assert_eq!(a.live_states(), 0);
+
+        // A foreign abandon is refused for the same reason a foreign complete is.
+        let mut y = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let idy = y.admit_state(b"s", 1, 0).unwrap();
+        y.charge_input(idy, 1, 1, 0).unwrap();
+        let foreign = y.charge_response(idy, 1, 0).unwrap();
+        let mut z = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let idz = z.admit_state(b"s", 1, 0).unwrap();
+        z.charge_input(idz, 1, 1, 0).unwrap();
+        let _own = z.charge_response(idz, 1, 0).unwrap();
+        assert_eq!(z.abandon_response(foreign).err(), Some(SessionRejected));
+    }
+
+    #[test]
+    fn forged_permits_cannot_complete_or_abandon_a_response() {
+        // The ownership checks are exercised with forged permits, since an
+        // honest permit is one-shot and always matches its own state.
+        let mut a = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = a.admit_state(b"s", 1, 0).unwrap();
+        a.charge_input(id, 1, 1, 0).unwrap();
+        let _real = a.charge_response(id, 1, 0).unwrap();
+        let controller = a.controller_id;
+        // Correct controller, wrong attempt id: the pending slot does not match.
+        let wrong_attempt = PreauthResponsePermit {
+            controller_id: controller,
+            attempt_id: 999,
+            state_id: id,
+            admitted_at_ms: 0,
+            deadline_ms: 1_000,
+        };
+        assert_eq!(
+            a.complete_response(wrong_attempt, 0).err(),
+            Some(SessionRejected)
+        );
+        let wrong_attempt = PreauthResponsePermit {
+            controller_id: controller,
+            attempt_id: 999,
+            state_id: id,
+            admitted_at_ms: 0,
+            deadline_ms: 1_000,
+        };
+        assert_eq!(
+            a.abandon_response(wrong_attempt).err(),
+            Some(SessionRejected)
+        );
+        // A foreign controller id is refused even with the right attempt id.
+        let foreign = PreauthResponsePermit {
+            controller_id: controller + 1,
+            attempt_id: 0,
+            state_id: id,
+            admitted_at_ms: 0,
+            deadline_ms: 1_000,
+        };
+        assert_eq!(a.complete_response(foreign, 0).err(), Some(SessionRejected));
+    }
+
+    #[test]
+    fn an_unbacked_queue_reservation_cannot_be_dequeued() {
+        let mut a = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = a.admit_state(b"s", 1, 0).unwrap();
+        // A forged permit for a state that reserved nothing must be refused
+        // rather than decrementing past zero.
+        let forged = PreauthQueuePermit { state_id: id };
+        assert_eq!(a.dequeue(forged).err(), Some(SessionRejected));
+        assert_eq!(a.queued(), 0);
+        // The real reservation still works and is released exactly once.
+        let real = a.enqueue(id, 0).unwrap();
+        assert_eq!(a.queued(), 1);
+        a.dequeue(real).unwrap();
+        assert_eq!(a.queued(), 0);
+    }
+
+    #[test]
+    fn abandoning_or_completing_releases_the_pending_response_slot() {
+        // The pending slot is private, so this asserts it directly: a slot left
+        // set would keep the state from ever sending another response.
+        let mut a = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = a.admit_state(b"s", 1, 0).unwrap();
+        a.charge_input(id, 1, 1, 0).unwrap();
+        assert!(a.states.get(&id).unwrap().pending_response.is_none());
+        let p = a.charge_response(id, 1, 0).unwrap();
+        assert!(a.states.get(&id).unwrap().pending_response.is_some());
+        a.abandon_response(p).unwrap();
+        assert!(
+            a.states.get(&id).unwrap().pending_response.is_none(),
+            "abandon must release the pending slot"
+        );
+
+        let mut b = ProcessPreauthAdmission::new(process_limits(), 0).unwrap();
+        let id = b.admit_state(b"s", 1, 0).unwrap();
+        b.charge_input(id, 1, 1, 0).unwrap();
+        let p = b.charge_response(id, 1, 0).unwrap();
+        b.complete_response(p, 0).unwrap();
+        assert!(
+            b.states.get(&id).unwrap().pending_response.is_none(),
+            "complete must release the pending slot"
+        );
     }
 
     #[test]
