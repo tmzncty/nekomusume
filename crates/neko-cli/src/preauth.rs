@@ -857,4 +857,264 @@ mod tests {
         admission.release(next);
         assert_eq!(admission.process.live_states(), 0);
     }
+
+    #[test]
+    fn source_key_pins_family_carrier_and_port_bytes_exactly() {
+        let v4: SocketAddr = "127.0.0.1:40080".parse().unwrap();
+        let v6: SocketAddr = "[::1]:40080".parse().unwrap();
+        // carrier tag | family tag | address octets | big-endian port
+        assert_eq!(
+            source_key(CarrierKind::Tcp, v4),
+            vec![1, 4, 127, 0, 0, 1, 0x9c, 0x90]
+        );
+        assert_eq!(
+            source_key(CarrierKind::Udp, v4),
+            vec![2, 4, 127, 0, 0, 1, 0x9c, 0x90]
+        );
+        let mut v6_tcp = vec![1u8, 6];
+        v6_tcp.extend_from_slice(&[0u8; 15]);
+        v6_tcp.push(1);
+        v6_tcp.extend_from_slice(&[0x9c, 0x90]);
+        assert_eq!(source_key(CarrierKind::Tcp, v6), v6_tcp);
+        let mut v6_udp = v6_tcp.clone();
+        v6_udp[0] = 2;
+        assert_eq!(source_key(CarrierKind::Udp, v6), v6_udp);
+    }
+
+    #[test]
+    fn deadline_budget_is_exact_millis_remaining() {
+        #[derive(Default)]
+        struct RecordingWriter {
+            budgets: Vec<Duration>,
+            bytes: Vec<u8>,
+        }
+        impl BoundedWrite for RecordingWriter {
+            fn write_with_budget(&mut self, bytes: &[u8], budget: Duration) -> io::Result<usize> {
+                self.budgets.push(budget);
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush_with_budget(&mut self, budget: Duration) -> io::Result<()> {
+                self.budgets.push(budget);
+                Ok(())
+            }
+            fn restore_write_timeout(&mut self, _timeout: Option<Duration>) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        // A fixed clock 10ms into a deadline at 110 gives every write and the
+        // flush exactly 100ms of remaining budget.
+        let mut fixed = RecordingWriter::default();
+        write_frame_until(&mut fixed, b"ab", 2, || 10, 110).unwrap();
+        assert_eq!(fixed.bytes, [0, 0, 0, 2, b'a', b'b']);
+        assert!(!fixed.budgets.is_empty());
+        assert!(
+            fixed
+                .budgets
+                .iter()
+                .all(|b| *b == Duration::from_millis(100))
+        );
+        // An advancing clock must shrink the budget by the elapsed amount, not
+        // hand out the same full deadline again.
+        let ticks = [10u64, 40, 70];
+        let mut index = 0;
+        let mut advancing = RecordingWriter::default();
+        write_frame_until(
+            &mut advancing,
+            b"ab",
+            2,
+            || {
+                let tick = ticks[index.min(ticks.len() - 1)];
+                index += 1;
+                tick
+            },
+            110,
+        )
+        .unwrap();
+        assert_eq!(
+            advancing.budgets,
+            vec![
+                Duration::from_millis(100),
+                Duration::from_millis(70),
+                Duration::from_millis(40),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_stalled_writer_fails_as_write_zero_before_the_deadline() {
+        struct StalledWriter;
+        impl BoundedWrite for StalledWriter {
+            fn write_with_budget(&mut self, _bytes: &[u8], _budget: Duration) -> io::Result<usize> {
+                Ok(0)
+            }
+            fn flush_with_budget(&mut self, _budget: Duration) -> io::Result<()> {
+                Ok(())
+            }
+            fn restore_write_timeout(&mut self, _timeout: Option<Duration>) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        // A writer that accepts nothing must be reported as a stalled write,
+        // never as a silent success and never as a deadline expiry.
+        let mut ticks = 0u64;
+        let error = write_frame_until(
+            &mut StalledWriter,
+            b"ab",
+            2,
+            || {
+                ticks += 50;
+                ticks
+            },
+            100,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WriteZero);
+    }
+
+    #[test]
+    fn an_interrupted_write_is_retried_rather_than_failing() {
+        struct InterruptOnce {
+            calls: usize,
+            bytes: Vec<u8>,
+        }
+        impl BoundedWrite for InterruptOnce {
+            fn write_with_budget(&mut self, bytes: &[u8], _budget: Duration) -> io::Result<usize> {
+                self.calls += 1;
+                if self.calls == 1 {
+                    return Err(io::Error::new(io::ErrorKind::Interrupted, "injected"));
+                }
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush_with_budget(&mut self, _budget: Duration) -> io::Result<()> {
+                Ok(())
+            }
+            fn restore_write_timeout(&mut self, _timeout: Option<Duration>) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut writer = InterruptOnce {
+            calls: 0,
+            bytes: Vec::new(),
+        };
+        write_frame_until(&mut writer, b"ab", 2, || 0, 100).unwrap();
+        assert_eq!(writer.bytes, [0, 0, 0, 2, b'a', b'b']);
+        assert_eq!(writer.calls, 3, "the interrupted write is retried once");
+    }
+
+    #[test]
+    fn flush_happens_once_and_observes_the_deadline() {
+        struct CountingWriter {
+            flushes: usize,
+            bytes: Vec<u8>,
+        }
+        impl BoundedWrite for CountingWriter {
+            fn write_with_budget(&mut self, bytes: &[u8], _budget: Duration) -> io::Result<usize> {
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush_with_budget(&mut self, _budget: Duration) -> io::Result<()> {
+                self.flushes += 1;
+                Ok(())
+            }
+            fn restore_write_timeout(&mut self, _timeout: Option<Duration>) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut ok = CountingWriter {
+            flushes: 0,
+            bytes: Vec::new(),
+        };
+        write_frame_until(&mut ok, b"ab", 2, || 0, 100).unwrap();
+        assert_eq!(ok.bytes, [0, 0, 0, 2, b'a', b'b']);
+        assert_eq!(ok.flushes, 1, "the frame is flushed exactly once");
+        // The clock reaches the deadline exactly at flush time: the frame must
+        // fail as timed out and the partial frame must not be flushed.
+        let ticks = [0u64, 0, 100];
+        let mut index = 0;
+        let mut late = CountingWriter {
+            flushes: 0,
+            bytes: Vec::new(),
+        };
+        assert_eq!(
+            write_frame_until(
+                &mut late,
+                b"ab",
+                2,
+                || {
+                    let tick = ticks[index.min(ticks.len() - 1)];
+                    index += 1;
+                    tick
+                },
+                100
+            )
+            .unwrap_err()
+            .kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert_eq!(late.flushes, 0, "an expired frame is never flushed");
+    }
+
+    #[test]
+    fn response_deadline_uses_the_permit_deadline_without_a_socket_timeout() {
+        let mut admission = ListenerAdmission::new();
+        let peer: SocketAddr = "127.0.0.1:40090".parse().unwrap();
+        let mut ticket = admission.admit(peer).unwrap();
+        admission.charge_input(&mut ticket, 64, 16).unwrap();
+        let permit = admission.charge_response(&mut ticket, 8).unwrap();
+        let permit_deadline = permit.deadline_ms();
+        // With no pre-existing socket timeout there is nothing earlier to
+        // preserve: the permit's own deadline is the response deadline.
+        assert_eq!(
+            admission
+                .effective_response_deadline(&permit, None)
+                .unwrap(),
+            permit_deadline
+        );
+        assert!(permit_deadline > 0);
+        admission.process.abandon_response(permit).unwrap();
+        admission.release(ticket);
+    }
+
+    #[test]
+    fn abandoning_a_staged_input_record_rejects_the_ticket() {
+        let mut admission = ListenerAdmission::new();
+        let peer: SocketAddr = "127.0.0.1:40091".parse().unwrap();
+        let mut ticket = admission.admit(peer).unwrap();
+        let mut reservation = admission.begin_tcp_input_record(&mut ticket, 8, 0).unwrap();
+        reservation.abandon(&mut admission, &mut ticket);
+        // The abandoned record terminalizes the outer ticket, so no later
+        // application work can be admitted for it.
+        assert!(admission.enqueue(&mut ticket).is_err());
+        assert!(admission.charge_response(&mut ticket, 1).is_err());
+        admission.release(ticket);
+        assert_eq!(admission.process.live_states(), 0);
+    }
+
+    #[test]
+    fn an_elapsed_response_permit_is_rejected_before_use() {
+        let mut admission = ListenerAdmission::new();
+        let peer: SocketAddr = "127.0.0.1:40092".parse().unwrap();
+        let mut ticket = admission.admit(peer).unwrap();
+        admission.charge_input(&mut ticket, 64, 16).unwrap();
+        let permit = admission.charge_response(&mut ticket, 8).unwrap();
+        let charged_at = admission.now_ms();
+        // The permit carries a short, bounded send deadline of its own; while it
+        // is still in the future the permit resolves to a usable deadline.
+        let budget_ms = permit.deadline_ms().saturating_sub(charged_at);
+        assert!(budget_ms > 0 && budget_ms <= 1_000, "bounded send budget");
+        assert!(admission.effective_response_deadline(&permit, None).is_ok());
+        // Once the permit's own deadline has passed it must be refused rather
+        // than resolved to a deadline that is already in the past.
+        std::thread::sleep(Duration::from_millis(budget_ms + 100));
+        assert!(
+            admission
+                .effective_response_deadline(&permit, None)
+                .is_err(),
+            "an elapsed permit deadline must not resolve to a usable deadline"
+        );
+        let _ = admission.process.abandon_response(permit);
+        admission.release(ticket);
+    }
 }
