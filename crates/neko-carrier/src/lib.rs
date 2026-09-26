@@ -8398,6 +8398,136 @@ mod path_recovery_tests {
             "persistent congestion collapsed cwnd to 2*MSS"
         );
     }
+
+    #[test]
+    fn path_local_identity_and_zero_state_accessors_are_exact() {
+        let mut r = PathRecovery::new(PathId(9), 11, 1200).unwrap();
+        // The seam is bound to exactly the path and generation it was created
+        // with — not a placeholder.
+        assert_eq!(r.path(), PathId(9));
+        assert_eq!(r.path_generation(), 11);
+        // With no traffic every observable is a real zero: no RTT sample, no
+        // pacing interval, no packet/frame counters.
+        assert_eq!(r.rtt_us(), 0);
+        assert_eq!(r.pacing_interval_us(1000), 0);
+        assert_eq!(r.diagnostics(), (0, 0, 0, 0));
+        assert_eq!(r.bytes_in_flight(), 0);
+        assert_eq!(r.in_flight(), 0);
+        assert_eq!(r.packets_sent(), 0);
+        assert_eq!(r.packets_lost(), 0);
+        assert!(r.fresh_health_sample().is_none());
+    }
+
+    #[test]
+    fn abandon_sent_reverses_only_the_named_packets_charge() {
+        let mut r = recovery();
+        // A never-sent packet number was never admitted: nothing to roll back.
+        assert!(!r.abandon_sent(999));
+        assert_eq!(r.bytes_in_flight(), 0);
+
+        r.on_sent(sent(1, 400, &[1])).unwrap();
+        assert_eq!(r.bytes_in_flight(), 400);
+        assert_eq!(r.packets_sent(), 1);
+        // Abandoning the named packet reverses exactly its in-flight charge.
+        assert!(r.abandon_sent(1));
+        assert_eq!(r.bytes_in_flight(), 0);
+        assert_eq!(r.packets_sent(), 0);
+        assert_eq!(r.in_flight(), 0);
+        // A second abandon of the same number is a no-op, not a second rollback.
+        assert!(!r.abandon_sent(1));
+        assert_eq!(r.bytes_in_flight(), 0);
+    }
+
+    #[test]
+    fn rtt_pacing_diagnostics_and_health_rtt_are_truthful() {
+        let mut r = recovery();
+        r.on_sent(sent(1, 400, &[1])).unwrap();
+        r.on_ack(7, &ack_of(1), 30_000, 0).unwrap();
+        // The measured RTT is exposed consistently through the accessor, the
+        // diagnostics tuple and the manager-facing health sample.
+        let rtt = r.rtt_us();
+        assert_eq!(rtt, 29_000, "30ms ack for a 1ms send is a 29ms sample");
+        assert_eq!(r.diagnostics().2, rtt);
+        assert!(r.pacing_interval_us(1000) > 0);
+        let sample = r.fresh_health_sample().expect("resolved outcome");
+        assert_eq!(sample.rtt_us, rtt);
+    }
+
+    #[test]
+    fn a_duplicate_ack_resolves_nothing_and_yields_no_fresh_sample() {
+        let mut r = recovery();
+        r.on_sent(sent(1, 400, &[1])).unwrap();
+        let ack = ack_of(1);
+        r.on_ack(7, &ack, 30_000, 0).unwrap();
+        assert!(r.fresh_health_sample().is_some());
+        // Repeating an already-retired ACK is accepted but resolves nothing:
+        // no new resolved outcome, so the freshness guard must yield no second
+        // sample for the same state.
+        let again = r.on_ack(7, &ack, 31_000, 0).unwrap();
+        assert!(again.acked_packets.is_empty());
+        assert!(again.lost_packets.is_empty());
+        assert!(again.retransmit_frames.is_empty());
+        assert!(
+            r.fresh_health_sample().is_none(),
+            "an ACK that changed nothing is not a fresh observation"
+        );
+    }
+
+    #[test]
+    fn quiesce_aligns_the_health_baseline_so_pre_quiesce_loss_cannot_replay() {
+        let mut r = recovery();
+        for n in 0..8u64 {
+            r.on_sent(sent(n, 400, &[n])).unwrap();
+        }
+        // Resolve one ack and five losses, but do NOT consume the sample: the
+        // quiesce below is the only thing that may move the interval baseline.
+        r.on_ack(7, &ack_of(7), 40_000, 0).unwrap();
+        assert_eq!(r.diagnostics().0, 8);
+        r.quiesce();
+        // Quiesce consumes the standing outcome for freshness...
+        assert!(r.fresh_health_sample().is_none());
+        // ...and rebases BOTH interval baselines. The next resolved outcome
+        // must therefore be judged on its own interval: another 1 acked + 5
+        // lost is 5/6 = 833/mille. A stale sent baseline would instead divide
+        // the same 5 losses by all 12 lifetime-resolved packets (416/mille).
+        for n in 8..16u64 {
+            r.on_sent(sent(n, 400, &[n])).unwrap();
+        }
+        let outcome = r.on_ack(7, &ack_of(15), 60_000, 0).unwrap();
+        assert_eq!(outcome.acked_packets, vec![15]);
+        assert_eq!(outcome.lost_packets, vec![8, 9, 10, 11, 12]);
+        let after = r
+            .fresh_health_sample()
+            .expect("post-quiesce resolved outcome");
+        assert_eq!(
+            after.loss_per_mille, 833,
+            "the interval must be rebased by quiesce, not carried from before it"
+        );
+        // Lifetime history stays truthful after quiesce.
+        assert_eq!(r.packets_lost(), 10);
+    }
+
+    #[test]
+    fn pto_sample_is_clamped_while_diagnostics_stay_unclamped() {
+        let mut r = recovery();
+        r.on_sent(sent(1, 400, &[1])).unwrap();
+        for _ in 0..u16::MAX as usize {
+            r.on_pto(1).unwrap();
+        }
+        let at_limit = r.fresh_health_sample().expect("pto is a resolved outcome");
+        assert_eq!(at_limit.pto, u16::MAX);
+        assert_eq!(r.diagnostics().3, u16::MAX as u32);
+        // One more PTO exceeds the u16 health field: the sample saturates while
+        // the diagnostic counter keeps counting.
+        r.on_pto(1).unwrap();
+        let over = r.fresh_health_sample().expect("pto is a resolved outcome");
+        assert_eq!(over.pto, u16::MAX, "health pto saturates at u16::MAX");
+        assert_eq!(
+            r.diagnostics().3,
+            u16::MAX as u32 + 1,
+            "diagnostics keep the unclamped count"
+        );
+    }
 }
 
 #[cfg(test)]
