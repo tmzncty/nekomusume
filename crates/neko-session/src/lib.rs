@@ -3497,6 +3497,93 @@ mod runtime_contract_boundary_tests {
     }
 
     #[test]
+    fn data_frames_reject_an_empty_payload_and_honour_the_frame_bound() {
+        let mk = |data: Vec<u8>| ProcessMessage::Data {
+            session: SessionId(1),
+            record: OutboundRecord {
+                stream: StreamId(2),
+                offset: 3,
+                data,
+            },
+        };
+        // An empty payload would be indistinguishable from a truncated frame,
+        // so the encoder refuses it outright.
+        assert_eq!(
+            mk(Vec::new()).encode().err(),
+            Some(ProcessCodecError::TooLarge)
+        );
+        // The bound is the encoded frame size: a payload of exactly
+        // PROCESS_FRAME_MAX - 30 bytes fills the frame and is accepted, one
+        // byte more overflows it and is refused.
+        let fits = PROCESS_FRAME_MAX - 30;
+        assert_eq!(mk(vec![7; fits]).encode().unwrap().len(), PROCESS_FRAME_MAX);
+        assert_eq!(
+            mk(vec![7; fits + 1]).encode().err(),
+            Some(ProcessCodecError::TooLarge)
+        );
+    }
+
+    #[test]
+    fn decode_refuses_a_frame_larger_than_the_process_bound() {
+        let frame = |len: usize| {
+            let mut input = Vec::new();
+            input.extend_from_slice(&PROCESS_MAGIC);
+            input.push(1);
+            input.push(1);
+            input.extend_from_slice(&1u64.to_be_bytes());
+            input.extend_from_slice(&2u64.to_be_bytes());
+            input.extend_from_slice(&3u64.to_be_bytes());
+            input.extend_from_slice(&(len as u16).to_be_bytes());
+            input.extend_from_slice(&vec![7u8; len]);
+            input
+        };
+        // A frame of exactly the bound with a self-consistent length decodes.
+        let inside = frame(PROCESS_FRAME_MAX - 30);
+        assert_eq!(inside.len(), PROCESS_FRAME_MAX);
+        assert!(ProcessMessage::decode(&inside).is_ok());
+        // One byte larger must be refused by the size gate even though its
+        // length field still agrees with its body.
+        let outside = frame(PROCESS_FRAME_MAX - 30 + 1);
+        assert_eq!(outside.len(), PROCESS_FRAME_MAX + 1);
+        assert_eq!(
+            ProcessMessage::decode(&outside).err(),
+            Some(ProcessCodecError::Malformed)
+        );
+    }
+
+    #[test]
+    fn decode_refuses_a_zero_length_data_frame() {
+        // A zero declared length cannot address a payload, so it is malformed
+        // rather than an empty record.
+        let mut input = Vec::new();
+        input.extend_from_slice(&PROCESS_MAGIC);
+        input.push(1);
+        input.push(1);
+        input.extend_from_slice(&1u64.to_be_bytes());
+        input.extend_from_slice(&2u64.to_be_bytes());
+        input.extend_from_slice(&3u64.to_be_bytes());
+        input.extend_from_slice(&0u16.to_be_bytes());
+        assert_eq!(input.len(), 30);
+        assert_eq!(
+            ProcessMessage::decode(&input).err(),
+            Some(ProcessCodecError::Malformed)
+        );
+    }
+
+    #[test]
+    fn decode_refuses_an_unknown_kind_with_the_malformed_class() {
+        let mut input = Vec::new();
+        input.extend_from_slice(&PROCESS_MAGIC);
+        input.push(1);
+        input.push(9);
+        input.extend_from_slice(&[0u8; 8]);
+        assert_eq!(
+            ProcessMessage::decode(&input).err(),
+            Some(ProcessCodecError::Malformed)
+        );
+    }
+
+    #[test]
     fn datagram_runtime_rejects_zero_limits() {
         assert!(DatagramRuntime::new(0, 1).is_err());
         assert!(DatagramRuntime::new(1, 0).is_err());
