@@ -453,6 +453,30 @@ mod tests {
             Err(EncodeError::PayloadTooLarge(MAX_PAYLOAD_LEN + 1))
         );
     }
+
+    #[test]
+    fn trailing_byte_count_is_exact_and_varint_length_boundaries_hold() {
+        // Trailing bytes are reported as the exact excess beyond the declared
+        // payload length, not as the whole available remainder.
+        let mut trailing = encode(&record(RecordType::Data, &[1, 2])).unwrap();
+        trailing.push(0);
+        assert_eq!(decode(&trailing), Err(DecodeError::TrailingBytes(1)));
+        let mut two_extra = encode(&record(RecordType::Data, &[7])).unwrap();
+        two_extra.extend_from_slice(&[0, 0]);
+        assert_eq!(decode(&two_extra), Err(DecodeError::TrailingBytes(2)));
+
+        // Ten continuation bytes are a complete maximum-length integer that
+        // overflows, not truncated input; nine bytes are genuinely truncated.
+        assert_eq!(
+            decode_varint(&[0x80; 10]),
+            Err(DecodeError::IntegerOverflow)
+        );
+        assert_eq!(decode_varint(&[0x80; 9]), Err(DecodeError::Truncated));
+        // The 64th bit is representable in the final group.
+        let mut high_bit = vec![0x80u8; 9];
+        high_bit.push(0x01);
+        assert_eq!(decode_varint(&high_bit), Ok((1u64 << 63, 10)));
+    }
 }
 
 #[cfg(test)]
@@ -504,6 +528,58 @@ mod frame_tests {
         assert_eq!(
             encode_frames(&[Frame::Data(vec![0; MAX_FRAME_PAYLOAD_LEN + 1])]),
             Err(FrameError::LengthTooLarge(MAX_FRAME_PAYLOAD_LEN + 1))
+        );
+    }
+
+    #[test]
+    fn ignorable_bit_keeps_known_types_and_record_payload_bound_is_exact() {
+        // The low type bit is the compatibility bit: a known type carrying it
+        // still decodes as that known type; only unknown types are retained.
+        assert_eq!(decode_frames(&[0x01, 0, 0]), Ok(vec![Frame::Data(vec![])]));
+        assert_eq!(
+            decode_frames(&[0x03, 0, 0]),
+            Ok(vec![Frame::DeliveryAck(vec![])])
+        );
+        assert_eq!(decode_frames(&[0x05, 0, 0]), Ok(vec![Frame::Close(vec![])]));
+        assert_eq!(
+            decode_frames(&[0x0d, 0, 0]),
+            Ok(vec![Frame::Datagram(vec![])])
+        );
+        assert_eq!(
+            decode_frames(&[0x07, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8]),
+            Ok(vec![Frame::PathChallenge([1, 2, 3, 4, 5, 6, 7, 8])])
+        );
+
+        // The path-vector length rule is exact and is checked before the
+        // payload is read: an over-long path frame with a short body is an
+        // invalid length, not a truncated frame.
+        assert_eq!(
+            decode_frames(&[0x09, 0, 10, 1, 2, 3, 4]),
+            Err(FrameError::InvalidLength {
+                frame_type: 0x09,
+                length: 10
+            })
+        );
+        assert_eq!(
+            decode_frames(&[0x09, 0, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            Err(FrameError::InvalidLength {
+                frame_type: 0x09,
+                length: 9
+            })
+        );
+
+        // The whole SessionRecord payload stays bounded at 4096 bytes even
+        // when every individual frame is inside the 1024-byte frame limit.
+        let full: Vec<Frame> = vec![Frame::Data(vec![0; 1021]); 4];
+        assert_eq!(encode_frames(&full).unwrap().len(), MAX_PAYLOAD_LEN);
+        assert_eq!(
+            decode_frames(&encode_frames(&full).unwrap()),
+            Ok(full.to_vec())
+        );
+        let over: Vec<Frame> = vec![Frame::Data(vec![0; 1021]); 5];
+        assert_eq!(
+            encode_frames(&over),
+            Err(FrameError::LengthTooLarge(5 * (FRAME_HEADER_LEN + 1021)))
         );
     }
 }
@@ -1013,6 +1089,41 @@ mod ack_packet_tests {
         assert_eq!(decode(bytes).unwrap().payload, vec![1, 2, 3]);
         assert_eq!(decode_packet(&pkt[..4]), Err(DecodeError::Truncated));
     }
+
+    #[test]
+    fn range_count_and_packet_header_boundaries_are_exact() {
+        // 32 ranges is the hard bound on both the encode and decode sides.
+        let at_limit: Vec<(u64, u64)> = (0..32u64).map(|i| (i * 4, i * 4)).collect();
+        let a = payload(&at_limit);
+        let enc = encode_ack(&a).unwrap();
+        assert_eq!(enc[2], MAX_ACK_RANGES as u8);
+        assert_eq!(decode_ack(&enc), Ok(a));
+        let over_limit: Vec<(u64, u64)> = (0..33u64).map(|i| (i * 4, i * 4)).collect();
+        assert_eq!(
+            encode_ack(&payload(&over_limit)),
+            Err(AckCodecError::TooManyRanges)
+        );
+
+        // Decoding applies the same canonical-range and error-mapping rules to
+        // hand-built bytes, not only to encoder output.
+        assert_eq!(
+            decode_ack(&[9, 0, 2, 0, 5, 6, 9]),
+            Err(AckCodecError::NonCanonicalRanges)
+        );
+        assert_eq!(decode_ack(&[0x80]), Err(AckCodecError::Truncated));
+        assert_eq!(
+            decode_ack(&[0x80, 0x00]),
+            Err(AckCodecError::NonCanonicalInteger)
+        );
+
+        // Exactly one packet header splits into an empty record slice; the
+        // record bytes stay unvalidated here and are rejected by decode.
+        let header_only = [0u8; PACKET_HEADER_LEN];
+        let (number, rest) = decode_packet(&header_only).unwrap();
+        assert_eq!(number, 0);
+        assert_eq!(rest, &[] as &[u8]);
+        assert_eq!(decode(rest), Err(DecodeError::Truncated));
+    }
 }
 
 #[cfg(test)]
@@ -1136,5 +1247,74 @@ mod negotiation_tests {
                 .client_accept_response(&encode_response(9)),
             Err(NegotiationError::UnsupportedSelected(9))
         );
+    }
+
+    #[test]
+    fn supported_bounds_empty_and_sixteen_are_exact() {
+        assert_eq!(
+            VersionNegotiator::new(NegotiationRole::Client, &[]),
+            Err(NegotiationError::EmptySupported)
+        );
+        // 1..=16 entries are accepted, and the offered count stays exact.
+        let sixteen: Vec<u16> = (0..16).collect();
+        let mut client = VersionNegotiator::new(NegotiationRole::Client, &sixteen).unwrap();
+        let mut server = VersionNegotiator::new(NegotiationRole::Server, &sixteen).unwrap();
+        let hello = client.client_hello().unwrap();
+        assert_eq!(hello.len(), 4 + sixteen.len() * 2);
+        assert_eq!(hello[3] as usize, sixteen.len());
+        let response = server.server_accept_hello(&hello).unwrap();
+        assert_eq!(response, encode_response(15));
+        assert_eq!(client.client_accept_response(&response), Ok(15));
+        assert_eq!(
+            VersionNegotiator::new(NegotiationRole::Server, &(0..17).collect::<Vec<u16>>()),
+            Err(NegotiationError::TooManySupported)
+        );
+    }
+
+    #[test]
+    fn binding_is_the_exact_canonical_transcript() {
+        let mut client = VersionNegotiator::new(NegotiationRole::Client, &[0, 1, 2]).unwrap();
+        let mut server = VersionNegotiator::new(NegotiationRole::Server, &[0, 2]).unwrap();
+        let hello = client.client_hello().unwrap();
+        let response = server.server_accept_hello(&hello).unwrap();
+        assert_eq!(client.client_accept_response(&response), Ok(2));
+        assert_eq!(
+            server.authenticated_binding().unwrap(),
+            client.authenticated_binding().unwrap()
+        );
+
+        // domain || u16be hello length || hello || u16be response length ||
+        // response || u16be selected.
+        let mut expected = Vec::new();
+        expected.extend_from_slice(NEGOTIATION_BINDING_DOMAIN);
+        expected.extend_from_slice(&(hello.len() as u16).to_be_bytes());
+        expected.extend_from_slice(&hello);
+        expected.extend_from_slice(&(response.len() as u16).to_be_bytes());
+        expected.extend_from_slice(&response);
+        expected.extend_from_slice(&2u16.to_be_bytes());
+        assert_eq!(
+            client.authenticated_binding().unwrap().as_bytes(),
+            expected.as_slice()
+        );
+    }
+
+    #[test]
+    fn hello_grammar_is_exact_and_descending_offers_are_malformed() {
+        // Exactly count * 2 version bytes: trailing bytes are malformed.
+        let mut trailing = VersionNegotiator::new(NegotiationRole::Server, &[0]).unwrap();
+        assert_eq!(
+            trailing.server_accept_hello(&[b'N', b'1', 1, 1, 0, 0, 0xff]),
+            Err(NegotiationError::Malformed)
+        );
+        assert_eq!(trailing.state(), NegotiationState::Rejected);
+
+        // "Strictly increasing" means a descending pair is malformed; the
+        // duplicate arm covers only an exact repeat of the previous version.
+        let mut descending = VersionNegotiator::new(NegotiationRole::Server, &[0, 3]).unwrap();
+        assert_eq!(
+            descending.server_accept_hello(&[b'N', b'1', 1, 2, 0, 3, 0, 0]),
+            Err(NegotiationError::Malformed)
+        );
+        assert_eq!(descending.state(), NegotiationState::Rejected);
     }
 }
