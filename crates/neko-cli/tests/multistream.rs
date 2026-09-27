@@ -305,6 +305,54 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
     assert!(counter(&evidence, "window_exhausted") > 0);
     assert_eq!(counter(&evidence, "ack_released"), 12);
     assert_eq!(counter(&evidence, "resumed"), 12);
+
+    // --- server-side contract -------------------------------------------------
+    // The test previously checked only the server's EXIT STATUS, so its entire
+    // JSON line was unwitnessed: every key name, the `role` value, the `ok`
+    // value, the field order and the separators could all change with nothing
+    // failing. Its `peer` is the client's ephemeral loopback address, so the
+    // line is pinned as an exact prefix and an exact suffix around that one
+    // variable field - which still fixes every key, value and separator.
+    let server_evidence = String::from_utf8(status.stdout.clone()).unwrap();
+    let server_line = server_evidence.trim_end_matches('\n');
+    let server_prefix = "{\"ok\":true,\"role\":\"server\",\"peer\":\"";
+    let server_suffix = concat!(
+        "\",\"streams\":3,\"records_per_stream\":4,\"bytes_per_record\":17,",
+        "\"records\":12,\"payload_bytes\":204}"
+    );
+    assert!(
+        server_line.starts_with(server_prefix),
+        "server line must open the published envelope: {server_line}"
+    );
+    assert!(
+        server_line.ends_with(server_suffix),
+        "server line must carry the published fields, in order: {server_line}"
+    );
+    let peer = &server_line[server_prefix.len()..server_line.len() - server_suffix.len()];
+    assert!(
+        peer.strip_prefix("127.0.0.1:")
+            .is_some_and(|p| { !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) }),
+        "peer must be the loopback address with a numeric port: {peer}"
+    );
+
+    // --- client fields the existing assertions skipped -----------------------
+    assert!(
+        evidence.contains("\"role\":\"client\""),
+        "the client line must state its role: {evidence}"
+    );
+    assert!(
+        evidence.contains("\"records_per_stream\":4"),
+        "records_per_stream echoes --records: {evidence}"
+    );
+    assert!(
+        evidence.contains("\"bytes_per_record\":17"),
+        "bytes_per_record echoes --bytes: {evidence}"
+    );
+    assert!(
+        evidence.contains("\"events\":\"") && evidence.contains("stream_opened"),
+        "the events field carries the joined event names: {evidence}"
+    );
+
     let _ = fs::remove_file(server_identity);
     let _ = fs::remove_file(client_identity);
 }
