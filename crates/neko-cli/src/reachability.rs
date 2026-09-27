@@ -134,6 +134,48 @@ fn json_string(s: &str) -> String {
 mod tests {
     use super::*;
     #[test]
+    fn json_string_escapes_every_special_character_it_must() {
+        // `json_string` exists solely to make the emitted artifact valid JSON,
+        // yet nothing exercised its escaping: every one of its match arms, the
+        // control-character `\uXXXX` formatting, and even the surrounding quotes
+        // could be changed with no test failing. It is private to this module,
+        // so it is pinned directly.
+        assert_eq!(
+            json_string("a\"b\\c\nd\re\tf\u{1}g\u{7f}"),
+            "\"a\\\"b\\\\c\\nd\\re\\tf\\u0001g\\u007f\""
+        );
+        // Each arm on its own, so a dropped arm cannot hide behind another.
+        assert_eq!(json_string("\""), "\"\\\"\"");
+        assert_eq!(json_string("\\"), "\"\\\\\"");
+        assert_eq!(json_string("\n"), "\"\\n\"");
+        assert_eq!(json_string("\r"), "\"\\r\"");
+        assert_eq!(json_string("\t"), "\"\\t\"");
+    }
+
+    #[test]
+    fn json_string_uses_lowercase_zero_padded_hex_for_control_characters() {
+        // Lowercase and zero-padded to four digits: `\u0001`, not `\u1` and not
+        // `\u0001` with uppercase hex. Both the padding and the case were free.
+        assert_eq!(json_string("\u{1}"), "\"\\u0001\"");
+        assert_eq!(json_string("\u{1f}"), "\"\\u001f\"");
+        assert_eq!(json_string("\u{7f}"), "\"\\u007f\"");
+        // A printable non-ASCII character is NOT escaped.
+        assert_eq!(json_string("é"), "\"é\"");
+        assert_eq!(json_string("日"), "\"日\"");
+    }
+
+    #[test]
+    fn json_string_quotes_a_plain_string_and_nothing_else() {
+        // The wrapper is a pair of quotes and the body is unchanged.
+        assert_eq!(json_string(""), "\"\"");
+        assert_eq!(json_string("127.0.0.1:9"), "\"127.0.0.1:9\"");
+        assert_eq!(
+            json_string("target must be loopback"),
+            "\"target must be loopback\""
+        );
+    }
+
+    #[test]
     fn rejects_wan_before_socket() {
         assert_eq!(
             validate("192.0.2.1:9".parse().unwrap(), IpVersion::V4, 100, 1),
