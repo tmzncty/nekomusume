@@ -6341,6 +6341,15 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
         ),
         "{client_log}"
     );
+    // The server's admission event, pinned in full. It had only ever been asserted
+    // ABSENT (in the warm-readiness failure test), so every field was free.
+    assert!(
+        server_log.contains(
+            "carrier_event name=tcp_resource_admitted session=7001 target_path=2 \
+             generation=1 delivery_epoch=1 final_challenge=3 source=runtime_limits"
+        ),
+        "{server_log}"
+    );
     assert_eq!(
         client_log
             .matches("\"event\":\"tcp_warm_readiness\"")
