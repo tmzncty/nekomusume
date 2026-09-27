@@ -568,6 +568,84 @@ mod tests {
     use neko_session::DatagramRuntime;
 
     #[test]
+    fn the_json_line_envelope_is_the_published_v1_contract() {
+        // The outer envelope of `to_json_line` was entirely unwitnessed: every
+        // existing assertion used `contains` on an inner fragment, so the key
+        // names, the schema string, the schema_version value, the field order,
+        // the separators and even the argument alignment were all free to
+        // change without any test noticing. The three neighbouring fields are
+        // given DIFFERENT values (41 / 7) so a swap is visible.
+        let e = Event {
+            sequence: 41,
+            observed_at_ms: 7,
+            event: "probe.event",
+            severity: "warn",
+            correlation: Correlation {
+                session_id: "session:9".into(),
+                stream_id: Some("stream:3".into()),
+                carrier_id: None,
+                path_id: Some("path:2".into()),
+            },
+            data: "{\"k\":1}".into(),
+        };
+        assert_eq!(
+            e.to_json_line(),
+            concat!(
+                "{\"schema\":\"nekomusume.observability-event.v1\",",
+                "\"schema_version\":1,",
+                "\"event\":\"probe.event\",",
+                "\"sequence\":41,",
+                "\"observed_at_ms\":7,",
+                "\"severity\":\"warn\",",
+                "\"correlation\":{\"session_id\":\"session:9\",\"stream_id\":\"stream:3\",\"path_id\":\"path:2\"},",
+                "\"data\":{\"k\":1}}"
+            )
+        );
+        // The absent carrier must not appear even though its neighbours do.
+        assert!(!e.to_json_line().contains("carrier_id"));
+    }
+
+    #[test]
+    fn a_produced_event_carries_the_same_envelope_and_omits_absent_keys() {
+        // End-to-end through the Producer, so the envelope is pinned on a real
+        // event and not only on a hand-built one. `record_health` correlates by
+        // carrier and path only, so `stream_id` must be ABSENT rather than
+        // present-and-empty.
+        let mut p = Producer::new(SessionId(4), 8).unwrap();
+        p.record_health(
+            22,
+            4,
+            PathId(5),
+            None,
+            HealthState::Healthy,
+            HealthSample {
+                rtt_us: 33,
+                loss_per_mille: 44,
+                pto: 55,
+            },
+        );
+        let lines: Vec<_> = p.events().map(Event::to_json_line).collect();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0],
+            concat!(
+                "{\"schema\":\"nekomusume.observability-event.v1\",",
+                "\"schema_version\":1,",
+                "\"event\":\"carrier.health_sample\",",
+                "\"sequence\":0,",
+                "\"observed_at_ms\":22,",
+                "\"severity\":\"debug\",",
+                "\"correlation\":{\"session_id\":\"session:4\",\"carrier_id\":\"carrier:4\",\"path_id\":\"path:5\"},",
+                "\"data\":{\"health_state\":\"healthy\",\"latest_rtt_us\":33,\"loss_per_mille\":44,\"pto_count\":55}}"
+            )
+        );
+        assert!(
+            !lines[0].contains("stream_id"),
+            "an absent correlation field must not appear at all"
+        );
+    }
+
+    #[test]
     fn runtime_facts_are_correlated_secret_free_and_bounded() {
         let mut p = Producer::new(SessionId(7), 8).unwrap();
         p.record_health(
