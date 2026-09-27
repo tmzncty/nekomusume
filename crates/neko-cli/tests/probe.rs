@@ -1481,6 +1481,17 @@ fn authenticated_tcp_and_udp_loopback_probe_starts_after_ready() {
                 .startup_log
                 .contains("lifecycle_state=READY readiness=true")
         );
+        // The startup banner names the server's OWN public key. The `key` helper
+        // generated it into `sp`, so `sk` is the exact value the banner must
+        // carry - which pins the label AND that it is the public key of this
+        // identity rather than the private key or the peer's key.
+        assert!(
+            server
+                .startup_log
+                .contains(&format!("server_public_key={sk}")),
+            "{}",
+            server.startup_log
+        );
 
         let out = bounded_client_output(
             Command::new(bin).args([
@@ -7463,6 +7474,14 @@ fn periodic_session_delayed_confirmations_are_counted_on_one_session() {
     let port = port_lease.port();
     port_lease.release();
     let server = start_periodic_server(bin, port, &sp, &ck, &["--test-ack-delay-ms", "150"]);
+    // Same banner on the periodic server, whose identity is also `sp`.
+    assert!(
+        server
+            .startup_log
+            .contains(&format!("server_public_key={sk}")),
+        "{}",
+        server.startup_log
+    );
     let out = bounded_client_output(
         Command::new(bin).args([
             "periodic-client",
