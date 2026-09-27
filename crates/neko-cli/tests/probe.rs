@@ -8260,6 +8260,53 @@ fn endpoint_rebind_real_sockets_promote_new_source_and_reject_stale_old_source()
         client_log.contains("endpoint_rebind_client_ok records=2 application_bytes_total=32"),
         "{client_log}"
     );
+    // Endpoint-rebind diagnostic ENVELOPES. Six of this path's event names had NO
+    // test reference at all; asserted with their `seq` and fields, which separate
+    // the server's `generation=0` confirmation from its `generation=1` validation,
+    // and the client's `generation=1` candidate from its `generation=0` stale-source
+    // send.
+    for (label, log, needle) in [
+        (
+            "server a confirmed",
+            server_log.as_str(),
+            r#""role":"server","event":"endpoint_a_confirmed","seq":1,"path":1,"generation":0"#,
+        ),
+        (
+            "server validated",
+            server_log.as_str(),
+            r#""role":"server","event":"endpoint_validated","seq":1,"path":1,"generation":1"#,
+        ),
+        (
+            "server post-delivery ack",
+            server_log.as_str(),
+            r#""role":"server","event":"endpoint_post_delivery_ack_sent","seq":2,"path":1,"generation":1"#,
+        ),
+        (
+            // The CLIENT emitter of endpoint_a_confirmed: this event has TWO emit
+            // sites (server and client) with the same seq/fields, so both need their
+            // own role-qualified witness.
+            "client a confirmed",
+            client_log.as_ref(),
+            r#""role":"client","event":"endpoint_a_confirmed","seq":1,"path":1,"generation":0"#,
+        ),
+        (
+            "client candidate sent",
+            client_log.as_ref(),
+            r#""role":"client","event":"endpoint_candidate_sent","seq":1,"path":1,"generation":1,"source_endpoint_changed":true"#,
+        ),
+        (
+            "client challenge answered",
+            client_log.as_ref(),
+            r#""role":"client","event":"endpoint_challenge_answered","seq":1,"path":1,"generation":1"#,
+        ),
+        (
+            "client stale source sent",
+            client_log.as_ref(),
+            r#""role":"client","event":"endpoint_stale_source_sent","seq":1,"path":1,"generation":0"#,
+        ),
+    ] {
+        assert!(log.contains(needle), "{label}: {log}");
+    }
     assert!(
         server_log.contains("endpoint_rebind_server_ok records=2 application_bytes_total=32"),
         "{server_log}"
