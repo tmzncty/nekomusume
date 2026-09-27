@@ -125,6 +125,102 @@ fn json_capabilities_report_every_documented_field() {
     }
 }
 
+/// Minimal structural validator: balanced braces/brackets outside strings, an
+/// even number of unescaped quotes, and no empty object/array slots. This is the
+/// property `contains`-style field checks cannot see - a dropped separator or a
+/// missing bracket still leaves every field fragment present.
+fn assert_structurally_valid_json(s: &str) {
+    let bytes = s.as_bytes();
+    let (mut braces, mut brackets) = (0i64, 0i64);
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, b) in bytes.iter().enumerate() {
+        match b {
+            b'\\' if in_string => escaped = !escaped,
+            _ => escaped = false,
+        }
+        if *b == b'"' && !escaped {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        match b {
+            b'{' => braces += 1,
+            b'}' => braces -= 1,
+            b'[' => brackets += 1,
+            b']' => brackets -= 1,
+            _ => {}
+        }
+        assert!(
+            braces >= 0 && brackets >= 0,
+            "unbalanced close at byte {i} in {s}"
+        );
+    }
+    assert!(!in_string, "unterminated string in {s}");
+    assert_eq!(braces, 0, "unbalanced braces in {s}");
+    assert_eq!(brackets, 0, "unbalanced brackets in {s}");
+    // Only patterns that cannot occur in well-formed JSON. `},`, `],` and `}]}`
+    // are all legitimate (between array elements, or closing nested containers),
+    // so they are not checked here.
+    for bad in [",,", ",}", ",]", "{,", "[,"] {
+        assert!(!s.contains(bad), "empty slot {bad:?} in {s}");
+    }
+}
+
+#[test]
+fn json_capabilities_is_well_formed_and_is_exactly_the_published_line() {
+    // Every existing assertion on this output is a `contains` on one field
+    // fragment, so the JSON's STRUCTURE was unwitnessed: dropping a separator
+    // between two top-level keys, removing the `commands` array bracket, adding
+    // or removing a closing brace, or reordering the top-level keys all left
+    // every fragment present and every test passing - yet the output is no
+    // longer the documented JSON contract and real consumers cannot parse it.
+    let out = run(&argv(&["capabilities", "--json"]));
+    assert!(out.ok, "{:?}", out.stderr);
+    let line = out.stdout.trim_end_matches('\n');
+
+    // The generated line is exactly this, byte for byte.
+    let expected = format!(
+        concat!(
+            "{{\"schema\":\"nekomusume.capabilities.v1\",",
+            "\"package_version\":\"{}\",\"target_os\":\"{}\",\"target_arch\":\"{}\",",
+            "\"secret_free\":true,",
+            "\"defaults\":{{\"bytes\":32,\"count\":1,\"duration_seconds\":10}},",
+            "\"limits\":{{\"bytes_max\":1200,\"count_max\":64,\"duration_seconds_max\":30,",
+            "\"workload_duration_seconds_max\":600,\"port_min\":40080,\"port_max\":40100}},",
+            "\"commands\":[",
+            "{{\"name\":\"client\",\"maturity\":\"research\"}},",
+            "{{\"name\":\"server\",\"maturity\":\"research\"}},",
+            "{{\"name\":\"probe\",\"maturity\":\"research\"}},",
+            "{{\"name\":\"health-observe\",\"maturity\":\"experimental\"}},",
+            "{{\"name\":\"failover\",\"maturity\":\"experimental\"}},",
+            "{{\"name\":\"multistream\",\"maturity\":\"experimental\"}},",
+            "{{\"name\":\"scheduler-fairness\",\"maturity\":\"fixture\"}},",
+            "{{\"name\":\"key-update\",\"maturity\":\"fixture\"}},",
+            "{{\"name\":\"periodic-server\",\"maturity\":\"research\"}},",
+            "{{\"name\":\"periodic-client\",\"maturity\":\"research\"}},",
+            "{{\"name\":\"lab\",\"maturity\":\"fixture\"}},",
+            "{{\"name\":\"workload\",\"maturity\":\"fixture\"}},",
+            "{{\"name\":\"endpoint-rebind-server\",\"maturity\":\"experimental\"}},",
+            "{{\"name\":\"endpoint-rebind-client\",\"maturity\":\"experimental\"}},",
+            "{{\"name\":\"keygen\",\"maturity\":\"utility\"}},",
+            "{{\"name\":\"capabilities\",\"maturity\":\"utility\"}}",
+            "]}}"
+        ),
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    assert_eq!(
+        line, expected,
+        "the capabilities JSON is a published contract"
+    );
+    // And it really is well-formed JSON, not merely the right fragments.
+    assert_structurally_valid_json(line);
+}
+
 #[test]
 fn human_capabilities_state_the_limits_and_the_secret_free_property() {
     let out = run(&argv(&["capabilities"]));
