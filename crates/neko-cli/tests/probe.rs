@@ -8111,6 +8111,28 @@ fn endpoint_rebind_real_sockets_promote_new_source_and_reject_stale_old_source()
         client_log.contains("\"source_endpoint_changed\":true"),
         "{client_log}"
     );
+    // The rebind summaries are printed UNCONDITIONALLY at the end of each side, so
+    // they were already in these captured logs - nothing asserted them, though.
+    // `bytes` is 16, so `application_bytes_total` must be `bytes * 2` = 32, which
+    // separates the documented total from the per-record size.
+    assert!(
+        client_log.contains("endpoint_rebind_client_ok records=2 application_bytes_total=32"),
+        "{client_log}"
+    );
+    assert!(
+        server_log.contains("endpoint_rebind_server_ok records=2 application_bytes_total=32"),
+        "{server_log}"
+    );
+    // Each side names ITSELF, not the other: the server log must not carry the
+    // client label and vice versa (kills a swapped label between the two).
+    assert!(
+        !server_log.contains("endpoint_rebind_client_ok"),
+        "{server_log}"
+    );
+    assert!(
+        !client_log.contains("endpoint_rebind_server_ok"),
+        "{client_log}"
+    );
     assert!(
         server_log.contains("\"event\":\"endpoint_candidate_seen\""),
         "{server_log}"
