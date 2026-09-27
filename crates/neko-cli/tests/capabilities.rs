@@ -253,10 +253,16 @@ fn human_capabilities_state_the_limits_and_the_secret_free_property() {
         "{s}"
     );
     assert!(s.contains("report_secret_free=true"), "{s}");
+    // The fixture-scenarios line in FULL. Only the trailing `scope=` value was
+    // asserted, so the label, `command=`, `scenario=` and `maturity=` - and the
+    // line's entire presence - were free: renaming the label, retargeting the
+    // scenario, reclassifying the maturity, or dropping the whole prefix all left
+    // the old assertion passing.
     assert!(
-        s.contains(
+        s.contains(concat!(
+            "fixture_scenarios command=lab scenario=reliable-udp maturity=fixture ",
             "scope=bounded-loopback-controlled-suppression-manager-decision-only-no-tcp-socket"
-        ),
+        )),
         "{s}"
     );
 }
