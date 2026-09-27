@@ -7495,11 +7495,90 @@ fn periodic_session_delayed_confirmations_are_counted_on_one_session() {
     let log = String::from_utf8_lossy(&out.stdout);
     assert!(log.contains("periodic_client_authenticated session=7201 stream=1"));
     assert!(log.contains("attempted=3 confirmed=3 missing=0"), "{log}");
+
+    // The periodic report lines in full. `latency_ms`, `elapsed_ms` and the two
+    // percentiles are the only varying fields (wall-clock timing), so each line
+    // is pinned as an exact surrounding contract around those, with each varying
+    // field required to be a bare decimal. Everything else - the diagnostic
+    // labels, `sent`/`received`, the `confirmed`/`missing` split, `duplicate`,
+    // `duplicates`, `reconnects`, `application_bytes`, `cleanup` and `signal` -
+    // was unasserted before this.
+    let number_after = |s: &str, key: &str| -> String {
+        let rest = s
+            .split_once(key)
+            .unwrap_or_else(|| panic!("missing {key:?} in {s:?}"))
+            .1;
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        assert!(
+            !digits.is_empty(),
+            "{key:?} must be followed by a bare number in {s:?}"
+        );
+        digits
+    };
+    assert!(
+        log.contains(
+            "periodic_client_authenticated session=7201 stream=1 reconnect=unsupported key_update_after=None"
+        ),
+        "{log}"
+    );
+    assert!(
+        log.contains(
+            "periodic_interval seq=1 sent=true confirmed=true missing=false duplicate=false latency_ms="
+        ),
+        "{log}"
+    );
+    let summary = log
+        .lines()
+        .find(|l| l.starts_with("periodic_summary "))
+        .unwrap_or_else(|| panic!("no client summary in {log}"));
+    let p50 = number_after(summary, "p50_confirmation_latency_ms=");
+    let p95 = number_after(summary, "p95_confirmation_latency_ms=");
+    let elapsed = number_after(summary, "elapsed_ms=");
+    assert_eq!(
+        summary,
+        format!(
+            "periodic_summary transport=tcp session=7201 stream=1 attempted=3 confirmed=3 missing=0 duplicates=0 p50_confirmation_latency_ms={p50} p95_confirmation_latency_ms={p95} reconnects=0 elapsed_ms={elapsed} application_bytes=48 cleanup=verified signal=false"
+        ),
+        "client summary contract"
+    );
+
+    // The server's readiness line is consumed by the readiness wait, so it is
+    // asserted against the retained startup log rather than the drained one.
+    assert!(
+        server.startup_log.contains(&format!(
+            "periodic_server_ready transport=tcp port={port} reconnect=unsupported"
+        )),
+        "{}",
+        server.startup_log
+    );
     let (status, server_log) = finish_server(server);
     assert!(status.success(), "{server_log}");
     assert_eq!(
         server_log.matches("periodic_server_authenticated").count(),
         1
+    );
+    assert!(
+        server_log
+            .contains("periodic_server_authenticated session=7201 stream=1 key_update_after=None"),
+        "{server_log}"
+    );
+    assert!(
+        server_log.contains(
+            "periodic_server_interval seq=1 received=true confirmed=true duplicate=false"
+        ),
+        "{server_log}"
+    );
+    let server_summary = server_log
+        .lines()
+        .find(|l| l.starts_with("periodic_server_summary "))
+        .unwrap_or_else(|| panic!("no server summary in {server_log}"));
+    let server_elapsed = number_after(server_summary, "elapsed_ms=");
+    assert_eq!(
+        server_summary,
+        format!(
+            "periodic_server_summary authenticated=true received=3 confirmed=3 duplicates=0 elapsed_ms={server_elapsed} cleanup=verified signal=false"
+        ),
+        "server summary contract"
     );
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
@@ -7830,6 +7909,60 @@ fn periodic_setup_timeout_fails_before_application_records() {
     assert!(
         !server_log.contains("periodic_server_interval"),
         "{server_log}"
+    );
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+}
+
+#[test]
+fn periodic_server_reports_the_unauthenticated_outcome_when_no_client_arrives() {
+    // The `authenticated=false` summary was reached by NO test - it is printed
+    // only when the server's duration expires with no authenticated session, and
+    // every existing periodic test either authenticates or fails earlier (setup
+    // timeout / malformed setup). Its whole line was therefore unwitnessed,
+    // including the `authenticated=false` flag and the zero counters.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("periodic-noclient-server");
+    let cp = tmp("periodic-noclient-client");
+    let ck = key(bin, &cp);
+    let port_lease = periodic_test_port();
+    let port = port_lease.port();
+    port_lease.release();
+    // Duration 1 with no client: the server must expire and report honestly.
+    let server = start_periodic_server(bin, port, &sp, &ck, &["--duration", "1"]);
+    let (status, server_log) = finish_server(server);
+    assert!(
+        !status.success(),
+        "an expired run must not report success: {server_log}"
+    );
+    assert!(
+        !server_log.contains("periodic_server_authenticated"),
+        "{server_log}"
+    );
+    let summary = server_log
+        .lines()
+        .find(|l| l.starts_with("periodic_server_summary "))
+        .unwrap_or_else(|| panic!("no unauthenticated summary in {server_log}"));
+    // `elapsed_ms` is the only varying field, and this summary carries NO
+    // `signal=` field (unlike the authenticated one).
+    let elapsed: String = summary
+        .split_once("elapsed_ms=")
+        .expect("elapsed_ms")
+        .1
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    assert!(
+        !elapsed.is_empty(),
+        "elapsed_ms must be a number: {summary}"
+    );
+    assert_eq!(
+        summary,
+        format!(
+            "periodic_server_summary authenticated=false received=0 confirmed=0 duplicates=0 elapsed_ms={elapsed} cleanup=verified"
+        ),
+        "unauthenticated summary contract"
     );
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
