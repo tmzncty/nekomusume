@@ -2433,6 +2433,16 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     );
     assert!(status.success(), "{log}");
     assert!(String::from_utf8_lossy(&out.stdout).contains("failover_client_ok"));
+    // The CLIENT emitter of the same `udp_authenticated` line. The two emitters
+    // (server and client) produce byte-identical text, so an assertion anywhere
+    // passes if EITHER appears - which is exactly why this must be pinned on a log
+    // captured from the client, as it is here.
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .contains("carrier_event name=udp_authenticated session=7001 generation=0"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     assert!(log.contains("failover_server_ok"));
     drop(UdpSocket::bind(("127.0.0.1", udp)).unwrap());
     drop(TcpListener::bind(("127.0.0.1", tcp)).unwrap());
@@ -6664,6 +6674,12 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
     assert_eq!(
         log.matches("carrier_event name=udp_authenticated").count(),
         1
+    );
+    // Full line: only the label and its count were pinned, so `session` and
+    // `generation` were free.
+    assert!(
+        log.contains("carrier_event name=udp_authenticated session=7001 generation=0"),
+        "{log}"
     );
     assert_eq!(
         log.matches("carrier_event name=tcp_resumed session=7001 generation=1")
