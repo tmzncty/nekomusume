@@ -234,11 +234,24 @@ fn human_capabilities_state_the_limits_and_the_secret_free_property() {
         s.contains("limits bytes=1-1200 count=1-64 duration_seconds=1-30 workload_duration_seconds=1-600 ports=40080-40100"),
         "{s}"
     );
+    // The WHOLE grouped command line. Only `research=` and `aliases=` were
+    // asserted before, so the `experimental=`, `fixtures=` and `utilities=`
+    // groups - their labels, their membership and their order - were free: a
+    // renamed group label, a command moved between groups, or a command dropped
+    // from the line entirely all left the pre-existing assertions passing.
+    // (The JSON report does pin each command's maturity; this is the separate
+    // human-facing grouping, which is a distinct surface.)
     assert!(
-        s.contains("research=client,server,probe,periodic-server,periodic-client"),
+        s.contains(concat!(
+            "commands research=client,server,probe,periodic-server,periodic-client ",
+            "experimental=health-observe,failover,multistream,",
+            "endpoint-rebind-server,endpoint-rebind-client ",
+            "fixtures=scheduler-fairness,key-update,lab,workload ",
+            "utilities=keygen,capabilities ",
+            "aliases=failover-server,failover-client"
+        )),
         "{s}"
     );
-    assert!(s.contains("aliases=failover-server,failover-client"), "{s}");
     assert!(s.contains("report_secret_free=true"), "{s}");
     assert!(
         s.contains(
