@@ -6759,8 +6759,61 @@ fn expired_preprogress_udp_session_is_retired_before_delivery_and_fresh_handshak
         expiry < second_auth && second_auth < resume,
         "only the fresh post-expiry handshake may establish the guard used by resume: {server_log}"
     );
-    assert!(String::from_utf8_lossy(&recovered.stdout).contains("failover_client_ok"));
-    assert!(server_log.contains("failover_server_ok"));
+    // The two terminal summaries, pinned in full. Only the two PORT fields vary
+    // (they come from `failover_port_leases`), so each is separately required to be
+    // a bare decimal while the surrounding text is exact.
+    let client = String::from_utf8_lossy(&recovered.stdout);
+    assert!(
+        client.contains(
+            "failover_client_ok session=7001 count=1 application_bytes_total=16 \
+             failover_mode=controlled_udp_stop controlled_udp_stop=true"
+        ),
+        "{client}"
+    );
+    // `count=1` and `application_bytes_total=16` differ, so the two are separated
+    // (a `count`-for-bytes swap is visible); `bytes_hex` is the 16 recorded bytes.
+    let server_head = concat!(
+        "failover_server_ok session=7001 records=1 application_bytes_total=16 ",
+        "bytes_hex=78787878787878787878787878787878 ",
+        "failover_mode=controlled_udp_stop controlled_udp_stop=true udp_port="
+    );
+    let srv_at = server_log
+        .find(server_head)
+        .unwrap_or_else(|| panic!("server summary head missing:\n{server_log}"));
+    let rest = &server_log[srv_at + server_head.len()..];
+    let (udp_port, rest) = rest
+        .split_once(" tcp_port=")
+        .expect("tcp_port follows udp_port");
+    assert!(
+        !udp_port.is_empty() && udp_port.bytes().all(|b| b.is_ascii_digit()),
+        "udp_port must be a bare decimal: {udp_port}"
+    );
+    let tcp_port: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    assert!(
+        !tcp_port.is_empty(),
+        "tcp_port must be a bare decimal: {rest}"
+    );
+    // The summary line is not necessarily last in the log (a diagnostic JSON can
+    // follow), so this pins the FIELD BOUNDARY: the digit run must be terminated by
+    // a newline, so `tcp_port` cannot be a prefix of a longer number.
+    assert!(
+        rest[tcp_port.len()..].starts_with('\n'),
+        "tcp_port must be newline-terminated: {rest:?}"
+    );
+    // Each port must be the port THIS test assigned to that transport. Requiring
+    // only "a bare decimal" is not enough: swapping the two sources (`udp_port`
+    // reporting the TCP port and vice versa) leaves both fields bare decimals, so
+    // it is invisible unless the values are checked against the leases.
+    assert_eq!(
+        udp_port.parse::<u16>().expect("udp_port is a u16"),
+        udp,
+        "udp_port must be the UDP lease port"
+    );
+    assert_eq!(
+        tcp_port.parse::<u16>().expect("tcp_port is a u16"),
+        tcp,
+        "tcp_port must be the TCP lease port"
+    );
     fs::remove_file(sp).unwrap();
     fs::remove_file(cp).unwrap();
 }
