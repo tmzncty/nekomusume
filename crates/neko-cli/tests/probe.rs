@@ -3127,6 +3127,41 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
         server_log.contains(&format!("bytes_hex={}", "78".repeat(48))),
         "{server_log}"
     );
+    assert!(
+        server_log
+            .contains("carrier_event name=tcp_negotiated session=7001 generation=1 version=0"),
+        "NEG={} AUTH={}",
+        server_log.contains("carrier_event name=tcp_negotiated"),
+        server_log.contains("carrier_event name=tcp_authenticated")
+    );
+    assert!(
+        server_log.contains("carrier_event name=tcp_authenticated session=7001 generation=1"),
+        "{server_log}"
+    );
+    // `tcp_resume_validated` was already LOCATED by a `find(...)` used for ordering,
+    // but never pinned as a line - the label alone was covered, not its session and
+    // generation fields.
+    assert!(
+        server_log.contains("carrier_event name=tcp_resume_validated session=7001 generation=1"),
+        "{server_log}"
+    );
+    // ORDER, not just presence: negotiation precedes authentication, which
+    // precedes resume validation. Independent `contains` assertions cannot see a
+    // swap of two adjacent lines, which is exactly the copy-paste shape that
+    // happens here.
+    let negotiated_at = server_log
+        .find("carrier_event name=tcp_negotiated")
+        .unwrap();
+    let authenticated_at = server_log
+        .find("carrier_event name=tcp_authenticated")
+        .unwrap();
+    let resume_at = server_log
+        .find("carrier_event name=tcp_resume_validated")
+        .unwrap();
+    assert!(
+        negotiated_at < authenticated_at && authenticated_at < resume_at,
+        "carrier_event order must be negotiated < authenticated < resume_validated"
+    );
 }
 #[test]
 fn reliable_udp_failover_settles_packet_acks_to_zero_in_flight() {
