@@ -5,10 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const PACKET_THRESHOLD: u64 = 3;
 pub const LOSS_TIME_NUMERATOR: u64 = 9;
 pub const LOSS_TIME_DENOMINATOR: u64 = 8;
-pub const DEFAULT_MSS: u64 = 1200;
 pub const DEFAULT_MAX_SENT_PACKETS: usize = 4096;
 pub const DEFAULT_MAX_FRAMES_PER_PACKET: usize = 64;
-pub const DEFAULT_MAX_ACK_RANGES: usize = 256;
 /// Hard ceilings prevent caller-controlled limits from creating unbounded state.
 pub const HARD_MAX_SENT_PACKETS: usize = 65_536;
 pub const HARD_MAX_FRAMES_PER_PACKET: usize = 1_024;

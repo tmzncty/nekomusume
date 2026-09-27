@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_PREAUTH_CONTROLLER_ID: AtomicU64 = AtomicU64::new(1);
 
-pub const SNOW_VERSION: &str = "0.10.0";
 pub const MAX_REPLAY_WINDOW: u64 = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
