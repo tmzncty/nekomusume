@@ -601,3 +601,157 @@ fn payload_file_reports_the_open_failure_site_separately() {
     let _ = std::fs::remove_file(&f);
     let _ = std::fs::remove_file(&id);
 }
+
+/// A `failover-client` invocation from the given raw flags. Its port/delay/recovery
+/// guards all run BEFORE any socket is created and before `--server-key` is
+/// consulted, so none of the cases below need a peer.
+fn failover_client_args(extra: &[&str]) -> Vec<String> {
+    let mut v = argv(&["failover-client"]);
+    v.extend(extra.iter().map(|s| (*s).to_string()));
+    v
+}
+
+#[test]
+fn numeric_flags_distinguish_parse_failures_from_range_failures() {
+    // Each numeric flag has TWO failure modes with DIFFERENT messages: an
+    // unparseable value (`invalid <flag>`) and an out-of-range value
+    // (`<flag> outside <range>`). Only the range mode was asserted anywhere, so a
+    // mutant that collapsed the two messages, or reworded the parse failure, was
+    // free. The range message is asserted to be ABSENT so the two cannot merge.
+    for (flag, unparseable, range_msg) in [
+        ("--bytes", "abc", "bytes outside 1-1200"),
+        ("--duration", "abc", "duration outside 1-30"),
+        ("--count", "abc", "count outside 1-64"),
+    ] {
+        let out = run(&client_args(&[(flag, unparseable)]));
+        assert_eq!(out.code, Some(2), "{flag}={unparseable}: {}", out.stderr);
+        assert!(
+            out.stderr.contains(&format!("invalid {}", &flag[2..])),
+            "{flag}={unparseable} must report a parse failure: {}",
+            out.stderr
+        );
+        assert!(
+            !out.stderr.contains(range_msg),
+            "{flag}={unparseable} must NOT report a range failure: {}",
+            out.stderr
+        );
+    }
+    // `--port` is parsed earlier in `common()`, so it is reachable the same way.
+    let out = run(&client_args(&[("--port", "abc")]));
+    assert_eq!(out.code, Some(2), "{}", out.stderr);
+    assert!(out.stderr.contains("invalid port"), "{}", out.stderr);
+    // A value that overflows the target integer is also a parse failure, not a
+    // range failure.
+    let out = run(&client_args(&[("--bytes", "99999999999999999999")]));
+    assert_eq!(out.code, Some(2), "{}", out.stderr);
+    assert!(out.stderr.contains("invalid bytes"), "{}", out.stderr);
+}
+
+#[test]
+fn failover_client_validates_ports_and_delays_before_connecting() {
+    for (label, args, msg) in [
+        (
+            "udp port unparseable",
+            &["--udp-port", "abc"][..],
+            "invalid UDP port",
+        ),
+        (
+            "tcp port unparseable",
+            &["--tcp-port", "99999"][..],
+            "invalid TCP port",
+        ),
+        (
+            "udp port below window",
+            &["--udp-port", "40079"][..],
+            "ports outside 40080-40100",
+        ),
+        (
+            "tcp port above window",
+            &["--tcp-port", "40101"][..],
+            "ports outside 40080-40100",
+        ),
+        (
+            "first data delay unparseable",
+            &["--test-first-data-delay-ms", "abc"][..],
+            "invalid first data delay",
+        ),
+        (
+            "first data delay above bound",
+            &["--test-first-data-delay-ms", "2001"][..],
+            "first data delay outside 0-2000 ms",
+        ),
+    ] {
+        let out = run(&failover_client_args(args));
+        assert_eq!(out.code, Some(2), "{label}: {}", out.stderr);
+        assert!(out.stderr.contains(msg), "{label}: {}", out.stderr);
+    }
+    // Both window edges are ACCEPTED: the run passes its own bound and stops at the
+    // next guard instead, which is what separates `>=`/`<=` from `>`/`<`.
+    for ok in [
+        &["--udp-port", "40080"][..],
+        &["--tcp-port", "40100"][..],
+        &["--test-first-data-delay-ms", "2000"][..],
+    ] {
+        let out = run(&failover_client_args(ok));
+        assert!(
+            out.stderr.contains("missing --server-key"),
+            "{ok:?} should pass its own bound: {}",
+            out.stderr
+        );
+    }
+}
+
+#[test]
+fn failover_recovery_flags_enforce_each_precondition_clause() {
+    // `--migration-back` is guarded by a TWO-clause condition (needs
+    // --automatic-health-failover AND count >= 3), so each clause is checked on its
+    // own: weakening the conjunction, or dropping a clause, must be visible.
+    let msg = "--migration-back requires --automatic-health-failover and count >= 3";
+    for (label, args) in [
+        ("neither clause", vec!["--migration-back"]),
+        (
+            "failover but count 2",
+            vec![
+                "--migration-back",
+                "--automatic-health-failover",
+                "--count",
+                "2",
+            ],
+        ),
+    ] {
+        let out = run(&failover_client_args(&args));
+        assert_eq!(out.code, Some(2), "{label}: {}", out.stderr);
+        assert!(out.stderr.contains(msg), "{label}: {}", out.stderr);
+    }
+    // Control: both clauses hold -> the guard must NOT fire, so the run reaches a
+    // later guard. Without this a guard that always fires would look pinned.
+    let out = run(&failover_client_args(&[
+        "--migration-back",
+        "--automatic-health-failover",
+        "--count",
+        "3",
+    ]));
+    assert!(!out.stderr.contains(msg), "{}", out.stderr);
+    assert!(
+        out.stderr.contains("missing --server-key"),
+        "{}",
+        out.stderr
+    );
+
+    // `--cold-health-failover` needs only --automatic-health-failover, and has its
+    // own message.
+    let cmsg = "--cold-health-failover requires --automatic-health-failover";
+    let out = run(&failover_client_args(&["--cold-health-failover"]));
+    assert_eq!(out.code, Some(2), "{}", out.stderr);
+    assert!(out.stderr.contains(cmsg), "{}", out.stderr);
+    let out = run(&failover_client_args(&[
+        "--cold-health-failover",
+        "--automatic-health-failover",
+    ]));
+    assert!(!out.stderr.contains(cmsg), "{}", out.stderr);
+    assert!(
+        out.stderr.contains("missing --server-key"),
+        "{}",
+        out.stderr
+    );
+}
