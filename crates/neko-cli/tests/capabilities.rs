@@ -388,3 +388,216 @@ fn keygen_emits_lowercase_zero_padded_hex() {
     );
     let _ = std::fs::remove_file(&path);
 }
+
+/// Base arguments for the `--payload-file` guards. `benchmark_payload` is called
+/// BEFORE any socket is opened (`client()` calls it ahead of
+/// `TcpStream::connect_timeout`), so every guard below is reachable with no
+/// server listening - the same "pre-connect argument bound" class as the rest of
+/// this file. `--identity` points at a temp path so no default identity file is
+/// ever created in the working directory.
+fn payload_args(
+    bytes: &str,
+    count: &str,
+    transport: &str,
+    json: bool,
+    payload: &str,
+    identity: &str,
+) -> Vec<String> {
+    let mut v = argv(&[
+        "client",
+        "--transport",
+        transport,
+        "--port",
+        "40085",
+        "--addr",
+        "127.0.0.1:40085",
+        "--server-key",
+        PEER,
+        "--bytes",
+        bytes,
+        "--count",
+        count,
+        "--identity",
+        identity,
+        "--payload-file",
+        payload,
+    ]);
+    if json {
+        v.push("--json".into());
+    }
+    v
+}
+
+#[test]
+fn payload_file_requires_tcp_a_single_exchange_and_json_mode() {
+    let f = tmp("payload-guard25.bin");
+    let id = tmp("payload-guard.id");
+    std::fs::write(&f, vec![b'x'; 25]).unwrap();
+    let path = f.to_str().unwrap();
+    let idp = id.to_str().unwrap();
+
+    // The flag sits behind a THREE-way conjunction, so each clause is checked on
+    // its own: weakening any single one (`||` -> `&&`, or dropping a clause)
+    // must be visible. All three share one message.
+    const MSG: &str = "--payload-file requires TCP, --count 1, and --json";
+    for (label, args) in [
+        (
+            "transport udp",
+            payload_args("25", "1", "udp", true, path, idp),
+        ),
+        ("count 2", payload_args("25", "2", "tcp", true, path, idp)),
+        (
+            "json omitted",
+            payload_args("25", "1", "tcp", false, path, idp),
+        ),
+    ] {
+        let out = run(&args);
+        assert_eq!(
+            out.code,
+            Some(2),
+            "{label}: code={:?} {}",
+            out.code,
+            out.stderr
+        );
+        assert!(out.stderr.contains(MSG), "{label}: {}", out.stderr);
+    }
+
+    // Control: with every clause satisfied the guard must NOT fire. The run then
+    // proceeds past it and fails later for an unrelated reason (nothing is
+    // listening), so the guard message must be absent.
+    let out = run(&payload_args("25", "1", "tcp", true, path, idp));
+    assert!(
+        !out.stderr.contains(MSG),
+        "guard fired although all three clauses hold: {}",
+        out.stderr
+    );
+
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&id);
+}
+
+#[test]
+fn payload_file_must_be_a_regular_file_of_exactly_the_requested_length() {
+    let p25 = tmp("payload-len25.bin");
+    let p24 = tmp("payload-len24.bin");
+    let p26 = tmp("payload-len26.bin");
+    let dir = tmp("payload-dir");
+    let absent = tmp("payload-absent.bin");
+    let id = tmp("payload-len.id");
+    std::fs::write(&p25, vec![b'x'; 25]).unwrap();
+    std::fs::write(&p24, vec![b'x'; 24]).unwrap();
+    std::fs::write(&p26, vec![b'x'; 26]).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let _ = std::fs::remove_file(&absent);
+    let idp = id.to_str().unwrap();
+
+    // A path that does not exist fails at the metadata step, which has its OWN
+    // message - distinct from the shape/length guard below.
+    let out = run(&payload_args(
+        "25",
+        "1",
+        "tcp",
+        true,
+        absent.to_str().unwrap(),
+        idp,
+    ));
+    assert_eq!(out.code, Some(2), "code={:?} {}", out.code, out.stderr);
+    assert!(
+        out.stderr.contains("payload file unreadable"),
+        "absent file: {}",
+        out.stderr
+    );
+
+    // Not a regular file (a directory), too short, and too long all trip the
+    // same guard - checked in both directions so `!=` cannot become `>` or `<`.
+    for (label, bytes, payload) in [
+        ("a directory", "25", dir.to_str().unwrap()),
+        ("one byte short", "25", p24.to_str().unwrap()),
+        ("one byte long", "24", p25.to_str().unwrap()),
+        ("--bytes too small", "25", p26.to_str().unwrap()),
+    ] {
+        let out = run(&payload_args(bytes, "1", "tcp", true, payload, idp));
+        assert_eq!(
+            out.code,
+            Some(2),
+            "{label}: code={:?} {}",
+            out.code,
+            out.stderr
+        );
+        assert!(
+            out.stderr
+                .contains("payload file length must equal bounded --bytes"),
+            "{label}: {}",
+            out.stderr
+        );
+    }
+
+    // The exact-length, regular-file shape is accepted by these guards (the run
+    // proceeds past them and fails later, since nothing is listening).
+    let out = run(&payload_args(
+        "25",
+        "1",
+        "tcp",
+        true,
+        p25.to_str().unwrap(),
+        idp,
+    ));
+    assert!(
+        !out.stderr
+            .contains("payload file length must equal bounded --bytes"),
+        "an exactly-sized regular file was rejected: {}",
+        out.stderr
+    );
+
+    for p in [&p25, &p24, &p26, &absent, &id] {
+        let _ = std::fs::remove_file(p);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The metadata step and the `open` step BOTH emit `payload file unreadable`, at
+/// two separate `unwrap_or_else` sites. Only a file that is stat-able with the
+/// right length but cannot be opened distinguishes them, so this exercises the
+/// `open` site. It needs a non-root runner (root can open mode 000), and skips
+/// itself rather than failing if the environment cannot express the case.
+#[test]
+#[cfg(unix)]
+fn payload_file_reports_the_open_failure_site_separately() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = tmp("payload-unreadable25.bin");
+    let id = tmp("payload-open.id");
+    std::fs::write(&f, vec![b'x'; 25]).unwrap();
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let path = f.to_str().unwrap();
+    let idp = id.to_str().unwrap();
+
+    if std::fs::read(&f).is_ok() {
+        // Cannot make the open fail here (running as root, or an ACL grants
+        // access). The sub-case is not exercisable in this environment.
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let _ = std::fs::remove_file(&f);
+        let _ = std::fs::remove_file(&id);
+        return;
+    }
+
+    // Stat succeeds (correct length, regular file) so the shape/length guard does
+    // NOT fire; only the open can fail.
+    let out = run(&payload_args("25", "1", "tcp", true, path, idp));
+    assert_eq!(out.code, Some(2), "code={:?} {}", out.code, out.stderr);
+    assert!(
+        out.stderr.contains("payload file unreadable"),
+        "open-failure site: {}",
+        out.stderr
+    );
+    assert!(
+        !out.stderr
+            .contains("payload file length must equal bounded --bytes"),
+        "the shape guard fired before the open: {}",
+        out.stderr
+    );
+
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&id);
+}
