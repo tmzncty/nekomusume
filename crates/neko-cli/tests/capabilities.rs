@@ -755,3 +755,216 @@ fn failover_recovery_flags_enforce_each_precondition_clause() {
         out.stderr
     );
 }
+
+/// A `multistream` invocation from the given raw flags. Its `config()` bounds,
+/// port window, address parse, mode/key requirement and identity requirement all
+/// run BEFORE any socket is created, so none of the cases below needs a peer.
+fn ms_args(extra: &[&str]) -> Vec<String> {
+    let mut v = argv(&["multistream"]);
+    v.extend(extra.iter().map(|s| (*s).to_string()));
+    v
+}
+
+/// A `endpoint-rebind-<side>` invocation from the given raw flags. Its
+/// count/bytes/duration clique runs before the server binds and before the client
+/// creates any socket.
+fn rebind_args(side: &str, extra: &[&str]) -> Vec<String> {
+    let mut v = argv(&[&format!("endpoint-rebind-{side}")]);
+    v.extend(extra.iter().map(|s| (*s).to_string()));
+    v
+}
+
+#[test]
+fn multistream_validates_every_argument_before_connecting() {
+    // Each message is asserted in FULL. The pre-existing assertion in
+    // tests/multistream.rs only checked the prefix `streams outside`, so the
+    // numbers were free; these also cover the eleven sibling messages, which had
+    // no witness at all.
+    for (label, args, msg) in [
+        ("streams 0", &["--streams", "0"][..], "streams outside 1-16"),
+        (
+            "streams 17",
+            &["--streams", "17"][..],
+            "streams outside 1-16",
+        ),
+        (
+            "streams unparseable",
+            &["--streams", "abc"][..],
+            "invalid --streams",
+        ),
+        ("records 0", &["--records", "0"][..], "records outside 1-64"),
+        (
+            "records 65",
+            &["--records", "65"][..],
+            "records outside 1-64",
+        ),
+        ("bytes 0", &["--bytes", "0"][..], "bytes outside 1-1024"),
+        (
+            "bytes 1025",
+            &["--bytes", "1025"][..],
+            "bytes outside 1-1024",
+        ),
+        (
+            "port 40079",
+            &["--port", "40079"][..],
+            "port outside 40080-40100",
+        ),
+        (
+            "port 40101",
+            &["--port", "40101"][..],
+            "port outside 40080-40100",
+        ),
+        (
+            "address unparseable",
+            &["--addr", "nonsense"][..],
+            "invalid --addr",
+        ),
+        (
+            "server without client key",
+            &["--mode", "server"][..],
+            "--client-key is required",
+        ),
+        (
+            "client without server key",
+            &["--mode", "client"][..],
+            "--server-key is required",
+        ),
+        (
+            "mode neither",
+            &["--mode", "bogus"][..],
+            "mode must be server or client",
+        ),
+        (
+            "client key wrong length",
+            &["--mode", "server", "--client-key", "ab"][..],
+            "key must be 32-byte hex",
+        ),
+        (
+            "client key not hex",
+            &[
+                "--mode",
+                "server",
+                "--client-key",
+                "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+            ][..],
+            "invalid key hex",
+        ),
+        (
+            "no identity",
+            &["--mode", "client", "--server-key", PEER][..],
+            "--identity is required",
+        ),
+    ] {
+        let out = run(&ms_args(args));
+        assert_eq!(
+            out.code,
+            Some(2),
+            "{label}: code={:?} {}",
+            out.code,
+            out.stderr
+        );
+        assert!(
+            out.stderr.contains(msg),
+            "{label}: {} (want {msg})",
+            out.stderr
+        );
+    }
+    // Boundary values that are INSIDE each window are accepted: the run gets past
+    // every argument guard and fails later reaching for a peer, which is what
+    // separates an inclusive bound from an exclusive one.
+    for ok in [
+        &["--streams", "1"][..],
+        &["--streams", "16"][..],
+        &["--records", "64"][..],
+        &["--bytes", "1024"][..],
+        &["--port", "40080"][..],
+        &["--port", "40100"][..],
+    ] {
+        let mut args = vec!["--mode", "client", "--server-key", PEER];
+        args.extend_from_slice(ok);
+        let out = run(&ms_args(&args));
+        assert!(
+            out.stderr.contains("--identity is required"),
+            "{ok:?} should pass its bound: {}",
+            out.stderr
+        );
+    }
+}
+
+#[test]
+fn endpoint_rebind_requires_the_documented_clique_on_both_sides() {
+    // A FIVE-clause condition (`count != 2 || bytes == 0 || bytes > MAX ||
+    // secs == 0 || secs > MAX_DURATION`) with a single message, so each clause is
+    // exercised on its own and the message is issued by BOTH sides.
+    const MSG: &str = "endpoint rebind requires count=2, bytes=1-1200, duration=1-30";
+    for side in ["server", "client"] {
+        for (label, args) in [
+            ("count 1", vec!["--count", "1"]),
+            ("count 3", vec!["--count", "3"]),
+            ("bytes 0", vec!["--count", "2", "--bytes", "0"]),
+            ("bytes 1201", vec!["--count", "2", "--bytes", "1201"]),
+            ("duration 0", vec!["--count", "2", "--duration", "0"]),
+            ("duration 31", vec!["--count", "2", "--duration", "31"]),
+        ] {
+            let out = run(&rebind_args(side, &args));
+            assert_eq!(out.code, Some(2), "{side} {label}: {}", out.stderr);
+            assert!(out.stderr.contains(MSG), "{side} {label}: {}", out.stderr);
+        }
+        // Control: the fully-legal clique does NOT fire the guard - the run stops at
+        // the next requirement instead, which differs per side.
+        let expected_next = if side == "server" {
+            "missing --client-key"
+        } else {
+            "missing --server-key"
+        };
+        let out = run(&rebind_args(side, &["--count", "2", "--bytes", "1200"]));
+        assert!(!out.stderr.contains(MSG), "{side} control: {}", out.stderr);
+        assert!(
+            out.stderr.contains(expected_next),
+            "{side} control: {}",
+            out.stderr
+        );
+        // Both `--bytes` edges are inside: 1 and 1200 are accepted.
+        for edge in ["1", "1200"] {
+            let out = run(&rebind_args(side, &["--count", "2", "--bytes", edge]));
+            assert!(
+                !out.stderr.contains(MSG),
+                "{side} --bytes {edge} should be legal: {}",
+                out.stderr
+            );
+        }
+    }
+}
+
+#[test]
+fn endpoint_rebind_client_orders_its_own_guards_after_the_clique() {
+    // These are only reachable once the clique holds, so they prove the ORDER of
+    // the guards as well as the messages.
+    let out = run(&rebind_args(
+        "client",
+        &["--count", "2", "--udp-port", "abc"],
+    ));
+    assert_eq!(out.code, Some(2), "{}", out.stderr);
+    assert!(out.stderr.contains("invalid UDP port"), "{}", out.stderr);
+    assert!(
+        !out.stderr.contains("endpoint rebind requires"),
+        "the clique must be satisfied first: {}",
+        out.stderr
+    );
+
+    let out = run(&rebind_args(
+        "client",
+        &["--count", "2", "--addr", "nonsense"],
+    ));
+    assert_eq!(out.code, Some(2), "{}", out.stderr);
+    assert!(out.stderr.contains("bad UDP target"), "{}", out.stderr);
+
+    // Control: with the clique satisfied and both fields parseable, the client gets
+    // as far as needing a peer key.
+    let out = run(&rebind_args("client", &["--count", "2"]));
+    assert!(
+        out.stderr.contains("missing --server-key"),
+        "{}",
+        out.stderr
+    );
+}

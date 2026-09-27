@@ -528,7 +528,11 @@ fn multistream_rejects_unbounded_payload_before_connecting() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("streams outside"));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("streams outside 1-16"),
+        "a bare prefix would let the numbers drift: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 const DOMAIN: &[u8] = b"nekomusume/neko-cli/multistream/v1";
