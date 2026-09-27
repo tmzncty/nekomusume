@@ -2673,6 +2673,22 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
             "missing client event {event}: {client_log}"
         );
     }
+    // The loop above only proves each label appears. These two lines carry fields -
+    // `count=3 bytes=16` (different values, so a swap is visible) and the reason
+    // string - and `controlled_udp_stop` had previously only ever been asserted
+    // ABSENT, so its whole line was free.
+    assert!(
+        client_log
+            .contains("carrier_event name=ordered_records_complete session=7001 count=3 bytes=16"),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains(
+            "carrier_event name=controlled_udp_stop session=7001 generation=0 \
+             reason=bounded_application_fault_injection"
+        ),
+        "{client_log}"
+    );
     assert!(server_log.contains("carrier_event name=udp_authenticated"));
     assert!(server_log.contains("carrier_event name=tcp_resumed"));
     assert!(client_log.contains("\"event\":\"udp_delivery_ack_validated\""));
@@ -6387,6 +6403,12 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
         server_log.contains("carrier_event name=udp_recovery_owner_started"),
         "{server_log}"
     );
+    // Label-only before this; the session/generation fields were free.
+    assert!(
+        server_log
+            .contains("carrier_event name=udp_recovery_owner_started session=7001 generation=1"),
+        "{server_log}"
+    );
     assert!(
         server_log.contains("records=3 application_bytes_total=48"),
         "{server_log}"
@@ -6624,6 +6646,12 @@ fn first_udp_selection_loss_recovers_from_same_peer_duplicate_hello() {
     // The duplicate pending hello cannot restart negotiation or reset
     // ResumeGuard/session/path/delivery state.
     assert_eq!(log.matches("carrier_event name=udp_negotiated").count(), 1);
+    // The full line, not just the label and its count: the earlier assertion pinned
+    // the occurrence but left `session`/`generation`/`version` free.
+    assert!(
+        log.contains("carrier_event name=udp_negotiated session=7001 generation=0 version=0"),
+        "{log}"
+    );
     assert_eq!(
         log.matches("carrier_event name=udp_authenticated").count(),
         1
