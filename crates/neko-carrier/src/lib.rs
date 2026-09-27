@@ -144,8 +144,6 @@ pub enum PathError {
     OldGeneration,
     InvalidTransition,
     ValidationRequired,
-    ValidationDomain,
-    ActivePathRequired,
     ActivePathConflict,
     HysteresisGate,
 }
@@ -1087,14 +1085,14 @@ pub struct MemoryLimits {
     pub max_queue_bytes: usize,
 }
 
+/// Errors a memory endpoint pair can actually raise. Only two outcomes exist:
+/// construction rejects bad limits, and a poisoned mutex is reported. The pair
+/// has no datagram-size, queue-capacity, close or peer-close semantics at this
+/// boundary - those belong to `CarrierError`, which is what `MemoryEndpoint`
+/// operations return (see D054).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryPairError {
     InvalidLimits,
-    MessageTooLarge,
-    QueueFull,
-    Closed,
-    PeerClosed,
-    ArithmeticOverflow,
     StatePoisoned,
 }
 
