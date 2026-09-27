@@ -175,6 +175,84 @@ mod tests {
         );
     }
 
+    /// Pins the reachability artifact's STRUCTURE, not just a few fragments:
+    /// the `schema_version` key, the `metadata` object and its nesting, the
+    /// `cases` array, and every per-case key (`transport`, `ip_version`,
+    /// `target`, `reachable`, `rtt_ms`, `payload_bytes`, `error`). Only
+    /// `observed_at_unix_ms` varies (the wall clock) and only `rtt_ms`/
+    /// `payload_bytes` vary on a success path, so a REFUSAL case - where both are
+    /// the fixed `null`/`0` - can be pinned exactly around the one varying field.
+    fn assert_refusal_artifact(
+        s: &str,
+        transport: &str,
+        version: &str,
+        target_json: &str,
+        error: &str,
+    ) {
+        let prefix = "{\"schema_version\":\"reachability-matrix.v1\",\"observed_at_unix_ms\":";
+        assert!(s.starts_with(prefix), "artifact head: {s}");
+        let rest = &s[prefix.len()..];
+        let (observed, tail) = rest
+            .split_once(",\"scope\":\"local-loopback\",")
+            .expect("scope follows the clock");
+        assert!(
+            !observed.is_empty() && observed.bytes().all(|b| b.is_ascii_digit()),
+            "observed_at_unix_ms must be a bare number: {s}"
+        );
+        let expected_tail = format!(
+            "\"metadata\":{{\"privileged\":false,\"raw_protocol\":false,\"third_party_scan\":false}},\"cases\":[{{\"transport\":\"{transport}\",\"ip_version\":\"{version}\",\"target\":{target_json},\"reachable\":false,\"rtt_ms\":null,\"payload_bytes\":0,\"error\":{error}}}]}}"
+        );
+        assert_eq!(tail, expected_tail, "artifact tail: {s}");
+    }
+
+    #[test]
+    fn the_artifact_structure_is_pinned_for_every_refusal_reason() {
+        // The key names `metadata`, `cases`, `target`, `error`, `payload_bytes`
+        // and `schema_version`, and the nesting that ties them together, appeared
+        // in NO test before this one - only a handful of leaf values did.
+        assert_refusal_artifact(
+            &run(
+                Transport::Udp,
+                IpVersion::V4,
+                "127.0.0.1:0".parse().unwrap(),
+                1,
+                1,
+            ),
+            "udp",
+            "ipv4",
+            "\"127.0.0.1:0\"",
+            "\"target port must be non-zero\"",
+        );
+        assert_refusal_artifact(
+            &run(
+                Transport::Tcp,
+                IpVersion::V4,
+                "192.0.2.1:9".parse().unwrap(),
+                100,
+                1,
+            ),
+            "tcp",
+            "ipv4",
+            "\"192.0.2.1:9\"",
+            "\"target must be loopback; public/WAN probing is disabled\"",
+        );
+        // A v6 target with a payload over the bound: the target is quoted and its
+        // `ip_version` is independent of `transport`.
+        assert_refusal_artifact(
+            &run(
+                Transport::Tcp,
+                IpVersion::V6,
+                "[::1]:0".parse().unwrap(),
+                100,
+                7,
+            ),
+            "tcp",
+            "ipv6",
+            "\"[::1]:0\"",
+            "\"target port must be non-zero\"",
+        );
+    }
+
     #[test]
     fn rejects_wan_before_socket() {
         assert_eq!(
