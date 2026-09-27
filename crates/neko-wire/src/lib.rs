@@ -1205,6 +1205,55 @@ mod negotiation_tests {
         );
     }
     #[test]
+    fn the_three_state_accessors_agree_across_every_negotiation_state() {
+        // `is_established` had zero call sites in the entire tree, so its
+        // polarity and its match arm were free. It is pinned against the two
+        // adjacent accessors that ARE used (`selected`/`state`) across all
+        // three states, so the trio cannot disagree.
+        let agree = |n: &VersionNegotiator, state: NegotiationState, selected: Option<u16>| {
+            assert_eq!(n.state(), state);
+            assert_eq!(n.selected(), selected);
+            assert_eq!(
+                n.is_established(),
+                selected.is_some(),
+                "is_established must agree with selected()"
+            );
+            assert_eq!(
+                n.is_established(),
+                matches!(state, NegotiationState::Established(_)),
+                "is_established must agree with state()"
+            );
+        };
+
+        // Awaiting.
+        let awaiting = VersionNegotiator::new(NegotiationRole::Client, &[0, 2]).unwrap();
+        agree(&awaiting, NegotiationState::Awaiting, None);
+
+        // Established (with a non-zero version, so a swapped version shows up).
+        let (mut c, mut s) = pair();
+        let hello = c.client_hello().unwrap();
+        let response = s.server_accept_hello(&hello).unwrap();
+        assert_eq!(s.state(), NegotiationState::Established(0));
+        agree(&s, NegotiationState::Established(0), Some(0));
+        assert_eq!(c.client_accept_response(&response), Ok(0));
+        agree(&c, NegotiationState::Established(0), Some(0));
+
+        // Rejected: a server that cannot decode the offered hello.
+        let mut rejected = VersionNegotiator::new(NegotiationRole::Server, &[0, 1]).unwrap();
+        assert!(rejected.server_accept_hello(&[0xff]).is_err());
+        agree(&rejected, NegotiationState::Rejected, None);
+
+        // Rejected via no-compatible-version is the same state.
+        let mut incompatible = VersionNegotiator::new(NegotiationRole::Server, &[7, 8]).unwrap();
+        let other = encode_hello(&[0, 1]).unwrap();
+        assert_eq!(
+            incompatible.server_accept_hello(&other),
+            Err(NegotiationError::NoCompatibleVersion)
+        );
+        agree(&incompatible, NegotiationState::Rejected, None);
+    }
+
+    #[test]
     fn established_server_replays_exact_response_for_duplicate_hello_only() {
         let mut s = VersionNegotiator::new(NegotiationRole::Server, &[0, 1]).unwrap();
         let hello = encode_hello(&[0, 1]).unwrap();
