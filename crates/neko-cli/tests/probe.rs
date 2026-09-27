@@ -1510,7 +1510,24 @@ fn authenticated_tcp_and_udp_loopback_probe_starts_after_ready() {
             "{}",
             String::from_utf8_lossy(&out.stderr)
         );
-        assert!(String::from_utf8_lossy(&out.stdout).contains("probe_ok"));
+        // The human envelope's labels and their source wiring, not just the
+        // token `probe_ok`: a renamed label or a swapped argument survived the
+        // bare `contains("probe_ok")` assertion.
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("probe_ok"), "{stdout}");
+        let human_prefix = format!("probe_ok transport={transport} bytes=32 elapsed_ms=");
+        assert!(
+            stdout.contains(&human_prefix),
+            "human probe envelope: {stdout}"
+        );
+        let ms: String = stdout
+            .split_once(&human_prefix)
+            .unwrap()
+            .1
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        assert!(!ms.is_empty(), "elapsed_ms must be a number: {stdout}");
         assert!(server_status.success(), "{server_log}");
         assert!(server_log.contains("lifecycle_state=STOPPED readiness=false"));
     }
@@ -1571,7 +1588,99 @@ fn authenticated_tcp_benchmark_echoes_exact_payload_and_hash() {
     );
     assert!(log.contains("\"fd_count\":"), "{log}");
     assert!(log.contains("\"wire_bytes\":null"), "{log}");
+    // The WHOLE envelope, key order included. `elapsed_ms` and `fd_count` are the
+    // only variable fields (clock and open-fd count), so they are parsed rather
+    // than compared, but the `ok` value, the `transport` key AND value, the
+    // `elapsed_ms` key, the `fd_count` key, the `wire_bytes` key and its `null`
+    // value, and the separators between them are all pinned exactly.
+    let head = concat!(
+        "{\"ok\":true,\"transport\":\"tcp\",\"application_bytes\":25,",
+        "\"payload_sha256\":\"cf241de87cf4e86eca5350ac13106043592ab1a8bceb97851833d90440b52cef\",",
+        "\"elapsed_ms\":"
+    );
+    assert!(log.starts_with(head), "benchmark envelope head: {log}");
+    let rest = &log[head.len()..];
+    let (ms, tail) = rest
+        .split_once(",\"fd_count\":")
+        .expect("fd_count follows elapsed_ms");
+    assert!(
+        !ms.is_empty() && ms.bytes().all(|b| b.is_ascii_digit()),
+        "elapsed_ms must be a bare number: {log}"
+    );
+    let (fds, end) = tail
+        .split_once(",\"wire_bytes\":null}")
+        .expect("wire_bytes closes the object");
+    assert!(
+        !fds.is_empty() && fds.bytes().all(|b| b.is_ascii_digit()),
+        "fd_count must be a bare number: {log}"
+    );
+    // `println!` appends exactly one newline; anything else after the closing
+    // brace would mean the envelope itself is not what it claims to be.
+    assert!(
+        end.trim_end_matches('\n').is_empty(),
+        "nothing but a newline may follow the closing brace: {log:?}"
+    );
     assert!(server_status.success(), "{server_log}");
+}
+
+#[test]
+fn probe_json_without_a_payload_file_uses_the_documented_envelope() {
+    // The plain (non-matrix) client/probe JSON artifact was never produced by any
+    // test: without `--payload-file` the emitter takes its no-hash branch, which
+    // no test reached, so every key name and value source in it was free. The
+    // benchmark test only covers the WITH-hash branch.
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    for (transport, port) in [("tcp", 40095u16), ("udp", 40096u16)] {
+        let sp = tmp(&format!("{transport}-probejson-server"));
+        let cp = tmp(&format!("{transport}-probejson-client"));
+        let sk = key(bin, &sp);
+        let ck = key(bin, &cp);
+        let server = start_server(bin, transport, port, &sp, &ck);
+        let out = bounded_client_output(
+            Command::new(bin).args([
+                "client",
+                "--transport",
+                transport,
+                "--port",
+                &port.to_string(),
+                "--addr",
+                &format!("127.0.0.1:{port}"),
+                "--server-key",
+                &sk,
+                "--identity",
+                cp.to_str().unwrap(),
+                "--bytes",
+                "9",
+                "--duration",
+                "2",
+                "--json",
+            ]),
+            Duration::from_secs(10),
+        );
+        let (server_status, server_log) = finish_server(server);
+        let _ = fs::remove_file(sp);
+        let _ = fs::remove_file(cp);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let line = stdout.trim_end();
+        // `elapsed_ms` is the only varying field, so it is the only one not
+        // asserted literally; it must still be a bare decimal number.
+        let prefix =
+            format!("{{\"ok\":true,\"transport\":\"{transport}\",\"bytes\":9,\"elapsed_ms\":");
+        assert!(line.starts_with(&prefix), "probe JSON envelope: {stdout}");
+        assert!(line.ends_with('}'), "probe JSON envelope: {stdout}");
+        let ms = &line[prefix.len()..line.len() - 1];
+        assert!(
+            !ms.is_empty() && ms.bytes().all(|b| b.is_ascii_digit()),
+            "elapsed_ms must be a bare number: {stdout}"
+        );
+        assert!(server_status.success(), "{server_log}");
+    }
 }
 
 #[test]
