@@ -6768,6 +6768,25 @@ fn failover_udp_handshake_timeout_reports_last_success_stage() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!out.status.success());
+    // The envelope itself: `ok`, `subsystem` and `role` were never asserted, and
+    // `ok` is not constant - it is true for the progress stages and FALSE for the
+    // terminal timeout stage, so both spellings are pinned together with the
+    // stage they belong to.
+    // The complete FIRST progress line, key order included, so the envelope and
+    // the `last_success_stage` key on the progress path are both pinned (that key
+    // is otherwise only witnessed on the timeout path).
+    assert!(
+        stdout.contains(
+            r#""ok":true,"subsystem":"udp_handshake","role":"client","stage":"socket_bind","last_success_stage":"socket_bind""#
+        ),
+        "the first progress stage is the documented envelope: {stdout}"
+    );
+    assert!(
+        stdout.contains(
+            r#""ok":false,"subsystem":"udp_handshake","role":"client","stage":"timeout""#
+        ),
+        "the terminal stage sets ok=false in the same envelope: {stdout}"
+    );
     assert!(stdout.contains(r#""stage":"socket_bind""#));
     assert!(stdout.contains(r#""stage":"client_hello_sent""#));
     assert!(

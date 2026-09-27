@@ -71,6 +71,39 @@ fn the_clean_scenario_artifact_is_exactly_the_published_line() {
 }
 
 #[test]
+fn the_legacy_lab_failover_demo_timeline_is_exactly_the_published_line() {
+    // `lab` without `--scenario` emits a different artifact from the
+    // reliable-udp one: a failover demo. The only assertion on it anywhere is
+    // `contains("\"demo\":\"failover\"")`, so the WHOLE `timeline` array - its key,
+    // every entry's `step`/`carrier`/`event`/`bytes` keys and values, the
+    // separators between entries and the closing brackets - was unasserted. It
+    // is deterministic, so the whole line is pinned.
+    let out = Command::new(BIN)
+        .args(["lab", "--json"])
+        .output()
+        .expect("the neko-cli binary must run");
+    assert!(out.status.success());
+    let line = String::from_utf8_lossy(&out.stdout)
+        .trim_end_matches('\n')
+        .to_owned();
+    assert_eq!(
+        line,
+        concat!(
+            "{\"ok\":true,\"demo\":\"failover\",\"timeline\":[",
+            "{\"step\":0,\"carrier\":\"udp\",\"event\":\"active\",\"bytes\":0},",
+            "{\"step\":1,\"carrier\":\"udp\",\"event\":\"pto\",\"bytes\":1},",
+            "{\"step\":2,\"carrier\":\"udp\",\"event\":\"uncertain\",\"bytes\":8192},",
+            "{\"step\":3,\"carrier\":\"tcp\",\"event\":\"validated\",\"bytes\":8192},",
+            "{\"step\":4,\"carrier\":\"tcp\",\"event\":\"migrated\",\"bytes\":8192},",
+            "{\"step\":5,\"carrier\":\"tcp\",\"event\":\"duplicate_dedup\",\"bytes\":1024},",
+            "{\"step\":6,\"carrier\":\"tcp\",\"event\":\"recovered\",\"bytes\":9216}",
+            "]}"
+        ),
+        "the legacy lab failover demo is a published contract"
+    );
+}
+
+#[test]
 fn the_lossy_scenario_artifact_is_exactly_the_published_line() {
     // The lossy scenario exercises the fields the clean one leaves at zero
     // (suppressed, pto_*, retransmit_*, newly_lost), so it is where those key
