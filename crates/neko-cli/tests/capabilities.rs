@@ -1056,3 +1056,112 @@ fn socket_free_command_range_guards_reject_and_accept_at_each_bound() {
         );
     }
 }
+
+/// `probe --matrix` argument rejections. The networked matrix test in `probe.rs`
+/// feeds many invalid argument lists but asserts only exit code 2 and empty stdout,
+/// so every rejection reason was interchangeable: swapping two messages, dropping
+/// the `--flag` name from a message, or defaulting a missing `--transport` /
+/// `--ip-version` instead of refusing it all went unnoticed. Every case here is
+/// rejected during argument parsing, before any socket is opened, and must print
+/// exactly `neko: <reason>` on stderr and nothing on stdout.
+#[test]
+fn matrix_probe_argument_rejections_name_the_exact_reason() {
+    const T: &str = "127.0.0.1:40080";
+    let matrix = |extra: &[&str]| {
+        let mut args = vec!["probe", "--matrix"];
+        args.extend_from_slice(extra);
+        argv(&args)
+    };
+    let full = |extra: &[&str]| {
+        let mut args = vec![
+            "probe",
+            "--matrix",
+            "--target",
+            T,
+            "--transport",
+            "tcp",
+            "--ip-version",
+            "ipv4",
+        ];
+        args.extend_from_slice(extra);
+        argv(&args)
+    };
+
+    let cases: [(Vec<String>, &str); 21] = [
+        (full(&["--matrix"]), "duplicate --matrix"),
+        (full(&["--json", "--json"]), "duplicate --json"),
+        (full(&["--target", "127.0.0.1:40081"]), "duplicate --target"),
+        (full(&["--transport", "udp"]), "duplicate --transport"),
+        (
+            full(&["--timeout-ms", "1", "--timeout-ms", "2"]),
+            "duplicate --timeout-ms",
+        ),
+        (matrix(&["--target"]), "missing value for --target"),
+        // A following flag is not taken as the value.
+        (
+            matrix(&["--target", "--json"]),
+            "missing value for --target",
+        ),
+        (full(&["--bytes"]), "missing value for --bytes"),
+        (full(&["--bogus"]), "unknown matrix argument: --bogus"),
+        (full(&["stray"]), "unknown matrix argument: stray"),
+        (
+            matrix(&["--transport", "tcp", "--ip-version", "ipv4"]),
+            "missing or invalid --target",
+        ),
+        (
+            matrix(&[
+                "--target",
+                "nonsense",
+                "--transport",
+                "tcp",
+                "--ip-version",
+                "ipv4",
+            ]),
+            "missing or invalid --target",
+        ),
+        (
+            matrix(&["--target", T, "--transport", "sctp", "--ip-version", "ipv4"]),
+            "--transport must be tcp or udp",
+        ),
+        // Absent is refused, not defaulted.
+        (
+            matrix(&["--target", T, "--ip-version", "ipv4"]),
+            "--transport must be tcp or udp",
+        ),
+        (
+            matrix(&["--target", T, "--transport", "udp", "--ip-version", "ipv5"]),
+            "--ip-version must be ipv4 or ipv6",
+        ),
+        (
+            matrix(&["--target", T, "--transport", "udp"]),
+            "--ip-version must be ipv4 or ipv6",
+        ),
+        (full(&["--timeout-ms", "x"]), "invalid --timeout-ms"),
+        (full(&["--bytes", "x"]), "invalid --bytes"),
+        // `reachability::validate` refusals are forwarded verbatim.
+        (full(&["--timeout-ms", "5001"]), "timeout must be 1-5000 ms"),
+        (full(&["--bytes", "1201"]), "payload must be 1-1200 bytes"),
+        (
+            matrix(&[
+                "--target",
+                "8.8.8.8:53",
+                "--transport",
+                "udp",
+                "--ip-version",
+                "ipv4",
+            ]),
+            "target must be loopback; public/WAN probing is disabled",
+        ),
+    ];
+    for (args, message) in &cases {
+        let out = run(args);
+        assert_eq!(out.code, Some(2), "args={args:?} stderr={:?}", out.stderr);
+        assert_eq!(out.stderr, format!("neko: {message}\n"), "args={args:?}");
+        assert!(
+            out.stdout.is_empty(),
+            "args={args:?} stdout={:?}",
+            out.stdout
+        );
+    }
+}
