@@ -3282,6 +3282,22 @@ fn executable_loopback_health_threshold_drives_udp_to_tcp() {
         negotiated_at < authenticated_at && authenticated_at < resume_at,
         "carrier_event order must be negotiated < authenticated < resume_validated"
     );
+    // `failure_observation_started_us`/`_elapsed_us` had NO witness. The timings vary,
+    // but the state transition is stable and is pinned per observation.
+    for (seq, state) in [(1, "unknown"), (2, "degraded"), (3, "failed")] {
+        assert!(
+            client_log.contains(&format!(
+                "\"event\":\"udp_health_event\",\"seq\":{seq},\"event\":\"failure\",\"cause\":\"authenticated_delivery_ack_timeout\",\"state\":\"{state}\",\"failure_observation_started_us\":"
+            )),
+            "seq={seq}: {client_log}"
+        );
+    }
+    for key in [
+        "\"failure_observation_started_us\":",
+        "\"failure_observation_elapsed_us\":",
+    ] {
+        assert!(client_log.contains(key), "{key}: {client_log}");
+    }
 }
 #[test]
 fn reliable_udp_failover_settles_packet_acks_to_zero_in_flight() {
@@ -3866,6 +3882,20 @@ fn reliable_udp_migration_back_reserves_final_record() {
         .unwrap_or(usize::MAX);
     assert!(dack_pos < settled_pos, "{client_log}");
     assert!(pack_pos < settled_pos, "{client_log}");
+    // `challenge_id`, `from_path` and `to_path` had NO witness. `from_path` 2 vs
+    // `to_path` 1 differ, so a swap is visible.
+    assert!(
+        client_log.contains(
+            r#""role":"client","event":"udp_recovery_validated","seq":1,"path":1,"generation":1,"challenge_id":1"#
+        ),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains(
+            r#""role":"client","event":"udp_migrated_back","seq":1,"from":"tcp","from_path":2,"to":"udp","to_path":1,"generation":1 }"#
+        ),
+        "{client_log}"
+    );
 }
 #[test]
 fn reliable_udp_reversed_ack_order_confirms_in_order() {
@@ -5270,6 +5300,23 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
         settled[0].contains("\"remaining_in_flight\":0"),
         "{client_log}"
     );
+    // `pto_count` and `original_packet_number` had NO witness. `deadline_us`/`fired_at_us`
+    // are real timings, so the stable tail is pinned instead; and `packet_number` 5 vs
+    // `original_packet_number` 4 differ, so a swap is visible.
+    assert!(
+        client_log.contains(r#""event":"r9_udp_pto_fired","seq":0,"#),
+        "{client_log}"
+    );
+    assert!(client_log.contains(r#","pto_count":1 }"#), "{client_log}");
+    for key in [r#""deadline_us":"#, r#""fired_at_us":"#] {
+        assert!(client_log.contains(key), "{key}: {client_log}");
+    }
+    assert!(
+        client_log.contains(
+            r#""role":"client","event":"r9_udp_retransmit_sent","seq":0,"packet_number":5,"original_packet_number":4,"frame":48 }"#
+        ),
+        "{client_log}"
+    );
 }
 #[test]
 fn reliable_udp_ack_loss_delayed_original_reorder_settles() {
@@ -6583,6 +6630,20 @@ fn executable_loopback_warm_tcp_precedes_udp_failure_and_data() {
         server_log.contains(&format!("bytes_hex={}", "78".repeat(48))),
         "{server_log}"
     );
+    // `request_us`/`response_us` had NO witness. Their VALUES are real timings that
+    // differ run to run, so only the stable prefix and the key set are pinnable; the
+    // `warm` flag is false,false,true across seq 1,2,3.
+    for (seq, warm) in [(1, "false"), (2, "false"), (3, "true")] {
+        assert!(
+            client_log.contains(&format!(
+                "\"event\":\"tcp_warm_readiness\",\"seq\":{seq},\"warm\":{warm},\"request_us\":"
+            )),
+            "seq={seq}: {client_log}"
+        );
+    }
+    for key in ["\"request_us\":", "\"response_us\":"] {
+        assert!(client_log.contains(key), "{key}: {client_log}");
+    }
 }
 
 #[test]
@@ -7016,6 +7077,13 @@ fn expired_preprogress_udp_session_is_retired_before_delivery_and_fresh_handshak
     );
     fs::remove_file(sp).unwrap();
     fs::remove_file(cp).unwrap();
+    // `secure_retired`/`resume_guard_retired` had NO witness; the line is fully stable.
+    assert!(
+        server_log.contains(
+            r#""role":"server","event":"udp_preprogress_expired","seq":0,"secure_retired":true,"resume_guard_retired":true }"#
+        ),
+        "{server_log}"
+    );
 }
 
 #[test]
@@ -8502,6 +8570,14 @@ fn endpoint_rebind_real_sockets_promote_new_source_and_reject_stale_old_source()
     );
     assert!(
         server_log.contains("records=2 application_bytes_total=32"),
+        "{server_log}"
+    );
+    // `milliseconds` had NO witness anywhere: the promotion-delay envelope's only
+    // field was free. It is stable here because the flag pins it to 100.
+    assert!(
+        server_log.contains(
+            r#""role":"server","event":"endpoint_promotion_delay_held","seq":1,"milliseconds":100 }"#
+        ),
         "{server_log}"
     );
 }
