@@ -103,6 +103,16 @@ fn the_default_run_emits_the_documented_artifact() {
         ),
         "the resource note must state why accounting is absent"
     );
+    // The note is an artifact LINE, not free text: its `resource_note` key and its
+    // JSON framing were unpinned (renaming the key, or printing the sentence bare,
+    // both passed). It is the final line of the artifact.
+    assert_eq!(
+        stdout.lines().last(),
+        Some(
+            "{\"resource_note\":\"CPU/memory process-wide accounting is intentionally not reported: this slice has no stable cross-platform sampler.\"}"
+        ),
+        "{stdout}"
+    );
 }
 
 #[test]
