@@ -974,3 +974,85 @@ fn endpoint_rebind_client_orders_its_own_guards_after_the_clique() {
         out.stderr
     );
 }
+
+/// Range guards of three socket-free commands whose rejection messages had NO test
+/// witness: `lab --scenario reliable-udp`, `scheduler-fairness` and `workload`.
+/// Every bound is tested on BOTH sides - the first out-of-range value must exit 2
+/// with the exact message, and the last in-range value must succeed - so an
+/// off-by-one in either direction, or a swapped message, is visible. Each flag is
+/// passed exactly once (`parse` reads the first occurrence).
+#[test]
+fn socket_free_command_range_guards_reject_and_accept_at_each_bound() {
+    let lab = |flag: &str, value: &str| {
+        argv(&["lab", "--scenario", "reliable-udp", "--json", flag, value])
+    };
+    let fairness = |flag: &str, value: &str| argv(&["scheduler-fairness", flag, value]);
+    let workload = |flag: &str, value: &str| argv(&["workload", flag, value]);
+
+    let rejected: [(Vec<String>, &str); 20] = [
+        (lab("--rounds", "3"), "rounds outside 4-64"),
+        (lab("--rounds", "65"), "rounds outside 4-64"),
+        (lab("--drop-every", "1"), "drop-every outside 0 or 2-16"),
+        (lab("--drop-every", "17"), "drop-every outside 0 or 2-16"),
+        (lab("--drop-ack-every", "17"), "drop-ack-every outside 0-16"),
+        (lab("--settle-ms", "0"), "settle-ms outside 1-20000"),
+        (lab("--settle-ms", "20001"), "settle-ms outside 1-20000"),
+        (lab("--rounds", "x"), "invalid rounds"),
+        (fairness("--rounds", "0"), "rounds outside 1-64"),
+        (fairness("--rounds", "65"), "rounds outside 1-64"),
+        (fairness("--bytes", "0"), "bytes outside 1-256"),
+        (fairness("--bytes", "257"), "bytes outside 1-256"),
+        (fairness("--rounds", "x"), "invalid rounds"),
+        (workload("--duration", "0"), "duration outside 1-600"),
+        (workload("--duration", "601"), "duration outside 1-600"),
+        (workload("--concurrency", "0"), "concurrency outside 1-16"),
+        (workload("--concurrency", "17"), "concurrency outside 1-16"),
+        (workload("--records", "0"), "records outside 1-10000"),
+        (workload("--records", "10001"), "records outside 1-10000"),
+        (workload("--concurrency", "x"), "invalid concurrency"),
+    ];
+    for (args, message) in &rejected {
+        assert_rejected(args, message);
+        let out = run(args);
+        assert_eq!(out.stderr, format!("neko: {message}\n"), "args={args:?}");
+        assert!(
+            out.stdout.is_empty(),
+            "args={args:?} stdout={:?}",
+            out.stdout
+        );
+    }
+
+    // The in-range neighbour of every bound above is accepted.
+    let accepted: [Vec<String>; 13] = [
+        lab("--rounds", "4"),
+        lab("--rounds", "64"),
+        lab("--drop-every", "0"),
+        lab("--drop-every", "2"),
+        lab("--drop-every", "16"),
+        lab("--drop-ack-every", "16"),
+        lab("--settle-ms", "1"),
+        lab("--settle-ms", "20000"),
+        fairness("--rounds", "1"),
+        fairness("--rounds", "64"),
+        fairness("--bytes", "1"),
+        fairness("--bytes", "256"),
+        argv(&[
+            "workload",
+            "--duration",
+            "1",
+            "--concurrency",
+            "16",
+            "--records",
+            "10000",
+        ]),
+    ];
+    for args in &accepted {
+        let out = run(args);
+        assert!(out.ok, "args={args:?} stderr={:?}", out.stderr);
+        assert!(
+            out.stderr.is_empty(),
+            "args={args:?} stderr={:?}",
+            out.stderr
+        );
+    }
+}
