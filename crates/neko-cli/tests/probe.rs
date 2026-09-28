@@ -3933,7 +3933,13 @@ fn reliable_udp_reversed_ack_order_confirms_in_order() {
         ]),
         Duration::from_secs(10),
     );
-    let (_st, _sl) = finish_server(server);
+    let (_st, sl) = finish_server(server);
+    // Server-side envelope with NO test reference at all. Capturing this log (it was
+    // previously discarded) is the only change; no new run.
+    assert!(
+        sl.contains(r#""role":"server","event":"udp_delivery_ack_deferred","seq":0,"offset":0"#),
+        "{sl}"
+    );
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
@@ -5017,6 +5023,25 @@ fn reliable_udp_post_return_data_loss_recovers_via_pto_retransmit() {
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
+    // Two post-return envelopes with NO test reference at all, plus one that was
+    // label-only. The two are asserted to the trailing brace so that an APPENDED
+    // field is caught, not just a renamed or re-valued one.
+    assert!(
+        client_log
+            .contains(r#""role":"client","event":"r9_udp_post_return_recv_timeout","seq":0 }"#),
+        "{client_log}"
+    );
+    assert!(
+        client_log
+            .contains(r#""role":"client","event":"r9_udp_post_return_data_dropped","seq":0 }"#),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains(
+            r#""role":"client","event":"r9_udp_post_return_settled","seq":0,"stream":1,"offset":48,"remaining_in_flight":0"#
+        ),
+        "{client_log}"
+    );
     let client_err = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{client_log} {client_err}");
     assert!(srv_status.success(), "{server_log}");
@@ -5481,6 +5506,27 @@ fn reliable_udp_first_send_socket_failure_rolls_back() {
     );
     let (srv_status, _server_log) = finish_server(server);
     let client_log = String::from_utf8_lossy(&out.stdout);
+    // `_send_failed` and `_residual` were asserted by LABEL only. `_residual` has TWO
+    // emit sites that produce byte-identical text (server- and client-adjacent paths),
+    // and BOTH fire in this test - so a text assertion alone cannot tell which emitter
+    // produced a line. The occurrence COUNT is pinned as well, which is what makes a
+    // mutation at either site visible.
+    assert_eq!(
+        client_log
+            .matches(r#""role":"client","event":"r9_udp_post_return_send_failed","seq":0,"packet_number":4 }"#)
+            .count(),
+        1,
+        "{client_log}"
+    );
+    assert_eq!(
+        client_log
+            .matches(
+                r#""role":"client","event":"r9_udp_post_return_residual","seq":0,"session_outstanding":1,"remaining_in_flight":0 }"#
+            )
+            .count(),
+        2,
+        "{client_log}"
+    );
     let _ = srv_status;
     // Production first-send owner emitted the rollback classification, never a
     // positive sent event for the failed packet.
