@@ -2985,6 +2985,62 @@ fn reliable_udp_delivery_ack_suppression_replays_full_owned_set() {
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
+    // Five client-side diagnostic envelopes that had NO test reference at all.
+    // role + seq + payload; where two fields can hold DIFFERENT values
+    // (`ciphertext_bytes` 96 vs `record_payload_bytes` 16; `applied` 2 vs
+    // `rejected` 0) a swap is visible rather than cancelled.
+    assert!(
+        client_log.contains(
+            r#""role":"client","event":"udp_datagram_sent","seq":1,"ciphertext_bytes":96,"record_payload_bytes":16"#
+        ),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains(
+            r#""role":"client","event":"udp_post_handshake_ignored","seq":1,"reason":"stale_or_nonmatching_authenticated""#
+        ),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains(
+            r#""role":"client","event":"r9_udp_ack_deadline_elapsed","seq":0,"session_outstanding":2"#
+        ),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains(
+            r#""role":"client","event":"r9_udp_packet_ack_outcomes","seq":0,"applied":2,"rejected":0,"remaining_in_flight":0"#
+        ),
+        "{client_log}"
+    );
+    // `failover_timing` carries real microsecond timestamps that differ run to run,
+    // so only its stable prefix and its KEY SET are pinnable - asserting the values
+    // would make the test flaky. The key set still catches a renamed or dropped
+    // field (the promotion field name is chosen at runtime here).
+    assert!(
+        client_log.contains(
+            r#""role":"client","event":"failover_timing","seq":3,"fallback_class":"cold","promotion_gate":"cold_authenticated_resume""#
+        ),
+        "{client_log}"
+    );
+    for key in [
+        "failure_decided_at_us",
+        "tcp_connect_started_us",
+        "tcp_connected_us",
+        "tcp_negotiated_us",
+        "tcp_authenticated_us",
+        "resume_validated_us",
+        "cold_promotion_ready_us",
+        "new_active_at_us",
+        "first_resumed_data_accepted_us",
+        "first_resumed_ack_at_us",
+        "recovery_latency_us",
+    ] {
+        assert!(
+            client_log.contains(&format!("\"{key}\":")),
+            "{key}: {client_log}"
+        );
+    }
     assert!(
         out.status.success(),
         "stdout={client_log} stderr={}",
@@ -3519,6 +3575,13 @@ fn reliable_udp_migration_back_reserves_final_record() {
     let _ = fs::remove_file(sp);
     let _ = fs::remove_file(cp);
     let client_log = String::from_utf8_lossy(&out.stdout);
+    // A client-side envelope with NO test reference at all.
+    assert!(
+        client_log.contains(
+            r#""role":"client","event":"udp_migration_hold","seq":1,"active":"tcp","path":2,"generation":1"#
+        ),
+        "{client_log}"
+    );
     // Both processes must succeed for the positive P2 evidence chain.
     assert!(
         out.status.success(),
