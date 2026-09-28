@@ -12,6 +12,36 @@ use std::{
     time::Duration,
 };
 
+/// Owns a spawned server child for the whole test and kills + reaps it on drop.
+/// Each server test spawns the server, then does client-side work (connect,
+/// frame I/O, assertions) before `bounded_wait_with_output` reaps it; a panic
+/// anywhere in that window unwinds past the reap. Without this guard the
+/// listening server is reparented to init and outlives the test (observed once:
+/// a server survived ~19 minutes holding its loopback port). On the normal path
+/// the child is already reaped, so the drop-time `kill` returns a harmless error
+/// and `wait` returns the cached status.
+struct ServerGuard(std::process::Child);
+
+impl std::ops::Deref for ServerGuard {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ServerGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for ServerGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// H-I4-106: bounded wait+collect for a spawned child. The nominal process
 /// duration is behavior under test, not a harness bound. Poll try_wait with
 /// a local deadline; on expiry kill and poll-reap so a lifecycle regression
@@ -135,7 +165,7 @@ fn bounded_wait_with_output_fails_when_server_never_exits() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let (server_identity, _server_key) = identity(bin, "no-client-server");
     let (client_identity, client_key) = identity(bin, "no-client-client");
-    let mut server = Command::new(bin)
+    let server = Command::new(bin)
         .args([
             "multistream",
             "--mode",
@@ -161,6 +191,7 @@ fn bounded_wait_with_output_fails_when_server_never_exits() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let mut server = ServerGuard(server);
     let start = std::time::Instant::now();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         bounded_wait_with_output(&mut server, Duration::from_secs(1))
@@ -224,7 +255,7 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
     let (server_identity, server_key) = identity(bin, "server");
     let (client_identity, client_key) = identity(bin, "client");
-    let mut server = Command::new(bin)
+    let server = Command::new(bin)
         .args([
             "multistream",
             "--mode",
@@ -250,6 +281,7 @@ fn bounded_tcp_multistream_loopback_is_ordered_and_json_evidenced() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let mut server = ServerGuard(server);
     thread::sleep(Duration::from_millis(50));
     let client = bounded_client_output(
         Command::new(bin).args([
@@ -368,7 +400,7 @@ fn unauthorized_client_is_rejected_by_allowlist() {
         .local_addr()
         .unwrap()
         .port();
-    let mut server = Command::new(bin)
+    let server = Command::new(bin)
         .args([
             "multistream",
             "--mode",
@@ -390,6 +422,7 @@ fn unauthorized_client_is_rejected_by_allowlist() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let mut server = ServerGuard(server);
     thread::sleep(Duration::from_millis(50));
     let client = bounded_client_output(
         Command::new(bin).args([
@@ -713,7 +746,7 @@ fn executable_rejects_unsupported_only_negotiation_before_noise_or_data() {
     let reservation = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = reservation.local_addr().unwrap().port();
     drop(reservation);
-    let mut server = Command::new(bin)
+    let server = Command::new(bin)
         .args([
             "multistream",
             "--mode",
@@ -735,6 +768,7 @@ fn executable_rejects_unsupported_only_negotiation_before_noise_or_data() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let mut server = ServerGuard(server);
 
     let mut socket =
         connect_with_startup_deadline(&format!("127.0.0.1:{port}"), Duration::from_secs(2));
