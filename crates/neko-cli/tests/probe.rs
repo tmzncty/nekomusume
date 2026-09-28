@@ -2689,10 +2689,19 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
     // accounting counters differ from one another (`udp_confirmed_records`=1 vs
     // `uncertain_records`=2 vs `confirmed_records`=3), so swapping two of them is
     // visible rather than cancelled by equal values.
+    // The WHOLE line, from the envelope's `experiment_id` through the six trailing
+    // "must be zero" invariants. The earlier assertion stopped after
+    // `uncertain_bytes`, which left the envelope's experiment-id field and the
+    // duplicate/lost/conflicting counters with no witness at all (they appear
+    // nowhere else in the tree, in tests or docs).
     assert!(
-        client_log.contains(
-            r#""role":"client","event":"failover_accounting","seq":3,"udp_confirmed_records":1,"udp_confirmed_bytes":16,"uncertain_records":2,"uncertain_bytes":32"#
-        ),
+        client_log.contains(concat!(
+            r#""experiment_id":"primary-a-client","role":"client","event":"failover_accounting","seq":3,"#,
+            r#""udp_confirmed_records":1,"udp_confirmed_bytes":16,"uncertain_records":2,"uncertain_bytes":32,"#,
+            r#""replayed_records":2,"replayed_bytes":32,"confirmed_records":3,"confirmed_bytes":48,"#,
+            r#""duplicate_records":0,"duplicate_bytes":0,"lost_records":0,"lost_bytes":0,"#,
+            r#""conflicting_records":0,"conflicting_bytes":0 }"#
+        )),
         "{client_log}"
     );
     assert!(
