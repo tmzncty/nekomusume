@@ -6734,6 +6734,16 @@ fn migration_back_tamper_fails_closed_before_return() {
     assert!(stdout.contains("tcp_delivery_ack_validated"), "{stdout}");
     assert!(stdout.contains("udp_recovery_challenge_sent"), "{stdout}");
     assert!(stdout.contains("udp_recovery_failed"), "{stdout}");
+    // `udp_recovery_failed` has three emit sites (server terminal-milestone, client
+    // wrong-peer, client timeout) that share one label, so the label alone does not
+    // say WHICH failure happened. The tampered challenge is never answered, so this
+    // run takes the client TIMEOUT branch; the whole envelope is pinned.
+    assert!(
+        stdout.contains(
+            r#""role":"client","event":"udp_recovery_failed","seq":1,"active":"tcp","reason":"timeout" }"#
+        ),
+        "{stdout}"
+    );
     assert!(stdout.contains("\"active\":\"tcp\""), "{stdout}");
     assert!(!stdout.contains("migrated_back_to_udp"));
     assert!(!stdout.contains("udp_return_delivery_ack_validated"));
