@@ -2433,6 +2433,19 @@ fn udp_listener_rejects_bounded_malformed_churn_then_authenticates_and_cleans_up
     );
     assert!(status.success(), "{log}");
     assert!(String::from_utf8_lossy(&out.stdout).contains("failover_client_ok"));
+    // Two server-side diagnostic envelopes with NO test reference at all. Each is
+    // pinned with role, seq and its payload fields, so a renamed event, a swapped
+    // role, a shifted seq, or an altered payload is visible.
+    assert!(
+        log.contains(
+            r#""role":"server","event":"udp_datagram_received","seq":1,"ciphertext_bytes":96"#
+        ),
+        "{log}"
+    );
+    assert!(
+        log.contains(r#""role":"server","event":"tcp_readiness_response","seq":1,"admitted":true,"ciphertext_bytes":95"#),
+        "{log}"
+    );
     // The CLIENT emitter of the same `udp_authenticated` line. The two emitters
     // (server and client) produce byte-identical text, so an assertion anywhere
     // passes if EITHER appears - which is exactly why this must be pinned on a log
@@ -2672,6 +2685,22 @@ fn executable_loopback_controlled_udp_stop_tcp_resume() {
     );
     assert!(String::from_utf8_lossy(&out.stdout).contains("controlled_udp_stop=true"));
     let client_log = String::from_utf8_lossy(&out.stdout);
+    // Two client-side diagnostic envelopes with NO test reference at all. The
+    // accounting counters differ from one another (`udp_confirmed_records`=1 vs
+    // `uncertain_records`=2 vs `confirmed_records`=3), so swapping two of them is
+    // visible rather than cancelled by equal values.
+    assert!(
+        client_log.contains(
+            r#""role":"client","event":"failover_accounting","seq":3,"udp_confirmed_records":1,"udp_confirmed_bytes":16,"uncertain_records":2,"uncertain_bytes":32"#
+        ),
+        "{client_log}"
+    );
+    assert!(
+        client_log.contains(
+            r#""role":"client","event":"capture_metadata","seq":4,"capture":"metadata-only","payload":false,"keys":false,"bounded":true"#
+        ),
+        "{client_log}"
+    );
     for event in [
         "udp_authenticated",
         "controlled_udp_stop",
