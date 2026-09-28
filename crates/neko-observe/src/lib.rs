@@ -740,6 +740,15 @@ mod tests {
                 .iter()
                 .any(|line| line.contains("scheduler.starvation_guard"))
         );
+        // The starvation-guard payload: its only key, `session_queued_bytes`, had no
+        // witness. Three bytes are queued on the one open stream.
+        assert!(
+            lines.iter().any(
+                |line| line.contains("\"event\":\"scheduler.starvation_guard\"")
+                    && line.contains("\"data\":{\"session_queued_bytes\":3}}")
+            ),
+            "{lines:?}"
+        );
     }
 
     #[test]
@@ -845,6 +854,18 @@ mod tests {
         assert!(l[0].contains("\"stream_id\":\"stream:1\""), "{}", l[0]);
         assert!(l[1].contains("\"priority\":\"bulk\""), "{}", l[1]);
         assert!(l[1].contains("\"stream_id\":\"stream:2\""), "{}", l[1]);
+        // `session_queued_bytes` had no witness: it is the sum over every stream
+        // (1 + 2 = 3 bytes), not the selected stream's own queue.
+        assert!(
+            l[0].contains("\"data\":{\"priority\":\"interactive\",\"session_queued_bytes\":3}}"),
+            "{}",
+            l[0]
+        );
+        assert!(
+            l[1].contains("\"data\":{\"priority\":\"bulk\",\"session_queued_bytes\":3}}"),
+            "{}",
+            l[1]
+        );
         // The counters follow the same split as the labels.
         assert_eq!(p.dequeue_totals(), (1, 1, 0));
     }
@@ -1005,6 +1026,15 @@ mod tests {
         assert!(l[0].contains("\"carrier_kind\":\"tcp\""));
         assert!(l[0].contains("\"switch_reason\":\"operator_requested\""));
         assert!(l[0].contains("\"path_id\":\"path:5:g2\""));
+        // The whole `data` object: a completed switch with no previous path carries
+        // `to_path_id` and NO `from_path_id`. Neither key had a witness before.
+        assert!(
+            l[0].contains(
+                "\"data\":{\"carrier_kind\":\"tcp\",\"switch_reason\":\"operator_requested\",\"outcome\":\"succeeded\",\"path_generation\":2,\"to_path_id\":\"path:5:g2\" }}"
+            ),
+            "{}",
+            l[0]
+        );
     }
     #[test]
     fn failed_switch_correlates_from_path_and_warns() {
@@ -1035,6 +1065,15 @@ mod tests {
         // Correlation falls back to the from-path when there is no target.
         assert!(l[0].contains("\"carrier_id\":\"carrier:7\""));
         assert!(l[0].contains("\"path_generation\":3"));
+        // The whole `data` object: a failed switch carries `from_path_id` and NO
+        // `to_path_id` - the mirror image of the completed case above.
+        assert!(
+            l[0].contains(
+                "\"data\":{\"carrier_kind\":\"other\",\"switch_reason\":\"carrier_error\",\"outcome\":\"failed\",\"path_generation\":3,\"from_path_id\":\"path:7:g3\" }}"
+            ),
+            "{}",
+            l[0]
+        );
     }
     #[test]
     fn recovery_ack_emits_rtt_and_loss_only_with_evidence() {
@@ -1062,6 +1101,42 @@ mod tests {
         assert_eq!(l.len(), 1);
         assert!(l[0].contains("recovery.rtt_updated"));
         assert!(l[0].contains("\"latest_rtt_us\":5000"));
+        // The whole payload. Only `latest_rtt_us` was asserted, so the other three
+        // RTT keys - and which estimator field feeds each - were free. The first
+        // sample sets min = smoothed = latest (5000) and variance = latest/2 (2500),
+        // so a variance-for-smoothed miswiring is visible.
+        assert!(
+            l[0].contains(
+                "\"data\":{\"latest_rtt_us\":5000,\"min_rtt_us\":5000,\"smoothed_rtt_us\":5000,\"rtt_variance_us\":2500}}"
+            ),
+            "{}",
+            l[0]
+        );
+        // A second sample makes all four values DISTINCT, so each key is shown to be
+        // fed from its own estimator field (on the first sample min = smoothed =
+        // latest, which hides a min-for-latest miswiring). Sample 8000us:
+        // min stays 5000; smoothed = (7*5000 + 8000)/8 = 5375;
+        // variance = (3*2500 + |5000-8000|)/4 = 2625.
+        r.on_sent(SentPacket {
+            number: 1,
+            sent_at_us: 5_000,
+            bytes: 10,
+            ack_eliciting: true,
+            frames: vec![FrameId(2)],
+        })
+        .unwrap();
+        let ack = AckRanges::from_ranges(1, &[AckRange { start: 1, end: 1 }]).unwrap();
+        let res = r.on_ack(&ack, 13_000, 0).unwrap();
+        p.record_recovery_ack(3, 1, PathId(1), &r, &res);
+        let l = lines(&p);
+        assert_eq!(l.len(), 2, "{l:?}");
+        assert!(
+            l[1].contains(
+                "\"data\":{\"latest_rtt_us\":8000,\"min_rtt_us\":5000,\"smoothed_rtt_us\":5375,\"rtt_variance_us\":2625}}"
+            ),
+            "{}",
+            l[1]
+        );
     }
     #[test]
     fn pto_total_counts_each_record_pto() {
