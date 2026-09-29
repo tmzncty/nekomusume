@@ -646,6 +646,28 @@ pub(super) fn client(args: &[String]) {
 
 #[cfg(test)]
 mod tests {
+    // D067 slice 3 pin: the periodic command family must never send a PMTU
+    // probe. The only mentions of the probe path allowed in this file are in
+    // this test itself; any other reference fails the pin.
+    #[test]
+    fn periodic_never_references_the_plpmtud_probe_path() {
+        let src = include_str!("periodic.rs");
+        let mut mentions = 0;
+        for token in ["seal_probe", "PmtuProbe", "open_datagram", "--plpmtud"] {
+            let mut from = 0;
+            while let Some(at) = src[from..].find(token) {
+                mentions += 1;
+                from += at + token.len();
+            }
+        }
+        // Exactly the four mentions of the token strings in the array above.
+        // A fifth means someone wired the probe path into periodic.
+        assert_eq!(
+            mentions, 4,
+            "the periodic path must stay probe-free; found {mentions} mentions"
+        );
+    }
+
     use super::*;
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|s| s.to_string()).collect()

@@ -1072,6 +1072,29 @@ Two further facts:
   returns `ENETUNREACH`. The v6 base datagram is 1298 anyway, so an "IPv6 × 1278"
   matrix cell cannot be constructed.
 
+**Slice 3 landed (2026-09-29, opt-in `--plpmtud` on `client`/`server`, UDP only).**
+Experimental values per the approvals above; nothing here is release policy.
+
+- Both ends must pass the flag. There is no capability negotiation
+  (`VersionNegotiator` carries versions only), so a one-sided flag is an operator
+  error that surfaces: an upgraded peer decodes kind 6/7, an unupgraded peer fails
+  closed on the Malformed class, and the client fails closed on any DF failure
+  (`PMTUDISC_PROBE`; on non-Linux or any setsockopt error it prints a diagnostic and
+  exits nonzero — it never probes on a fragmentable socket).
+- Client: after the data exchange it runs the bounded probe loop — binary search
+  from the base 1278/1298 to `max_mtu` 1500, 2 attempts per size, 32 probes per
+  generation, one probe per acknowledged exchange (≥50 ms spacing). Probe loss is
+  probe-local evidence: it only lowers the search bound after the retries; it is
+  never congestion loss, never retransmission. EMSGSIZE on send lowers only the
+  bound. The probe-ACK wait uses the negotiated `--duration`.
+- Server: answers an authenticated probe with the fixed 22-byte `PmtuProbeAck`
+  (no amplification), stays reachable until its application deadline, then stops.
+- The periodic command family never references the probe path (pinned by test).
+- Local real-process evidence: loopback run converges to `confirmed_mtu=1500` with
+  the flag on both ends, and with the flag off the output contains no PLPMTUD
+  lines and D031 behaviour is unchanged. Loopback MTU is 65536, so this proves the
+  plumbing, not a path MTU; the changed-hypothesis VPS run is the next step.
+
 **Slice 3 blocker — the D031 unreliable cap forbids any probe above the base (found 2026-09-29, before writing slice 3).**
 `seal_unreliable` / `open_unreliable` enforce the D031 bound of 1200 bytes of
 plaintext (`MAX_UNRELIABLE_DATAGRAM`), and the live UDP carrier seals every datagram

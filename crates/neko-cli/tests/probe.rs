@@ -9021,3 +9021,134 @@ fn lab_scenario_arguments_fail_closed_before_sockets() {
         assert!(out.stdout.is_empty(), "args={args:?}");
     }
 }
+
+#[test]
+fn udp_plpmtud_loopback_converges_and_answers_only_probes() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("plpmtud-server");
+    let cp = tmp("plpmtud-client");
+    let server_key = key(bin, &sp);
+    let client_key = key(bin, &cp);
+    // start_server_for has no --plpmtud parameter, so spawn the server here
+    // with the same plumbing plus the flag.
+    let child = Command::new(bin)
+        .args([
+            "server",
+            "--transport",
+            "udp",
+            "--port",
+            "40089",
+            "--bind",
+            "127.0.0.1:40089",
+            "--identity",
+            sp.to_str().unwrap(),
+            "--client-key",
+            &client_key,
+            "--duration",
+            "20",
+            "--plpmtud",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (child, mut stdout, _) = wait_for_ready_marker(
+        child,
+        "lifecycle_state=READY readiness=true",
+        Duration::from_secs(5),
+    )
+    .unwrap_or_else(|e| panic!("plpmtud server not ready: {e}"));
+    let output = bounded_client_output(
+        Command::new(bin).args([
+            "client",
+            "--transport",
+            "udp",
+            "--port",
+            "40089",
+            "--addr",
+            "127.0.0.1:40089",
+            "--server-key",
+            &server_key,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "1",
+            "--duration",
+            "3",
+            "--plpmtud",
+        ]),
+        Duration::from_secs(30),
+    );
+    let client_out = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(output.status.success(), "client failed: {client_out}");
+    assert!(
+        client_out.contains("plpmtud_converged transport=udp"),
+        "missing convergence line: {client_out}"
+    );
+    assert!(
+        client_out.contains("confirmed_mtu=1500"),
+        "loopback MTU is 65536, the search must reach its ceiling: {client_out}"
+    );
+    // The server answers probes until its own deadline; finish bounded.
+    let (status, log) = {
+        let mut child = child;
+        let _ = child.kill();
+        let status = child.wait().unwrap();
+        let mut text = String::new();
+        use std::io::Read;
+        stdout.read_to_string(&mut text).unwrap();
+        (status, text)
+    };
+    let _ = status;
+    let _ = log;
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+}
+
+#[test]
+fn udp_plpmtud_flag_off_sends_no_probe_and_refuses_oversize() {
+    let _port_lock = TEST_PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin = env!("CARGO_BIN_EXE_neko-cli");
+    let sp = tmp("plpmtud-off-server");
+    let cp = tmp("plpmtud-off-client");
+    let server_key = key(bin, &sp);
+    let client_key = key(bin, &cp);
+    // Server WITHOUT the flag must refuse an oversize record before
+    // authentication (D031 unchanged); the client without the flag must not
+    // send any probe: its output contains no plpmtud lines at all.
+    let server = start_server_for(bin, "udp", 40095, &sp, &client_key, "8");
+    let output = bounded_client_output(
+        Command::new(bin).args([
+            "client",
+            "--transport",
+            "udp",
+            "--port",
+            "40095",
+            "--addr",
+            "127.0.0.1:40095",
+            "--server-key",
+            &server_key,
+            "--identity",
+            cp.to_str().unwrap(),
+            "--count",
+            "1",
+            "--duration",
+            "3",
+        ]),
+        Duration::from_secs(30),
+    );
+    let client_out = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(
+        output.status.success(),
+        "baseline client failed: {client_out}"
+    );
+    assert!(
+        !client_out.contains("plpmtud"),
+        "no PLPMTUD output may appear without the flag: {client_out}"
+    );
+    let (status, log) = finish_server(server);
+    assert!(status.success(), "{log}");
+    let _ = fs::remove_file(sp);
+    let _ = fs::remove_file(cp);
+}

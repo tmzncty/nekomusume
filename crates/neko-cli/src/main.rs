@@ -48,6 +48,7 @@ use std::{
 const USAGE: &str = "Usage: neko <server|client|probe|health-observe|failover|multistream|scheduler-fairness|key-update|periodic-server|periodic-client|lab|workload|endpoint-rebind-server|endpoint-rebind-client|keygen|capabilities> [bounded options]
 
   probe --matrix --target LOOPBACK:PORT --transport tcp|udp --ip-version ipv4|ipv6 [--timeout-ms 1-5000] [--bytes 1-1200] [--json]: local-loopback only
+  client|server --transport udp [--plpmtud]: opt-in PLPMTUD probe exchange (D067; both ends must pass the flag; fail-closed; experimental)
   lab --scenario reliable-udp [--rounds 4-64] [--drop-every 0|2-16] [--drop-ack-every 0-16] [--settle-ms 1-20000] [--json]: bounded loopback reliable-UDP fixture (controlled suppression is not natural loss; manager decision only, no TCP socket; not production)
   --count N: bounded authenticated exchanges (1-64; periodic 1-600)\n  periodic-*: one TCP Session, duration 1-600s, interval 100-5000ms, <=1MiB app data; reconnect unsupported\n  failover --role server|client: canonical bounded failover command\n  failover-server|failover-client: legacy aliases for failover\n  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
@@ -57,6 +58,17 @@ const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
 /// rebind). Derived from the frame header so it cannot drift from the sealer.
 const MAX_DATA_FRAME_BYTES: usize =
     neko_crypto::MAX_UNRELIABLE_DATAGRAM - neko_session::PROCESS_DATA_HEADER_LEN;
+/// D067 PLPMTUD experimental values (ADR candidates unless noted). Opt-in
+/// only; never a default, never release policy.
+const PLPMTUD_MAX_MTU: u16 = 1500;
+/// Cadence guard from the ADR candidate "at most one probe per RTT": in a
+/// loopback burst this bounds probes to one per acknowledged exchange RTT,
+/// measured from the last probe send. The probe-ACK timeout follows the
+/// negotiated --duration, and the black-hole cooldown (30 s, 85461's
+/// provisional value, not in the ADR) is not exercised in this slice: this
+/// loop converges, lowers its bound or hits the deadline; it never gates
+/// traffic on the cooldown.
+const PLPMTUD_PROBE_SPACING: Duration = Duration::from_millis(50);
 const MAX_DURATION: u64 = 30;
 const MAX_WORKLOAD_DURATION: u64 = 600;
 const PROCESS_FRAME_MAX: usize = neko_session::PROCESS_FRAME_MAX;
@@ -206,6 +218,21 @@ fn emit_diagnostic(args: &[String], role: &str, event: &str, seq: usize, fields:
         );
     }
 }
+/// Bounded PLPMTUD diagnostic; only meaningful under --plpmtud. `seq` is the
+/// client's probe ordinal.
+#[allow(clippy::too_many_arguments)]
+fn emit_plpmtud(args: &[String], event: &str, seq: usize, fields: &str) {
+    if diagnostic_mode(args) {
+        println!(
+            "{{\"experiment_id\":\"{}\",\"role\":\"client\",\"subsystem\":\"plpmtud\",\"event\":\"{}\",\"seq\":{}{} }}",
+            diagnostic_id(args),
+            event,
+            seq,
+            fields
+        );
+    }
+}
+
 fn benchmark_payload(
     args: &[String],
     transport: &str,
@@ -598,6 +625,10 @@ fn server(args: &[String]) {
     }
     let start = Instant::now();
     let mut preauth = preauth::ListenerAdmission::new();
+    // D067 slice 3: opt-in PLPMTUD answering. The server never originates
+    // probes; with the flag on it answers an authenticated probe with a
+    // 22-byte probe-ACK and nothing else.
+    let plpmtud = args.iter().any(|a| a == "--plpmtud");
     if t == "tcp" {
         let l = TcpListener::bind(bind).unwrap_or_else(|_| fail("bind failed"));
         lifecycle.satisfy(ReadinessPrerequisite::SocketBound);
@@ -774,13 +805,98 @@ fn server(args: &[String]) {
                     if data_peer != peer {
                         fail("data peer changed");
                     }
+                    // D067: with the flag on, a record above the D031 bound
+                    // can only be a probe; anything else is rejected inside
+                    // open_datagram before authentication. The reply to a
+                    // probe is the fixed 22-byte PmtuProbeAck.
+                    let plpmtud_family = plpmtud.then(|| match peer.ip() {
+                        IpAddr::V4(_) => neko_crypto::ProbeFamily::V4,
+                        IpAddr::V6(_) => neko_crypto::ProbeFamily::V6,
+                    });
                     let plain = ss
-                        .open_unreliable(&b[..n])
+                        .open_datagram(&b[..n], plpmtud_family)
                         .unwrap_or_else(|_| fail("auth failure"));
-                    let reply = ss
-                        .seal_unreliable(&plain)
-                        .unwrap_or_else(|_| fail("seal failure"));
-                    u.send_to(&reply, peer).unwrap();
+                    match ProcessMessage::decode(&plain) {
+                        Ok(ProcessMessage::PmtuProbe {
+                            path_generation,
+                            probe_id,
+                            probe_size,
+                            ..
+                        }) => {
+                            let ack = ProcessMessage::PmtuProbeAck {
+                                path_generation,
+                                probe_id,
+                                probe_size,
+                            }
+                            .encode()
+                            .unwrap_or_else(|_| fail("probe ack encode failed"));
+                            let reply = ss
+                                .seal_unreliable(&ack)
+                                .unwrap_or_else(|_| fail("seal failure"));
+                            u.send_to(&reply, peer).unwrap();
+                        }
+                        _ => {
+                            let reply = ss
+                                .seal_unreliable(&plain)
+                                .unwrap_or_else(|_| fail("seal failure"));
+                            u.send_to(&reply, peer).unwrap();
+                        }
+                    }
+                }
+                // D067 slice 3: with the flag on, stay reachable for probes
+                // until the application deadline. A probe is answered with the
+                // fixed 22-byte PmtuProbeAck (no amplification), anything else
+                // is echoed as before. Fail closed at the deadline.
+                if plpmtud {
+                    loop {
+                        match recv_udp_until(&u, &mut b, application_deadline, &shutdown)
+                            .unwrap_or_else(|_| fail("data receive failed"))
+                        {
+                            UdpWait::Datagram(n, data_peer) => {
+                                if data_peer != peer {
+                                    fail("data peer changed");
+                                }
+                                let plpmtud_family = plpmtud.then(|| match peer.ip() {
+                                    IpAddr::V4(_) => neko_crypto::ProbeFamily::V4,
+                                    IpAddr::V6(_) => neko_crypto::ProbeFamily::V6,
+                                });
+                                let plain = ss
+                                    .open_datagram(&b[..n], plpmtud_family)
+                                    .unwrap_or_else(|_| fail("auth failure"));
+                                match ProcessMessage::decode(&plain) {
+                                    Ok(ProcessMessage::PmtuProbe {
+                                        path_generation,
+                                        probe_id,
+                                        probe_size,
+                                        ..
+                                    }) => {
+                                        let ack = ProcessMessage::PmtuProbeAck {
+                                            path_generation,
+                                            probe_id,
+                                            probe_size,
+                                        }
+                                        .encode()
+                                        .unwrap_or_else(|_| fail("probe ack encode failed"));
+                                        let reply = ss
+                                            .seal_unreliable(&ack)
+                                            .unwrap_or_else(|_| fail("seal failure"));
+                                        u.send_to(&reply, peer).unwrap();
+                                    }
+                                    _ => {
+                                        let reply = ss
+                                            .seal_unreliable(&plain)
+                                            .unwrap_or_else(|_| fail("seal failure"));
+                                        u.send_to(&reply, peer).unwrap();
+                                    }
+                                }
+                            }
+                            UdpWait::Shutdown => {
+                                emit_signal_shutdown(&lifecycle);
+                                return;
+                            }
+                            UdpWait::Deadline => break,
+                        }
+                    }
                 }
                 lifecycle.stopped();
                 println!("lifecycle_state=STOPPED readiness=false");
@@ -811,6 +927,9 @@ fn client(args: &[String]) {
         .as_ref()
         .map(|(payload, _)| payload.clone())
         .unwrap_or_else(|| vec![b'x'; max]);
+    // D067: the PLPMTUD probe-ack timeout follows the negotiated --duration
+    // (the D031 echo timeout), not a fixed constant.
+    let probe_ack_timeout = d;
     let start = Instant::now();
     let cs = if t == "tcp" {
         let mut s =
@@ -897,6 +1016,30 @@ fn client(args: &[String]) {
         negotiation
             .admit_data()
             .unwrap_or_else(|_| fail("data admission denied"));
+        // D067 slice 3: opt-in PLPMTUD. Fail-closed on any DF failure
+        // (including non-Linux Unsupported): never probe on a fragmentable
+        // socket. On error prints the diagnostic line then exits nonzero.
+        let plpmtud = args.iter().any(|a| a == "--plpmtud");
+        let probe_family = if plpmtud {
+            let family = match target.ip() {
+                IpAddr::V4(_) => neko_crypto::ProbeFamily::V4,
+                IpAddr::V6(_) => neko_crypto::ProbeFamily::V6,
+            };
+            match pmtu_socket::set_probe_df(&u) {
+                Ok(()) => Some(family),
+                Err(e) => {
+                    emit_plpmtud(
+                        args,
+                        "plpmtud_df_failed_fail_closed",
+                        0,
+                        &format!(",\"error_kind\":\"{:?}\"", e.kind()),
+                    );
+                    fail("plpmtud requires DF; refusing to probe on a fragmentable socket");
+                }
+            }
+        } else {
+            None
+        };
         for _ in 0..count {
             let rec = ss
                 .seal_unreliable(&payload)
@@ -912,6 +1055,18 @@ fn client(args: &[String]) {
             }
         }
         emit_probe(args, "udp", max, start.elapsed().as_millis(), None);
+        if let Some(family) = probe_family {
+            plpmtud_client_probe_loop(
+                &u,
+                &mut ss,
+                family,
+                probe_ack_timeout,
+                args,
+                "udp",
+                max,
+                start,
+            );
+        }
         return;
     };
     let (mut s, mut ss) = cs.unwrap();
@@ -937,6 +1092,247 @@ fn client(args: &[String]) {
         benchmark.as_ref().map(|(_, hash)| hash.as_str()),
     )
 }
+/// D067 slice 3: the client's bounded PLPMTUD probe loop after a successful
+/// data exchange. Probes are PMTU evidence only: never Session data, never
+/// charged to bytes-in-flight, never congestion or retransmission work. Any
+/// outcome is fail-closed — the client exits nonzero, it never silently
+/// continues on stale assumptions.
+///
+/// Values are the D067 ADR candidates (`max_mtu` 1500, 2 attempts per size,
+/// 32 probes per generation). The black-hole cooldown (30 s, 85461's
+/// provisional value, not in the ADR) is reported in diagnostics as a
+/// labelled experimental value; this slice never gates traffic on it.
+#[allow(clippy::too_many_arguments)]
+fn plpmtud_client_probe_loop(
+    socket: &UdpSocket,
+    ss: &mut neko_crypto::SecureSession,
+    family: neko_crypto::ProbeFamily,
+    ack_timeout: Duration,
+    args: &[String],
+    transport: &str,
+    max: usize,
+    start: Instant,
+) {
+    use neko_reliable::PlpmtudConfig;
+    let mut model = match neko_reliable::Plpmtud::new(
+        PlpmtudConfig {
+            base_mtu: 1278,
+            max_mtu: PLPMTUD_MAX_MTU,
+            attempts_per_size: 2,
+            max_probes: 32,
+            blackhole_threshold: 3,
+        },
+        1,
+    ) {
+        Ok(m) => m,
+        Err(_) => fail("plpmtud model rejected the candidate config"),
+    };
+    let mut probe_seq = 0usize;
+    let mut last_send: Option<Instant> = None;
+    let deadline = start + Duration::from_secs(MAX_DURATION);
+    let cooldown_until: Option<Instant> = None; // black-hole fallback not exercised in this slice
+    loop {
+        if Instant::now() >= deadline {
+            emit_plpmtud(args, "plpmtud_deadline", probe_seq, "");
+            break;
+        }
+        if cooldown_until.is_some() {
+            break;
+        }
+        if model.converged() {
+            emit_plpmtud(
+                args,
+                "plpmtud_converged",
+                probe_seq,
+                &format!(",\"confirmed_mtu\":{}", model.confirmed_mtu()),
+            );
+            println!(
+                "plpmtud_converged transport={} bytes={} confirmed_mtu={}",
+                transport,
+                max,
+                model.confirmed_mtu()
+            );
+            break;
+        }
+        let probe = match model.start_probe() {
+            Ok(p) => p,
+            Err(neko_reliable::PlpmtudError::NoProbeNeeded) => break,
+            // The model keeps an outstanding probe until its ack or its timeout;
+            // ProbeOutstanding cannot occur here because each iteration resolves
+            // the previous probe before the next start_probe. Any other refusal is
+            // a closed stop (the client exits nonzero; it never guesses).
+            Err(e) => fail(&format!("plpmtud probe start failed: {e:?}")),
+        };
+        probe_seq += 1;
+        if let Some(t) = last_send
+            && t.elapsed() < PLPMTUD_PROBE_SPACING
+        {
+            thread::sleep(PLPMTUD_PROBE_SPACING - t.elapsed());
+        }
+        let plain = ProcessMessage::PmtuProbe {
+            path_generation: probe.path_generation,
+            probe_id: probe.id,
+            probe_size: probe.size,
+            padding_len: probe_padding_len(family, probe.size),
+        }
+        .encode()
+        .unwrap_or_else(|_| fail("plpmtud probe encode failed"));
+        let record = ss
+            .seal_probe(family, &plain)
+            .unwrap_or_else(|_| fail("plpmtud probe seal failed"));
+        let sent = socket.send(&record);
+        if let Err(e) = &sent
+            && e.raw_os_error() == Some(libc::EMSGSIZE)
+        {
+            // EMSGSIZE with DF on: the local interface cannot carry this
+            // datagram. Local MTU evidence only — it lowers the search bound,
+            // never the confirmed size, never congestion state.
+            match model.on_emsgsize(probe.size, None) {
+                neko_reliable::PmtuSendOutcome::Sent => unreachable!(),
+                neko_reliable::PmtuSendOutcome::RetryAt(size) => {
+                    emit_plpmtud(
+                        args,
+                        "plpmtud_probe_emsgsize_retry",
+                        probe_seq,
+                        &format!(",\"probe_size\":{},\"retry_at\":{}", probe.size, size),
+                    );
+                    last_send = Some(Instant::now());
+                    continue;
+                }
+                neko_reliable::PmtuSendOutcome::BaseIncompatible => {
+                    emit_plpmtud(
+                        args,
+                        "plpmtud_probe_emsgsize_base_incompatible",
+                        probe_seq,
+                        &format!(",\"probe_size\":{}", probe.size),
+                    );
+                    println!(
+                        "plpmtud_failed transport={} reason=base_incompatible",
+                        transport
+                    );
+                    std::process::exit(2);
+                }
+            }
+        }
+        sent.unwrap_or_else(|e| fail(&format!("plpmtud probe send failed: {e:?}")));
+        last_send = Some(Instant::now());
+        emit_plpmtud(
+            args,
+            "plpmtud_probe_sent",
+            probe_seq,
+            &format!(
+                ",\"probe_size\":{},\"padding_len\":{}",
+                probe.size,
+                probe_padding_len(family, probe.size)
+            ),
+        );
+        // Await the probe ACK with the negotiated echo timeout. Only an
+        // authenticated PmtuProbeAck bound to this exact (generation, id, size)
+        // advances the search; any other datagram is waited through. A timeout
+        // is probe-local evidence: it lowers the search bound after the
+        // per-size retries and is never congestion loss or retransmission.
+        let wait_started = Instant::now();
+        let acked = loop {
+            let remaining = ack_timeout.saturating_sub(wait_started.elapsed());
+            if remaining.is_zero() {
+                break false;
+            }
+            let mut buf = [0u8; 65536];
+            match socket.recv(&mut buf) {
+                Ok(n) => match ss.open_datagram(&buf[..n], Some(family)) {
+                    Ok(plain) => match ProcessMessage::decode(&plain) {
+                        Ok(ProcessMessage::PmtuProbeAck {
+                            path_generation,
+                            probe_id,
+                            probe_size,
+                        }) if path_generation == probe.path_generation
+                            && probe_id == probe.id
+                            && probe_size == probe.size =>
+                        {
+                            break true;
+                        }
+                        _ => continue,
+                    },
+                    // Unauthenticated or non-probe datagrams are waited
+                    // through: the probe timeout itself is the evidence.
+                    Err(_) => continue,
+                },
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::TimedOut
+                            | std::io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    continue;
+                }
+                Err(_) => break false,
+            }
+        };
+        if acked {
+            let converged = model
+                .acknowledge(probe.id, probe.path_generation, probe.size)
+                .unwrap_or_else(|e| fail(&format!("plpmtud ack failed: {e:?}")));
+            emit_plpmtud(
+                args,
+                "plpmtud_probe_acked",
+                probe_seq,
+                &format!(",\"probe_size\":{}", probe.size),
+            );
+            if converged {
+                emit_plpmtud(
+                    args,
+                    "plpmtud_converged",
+                    probe_seq,
+                    &format!(",\"confirmed_mtu\":{}", model.confirmed_mtu()),
+                );
+                println!(
+                    "plpmtud_converged transport={} bytes={} confirmed_mtu={}",
+                    transport,
+                    max,
+                    model.confirmed_mtu()
+                );
+                break;
+            }
+        } else {
+            // Resolve the outstanding probe via its timeout before the next
+            // start_probe (Retry keeps the same size with one attempt left;
+            // ReducedUpperBound clears the outstanding probe and lowers the
+            // search bound).
+            match model.timeout() {
+                Ok(neko_reliable::ProbeTimeout::Retry(_next)) => {
+                    emit_plpmtud(
+                        args,
+                        "plpmtud_probe_timeout_retry",
+                        probe_seq,
+                        &format!(",\"probe_size\":{}", probe.size),
+                    );
+                }
+                Ok(neko_reliable::ProbeTimeout::ReducedUpperBound) => {
+                    emit_plpmtud(
+                        args,
+                        "plpmtud_probe_timeout_lowered_bound",
+                        probe_seq,
+                        &format!(",\"probe_size\":{}", probe.size),
+                    );
+                }
+                Ok(neko_reliable::ProbeTimeout::Converged) => break,
+                Err(_) => fail("plpmtud timeout failed"),
+            }
+        }
+    }
+}
+
+/// Padding that makes a probe for `probe_size` (an IP packet size) reach
+/// exactly that IP size through the probe seal.
+fn probe_padding_len(family: neko_crypto::ProbeFamily, probe_size: u16) -> u16 {
+    probe_size
+        .saturating_sub(family.ip_udp_header_bytes() as u16)
+        .saturating_sub(neko_crypto::RECORD_SEAL_OVERHEAD as u16)
+        .saturating_sub(neko_session::PROCESS_PMTU_PROBE_HEADER_LEN as u16)
+}
+
 fn failover_binding(session: u64, generation: u64, expires: u64) -> neko_crypto::ResumeBinding {
     neko_crypto::ResumeBinding {
         session_id: session,
