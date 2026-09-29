@@ -162,6 +162,47 @@ pub const MAX_HANDSHAKE_MESSAGE: usize = 1024;
 pub const MAX_RECORD_PLAINTEXT: usize = 4096;
 pub const MAX_UNRELIABLE_DATAGRAM: usize = 1200;
 pub const RECORD_CONTEXT_LEN: usize = 26;
+/// Fixed bytes a sealed record adds to its plaintext: sequence 8, record
+/// context, AEAD tag 16.
+pub const RECORD_SEAL_OVERHEAD: usize = 8 + RECORD_CONTEXT_LEN + 16;
+/// D067 opt-in PLPMTUD exception to D031 (experimental, not release policy):
+/// the largest IP packet a probe may form. This is the administrator-approved
+/// experimental `max_mtu`; every probe bound below is derived from it.
+pub const PLPMTUD_MAX_MTU: usize = 1500;
+
+/// Address family of the probe socket, which fixes the IP + UDP header bytes
+/// subtracted from [`PLPMTUD_MAX_MTU`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeFamily {
+    V4,
+    V6,
+}
+impl ProbeFamily {
+    pub const fn ip_udp_header_bytes(self) -> usize {
+        match self {
+            Self::V4 => 20 + 8,
+            Self::V6 => 40 + 8,
+        }
+    }
+    /// Largest probe plaintext for this family: 1422 (IPv4) / 1402 (IPv6).
+    pub const fn max_probe_plaintext(self) -> usize {
+        PLPMTUD_MAX_MTU - self.ip_udp_header_bytes() - RECORD_SEAL_OVERHEAD
+    }
+}
+
+/// Byte layout of a `ProcessMessage::PmtuProbe` (neko-session kind 6). The
+/// layout is repeated here because neko-crypto does not depend on
+/// neko-session. A cross-crate test in neko-carrier pins that both agree.
+/// Only a structurally valid probe may use the enlarged bound: magic "NK",
+/// version 1, kind 6, a 24-byte header, then exactly `padding_len` zero bytes.
+fn is_pmtu_probe_plaintext(plain: &[u8]) -> bool {
+    const HEADER: usize = 24;
+    if plain.len() < HEADER || plain[..4] != [b'N', b'K', 1, 6] {
+        return false;
+    }
+    let padding_len = usize::from(u16::from_be_bytes([plain[22], plain[23]]));
+    plain.len() == HEADER + padding_len && plain[HEADER..].iter().all(|b| *b == 0)
+}
 pub const MAX_KEY_PHASE: u8 = 1;
 const PROLOGUE_PREFIX: &[u8] = b"nekomusume/noise-ik/v0\0";
 
@@ -573,6 +614,55 @@ impl SecureSession {
         self.open(record)
     }
 
+    /// D067 opt-in probe seal. It uses the same nonce manager as every other
+    /// record. The plaintext must be a structurally valid PMTU probe, so this
+    /// can never be used to seal an oversized Data or ACK frame.
+    pub fn seal_probe(
+        &mut self,
+        family: ProbeFamily,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, SessionRejected> {
+        if plaintext.len() > family.max_probe_plaintext() || !is_pmtu_probe_plaintext(plaintext) {
+            return Err(SessionRejected);
+        }
+        self.seal(plaintext)
+    }
+    /// D067 opt-in probe open. The size is checked against the socket family's
+    /// probe bound before authentication or replay mutation. After
+    /// authentication the plaintext must be a valid PMTU probe. Every failure is
+    /// the same `SessionRejected` as `open_unreliable`.
+    pub fn open_probe(
+        &mut self,
+        family: ProbeFamily,
+        record: &[u8],
+    ) -> Result<Vec<u8>, SessionRejected> {
+        if record.len() > RECORD_SEAL_OVERHEAD + family.max_probe_plaintext() {
+            return Err(SessionRejected);
+        }
+        let plain = self.open(record)?;
+        if !is_pmtu_probe_plaintext(&plain) {
+            return Err(SessionRejected);
+        }
+        Ok(plain)
+    }
+    /// Receive-side dispatch for one UDP datagram. With `plpmtud == None`
+    /// (flag off, the default) this is exactly `open_unreliable`, and
+    /// `open_probe` is never reached. With the flag on, only a record larger
+    /// than the D031 unreliable bound goes to `open_probe`, which admits
+    /// nothing but a probe.
+    pub fn open_datagram(
+        &mut self,
+        record: &[u8],
+        plpmtud: Option<ProbeFamily>,
+    ) -> Result<Vec<u8>, SessionRejected> {
+        match plpmtud {
+            Some(family) if record.len() > RECORD_SEAL_OVERHEAD + MAX_UNRELIABLE_DATAGRAM => {
+                self.open_probe(family, record)
+            }
+            _ => self.open_unreliable(record),
+        }
+    }
+
     /// Rekey both directions at an authenticated phase boundary. The caller
     /// must invoke this on both peers in the same order; no old-phase records
     /// are accepted after commit.
@@ -772,6 +862,139 @@ mod session_tests {
         let first = i.first_message().unwrap();
         let r = ResponderHandshake::new(&responder, policy, b"d").unwrap();
         assert!(r.receive_first(&first, ctx(0)).is_err());
+    }
+    fn probe_plain(total: usize) -> Vec<u8> {
+        let pad = total - 24;
+        let mut p = vec![b'N', b'K', 1, 6];
+        p.extend_from_slice(&7u64.to_be_bytes());
+        p.extend_from_slice(&9u64.to_be_bytes());
+        p.extend_from_slice(&1500u16.to_be_bytes());
+        p.extend_from_slice(&(pad as u16).to_be_bytes());
+        p.resize(total, 0);
+        p
+    }
+    fn data_plain(total: usize) -> Vec<u8> {
+        // A kind 1 Data-shaped process frame: NK, version 1, kind 1, then bytes.
+        let mut p = vec![b'N', b'K', 1, 1];
+        p.resize(total, 0xAB);
+        p
+    }
+    #[test]
+    fn probe_bounds_are_derived_from_max_mtu_per_family() {
+        assert_eq!(RECORD_SEAL_OVERHEAD, 50);
+        assert_eq!(ProbeFamily::V4.max_probe_plaintext(), 1500 - 28 - 50);
+        assert_eq!(ProbeFamily::V6.max_probe_plaintext(), 1500 - 48 - 50);
+        assert_eq!(ProbeFamily::V4.max_probe_plaintext(), 1422);
+        assert_eq!(ProbeFamily::V6.max_probe_plaintext(), 1402);
+    }
+    #[test]
+    fn probe_seal_and_open_are_inclusive_at_each_family_bound() {
+        for family in [ProbeFamily::V4, ProbeFamily::V6] {
+            let (mut a, mut b) = pair();
+            let max = family.max_probe_plaintext();
+            let r = a.seal_probe(family, &probe_plain(max)).unwrap();
+            assert_eq!(r.len(), RECORD_SEAL_OVERHEAD + max);
+            assert_eq!(b.open_probe(family, &r).unwrap(), probe_plain(max));
+            assert_eq!(
+                a.seal_probe(family, &probe_plain(max + 1)),
+                Err(SessionRejected),
+                "{family:?} seal max+1"
+            );
+            // A record one byte over the family bound is refused before
+            // authentication: the replay window is untouched, so the same
+            // record still opens through the generic path afterwards.
+            let over = a.seal(&probe_plain(max + 1)).unwrap();
+            assert_eq!(b.open_probe(family, &over), Err(SessionRejected));
+            assert_eq!(b.open(&over).unwrap(), probe_plain(max + 1));
+        }
+    }
+    #[test]
+    fn family_bounds_are_not_interchangeable() {
+        let (mut a, mut b) = pair();
+        let v4_max = ProbeFamily::V4.max_probe_plaintext();
+        assert!(v4_max > ProbeFamily::V6.max_probe_plaintext());
+        assert_eq!(
+            a.seal_probe(ProbeFamily::V6, &probe_plain(v4_max)),
+            Err(SessionRejected)
+        );
+        let r = a.seal_probe(ProbeFamily::V4, &probe_plain(v4_max)).unwrap();
+        assert_eq!(b.open_probe(ProbeFamily::V6, &r), Err(SessionRejected));
+        assert_eq!(
+            b.open_probe(ProbeFamily::V4, &r).unwrap(),
+            probe_plain(v4_max)
+        );
+    }
+    #[test]
+    fn probe_path_admits_only_a_zero_padded_kind_6_probe() {
+        let (mut a, mut b) = pair();
+        // Data, ACK-shaped and other kinds cannot borrow the enlarged bound,
+        // whatever their size, at either end.
+        for plain in [data_plain(1300), data_plain(100), {
+            let mut ack = probe_plain(1300);
+            ack[3] = 7;
+            ack
+        }] {
+            assert_eq!(a.seal_probe(ProbeFamily::V4, &plain), Err(SessionRejected));
+            let r = a.seal(&plain).unwrap();
+            assert_eq!(b.open_probe(ProbeFamily::V4, &r), Err(SessionRejected));
+        }
+        // A nonzero padding byte, a length/padding mismatch or a wrong
+        // version are refused too.
+        let mut bad_pad = probe_plain(1300);
+        bad_pad[1299] = 1;
+        let mut short = probe_plain(1300);
+        short.pop();
+        let mut long = probe_plain(1300);
+        long.push(0);
+        let mut bad_version = probe_plain(1300);
+        bad_version[2] = 2;
+        for plain in [bad_pad, short, long, bad_version] {
+            assert_eq!(a.seal_probe(ProbeFamily::V4, &plain), Err(SessionRejected));
+            let r = a.seal(&plain).unwrap();
+            assert_eq!(b.open_probe(ProbeFamily::V4, &r), Err(SessionRejected));
+        }
+        // The session stays usable after those refusals.
+        let ok = a.seal_probe(ProbeFamily::V4, &probe_plain(1300)).unwrap();
+        assert_eq!(
+            b.open_probe(ProbeFamily::V4, &ok).unwrap(),
+            probe_plain(1300)
+        );
+    }
+    #[test]
+    fn flag_off_datagram_path_never_reaches_the_probe_bound() {
+        let (mut a, mut b) = pair();
+        // A sealed probe of 1251 bytes is one byte over the D031 record bound.
+        let plain = probe_plain(1251 - RECORD_SEAL_OVERHEAD);
+        let r = a.seal_probe(ProbeFamily::V4, &plain).unwrap();
+        assert_eq!(r.len(), 1251);
+        assert_eq!(b.open_datagram(&r, None), Err(SessionRejected));
+        // Pre-authentication refusal: the same record then opens with the flag on.
+        assert_eq!(b.open_datagram(&r, Some(ProbeFamily::V4)).unwrap(), plain);
+        // Flag on: an oversized Data record is still refused.
+        let data = a.seal(&data_plain(1300)).unwrap();
+        assert_eq!(
+            b.open_datagram(&data, Some(ProbeFamily::V4)),
+            Err(SessionRejected)
+        );
+        // Flag on or off: a normal-size datagram of any kind uses the D031 path.
+        for flag in [None, Some(ProbeFamily::V4)] {
+            let small = a.seal_unreliable(&data_plain(1200)).unwrap();
+            assert_eq!(b.open_datagram(&small, flag).unwrap(), data_plain(1200));
+        }
+    }
+    #[test]
+    fn probe_records_share_the_single_nonce_and_replay_state() {
+        let (mut a, mut b) = pair();
+        let p = a.seal_probe(ProbeFamily::V4, &probe_plain(1400)).unwrap();
+        let d = a.seal_unreliable(&data_plain(64)).unwrap();
+        // One sender counter: consecutive sequences across both kinds.
+        let seq = |r: &[u8]| u64::from_be_bytes(r[..8].try_into().unwrap());
+        assert_eq!(seq(&d), seq(&p) + 1);
+        assert!(b.open_probe(ProbeFamily::V4, &p).is_ok());
+        // One replay window: a replayed probe is refused through either path.
+        assert_eq!(b.open_probe(ProbeFamily::V4, &p), Err(SessionRejected));
+        assert_eq!(b.open(&p), Err(SessionRejected));
+        assert!(b.open_unreliable(&d).is_ok());
     }
     #[test]
     fn payload_ceilings_are_inclusive_on_both_the_reliable_and_unreliable_paths() {

@@ -553,6 +553,8 @@ probe records and a separate reviewed gate.
 
 Candidate local implementation: 1200-byte cap, authenticated context/nonce/replay, uniform rejection, no retransmission or delivery evidence; 0-RTT and public/WAN use remain disabled.
 
+> **Cross-reference — D067 opt-in exception.** Under the explicit PLPMTUD flag only, a PMTU probe (process kind 6, zero padding) may be sealed/opened with a larger, `max_mtu`-derived bound (`seal_probe` / `open_probe`). The 1200-byte cap above is unchanged for every other record and for all default traffic. See D067 for the values.
+
 
 ## 2026-08-29 — D032：Bounded XOR FEC candidate, not enabled
 
@@ -1100,6 +1102,28 @@ nothing**:
 
 Until 85461 or the maintainer decides, slice 3 is not written. No implementation
 may pick one of these unilaterally, because each changes a D031 security bound.
+
+**Decision (85461, 2026-09-29): candidate (A), experimental, flag-only.**
+This is a security-bound exception, not release policy.
+
+- `neko_crypto::seal_probe` / `open_probe` share the one nonce manager and replay
+  window of the `SecureSession`.
+- Bounds are derived, not literal. With `PLPMTUD_MAX_MTU` = 1500 (the approved
+  experimental `max_mtu`) and `RECORD_SEAL_OVERHEAD` = 50 (sequence 8 + context 26 +
+  tag 16):
+  - IPv4 probe plaintext ≤ 1500 − 28 − 50 = **1422**; IPv6 ≤ 1500 − 48 − 50 = **1402**;
+  - the pre-authentication record size is ≤ **1472** (v4) / **1452** (v6), against
+    D031's 1250.
+- The receiver dispatch is `open_datagram(record, plpmtud)`.
+  - With the flag off (`None`) it is exactly `open_unreliable`, and `open_probe`
+    is unreachable.
+  - With the flag on, only a record larger than the D031 bound goes to
+    `open_probe`.
+- Both ends admit nothing but a structurally valid probe: `NK`, version 1, kind 6,
+  a 24-byte header, then exactly `padding_len` zero bytes. `seal_probe` checks
+  before sealing, and `open_probe` checks after authentication.
+- Every refusal is the same `SessionRejected` as `open_unreliable`. Data, ACK and
+  other kinds cannot use the larger bound even with the flag on.
 
 **Capability negotiation gap.** The only pre-data exchange is
 `neko_wire::VersionNegotiator`, a version list (`SUPPORTED_VERSIONS` =
