@@ -1018,6 +1018,27 @@ records ≤ 224, ACK ≤ 95). The effective base PLPMTU of the current carrier i
 therefore 1278 on IPv4 as an IP packet, not the ADR's nominal 1200. A probe search
 based at 1200 would start *below* traffic the carrier already sends.
 
+**Experimental defaults approved by the administrator, 2026-09-29** (relayed by Session
+85461; administrator's words: "建议照旧，先这样吧，反正必须要测"). These are
+**experimental defaults pending measurement and review, not release policy**. They
+apply only behind an explicit opt-in flag; PLPMTUD stays off by default, and the
+status R row changes only once live evidence exists.
+
+1. Congestion budget: probes are admission-checked against cwnd only and **not**
+   charged to bytes-in-flight. This promotes the working hypothesis above to an
+   experimental value.
+2. `max_mtu` = 1500 (ADR candidate). The search starts at the measured current base,
+   **IPv4 1278 / IPv6 1298** (see the table above), not 1200. Header overhead
+   deducted: 28 bytes (IPv4) / 48 bytes (IPv6).
+3. Retries: 2 attempts per size; at most 32 probes per path generation.
+4. Cadence: at most one probe per RTT and no more than 1% of path bytes. Black-hole
+   cooldown 30 s. **The 30 s value is 85461's provisional choice; it is not in the
+   ADR** and must be labelled as such in evidence.
+
+If measurement shows a value is unsuitable (for example 1500 black-holes on the local
+path, or the 1% limit lets no probe out in a short session), the data is recorded and
+reported to 85461. Values are not changed unilaterally.
+
 **Defect found while measuring (not fixed here):** `failover` accepts `--bytes` up to
 1200 (`MAX_BYTES = MAX_UNRELIABLE_DATAGRAM`), but that cap is applied to the user
 payload. `seal_unreliable` applies the same 1200 cap to the *encoded logical frame*,
