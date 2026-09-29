@@ -81,7 +81,32 @@ retried by reflex; the tc filter is removed either way.
 - Cleanup, verified: no listeners or processes left on the VPS, the tc filter
   removed, no local route/qdisc residue.
 
-## Open question for 85461
+## Execution status (2026-09-29, blocked before any connection)
+
+Approved by 85461 (same deployment + same window A+B = one changed-hypothesis run;
+three conditions recorded). Execution is **blocked before any VPS contact** by two
+facts, both requiring an administrator decision:
+
+1. **Host key change.** `ssh vps-104` now presents ED25519
+   `SHA256:ecXqLkw0hzk5SXWZ9WyXRyn0w83dM5XMjgWPVlNEO4`, while the pinned
+   known_hosts key is a different ED25519 key (last updated 2026-09-26). TCP/22 is
+   reachable. No reinstall is documented in the repo. The new key was **not**
+   accepted, known_hosts was **not** modified, and no login was attempted. A
+   possible reinstall must be confirmed by the administrator before the key is
+   replaced.
+2. **All traffic to the VPS is routed through the local `Meta` TUN** (198.18.0.2,
+   table 2022, rules 9000/9001/9002), not a direct WAN path. The TUN's egress MTU
+   is 9000, so the Phase-B `dst + len > 1400` filter would drop every encapsulated
+   datagram (the tunnel's L3 length always exceeds 1400 regardless of payload),
+   and Phase A would measure the Meta exit node's path, not the local→VPS path.
+   Either outcome would be misleading evidence for the mainline hypothesis.
+
+The release binary is built and frozen for the whole run:
+SHA-256 `dfea1d31bf1a37101da21df5918a28cd24a19cef0d8fbb291e8d333bfda591b6`
+(1,526,168 bytes, exact tree `a82b5d7`). No gate re-run, no rebuild, no redeploy
+across A/B, per the approval conditions.
+
+## Original open question for 85461
 
 Does the two-phase shape (A then B in one deployment and window) count as the one
 allowed changed-hypothesis VPS run, or should Phase B be cut and only the clean
