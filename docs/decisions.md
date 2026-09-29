@@ -993,3 +993,36 @@ Open policy candidates. They need a maintainer decision (routed through Session
 
 No wire, CLI, socket, ICMP/PTB, IPv6, READY_LIVE, release-flag, H-I4-119 or D019
 change.
+
+**Working hypothesis for candidate 1 (2026-09-29):** Session 85461 agrees to
+"admission-check only, not charged to bytes-in-flight" as the working hypothesis for
+slices 2 and 3. The final value awaits maintainer confirmation; this is **not** a
+decision.
+
+**Fact for candidate 2 — the current UDP carrier base datagram (measured, exact
+`cd90d0c`).** Measured with `strace` on a real loopback `failover` server/client pair,
+with and without `--reliable-udp`. The live UDP Data datagram is
+`seal_unreliable(ProcessMessage::Data)`:
+
+| Layer | Bytes |
+|---|---|
+| Logical Data frame (`NK` magic 2 + version 1 + type 1 + session 8 + stream 8 + offset 8 + length 2) | 30 + payload |
+| Sealed record (sequence 8 + record context 26 + AEAD tag 16) | +50 |
+| **UDP payload** | **payload + 80** |
+
+There is no separate outer packet header on this path; the sequence doubles as the
+packet number. At the largest payload that works today (1170, see the defect below),
+the largest emitted UDP payload is **1250 bytes**. That is an IP packet of
+**1278 (IPv4) / 1298 (IPv6)**. All other datagrams observed are smaller (control
+records ≤ 224, ACK ≤ 95). The effective base PLPMTU of the current carrier is
+therefore 1278 on IPv4 as an IP packet, not the ADR's nominal 1200. A probe search
+based at 1200 would start *below* traffic the carrier already sends.
+
+**Defect found while measuring (not fixed here):** `failover` accepts `--bytes` up to
+1200 (`MAX_BYTES = MAX_UNRELIABLE_DATAGRAM`), but that cap is applied to the user
+payload. `seal_unreliable` applies the same 1200 cap to the *encoded logical frame*,
+which is 30 bytes larger. For `--bytes` 1171–1200 the client therefore passes argument
+validation and then panics (`SessionRejected` unwrap at `main.rs:2616`, exit 134).
+The server times out (exit 2). Bisected: 1170 succeeds, 1171 fails. The fix is
+either to cap `--bytes` at 1170 or to make the unreliable cap count the frame. That
+choice decides what "base" means, so it is reported rather than chosen here.
