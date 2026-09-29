@@ -902,13 +902,13 @@ fn endpoint_rebind_requires_the_documented_clique_on_both_sides() {
     // A FIVE-clause condition (`count != 2 || bytes == 0 || bytes > MAX ||
     // secs == 0 || secs > MAX_DURATION`) with a single message, so each clause is
     // exercised on its own and the message is issued by BOTH sides.
-    const MSG: &str = "endpoint rebind requires count=2, bytes=1-1200, duration=1-30";
+    const MSG: &str = "endpoint rebind requires count=2, bytes=1-1170, duration=1-30";
     for side in ["server", "client"] {
         for (label, args) in [
             ("count 1", vec!["--count", "1"]),
             ("count 3", vec!["--count", "3"]),
             ("bytes 0", vec!["--count", "2", "--bytes", "0"]),
-            ("bytes 1201", vec!["--count", "2", "--bytes", "1201"]),
+            ("bytes 1171", vec!["--count", "2", "--bytes", "1171"]),
             ("duration 0", vec!["--count", "2", "--duration", "0"]),
             ("duration 31", vec!["--count", "2", "--duration", "31"]),
         ] {
@@ -923,15 +923,17 @@ fn endpoint_rebind_requires_the_documented_clique_on_both_sides() {
         } else {
             "missing --server-key"
         };
-        let out = run(&rebind_args(side, &["--count", "2", "--bytes", "1200"]));
+        let out = run(&rebind_args(side, &["--count", "2", "--bytes", "1170"]));
         assert!(!out.stderr.contains(MSG), "{side} control: {}", out.stderr);
         assert!(
             out.stderr.contains(expected_next),
             "{side} control: {}",
             out.stderr
         );
-        // Both `--bytes` edges are inside: 1 and 1200 are accepted.
-        for edge in ["1", "1200"] {
+        // Both `--bytes` edges are inside: 1 and 1170 (1200 minus the 30-byte
+        // Data frame header) are accepted; 1200 used to be accepted here and
+        // then panicked the client at seal time.
+        for edge in ["1", "1170"] {
             let out = run(&rebind_args(side, &["--count", "2", "--bytes", edge]));
             assert!(
                 !out.stderr.contains(MSG),
@@ -1162,6 +1164,44 @@ fn matrix_probe_argument_rejections_name_the_exact_reason() {
             out.stdout.is_empty(),
             "args={args:?} stdout={:?}",
             out.stdout
+        );
+    }
+}
+
+/// `failover` and `endpoint-rebind` wrap `--bytes` of payload in a
+/// `ProcessMessage::Data` frame (30 bytes of header) before `seal_unreliable`,
+/// whose cap is `MAX_UNRELIABLE_DATAGRAM` = 1200 on the ENCODED frame. The CLI
+/// used to accept up to 1200 bytes of payload, so 1171-1200 passed validation
+/// and then panicked in the client (exit 134) while the server waited out its
+/// timeout. The bound is now derived (1200 - 30 = 1170): 1170 must pass argument
+/// validation on every side and 1171 must be refused there, before any socket.
+#[test]
+fn data_frame_commands_cap_bytes_at_the_sealable_payload() {
+    let header = neko_session::PROCESS_DATA_HEADER_LEN;
+    let cap = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
+    assert_eq!(header, 30);
+    assert_eq!(
+        cap - header,
+        1170,
+        "CLI bound + frame header == seal_unreliable cap"
+    );
+
+    // failover: both roles report the same derived bound.
+    for role in ["server", "client"] {
+        let rejected = run(&argv(&["failover", "--role", role, "--bytes", "1171"]));
+        assert_eq!(rejected.code, Some(2), "{role}: {}", rejected.stderr);
+        assert_eq!(
+            rejected.stderr, "neko: bytes outside 1-1170\n",
+            "{role} 1171 is refused at argument validation"
+        );
+        // 1170 passes the bytes check; the run then stops at the next missing
+        // requirement, which is NOT the bytes message.
+        let accepted = run(&argv(&["failover", "--role", role, "--bytes", "1170"]));
+        assert_eq!(accepted.code, Some(2), "{role}: {}", accepted.stderr);
+        assert!(
+            !accepted.stderr.contains("bytes outside"),
+            "{role} 1170 must pass the bytes check: {}",
+            accepted.stderr
         );
     }
 }

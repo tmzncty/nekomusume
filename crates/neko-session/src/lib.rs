@@ -1012,6 +1012,9 @@ pub struct InboundRecord {
 /// records and therefore never needs a socket or address type.
 pub const PROCESS_FRAME_MAX: usize = 4096;
 const PROCESS_MAGIC: [u8; 2] = *b"NK";
+/// Encoded size of a `ProcessMessage::Data` frame excluding the record payload:
+/// magic 2 + version 1 + type 1 + session 8 + stream 8 + offset 8 + length 2.
+pub const PROCESS_DATA_HEADER_LEN: usize = PROCESS_MAGIC.len() + 1 + 1 + 8 + 8 + 8 + 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResumeWireBinding {
@@ -3549,6 +3552,26 @@ mod runtime_contract_boundary_tests {
             ProcessMessage::decode(&outside).err(),
             Some(ProcessCodecError::Malformed)
         );
+    }
+
+    #[test]
+    fn data_header_constant_matches_the_encoder() {
+        let frame = |len: usize| {
+            ProcessMessage::Data {
+                session: SessionId(u64::MAX),
+                record: OutboundRecord {
+                    stream: StreamId(u64::MAX),
+                    offset: u64::MAX,
+                    data: vec![0xa5; len],
+                },
+            }
+            .encode()
+            .unwrap()
+        };
+        for len in [1, 17, 1170, PROCESS_FRAME_MAX - 30] {
+            assert_eq!(frame(len).len(), PROCESS_DATA_HEADER_LEN + len, "len={len}");
+        }
+        assert_eq!(PROCESS_DATA_HEADER_LEN, 30);
     }
 
     #[test]

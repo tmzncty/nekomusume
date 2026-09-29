@@ -51,6 +51,11 @@ const USAGE: &str = "Usage: neko <server|client|probe|health-observe|failover|mu
   --count N: bounded authenticated exchanges (1-64; periodic 1-600)\n  periodic-*: one TCP Session, duration 1-600s, interval 100-5000ms, <=1MiB app data; reconnect unsupported\n  failover --role server|client: canonical bounded failover command\n  failover-server|failover-client: legacy aliases for failover\n  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
 const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
+/// `--bytes` ceiling for commands whose payload is wrapped in a
+/// `ProcessMessage::Data` frame before `seal_unreliable` (failover and endpoint
+/// rebind). Derived from the frame header so it cannot drift from the sealer.
+const MAX_DATA_FRAME_BYTES: usize =
+    neko_crypto::MAX_UNRELIABLE_DATAGRAM - neko_session::PROCESS_DATA_HEADER_LEN;
 const MAX_DURATION: u64 = 30;
 const MAX_WORKLOAD_DURATION: u64 = 600;
 const PROCESS_FRAME_MAX: usize = neko_session::PROCESS_FRAME_MAX;
@@ -1171,8 +1176,8 @@ fn failover_server(args: &[String]) {
             .parse::<u64>()
             .unwrap_or_else(|_| fail("invalid duration")),
     );
-    if bytes == 0 || bytes > MAX_BYTES {
-        fail("bytes outside 1-1200")
+    if bytes == 0 || bytes > MAX_DATA_FRAME_BYTES {
+        fail(&format!("bytes outside 1-{MAX_DATA_FRAME_BYTES}"))
     }
     if duration.is_zero() || duration > Duration::from_secs(MAX_DURATION) {
         fail("duration outside 1-30")
@@ -2458,8 +2463,8 @@ fn failover_client(args: &[String]) {
     let secs = parse(args, "--duration", Some("10"))
         .parse::<u64>()
         .unwrap_or_else(|_| fail("invalid duration"));
-    if bytes == 0 || bytes > MAX_BYTES {
-        fail("bytes outside 1-1200")
+    if bytes == 0 || bytes > MAX_DATA_FRAME_BYTES {
+        fail(&format!("bytes outside 1-{MAX_DATA_FRAME_BYTES}"))
     }
     if secs == 0 || secs > MAX_DURATION {
         fail("duration outside 1-30")
@@ -2613,7 +2618,9 @@ fn failover_client(args: &[String]) {
     }
     .encode()
     .unwrap();
-    let encrypted = us.seal_unreliable(&logical).unwrap();
+    let encrypted = us
+        .seal_unreliable(&logical)
+        .unwrap_or_else(|_| fail("data record exceeds the unreliable datagram limit"));
     if first_data_delay_ms > 0 {
         std::thread::sleep(Duration::from_millis(first_data_delay_ms));
     }
@@ -4234,8 +4241,11 @@ fn endpoint_rebind_server(args: &[String]) {
     let secs = parse(args, "--duration", Some("10"))
         .parse::<u64>()
         .unwrap_or_else(|_| fail("invalid duration"));
-    if count != 2 || bytes == 0 || bytes > MAX_BYTES || secs == 0 || secs > MAX_DURATION {
-        fail("endpoint rebind requires count=2, bytes=1-1200, duration=1-30")
+    if count != 2 || bytes == 0 || bytes > MAX_DATA_FRAME_BYTES || secs == 0 || secs > MAX_DURATION
+    {
+        fail(&format!(
+            "endpoint rebind requires count=2, bytes=1-{MAX_DATA_FRAME_BYTES}, duration=1-30"
+        ))
     }
     let port = parse(args, "--udp-port", Some("40081"))
         .parse::<u16>()
@@ -4618,8 +4628,11 @@ fn endpoint_rebind_client(args: &[String]) {
     let secs = parse(args, "--duration", Some("10"))
         .parse::<u64>()
         .unwrap_or_else(|_| fail("invalid duration"));
-    if count != 2 || bytes == 0 || bytes > MAX_BYTES || secs == 0 || secs > MAX_DURATION {
-        fail("endpoint rebind requires count=2, bytes=1-1200, duration=1-30")
+    if count != 2 || bytes == 0 || bytes > MAX_DATA_FRAME_BYTES || secs == 0 || secs > MAX_DURATION
+    {
+        fail(&format!(
+            "endpoint rebind requires count=2, bytes=1-{MAX_DATA_FRAME_BYTES}, duration=1-30"
+        ))
     }
     let addr = parse(args, "--addr", Some("127.0.0.1"));
     let port = parse(args, "--udp-port", Some("40081"))
@@ -4678,9 +4691,10 @@ fn endpoint_rebind_client(args: &[String]) {
     }
     .encode()
     .unwrap();
-    endpoint_a
-        .send_to(&secure.seal_unreliable(&first).unwrap(), target)
-        .unwrap();
+    let first_sealed = secure
+        .seal_unreliable(&first)
+        .unwrap_or_else(|_| fail("data record exceeds the unreliable datagram limit"));
+    endpoint_a.send_to(&first_sealed, target).unwrap();
     let (n, source) = endpoint_a.recv_from(&mut buf).unwrap();
     if source != target {
         fail("pre-rebind DeliveryAck from wrong peer")
