@@ -20,7 +20,7 @@ set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 BIN=${BIN:-$REPO/target/release/neko-cli}
-FROZEN_SHA=b443ad9905c2657fcbc756ff35a8280e8e7550419a5f509f24a9b7a7e4e4339b
+FROZEN_SHA=efe5d922e50d75291fb7de86e0451c83df02a962bc570b56fd3cf21f5f964a77
 OUT=${1:-/tmp/plpmtud-matrix-$(date +%Y%m%d-%H%M%S)}
 PORT_V4=40090
 PORT_V6=40091

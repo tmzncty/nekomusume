@@ -50,6 +50,19 @@ the truth. The Session layer (all exchanges ≤ base size) was never the failure
 source — v4-rc1500 and v6-rc1500 handshake/exchange/echo are loss-free by
 construction, and their cells show 0 ICMP and 8/8 acks.
 
+## Follow-up: the silent-exit cells are now explicit (0522e14)
+
+85461 approved `plpmtud_converged_by_timeout` as an independent slice. Exact tree
+`0522e14` (gate `check-gate-0522e14-20260929.md`, first-attempt green) makes the
+`ProbeTimeout::Converged` arm emit the event and print the same
+`plpmtud_converged` line as the acked path. The three silent families were rerun
+with the rebuilt binary (`efe5d922…`): **18/18 `converged_exact`**, each at its
+true bottleneck (v4-rc1278 → 1278, v6-rc1298 → 1298, v6-rc1350 → 1350); DF-off
+control PASS and IPv6×1278 N/A unchanged. A hand mutant deleting the event
+regresses the summary to `conv=None / client_exit_0`, so the classification no
+longer depends on manual log reading. Rerun artifacts:
+`artifacts/plpmtud-local-matrix/20260929-0522e14-3fam/`.
+
 ## Provenance notes
 
 - The matrix script and the ProbeOutstanding resend fix are exact-tree
