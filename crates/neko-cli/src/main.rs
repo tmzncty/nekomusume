@@ -1320,7 +1320,26 @@ fn plpmtud_client_probe_loop(
                         &format!(",\"probe_size\":{}", probe.size),
                     );
                 }
-                Ok(neko_reliable::ProbeTimeout::Converged) => break,
+                Ok(neko_reliable::ProbeTimeout::Converged) => {
+                    // The search folded onto the confirmed base: every size
+                    // above it was refused by the path. That is a converged
+                    // outcome and must be machine-readable, not a silent
+                    // exit (the local matrix showed 18 cells classified
+                    // converged=None because this arm printed nothing).
+                    emit_plpmtud(
+                        args,
+                        "plpmtud_converged_by_timeout",
+                        probe_seq,
+                        &format!(",\"confirmed_mtu\":{}", model.confirmed_mtu()),
+                    );
+                    println!(
+                        "plpmtud_converged transport={} bytes={} confirmed_mtu={}",
+                        transport,
+                        max,
+                        model.confirmed_mtu()
+                    );
+                    break;
+                }
                 Err(_) => fail("plpmtud timeout failed"),
             }
         }
