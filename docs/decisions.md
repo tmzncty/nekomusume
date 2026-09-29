@@ -1070,6 +1070,45 @@ Two further facts:
   returns `ENETUNREACH`. The v6 base datagram is 1298 anyway, so an "IPv6 × 1278"
   matrix cell cannot be constructed.
 
+**Slice 3 blocker — the D031 unreliable cap forbids any probe above the base (found 2026-09-29, before writing slice 3).**
+`seal_unreliable` / `open_unreliable` enforce the D031 bound of 1200 bytes of
+plaintext (`MAX_UNRELIABLE_DATAGRAM`), and the live UDP carrier seals every datagram
+through them. The seal overhead is fixed: sequence 8 + context 26 + tag 16 = 50
+bytes. The largest sealable UDP datagram is therefore 1250 bytes, which is an IP
+packet of **1278 (IPv4) / 1298 (IPv6)**. That is exactly the measured base above, so
+every upward probe — anything from 1279 up to `max_mtu` 1500 — is refused at seal
+time. A 1500-byte IPv4 probe needs 1422 bytes of plaintext (probe header 24 +
+padding 1398); IPv6 needs 1402. Slice 3 cannot send a single useful probe without
+changing a security bound. This entry proposes candidates only; **it decides
+nothing**:
+
+- **(A) Probe-only seal bound (recommended candidate).** Add a separate
+  `seal_probe` / `open_probe` pair next to the unreliable pair, with its own
+  ceiling `max_mtu − IP/UDP header − 50`, i.e. 1422 for IPv4 at `max_mtu` 1500.
+  - The existing `MAX_UNRELIABLE_DATAGRAM` = 1200 stays unchanged for all Data.
+  - The receiver opens with the larger bound only when `--plpmtud` is on. The
+    plaintext must then decode as kind 6 `PmtuProbe`, otherwise the datagram is
+    rejected.
+  - Cost: a receiver with the flag on accepts up to 1472 bytes before AEAD instead
+    of 1250.
+  - The reply is a 22-byte `PmtuProbeAck`, so there is no amplification.
+- **(B) Raise `MAX_UNRELIABLE_DATAGRAM` globally.** This changes D031 for all
+  traffic, including default behaviour. Not recommended.
+- **(C) Seal probes with the reliable `seal`** (bound `MAX_RECORD_PLAINTEXT` 4096).
+  It reuses an existing API, but the pre-AEAD acceptance on the UDP receiver would
+  have to rise to about 4146 bytes, more than (A) needs.
+
+Until 85461 or the maintainer decides, slice 3 is not written. No implementation
+may pick one of these unilaterally, because each changes a D031 security bound.
+
+**Capability negotiation gap.** The only pre-data exchange is
+`neko_wire::VersionNegotiator`, a version list (`SUPPORTED_VERSIONS` =
+`[NEGOTIATION_VERSION]`) with no capability or extension field. Per 85461's rule, no
+new mechanism is invented here. Probes are gated on the explicit flag being set on
+**both** ends. A peer that has not been upgraded decodes kind 6/7 as `Malformed`:
+the live `if let` loops skip it, and the periodic runner fails closed. So an
+operator error of enabling the flag on only one side is visible, not silent.
+
 **Defect found while measuring (not fixed here):** `failover` accepts `--bytes` up to
 1200 (`MAX_BYTES = MAX_UNRELIABLE_DATAGRAM`), but that cap is applied to the user
 payload. `seal_unreliable` applies the same 1200 cap to the *encoded logical frame*,
