@@ -1,0 +1,17 @@
+client_public_key=2bbd2a5096ab44714f1e818695bd722095772b2a8149ff0637c7ed0bc3b15e49
+probe_ok transport=udp bytes=32 elapsed_ms=1
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":1,"probe_size":1389,"padding_len":1267 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":1,"probe_size":1389 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":2,"probe_size":1445,"padding_len":1323 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_retry","seq":2,"probe_size":1445 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":3,"probe_size":1445,"padding_len":1323 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_lowered_bound","seq":3,"probe_size":1445 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":4,"probe_size":1417,"padding_len":1295 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_retry","seq":4,"probe_size":1417 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":5,"probe_size":1417,"padding_len":1295 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_lowered_bound","seq":5,"probe_size":1417 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":6,"probe_size":1403,"padding_len":1281 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_retry","seq":6,"probe_size":1403 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":7,"probe_size":1403,"padding_len":1281 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_lowered_bound","seq":7,"probe_size":1403 }
+{"experiment_id":"plpmtud-v6-sb1400-l1-long","role":"client","subsystem":"plpmtud","event":"plpmtud_deadline","seq":7 }

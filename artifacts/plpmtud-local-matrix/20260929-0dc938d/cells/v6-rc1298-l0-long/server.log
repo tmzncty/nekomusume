@@ -1,0 +1,3 @@
+server_public_key=6547000c44dec9178fa8c0031d49ed9072b42d7b1a7d3bc316e168a171f5b00c
+lifecycle_state=READY readiness=true
+neko: data receive failed

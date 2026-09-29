@@ -1,0 +1,20 @@
+client_public_key=254cada1c38e2065222d47e33ef7e25e5ace17172dc988b2a31b1cb1bf62017e
+probe_ok transport=udp bytes=32 elapsed_ms=1051
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":1,"probe_size":1389,"padding_len":1267 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":1,"probe_size":1389 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":2,"probe_size":1445,"padding_len":1323 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":2,"probe_size":1445 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":3,"probe_size":1473,"padding_len":1351 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":3,"probe_size":1473 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":4,"probe_size":1487,"padding_len":1365 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":4,"probe_size":1487 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":5,"probe_size":1494,"padding_len":1372 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":5,"probe_size":1494 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":6,"probe_size":1497,"padding_len":1375 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":6,"probe_size":1497 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":7,"probe_size":1499,"padding_len":1377 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":7,"probe_size":1499 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":8,"probe_size":1500,"padding_len":1378 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":8,"probe_size":1500 }
+{"experiment_id":"plpmtud-v6-rc1500-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_converged","seq":8,"confirmed_mtu":1500 }
+plpmtud_converged transport=udp bytes=32 confirmed_mtu=1500

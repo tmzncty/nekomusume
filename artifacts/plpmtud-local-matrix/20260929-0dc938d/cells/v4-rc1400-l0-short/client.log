@@ -1,0 +1,28 @@
+client_public_key=b2bb5907cfe306f8f19cf52d93df05784567e8f4ad9fa34879416280d329b561
+probe_ok transport=udp bytes=32 elapsed_ms=1
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":1,"probe_size":1389,"padding_len":1287 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":1,"probe_size":1389 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":2,"probe_size":1445,"padding_len":1343 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_retry","seq":2,"probe_size":1445 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":3,"probe_size":1445,"padding_len":1343 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_lowered_bound","seq":3,"probe_size":1445 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":4,"probe_size":1417,"padding_len":1315 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_retry","seq":4,"probe_size":1417 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":5,"probe_size":1417,"padding_len":1315 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_lowered_bound","seq":5,"probe_size":1417 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":6,"probe_size":1403,"padding_len":1301 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_retry","seq":6,"probe_size":1403 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":7,"probe_size":1403,"padding_len":1301 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_lowered_bound","seq":7,"probe_size":1403 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":8,"probe_size":1396,"padding_len":1294 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":8,"probe_size":1396 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":9,"probe_size":1399,"padding_len":1297 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":9,"probe_size":1399 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":10,"probe_size":1401,"padding_len":1299 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_retry","seq":10,"probe_size":1401 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":11,"probe_size":1401,"padding_len":1299 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_timeout_lowered_bound","seq":11,"probe_size":1401 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_sent","seq":12,"probe_size":1400,"padding_len":1298 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_probe_acked","seq":12,"probe_size":1400 }
+{"experiment_id":"plpmtud-v4-rc1400-l0-short","role":"client","subsystem":"plpmtud","event":"plpmtud_converged","seq":12,"confirmed_mtu":1400 }
+plpmtud_converged transport=udp bytes=32 confirmed_mtu=1400
