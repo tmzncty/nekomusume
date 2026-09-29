@@ -7725,6 +7725,28 @@ pub struct ReliableUdpRuntime {
     /// teardown every data/feedback mutator is fail-closed or observationally
     /// inert; a fresh same-generation runtime never silently re-opens.
     torn_down: bool,
+    /// Opt-in packetization-layer PMTU discovery for this path generation.
+    /// `None` (the default) means no probe can ever be produced. Probes live
+    /// entirely outside `recovery`, `retransmit` and `packet_frames`: they are
+    /// not data, are never charged to bytes-in-flight, and their loss is never
+    /// congestion loss or Session/carrier retransmission work.
+    pmtu: Option<neko_reliable::Plpmtud>,
+}
+
+/// Why a runtime PLPMTUD operation was refused. Every refusal leaves the
+/// runtime unchanged: no probe id or probe budget is consumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PmtuRuntimeError {
+    /// PLPMTUD was not enabled on this runtime (the default).
+    NotEnabled,
+    /// `enable_plpmtud` was already called for this runtime.
+    AlreadyEnabled,
+    /// The runtime is torn down; probing is fail-closed.
+    TornDown,
+    /// The congestion window cannot admit a probe of this size right now.
+    CongestionWindowFull,
+    /// The state model refused the operation.
+    Model(neko_reliable::PlpmtudError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7773,7 +7795,106 @@ impl ReliableUdpRuntime {
             manager,
             packet_frames: BTreeMap::new(),
             torn_down: false,
+            pmtu: None,
         })
+    }
+
+    /// Opt in to PLPMTUD for this runtime's path generation. The model is bound
+    /// to the runtime generation, so a probe ACK from any other generation is
+    /// stale. Enabling twice is refused rather than silently resetting evidence.
+    pub fn enable_plpmtud(
+        &mut self,
+        config: neko_reliable::PlpmtudConfig,
+    ) -> Result<(), PmtuRuntimeError> {
+        if self.torn_down {
+            return Err(PmtuRuntimeError::TornDown);
+        }
+        if self.pmtu.is_some() {
+            return Err(PmtuRuntimeError::AlreadyEnabled);
+        }
+        self.pmtu = Some(
+            neko_reliable::Plpmtud::new(config, self.generation)
+                .map_err(PmtuRuntimeError::Model)?,
+        );
+        Ok(())
+    }
+
+    fn pmtu_live(&mut self) -> Result<&mut neko_reliable::Plpmtud, PmtuRuntimeError> {
+        if self.torn_down {
+            return Err(PmtuRuntimeError::TornDown);
+        }
+        self.pmtu.as_mut().ok_or(PmtuRuntimeError::NotEnabled)
+    }
+
+    /// Start the next upward probe. The probe size must fit the congestion
+    /// window, but it is admission-checked only: the probe is not charged to
+    /// bytes-in-flight and is not recorded in recovery, so it can never become
+    /// congestion loss or retransmission work. The caller seals and sends it
+    /// as a probe frame, never as Session data. A refusal consumes nothing.
+    pub fn start_pmtu_probe(&mut self) -> Result<neko_reliable::Probe, PmtuRuntimeError> {
+        if self.torn_down {
+            return Err(PmtuRuntimeError::TornDown);
+        }
+        let model = self.pmtu.as_ref().ok_or(PmtuRuntimeError::NotEnabled)?;
+        if model.outstanding().is_none() && !model.converged() {
+            // Admission is checked before the model mutates: compute the size
+            // the model would pick without starting the probe.
+            let mut preview = *model;
+            let size = preview.start_probe().map_err(PmtuRuntimeError::Model)?.size;
+            if !self.recovery.can_send(u64::from(size)) {
+                return Err(PmtuRuntimeError::CongestionWindowFull);
+            }
+        }
+        self.pmtu_live()?
+            .start_probe()
+            .map_err(PmtuRuntimeError::Model)
+    }
+
+    /// Apply an authenticated probe acknowledgement. Only this can raise the
+    /// confirmed size. It never touches recovery or ACK tracking. Returns
+    /// whether the search has converged.
+    pub fn on_pmtu_probe_ack(
+        &mut self,
+        id: u64,
+        path_generation: u64,
+        size: u16,
+    ) -> Result<bool, PmtuRuntimeError> {
+        self.pmtu_live()?
+            .acknowledge(id, path_generation, size)
+            .map_err(PmtuRuntimeError::Model)
+    }
+
+    /// The outstanding probe's timer expired. This is probe-local evidence only:
+    /// it lowers the search bound after the per-size retries and never counts
+    /// as packet loss or path failure.
+    pub fn on_pmtu_probe_timeout(
+        &mut self,
+    ) -> Result<neko_reliable::ProbeTimeout, PmtuRuntimeError> {
+        self.pmtu_live()?.timeout().map_err(PmtuRuntimeError::Model)
+    }
+
+    /// A local send failed with EMSGSIZE. This only lowers the search bound;
+    /// it never raises the confirmed size and never counts as packet loss.
+    pub fn on_pmtu_emsgsize(
+        &mut self,
+        attempted_packet_size: u16,
+        reported_mtu: Option<u16>,
+    ) -> Result<neko_reliable::PmtuSendOutcome, PmtuRuntimeError> {
+        Ok(self
+            .pmtu_live()?
+            .on_emsgsize(attempted_packet_size, reported_mtu))
+    }
+
+    /// Confirmed packetization size, or `None` if PLPMTUD is not enabled.
+    pub fn pmtu_confirmed_mtu(&self) -> Option<u16> {
+        self.pmtu
+            .as_ref()
+            .map(neko_reliable::Plpmtud::confirmed_mtu)
+    }
+
+    /// Read-only view of the PLPMTUD model, if enabled.
+    pub fn pmtu_state(&self) -> Option<&neko_reliable::Plpmtud> {
+        self.pmtu.as_ref()
     }
 
     /// Mark TCP standby ready so a degradation can promote it.
@@ -8081,6 +8202,8 @@ impl ReliableUdpRuntime {
         // ranges, largest_observed and the pending ACK obligation do not
         // survive terminalization for this generation.
         self.acks = PacketAckTracker::new(self.generation);
+        // PLPMTUD: an outstanding probe does not survive terminalization.
+        self.pmtu = None;
         // H-R9-065: mark the runtime terminal — every data/feedback mutator
         // is fail-closed or observationally inert from here on.
         self.torn_down = true;
@@ -8742,6 +8865,215 @@ mod path_recovery_tests {
                 path: PathId(2),
                 generation: PathGeneration(1)
             })
+        );
+    }
+
+    fn pmtu_config() -> neko_reliable::PlpmtudConfig {
+        neko_reliable::PlpmtudConfig {
+            base_mtu: 1200,
+            max_mtu: 1500,
+            attempts_per_size: 2,
+            max_probes: 32,
+            blackhole_threshold: 3,
+        }
+    }
+
+    /// Everything a probe must NOT touch, as one comparable snapshot.
+    fn data_path_snapshot(rt: &ReliableUdpRuntime) -> (usize, u64, u64, u64, usize) {
+        (
+            rt.in_flight(),
+            rt.recovery_bytes_in_flight(),
+            rt.packets_sent(),
+            rt.packets_lost(),
+            rt.retained_frames(),
+        )
+    }
+
+    #[test]
+    fn plpmtud_is_opt_in_and_every_operation_refuses_until_enabled() {
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        assert_eq!(rt.pmtu_confirmed_mtu(), None);
+        assert!(rt.pmtu_state().is_none());
+        assert_eq!(rt.start_pmtu_probe(), Err(PmtuRuntimeError::NotEnabled));
+        assert_eq!(
+            rt.on_pmtu_probe_ack(0, 1, 1350),
+            Err(PmtuRuntimeError::NotEnabled)
+        );
+        assert_eq!(
+            rt.on_pmtu_probe_timeout(),
+            Err(PmtuRuntimeError::NotEnabled)
+        );
+        assert_eq!(
+            rt.on_pmtu_emsgsize(1400, None),
+            Err(PmtuRuntimeError::NotEnabled)
+        );
+        // The ordinary data path is unchanged by those refusals.
+        assert_eq!(data_path_snapshot(&rt), (0, 0, 0, 0, 0));
+        rt.on_packet_sent(0, 0, 400, FrameId(7), b"data").unwrap();
+        assert_eq!(data_path_snapshot(&rt), (1, 400, 1, 0, 1));
+    }
+
+    #[test]
+    fn plpmtud_enable_validates_config_binds_generation_and_refuses_twice() {
+        let mut rt = ReliableUdpRuntime::new(9, 1200).unwrap();
+        let mut bad = pmtu_config();
+        bad.max_mtu = 1100;
+        assert_eq!(
+            rt.enable_plpmtud(bad),
+            Err(PmtuRuntimeError::Model(
+                neko_reliable::PlpmtudError::InvalidConfig
+            ))
+        );
+        assert!(rt.pmtu_state().is_none(), "a refused enable stores nothing");
+        rt.enable_plpmtud(pmtu_config()).unwrap();
+        assert_eq!(rt.pmtu_state().unwrap().generation(), 9);
+        assert_eq!(rt.pmtu_confirmed_mtu(), Some(1200));
+        assert_eq!(
+            rt.enable_plpmtud(pmtu_config()),
+            Err(PmtuRuntimeError::AlreadyEnabled)
+        );
+        // An ACK bound to another generation is stale.
+        let probe = rt.start_pmtu_probe().unwrap();
+        assert_eq!(probe.path_generation, 9);
+        assert_eq!(
+            rt.on_pmtu_probe_ack(probe.id, 8, probe.size),
+            Err(PmtuRuntimeError::Model(
+                neko_reliable::PlpmtudError::StaleAck
+            ))
+        );
+        assert_eq!(rt.pmtu_state().unwrap().outstanding(), Some(probe));
+    }
+
+    #[test]
+    fn plpmtud_probe_loss_and_ack_never_touch_recovery_reno_or_retransmit() {
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.enable_plpmtud(pmtu_config()).unwrap();
+        // Some real data is in flight alongside the probes.
+        rt.on_packet_sent(0, 0, 400, FrameId(1), b"data").unwrap();
+        let before = data_path_snapshot(&rt);
+        assert_eq!(before, (1, 400, 1, 0, 1));
+
+        // Probe 1350 is lost on both attempts: the bound drops, nothing else moves.
+        let p = rt.start_pmtu_probe().unwrap();
+        assert_eq!(p.size, 1350);
+        assert_eq!(data_path_snapshot(&rt), before);
+        assert!(matches!(
+            rt.on_pmtu_probe_timeout(),
+            Ok(neko_reliable::ProbeTimeout::Retry(_))
+        ));
+        assert_eq!(
+            rt.on_pmtu_probe_timeout(),
+            Ok(neko_reliable::ProbeTimeout::ReducedUpperBound)
+        );
+        assert_eq!(rt.pmtu_state().unwrap().upper_bound(), 1349);
+        assert_eq!(
+            data_path_snapshot(&rt),
+            before,
+            "probe loss is not packet loss"
+        );
+        assert_eq!(rt.recovery_engine().pto_count, 0, "probe loss is not a PTO");
+
+        // The next probe is acknowledged: only the confirmed size moves.
+        let q = rt.start_pmtu_probe().unwrap();
+        assert_eq!(q.size, 1275);
+        assert_eq!(rt.on_pmtu_probe_ack(q.id, 1, q.size), Ok(false));
+        assert_eq!(rt.pmtu_confirmed_mtu(), Some(1275));
+        assert_eq!(data_path_snapshot(&rt), before);
+
+        // A duplicate of that ACK is refused and changes nothing.
+        assert_eq!(
+            rt.on_pmtu_probe_ack(q.id, 1, q.size),
+            Err(PmtuRuntimeError::Model(
+                neko_reliable::PlpmtudError::NoOutstandingProbe
+            ))
+        );
+        assert_eq!(rt.pmtu_confirmed_mtu(), Some(1275));
+
+        // The data packet's own ACK still resolves exactly as it would without PLPMTUD.
+        let mut ranges = AckRanges::new(32).unwrap();
+        ranges.insert(0).unwrap();
+        let out = rt.apply_ack(&ranges, 10_000, 0).unwrap();
+        assert_eq!(out.acked_packets, vec![0]);
+        assert!(out.lost_packets.is_empty());
+        assert!(out.retransmit_frames.is_empty());
+        assert_eq!(data_path_snapshot(&rt), (0, 0, 1, 0, 0));
+    }
+
+    #[test]
+    fn plpmtud_probe_admission_is_checked_before_mutation() {
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.enable_plpmtud(pmtu_config()).unwrap();
+        // Fill the initial window (10 * 1200 = 12000) to within 1349 bytes, so the
+        // first probe (1350) does not fit but a 1349-byte send would.
+        rt.on_packet_sent(0, 0, 12_000 - 1_349, FrameId(1), b"fill")
+            .unwrap();
+        assert!(rt.can_send(1349));
+        assert!(!rt.can_send(1350));
+        let model_before = *rt.pmtu_state().unwrap();
+        let data_before = data_path_snapshot(&rt);
+        assert_eq!(
+            rt.start_pmtu_probe(),
+            Err(PmtuRuntimeError::CongestionWindowFull)
+        );
+        // Refusal consumed no probe id and no probe budget.
+        assert_eq!(*rt.pmtu_state().unwrap(), model_before);
+        assert_eq!(data_path_snapshot(&rt), data_before);
+        // Once the window drains, the same first probe is produced with id 0.
+        let mut ranges = AckRanges::new(32).unwrap();
+        ranges.insert(0).unwrap();
+        rt.apply_ack(&ranges, 1_000, 0).unwrap();
+        let p = rt.start_pmtu_probe().unwrap();
+        assert_eq!((p.id, p.size), (0, 1350));
+        // A second probe while one is outstanding is refused by the model.
+        assert_eq!(
+            rt.start_pmtu_probe(),
+            Err(PmtuRuntimeError::Model(
+                neko_reliable::PlpmtudError::ProbeOutstanding
+            ))
+        );
+    }
+
+    #[test]
+    fn plpmtud_emsgsize_lowers_only_the_search_bound() {
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.enable_plpmtud(pmtu_config()).unwrap();
+        assert_eq!(
+            rt.on_pmtu_emsgsize(1400, Some(1300)),
+            Ok(neko_reliable::PmtuSendOutcome::RetryAt(1200))
+        );
+        assert_eq!(rt.pmtu_state().unwrap().upper_bound(), 1300);
+        assert_eq!(rt.pmtu_confirmed_mtu(), Some(1200));
+        assert_eq!(
+            rt.on_pmtu_emsgsize(1200, None),
+            Ok(neko_reliable::PmtuSendOutcome::BaseIncompatible)
+        );
+        assert_eq!(data_path_snapshot(&rt), (0, 0, 0, 0, 0));
+    }
+
+    #[test]
+    fn plpmtud_is_fail_closed_after_teardown() {
+        let mut rt = ReliableUdpRuntime::new(1, 1200).unwrap();
+        rt.enable_plpmtud(pmtu_config()).unwrap();
+        let p = rt.start_pmtu_probe().unwrap();
+        rt.teardown();
+        assert!(
+            rt.pmtu_state().is_none(),
+            "probe state does not survive teardown"
+        );
+        assert_eq!(rt.pmtu_confirmed_mtu(), None);
+        assert_eq!(rt.start_pmtu_probe(), Err(PmtuRuntimeError::TornDown));
+        assert_eq!(
+            rt.on_pmtu_probe_ack(p.id, 1, p.size),
+            Err(PmtuRuntimeError::TornDown)
+        );
+        assert_eq!(rt.on_pmtu_probe_timeout(), Err(PmtuRuntimeError::TornDown));
+        assert_eq!(
+            rt.on_pmtu_emsgsize(1400, None),
+            Err(PmtuRuntimeError::TornDown)
+        );
+        assert_eq!(
+            rt.enable_plpmtud(pmtu_config()),
+            Err(PmtuRuntimeError::TornDown)
         );
     }
 

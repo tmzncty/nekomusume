@@ -958,3 +958,38 @@ a conservative candidate-process manifest: all release gates are false. This
 slice adds no wire negotiation implementation and does not establish
 previous/current interoperability, security review, WAN evidence, production,
 public exposure, 0-RTT, FEC or multipath.
+
+
+## 2026-09-29 — D067：Live PLPMTUD integration — runtime seam, and open policy candidates
+
+**Status: Candidate — carrier seam only; no wire frame, socket, CLI or live probing.
+Policy values below are NOT decided.**
+
+`neko_carrier::ReliableUdpRuntime` gains an opt-in, default-off
+`neko_reliable::Plpmtud`. The probe path is kept entirely outside `Recovery`, Reno
+bytes-in-flight, `RetransmitBuffer` and the packet→frame map. A probe is therefore
+not Session data: its loss is never congestion loss, never a PTO, and never
+retransmission work. A probe also never enters the ACK packet-number space; it is
+confirmed only by an explicit authenticated probe-ACK bound to
+`(probe id, path generation, exact size)`. Admission against the congestion window
+is checked before the model mutates, so a refusal consumes no probe id or budget.
+Teardown drops probe state and fails every probe operation closed. The plan is
+`docs/notes/plpmtud-live-integration-plan-20260929.md`.
+
+Open policy candidates. They need a maintainer decision (routed through Session
+85461) before any value is made a default or used outside an explicit opt-in:
+
+1. **Probe congestion charging.** The ADR says probes "consume the same carrier
+   pacing/congestion budget". The seam currently only *admission-checks* probe size
+   against cwnd and does not charge bytes-in-flight. Charging would need a
+   probe-owned charge/release path that stays out of loss accounting. Candidate:
+   keep admission-only until decided.
+2. **Probe size ceiling** (`max_mtu`). ADR example 1500, with `PathMtuLimits`
+   header accounting of 28 (IPv4) / 48 (IPv6) bytes.
+3. **Retry and budget.** Attempts per size (ADR candidate 2) and total probes per
+   path generation (ADR candidate 32).
+4. **Cadence and cooldown.** At most one probe per RTT, ≤1% of path bytes over a
+   rolling interval, and a black-hole cooldown (ADR candidates; no value chosen).
+
+No wire, CLI, socket, ICMP/PTB, IPv6, READY_LIVE, release-flag, H-I4-119 or D019
+change.
