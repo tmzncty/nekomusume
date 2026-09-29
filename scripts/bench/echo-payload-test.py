@@ -4,12 +4,18 @@ ROOT=pathlib.Path(__file__).resolve().parents[2]
 TOOL=ROOT/"scripts/bench/echo-payload.py"
 with tempfile.TemporaryDirectory() as td:
     payload=pathlib.Path(td)/"payload"; payload.write_bytes(b"equal-application-payload")
+    payload_bytes=b"equal-application-payload"
     listener=socket.socket(); listener.bind(("127.0.0.1",0)); listener.listen(1)
     port=listener.getsockname()[1]
     def echo():
         conn,_=listener.accept()
         with conn:
-            while data:=conn.recv(4096): conn.sendall(data)
+            received=0
+            while received<len(payload_bytes):
+                data=conn.recv(len(payload_bytes)-received)
+                if not data: break
+                received+=len(data)
+                conn.sendall(data)
         listener.close()
     thread=threading.Thread(target=echo); thread.start()
     out=subprocess.run([sys.executable,str(TOOL),"--host","127.0.0.1","--port",str(port),"--payload-file",str(payload),"--timeout","2"],text=True,capture_output=True,check=True)

@@ -30,7 +30,12 @@ try:
     with socket.create_connection((a.host, a.port), timeout=a.timeout) as s:
         s.settimeout(a.timeout)
         s.sendall(payload)
-        s.shutdown(socket.SHUT_WR)
+        # 85461-decided benchmark posture (2026-09-30): send, receive the full
+        # bounded response, then close. No pre-read half-close — hysteria
+        # v2.9.3 client forwarding tears down both directions on either
+        # io.Copy exit, so an early FIN discards the return path (see
+        # docs/notes/hy2-hy2-1-client-exit-rootcause-20260930.md). Half-close
+        # tolerance is a conformance question, not this benchmark's workload.
         chunks, received = [], 0
         while received < len(payload):
             chunk = s.recv(min(65536, len(payload) - received))
