@@ -1154,14 +1154,17 @@ fn plpmtud_client_probe_loop(
             );
             break;
         }
-        let probe = match model.start_probe() {
-            Ok(p) => p,
-            Err(neko_reliable::PlpmtudError::NoProbeNeeded) => break,
-            // The model keeps an outstanding probe until its ack or its timeout;
-            // ProbeOutstanding cannot occur here because each iteration resolves
-            // the previous probe before the next start_probe. Any other refusal is
-            // a closed stop (the client exits nonzero; it never guesses).
-            Err(e) => fail(&format!("plpmtud probe start failed: {e:?}")),
+        // A probe stays outstanding until it is acked or exhausts its
+        // attempts. On a retry the SAME probe is resent (same id and size);
+        // only when nothing is outstanding does a new probe start. This is
+        // RFC 8899 behaviour and the matrix's timeout cells depend on it.
+        let probe = match model.outstanding() {
+            Some(p) => p,
+            None => match model.start_probe() {
+                Ok(p) => p,
+                Err(neko_reliable::PlpmtudError::NoProbeNeeded) => break,
+                Err(e) => fail(&format!("plpmtud probe start failed: {e:?}")),
+            },
         };
         probe_seq += 1;
         if let Some(t) = last_send
