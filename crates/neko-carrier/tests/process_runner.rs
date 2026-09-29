@@ -197,6 +197,9 @@ fn receiver_process(
             ProcessMessage::ReadinessRequest { .. } | ProcessMessage::ReadinessResponse { .. } => {
                 panic!("readiness on data runner input")
             }
+            ProcessMessage::PmtuProbe { .. } | ProcessMessage::PmtuProbeAck { .. } => {
+                panic!("pmtu probe on data runner input")
+            }
         }
     }
     runtime.close_graceful(5).unwrap();
