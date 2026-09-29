@@ -1039,6 +1039,37 @@ If measurement shows a value is unsuitable (for example 1500 black-holes on the 
 path, or the 1% limit lets no probe out in a short session), the data is recorded and
 reported to 85461. Values are not changed unilaterally.
 
+**DF / fragmentation behaviour (measured 2026-09-29, before any socket change).**
+The carrier sets no `IP_MTU_DISCOVER` / `IPV6_MTU_DISCOVER` / `IPV6_DONTFRAG` today.
+Three namespaces A–R–B were used, with the bottleneck on R's egress (mid-path) and
+Linux 6.8 defaults (`ip_no_pmtu_disc=0`):
+
+| Case | Default socket | `PMTUDISC_PROBE` socket |
+|---|---|---|
+| v4 1400 over a 1278 hop, first send | lost; R returns ICMP frag-needed (mtu 1278); A caches PMTU 1278 | lost; ICMP returned; **cache ignored** |
+| v4 1400, second send after the ICMP | **delivered** (fragmented at source from the cache) | lost again |
+| v6 1400 over a 1350 hop, first send | lost; R returns Packet Too Big; A caches 1350 | lost |
+| v6 1400, second send after the PTB | **delivered** (source fragmentation) | lost again |
+| datagram that fits the hop | delivered | delivered |
+| sender's own interface smaller than the datagram | v4: fragmented and delivered | v4: local **EMSGSIZE** at `sendto` |
+
+So with the default socket a probe *above* the path MTU succeeds from its second
+attempt onward. That is a false success, confirming 85461's concern. With
+`PMTUDISC_PROBE` it never does. PLPMTUD evidence is therefore invalid unless the
+probe socket sets DF/PROBE.
+
+Two further facts:
+
+- **Router ICMP versus silent black hole are different paths.** An undersized hop
+  on a router returns ICMP (v4 frag-needed / v6 PTB). A `tc` `basic` filter on R's
+  egress matching the **L3 total length** (`cmp(u16 at 2 layer network gt 1300)`
+  for v4; for v6, IPv6 payload length `at 4 gt 1260`, which is L3 total > 1300)
+  drops silently. Both tc drop counters incremented, and no new ICMP reached A.
+- **IPv6 cannot run over a 1278-byte link.** IPv6 requires a minimum link MTU of
+  1280. At 1278 the kernel removes the interface's IPv6 addresses, and a v6 `sendto`
+  returns `ENETUNREACH`. The v6 base datagram is 1298 anyway, so an "IPv6 × 1278"
+  matrix cell cannot be constructed.
+
 **Defect found while measuring (not fixed here):** `failover` accepts `--bytes` up to
 1200 (`MAX_BYTES = MAX_UNRELIABLE_DATAGRAM`), but that cap is applied to the user
 payload. `seal_unreliable` applies the same 1200 cap to the *encoded logical frame*,
