@@ -106,6 +106,17 @@ SHA-256 `dfea1d31bf1a37101da21df5918a28cd24a19cef0d8fbb291e8d333bfda591b6`
 (1,526,168 bytes, exact tree `a82b5d7`). No gate re-run, no rebuild, no redeploy
 across A/B, per the approval conditions.
 
+**Superseded (2026-09-29, after `0dc938d`).** Exact tree `0dc938d` repairs the
+probe loop (after `ProbeTimeout::Retry` the probe is resent, not restarted — the
+`a82b5d7` loop exited 2 with `ProbeOutstanding` on any loss path, which the
+loopback test could not see). Any loss-path run, including this VPS run, must use
+the `0dc938d`-tree binary:
+SHA-256 `b443ad9905c2657fcbc756ff35a8280e8e7550419a5f509f24a9b7a7e4e4339b`
+(1,526,248 bytes; gate record `check-gate-0dc938d-20260929.md`). The `dfea1d31…`
+fingerprint above is retained for history only and is void for execution. The
+approval conditions are unchanged: one frozen build for the whole A+B window, no
+gate re-run, no rebuild, no redeploy between phases.
+
 ## Original open question for 85461
 
 Does the two-phase shape (A then B in one deployment and window) count as the one
