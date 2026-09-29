@@ -7,6 +7,7 @@ mod framed;
 mod health_window;
 mod multistream;
 mod periodic;
+mod pmtu_socket;
 mod preauth;
 mod reachability;
 
