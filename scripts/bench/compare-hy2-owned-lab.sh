@@ -192,7 +192,20 @@ run_client(){
    python3 "$run/process-resource-sampler.py" --experiment-id "$impl-owned-lab-$run_no" --implementation "$impl" --role client --identity "sha256:${client_identity[$impl]}" --application-bytes "$BYTES" --owned-port "$owned_port" --interval-ms 10 --max-seconds "$TIMEOUT" --output "$resource" -- bash -c "$cmd" >"$raw" 2>"$run/client.err"
  rc=$?; set -e
  ended_at=$(date -u +%FT%TZ)
- diagnostics=$run/client.err; [ "$impl" != hy2 ] || diagnostics=$run/hy2-client-$run_no.log
+ diagnostics=$run/client.err
+ if [ "$impl" = hy2 ]; then
+  # The echo client's stderr carries the payload-exchange failure reason.
+  # The transport log alone reports "connected" and "shutting down" even
+  # when the exchange failed, which stranded the 2026-09-08 hy2-1 sample
+  # in diagnostic category "unknown". Merge both into the diagnostics file
+  # (transport log first, then the echo client stderr) so the bundle
+  # classifies the actual failure.
+  diagnostics=$run/hy2-client-$run_no.log
+  if [ -s "$run/client.err" ]; then
+   printf '%s\n' '--- echo-client stderr ---' >>"$diagnostics"
+   cat "$run/client.err" >>"$diagnostics"
+  fi
+ fi
  bundle_id=$(printf %s "$out" | sha256sum | awk '{print $1}')
  bundle=$root/logs/hy2-owned-lab/$bundle_id-$impl-$run_no-private-diagnostic.json
  python3 "$validator" make-sample --implementation "$impl" --run "$run_no" --return-code "$rc" --time "$stats" --resource "$resource" --client-output "$raw" --client-diagnostics "$diagnostics" --diagnostic-bundle "$bundle" --diagnostic-started-at "$started_at" --diagnostic-ended-at "$ended_at" --diagnostic-stage client_started --bytes "$BYTES" --payload-hash "$payload_hash" --expected-identity "sha256:${client_identity[$impl]}" >"$row"

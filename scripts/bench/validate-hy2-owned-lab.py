@@ -11,6 +11,11 @@ DIAGNOSTIC_CATEGORIES = {
     "config": re.compile(r"\b(config(?:uration)?|yaml|unknown (?:field|option)|invalid (?:field|option|value))\b", re.I),
     "path": re.compile(r"\b(connection refused|no route|network is unreachable|timeout|timed out|no such file|path)\b", re.I),
     "readiness": re.compile(r"\b(not ready|readiness|listener|failed to listen|address already in use)\b", re.I),
+    # Payload-exchange failures of the echo client itself (mismatch/truncation/
+    # send errors). Ordered last: subsystem evidence (tls/auth/config/path/
+    # readiness) in the same diagnostic text outranks the generic exchange
+    # phrase, so genuine transport causes keep their precise category.
+    "payload": re.compile(r"\bpayload exchange\b", re.I),
 }
 LIFECYCLE_STAGES = ("server_bound", "client_started", "quic_udp", "tls_authenticated")
 STAGE_EVIDENCE_SCHEMA = "nekomusume.hy2-stage-evidence.v1"

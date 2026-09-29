@@ -153,7 +153,7 @@ python3 "$root/scripts/bench/validate-hy2-owned-lab.py" blocked --records /dev/n
 jq -e '.cleanup_evidence.local_processes_reaped==true and .cleanup_evidence.remote_process_groups_reaped==true and .cleanup_evidence.remote_temp_path_removed==true' "$tmp/cleanup-true.json" >/dev/null
 jq -e '.cleanup_evidence.local_processes_reaped==false and .cleanup_evidence.remote_process_groups_reaped==false and .cleanup_evidence.remote_temp_path_removed==false' "$tmp/cleanup-false.json" >/dev/null
 # Future nonzero client diagnostics retain bounded private evidence and only fixed public metadata.
-for spec in 'tls:TLS certificate pin failed' 'auth:authentication failed password=hunter2' 'config:invalid config yaml' 'path:connection refused 10.23.45.67:443 /home/private/key' 'readiness:listener not ready'; do
+for spec in 'tls:TLS certificate pin failed' 'auth:authentication failed password=hunter2' 'config:invalid config yaml' 'path:connection refused 10.23.45.67:443 /home/private/key' 'readiness:listener not ready' 'payload:payload exchange mismatch: echoed 0 of 1200 bytes with different content'; do
   category=${spec%%:*}; message=${spec#*:}; printf '%s\n' "$message" >"$tmp/diagnostic.err"
   bundle="$tmp/$category-private.json"
   python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation hy2 --run 1 --return-code 9 --time "$tmp/neko-first.time" --resource "$tmp/neko-first.resource" --client-output /dev/null --client-diagnostics "$tmp/diagnostic.err" --diagnostic-bundle "$bundle" --diagnostic-started-at 2026-09-03T00:00:00Z --diagnostic-ended-at 2026-09-03T00:00:01Z --diagnostic-stage client_started --bytes 1200 --payload-hash "$hash0" >"$tmp/diagnostic.json"
@@ -203,7 +203,7 @@ printf '%s\n' '{"application_bytes":1200,"payload_sha256":"'"$hash0"'"}' >"$tmp/
 printf '%s\n' '{"experiment_id":"nekomusume-owned-lab-1","implementation":"nekomusume","role":"client","identity":"sha256:neko-rehearsal","cpu":{"user_seconds":0.01,"system_seconds":0.02},"rss":{"max_kib":64},"fd":{"peak_count":4},"exit":{"code":0,"timed_out":false},"sampling":{"scope":"sampler-created process group"},"cleanup":{"process_reaped":true,"process_group_empty":true,"owned_sockets_after_exit":0,"complete":true}}' >"$tmp/pair-neko.resource"
 python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation nekomusume --run 1 --return-code 0 --time "$tmp/pair-neko.time" --resource "$tmp/pair-neko.resource" --client-output "$tmp/pair-neko.out" --expected-identity sha256:neko-rehearsal --bytes 1200 --payload-hash "$hash0" >"$tmp/pair-neko.json"
 jq -e '.failures==0 and .application_bytes==1200 and .payload_sha256=="'"$hash0"'" and .client_diagnostic==null' "$tmp/pair-neko.json" >/dev/null
-for spec in 'tls:TLS authentication failed' 'auth:authentication failed password=hunter2' 'config:invalid config yaml' 'path:connection refused 10.23.45.67:443 /home/private/key' 'readiness:listener not ready'; do
+for spec in 'tls:TLS authentication failed' 'auth:authentication failed password=hunter2' 'config:invalid config yaml' 'path:connection refused 10.23.45.67:443 /home/private/key' 'readiness:listener not ready' 'payload:payload exchange truncated: connection closed after 0 of 1200 bytes'; do
   category=${spec%%:*}; message=${spec#*:}; printf '%s\n' "$message" >"$tmp/pair-hy2.err"
   bundle="$tmp/pair-$category-private.json"; records="$tmp/pair-$category.jsonl"; blocked="$tmp/pair-$category-blocked.json"
   cp "$tmp/pair-neko.json" "$records"
