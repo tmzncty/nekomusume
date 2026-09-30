@@ -1500,8 +1500,21 @@ impl Plpmtud {
         attempted_packet_size: u16,
         reported_mtu: Option<u16>,
     ) -> PmtuSendOutcome {
+        // A local EMSGSIZE is authoritative feedback about the path's real
+        // capacity. The old code clamped the ceiling with `.max(confirmed)`,
+        // which hid a violated invariant: when the real ceiling is below the
+        // base, upper was silently pinned to confirmed and the caller was
+        // told to retry at confirmed — a size the same socket just refused —
+        // so the outstanding oversize probe was resent in a no-progress loop
+        // (the C4 shape: base 1278, egress MTU 1000). Now upper records the
+        // real ceiling, and a ceiling below the base is a BaseIncompatible
+        // outcome: the path cannot carry the base datagram at all, and the
+        // caller must stop rather than loop.
         let ceiling = reported_mtu.unwrap_or_else(|| attempted_packet_size.saturating_sub(1));
-        self.upper = self.upper.min(ceiling.max(self.confirmed));
+        self.upper = self.upper.min(ceiling);
+        if ceiling < self.confirmed {
+            return PmtuSendOutcome::BaseIncompatible;
+        }
         if attempted_packet_size <= self.config.base_mtu {
             PmtuSendOutcome::BaseIncompatible
         } else {
@@ -1673,18 +1686,52 @@ mod plpmtud_tests {
         assert!(!p.observe_confirmed_size_loss(1200));
     }
     #[test]
-    fn emsgsize_ceiling_defaults_below_attempt_and_is_floored_at_confirmed() {
+    fn emsgsize_ceiling_defaults_below_attempt_and_below_base_is_base_incompatible() {
         let mut p = Plpmtud::new(config(), 1).unwrap();
-        // No reported MTU: ceiling is attempted - 1.
+        // No reported MTU: ceiling is attempted - 1, still above confirmed.
         assert_eq!(p.on_emsgsize(1400, None), PmtuSendOutcome::RetryAt(1200));
         assert_eq!(p.upper_bound(), 1399);
-        // A reported MTU below confirmed never drops upper below confirmed.
+        // A reported MTU above confirmed lowers upper without failing.
         assert_eq!(
-            p.on_emsgsize(1300, Some(1000)),
+            p.on_emsgsize(1300, Some(1290)),
             PmtuSendOutcome::RetryAt(1200)
         );
-        assert_eq!(p.upper_bound(), 1200);
-        assert!(p.converged());
+        assert_eq!(p.upper_bound(), 1290);
+        assert!(!p.converged());
+    }
+
+    #[test]
+    fn emsgsize_ceiling_below_base_is_base_incompatible_and_upper_records_truth() {
+        let mut p = Plpmtud::new(config(), 1).unwrap();
+        // The real path capacity is below the search base: the invariant
+        // upper >= confirmed cannot hold, and the honest outcome is
+        // BaseIncompatible, never a retry loop at the refused size.
+        assert_eq!(
+            p.on_emsgsize(1300, Some(1000)),
+            PmtuSendOutcome::BaseIncompatible
+        );
+        assert_eq!(p.upper_bound(), 1000);
+        // The C4 shape: base 1278 (the measured carrier base), a small-MTU
+        // egress of 1000. The very first probe above the base gets EMSGSIZE
+        // feedback whose ceiling is below the base.
+        let mut c4 = PlpmtudConfig {
+            base_mtu: 1278,
+            max_mtu: 1500,
+            attempts_per_size: 2,
+            max_probes: 32,
+            blackhole_threshold: 3,
+        };
+        c4.max_probes = 32;
+        let mut c = Plpmtud::new(c4, 1).unwrap();
+        let q = c.start_probe().unwrap();
+        assert_eq!(q.size, 1389);
+        assert_eq!(
+            c.on_emsgsize(q.size, Some(1000)),
+            PmtuSendOutcome::BaseIncompatible
+        );
+        assert_eq!(c.upper_bound(), 1000);
+        // A second EMSGSIZE at the base itself stays BaseIncompatible.
+        assert_eq!(c.on_emsgsize(1278, None), PmtuSendOutcome::BaseIncompatible);
     }
     #[test]
     fn reset_generation_restores_upper_probe_budget_and_loss_run() {
