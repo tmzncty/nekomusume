@@ -1512,6 +1512,13 @@ impl Plpmtud {
         // caller must stop rather than loop.
         let ceiling = reported_mtu.unwrap_or_else(|| attempted_packet_size.saturating_sub(1));
         self.upper = self.upper.min(ceiling);
+        // The refused probe is finished: EMSGSIZE is local, deterministic
+        // feedback, so resending the same outstanding size can never succeed.
+        // Clearing the outstanding probe lets the next start_probe() pick a
+        // size from the narrowed interval instead of the caller resending the
+        // refused one in a no-progress loop (the measured C4 shape: 600
+        // resend events in one session with no search movement).
+        self.outstanding = None;
         if ceiling < self.confirmed {
             return PmtuSendOutcome::BaseIncompatible;
         }
@@ -1732,6 +1739,36 @@ mod plpmtud_tests {
         assert_eq!(c.upper_bound(), 1000);
         // A second EMSGSIZE at the base itself stays BaseIncompatible.
         assert_eq!(c.on_emsgsize(1278, None), PmtuSendOutcome::BaseIncompatible);
+    }
+
+    #[test]
+    fn emsgsize_clears_outstanding_so_the_search_moves_instead_of_resending() {
+        // The None-reported-MTU client shape: each EMSGSIZE can only imply
+        // ceiling = attempted - 1. The outstanding probe must be cleared so
+        // the next start_probe() narrows the size, never resends the refused
+        // one; the interval exhausts in bounded steps instead of looping.
+        let mut p = Plpmtud::new(config(), 1).unwrap();
+        let mut steps = 0;
+        loop {
+            steps += 1;
+            assert!(steps <= 12, "search did not exhaust in bounded steps");
+            let q = match p.start_probe() {
+                Ok(q) => q,
+                Err(PlpmtudError::NoProbeNeeded) => break,
+                Err(e) => panic!("unexpected {e:?}"),
+            };
+            // Simulate the client's EMSGSIZE at send time with no MTU value.
+            match p.on_emsgsize(q.size, None) {
+                PmtuSendOutcome::RetryAt(_) => {}
+                PmtuSendOutcome::BaseIncompatible => panic!("base rejected mid-search"),
+                PmtuSendOutcome::Sent => unreachable!(),
+            }
+            // The invariant under repair: nothing stays outstanding after an
+            // EMSGSIZE, so a resend loop is structurally impossible.
+            assert_eq!(p.outstanding(), None);
+        }
+        assert!((2..=12).contains(&steps));
+        assert!(p.converged() || p.upper_bound() <= 1200 + 1);
     }
     #[test]
     fn reset_generation_restores_upper_probe_budget_and_loss_run() {
