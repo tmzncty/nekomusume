@@ -49,8 +49,11 @@ pub(crate) fn set_probe_df(_socket: &UdpSocket) -> io::Result<()> {
     ))
 }
 
-/// The kernel's current MTU for a *connected* socket's route. Diagnostic only:
-/// PLPMTUD never takes its decision from this value.
+/// The kernel's current MTU for a *connected* socket's route. Fix 3
+/// (2026-09-30): after a local EMSGSIZE this value is fed to the PLPMTUD
+/// model as `reported_mtu` (one-step below-base detection); it is never
+/// used to raise or confirm any size — only an authenticated probe ACK can
+/// do that.
 #[cfg(target_os = "linux")]
 pub(crate) fn kernel_path_mtu(socket: &UdpSocket) -> io::Result<u32> {
     use rustix::net::sockopt::{ip_mtu, ipv6_mtu};

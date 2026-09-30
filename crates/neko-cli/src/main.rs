@@ -1140,19 +1140,31 @@ fn plpmtud_client_probe_loop(
             break;
         }
         if model.converged() {
-            emit_plpmtud(
-                args,
-                "plpmtud_converged",
-                probe_seq,
-                &format!(",\"confirmed_mtu\":{}", model.confirmed_mtu()),
-            );
-            println!(
-                "plpmtud_converged transport={} bytes={} confirmed_mtu={}",
-                transport,
-                max,
-                model.confirmed_mtu()
-            );
-            break;
+            // Fix 3: a fold onto the base under EMSGSIZE evidence has never
+            // actually transmitted the base size. Verify it with one real
+            // base-sized probe before reporting convergence; if that probe
+            // is also refused, the honest outcome is BaseIncompatible.
+            if model.needs_base_verification()
+                && let Err(e) = model.start_base_verification_probe()
+            {
+                fail(&format!("plpmtud base verification start failed: {e:?}"));
+            }
+            let pending_base_check = model.outstanding().is_some();
+            if !pending_base_check {
+                emit_plpmtud(
+                    args,
+                    "plpmtud_converged",
+                    probe_seq,
+                    &format!(",\"confirmed_mtu\":{}", model.confirmed_mtu()),
+                );
+                println!(
+                    "plpmtud_converged transport={} bytes={} confirmed_mtu={}",
+                    transport,
+                    max,
+                    model.confirmed_mtu()
+                );
+                break;
+            }
         }
         // A probe stays outstanding until it is acked or exhausts its
         // attempts. On a retry the SAME probe is resent (same id and size);
@@ -1190,7 +1202,14 @@ fn plpmtud_client_probe_loop(
             // EMSGSIZE with DF on: the local interface cannot carry this
             // datagram. Local MTU evidence only — it lowers the search bound,
             // never the confirmed size, never congestion state.
-            match model.on_emsgsize(probe.size, None) {
+            // Fix 3: feed the kernel's path-MTU estimate (pmtu_socket
+            // adapter, rustix; EMSGSIZE implies the route is resolvable and
+            // the value is populated) so a below-base path is judged in one
+            // step instead of folding onto an unverified base.
+            let reported = crate::pmtu_socket::kernel_path_mtu(socket)
+                .ok()
+                .and_then(|v| u16::try_from(v).ok());
+            match model.on_emsgsize(probe.size, reported) {
                 neko_reliable::PmtuSendOutcome::Sent => unreachable!(),
                 neko_reliable::PmtuSendOutcome::RetryAt(size) => {
                     emit_plpmtud(

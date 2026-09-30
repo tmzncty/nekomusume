@@ -1328,6 +1328,11 @@ pub struct Plpmtud {
     config: PlpmtudConfig,
     generation: u64,
     confirmed: u16,
+    /// EMSGSIZE evidence exists in this generation: the local socket has
+    /// refused at least one size, so the configured base is an assumption
+    /// that must be verified before a fold-to-base may be reported as
+    /// converged (fix 3).
+    emsgsize_seen: bool,
     upper: u16,
     next_probe_id: u64,
     probes_started: u16,
@@ -1396,6 +1401,7 @@ impl Plpmtud {
             config,
             generation,
             confirmed: config.base_mtu,
+            emsgsize_seen: false,
             upper: config.max_mtu,
             next_probe_id: 0,
             probes_started: 0,
@@ -1461,6 +1467,10 @@ impl Plpmtud {
         self.confirmed = self.confirmed.max(size);
         self.outstanding = None;
         self.base_loss_run = 0;
+        // Any acknowledged probe is at or above the base, so the path just
+        // demonstrably carried a base-sized-or-larger datagram: the base is
+        // verified for this generation.
+        self.emsgsize_seen = false;
         Ok(self.converged())
     }
     /// Timeout is probe-local loss evidence, never direct path-failure evidence.
@@ -1511,6 +1521,7 @@ impl Plpmtud {
         // outcome: the path cannot carry the base datagram at all, and the
         // caller must stop rather than loop.
         let ceiling = reported_mtu.unwrap_or_else(|| attempted_packet_size.saturating_sub(1));
+        self.emsgsize_seen = true;
         self.upper = self.upper.min(ceiling);
         // The refused probe is finished: EMSGSIZE is local, deterministic
         // feedback, so resending the same outstanding size can never succeed.
@@ -1540,6 +1551,45 @@ impl Plpmtud {
         self.outstanding = None;
         self.probes_started = 0;
         self.base_loss_run = 0;
+        self.emsgsize_seen = false;
+    }
+    /// Fix 3: after an EMSGSIZE-driven fold onto the base, the base itself
+    /// has never been transmitted. A `converged` at base under EMSGSIZE
+    /// evidence is provisional until a base-sized probe is actually sent and
+    /// acknowledged. (A fold driven purely by probe timeouts does not set
+    /// this: the path demonstrably carried the base-sized session traffic.)
+    pub fn needs_base_verification(&self) -> bool {
+        self.emsgsize_seen
+            && self.confirmed == self.config.base_mtu
+            && self.upper <= self.config.base_mtu
+    }
+    /// Issue the base-verification probe (exactly `base_mtu`, normal attempt
+    /// budget). Only valid when `needs_base_verification()`; its EMSGSIZE
+    /// maps to `BaseIncompatible` by the existing arms (ceiling below
+    /// confirmed, and attempted <= base), its ack verifies the base.
+    pub fn start_base_verification_probe(&mut self) -> Result<Probe, PlpmtudError> {
+        if self.outstanding.is_some() {
+            return Err(PlpmtudError::ProbeOutstanding);
+        }
+        if !self.needs_base_verification() {
+            return Err(PlpmtudError::NoProbeNeeded);
+        }
+        if self.probes_started >= self.config.max_probes {
+            return Err(PlpmtudError::ProbeLimit);
+        }
+        let probe = Probe {
+            id: self.next_probe_id,
+            path_generation: self.generation,
+            size: self.config.base_mtu,
+            attempts_left: self.config.attempts_per_size,
+        };
+        self.next_probe_id = self
+            .next_probe_id
+            .checked_add(1)
+            .ok_or(PlpmtudError::ProbeLimit)?;
+        self.probes_started += 1;
+        self.outstanding = Some(probe);
+        Ok(probe)
     }
 }
 
@@ -1739,6 +1789,143 @@ mod plpmtud_tests {
         assert_eq!(c.upper_bound(), 1000);
         // A second EMSGSIZE at the base itself stays BaseIncompatible.
         assert_eq!(c.on_emsgsize(1278, None), PmtuSendOutcome::BaseIncompatible);
+    }
+
+    #[test]
+    fn fix3_c4_shape_end_to_end_must_be_base_incompatible_never_converged() {
+        // The 85461-directed end-to-end pin: base 1278, real path capacity
+        // 1000. Whether the kernel reports its MTU (fix-3 mechanism a) or
+        // only attempted-1 is inferable (None shape), the terminal outcome
+        // must be BaseIncompatible; reporting converged at the unverified
+        // base is the false success fix 3 closes.
+        for reported in [Some(1000u16), None] {
+            let mut c = Plpmtud::new(
+                PlpmtudConfig {
+                    base_mtu: 1278,
+                    max_mtu: 1500,
+                    attempts_per_size: 2,
+                    max_probes: 32,
+                    blackhole_threshold: 3,
+                },
+                1,
+            )
+            .unwrap();
+            let mut saw_base_incompatible = false;
+            loop {
+                if let Some(rep) = reported {
+                    // Kernel reports the true 1000 ceiling on the first
+                    // EMSGSIZE; the model must decide immediately.
+                    let q = c.start_probe().unwrap();
+                    match c.on_emsgsize(q.size, Some(rep)) {
+                        PmtuSendOutcome::BaseIncompatible => {
+                            saw_base_incompatible = true;
+                            break;
+                        }
+                        _ => panic!("kernel-reported below-base ceiling must be immediate"),
+                    }
+                } else {
+                    // None shape: exhaust the search with attempted-1
+                    // ceilings, exactly like the client loop.
+                    let q = match c.start_probe() {
+                        Ok(q) => q,
+                        Err(PlpmtudError::NoProbeNeeded) => break,
+                        Err(e) => panic!("unexpected {e:?}"),
+                    };
+                    match c.on_emsgsize(q.size, None) {
+                        PmtuSendOutcome::RetryAt(_) => continue,
+                        PmtuSendOutcome::BaseIncompatible => {
+                            saw_base_incompatible = true;
+                            break;
+                        }
+                        PmtuSendOutcome::Sent => unreachable!(),
+                    }
+                }
+            }
+            if reported.is_some() {
+                assert!(saw_base_incompatible);
+            } else {
+                // Exhausted: converged-at-base is provisional, and the
+                // base-verification probe's EMSGSIZE must conclude
+                // BaseIncompatible. The conclusion may never be a plain
+                // converged at the unverified base.
+                assert!(!saw_base_incompatible);
+                assert!(c.needs_base_verification());
+                let v = c.start_base_verification_probe().unwrap();
+                assert_eq!(v.size, 1278);
+                let outcome = c.on_emsgsize(v.size, None);
+                assert_eq!(outcome, PmtuSendOutcome::BaseIncompatible);
+            }
+        }
+    }
+
+    #[test]
+    fn fix3_acknowledged_probe_verifies_the_base_and_clears_the_flag() {
+        let mut c = Plpmtud::new(
+            PlpmtudConfig {
+                base_mtu: 1278,
+                max_mtu: 1500,
+                attempts_per_size: 2,
+                max_probes: 32,
+                blackhole_threshold: 3,
+            },
+            1,
+        )
+        .unwrap();
+        // Fold the search with attempted-1 ceilings (client None shape)
+        // until it converges at the base under EMSGSIZE evidence.
+        loop {
+            let q = match c.start_probe() {
+                Ok(q) => q,
+                Err(PlpmtudError::NoProbeNeeded) => break,
+                Err(e) => panic!("unexpected {e:?}"),
+            };
+            match c.on_emsgsize(q.size, None) {
+                PmtuSendOutcome::RetryAt(_) => continue,
+                _ => panic!("expected RetryAt during the fold"),
+            }
+        }
+        assert!(c.needs_base_verification());
+        // A base-verification probe that is ACKed verifies the base: the
+        // flag clears and the state is a genuine converged-at-base.
+        let v = c.start_base_verification_probe().unwrap();
+        assert!(c.acknowledge(v.id, v.path_generation, v.size).is_ok());
+        assert!(!c.needs_base_verification());
+        assert_eq!(c.confirmed_mtu(), 1278);
+    }
+
+    #[test]
+    fn fix3_timeout_only_fold_needs_no_base_verification() {
+        // The path carried base-sized session traffic to get here; a fold
+        // driven purely by probe timeouts is a genuine converged, not a
+        // provisional one.
+        let mut p = Plpmtud::new(
+            PlpmtudConfig {
+                base_mtu: 1278,
+                max_mtu: 1279,
+                attempts_per_size: 2,
+                max_probes: 32,
+                blackhole_threshold: 3,
+            },
+            1,
+        )
+        .unwrap();
+        loop {
+            if let Some(_q) = p.outstanding() {
+                match p.timeout() {
+                    Ok(ProbeTimeout::Converged) => break,
+                    Ok(_) => {}
+                    Err(e) => panic!("{e:?}"),
+                }
+                continue;
+            }
+            match p.start_probe() {
+                Ok(_q) => {}
+                Err(PlpmtudError::NoProbeNeeded) => break,
+                Err(e) => panic!("{e:?}"),
+            }
+        }
+        assert!(p.converged());
+        assert!(!p.needs_base_verification());
     }
 
     #[test]
