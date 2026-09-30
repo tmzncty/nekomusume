@@ -1,0 +1,199 @@
+{
+ "c1": {
+  "long": {
+   "sent": 0,
+   "acked": 0,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": "negotiation response failed",
+   "converged": null,
+   "converged_by_timeout": false,
+   "file": "cells/c1/long.out"
+  },
+  "s1": {
+   "sent": 0,
+   "acked": 0,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": "negotiation response failed",
+   "converged": null,
+   "converged_by_timeout": false,
+   "file": "cells/c1/s1.out"
+  },
+  "s2": {
+   "sent": 0,
+   "acked": 0,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": "negotiation response failed",
+   "converged": null,
+   "converged_by_timeout": false,
+   "file": "cells/c1/s2.out"
+  }
+ },
+ "c2": {
+  "long": {
+   "sent": 6,
+   "acked": 4,
+   "timeouts": 2,
+   "emsgsize": 0,
+   "deadline": true,
+   "client_error": null,
+   "converged": null,
+   "converged_by_timeout": false,
+   "file": "cells/c2/long.out"
+  },
+  "s1": {
+   "sent": 7,
+   "acked": 2,
+   "timeouts": 5,
+   "emsgsize": 0,
+   "deadline": true,
+   "client_error": null,
+   "converged": null,
+   "converged_by_timeout": false,
+   "file": "cells/c2/s1.out"
+  },
+  "s2": {
+   "sent": 7,
+   "acked": 3,
+   "timeouts": 4,
+   "emsgsize": 0,
+   "deadline": true,
+   "client_error": null,
+   "converged": null,
+   "converged_by_timeout": false,
+   "file": "cells/c2/s2.out"
+  }
+ },
+ "c3": {
+  "long": {
+   "sent": 8,
+   "acked": 8,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": null,
+   "converged": 1500,
+   "converged_by_timeout": false,
+   "file": "cells/c3/long.out"
+  },
+  "s1": {
+   "sent": 8,
+   "acked": 8,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": null,
+   "converged": 1500,
+   "converged_by_timeout": false,
+   "file": "cells/c3/s1.out"
+  },
+  "s2": {
+   "sent": 8,
+   "acked": 8,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": null,
+   "converged": 1500,
+   "converged_by_timeout": false,
+   "file": "cells/c3/s2.out"
+  }
+ },
+ "c4": {
+  "extra": {
+   "sent": 0,
+   "acked": 0,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": "negotiation response failed",
+   "converged": null,
+   "converged_by_timeout": false,
+   "file": "cells/c4/extra.out"
+  },
+  "long": {
+   "sent": 0,
+   "acked": 0,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": "negotiation response failed",
+   "converged": null,
+   "converged_by_timeout": false,
+   "file": "cells/c4/long.out"
+  },
+  "s1": {
+   "sent": 0,
+   "acked": 0,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": "negotiation response failed",
+   "converged": null,
+   "converged_by_timeout": false,
+   "file": "cells/c4/s1.out"
+  },
+  "s2": {
+   "sent": 0,
+   "acked": 0,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": "negotiation response failed",
+   "converged": null,
+   "converged_by_timeout": false,
+   "file": "cells/c4/s2.out"
+  }
+ },
+ "c5": {
+  "attr": {
+   "sent": 8,
+   "acked": 8,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": null,
+   "converged": 1500,
+   "converged_by_timeout": false,
+   "file": "cells/c5/attr.out"
+  },
+  "long": {
+   "sent": 8,
+   "acked": 8,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": null,
+   "converged": 1500,
+   "converged_by_timeout": false,
+   "file": "cells/c5/long.out"
+  },
+  "s1": {
+   "sent": 0,
+   "acked": 0,
+   "timeouts": 0,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": "handshake response failed",
+   "converged": null,
+   "converged_by_timeout": false,
+   "file": "cells/c5/s1.out"
+  },
+  "s2": {
+   "sent": 9,
+   "acked": 8,
+   "timeouts": 1,
+   "emsgsize": 0,
+   "deadline": false,
+   "client_error": null,
+   "converged": 1500,
+   "converged_by_timeout": false,
+   "file": "cells/c5/s2.out"
+  }
+ }
+}
