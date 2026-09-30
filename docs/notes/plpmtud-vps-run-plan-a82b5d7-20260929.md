@@ -85,7 +85,16 @@ retried by reflex; the tc filter is removed either way.
 
 Approved by 85461 (same deployment + same window A+B = one changed-hypothesis run;
 three conditions recorded). Execution is **blocked before any VPS contact** by two
-facts, both requiring an administrator decision:
+facts, both requiring an administrator decision.
+**Resolution (2026-09-30, administrator via 85461):** `vps-104` has **expired and is
+permanently retired** — the host-key change was the provider's expiry-reclaim/reinstall,
+not an interception; the endpoint is never to be contacted or known_hosts-updated
+again, and a replacement machine is pending the administrator's choice. The `Meta`
+TUN is a **fixed environment constraint** (always on, global routing not to be
+changed; no local `ip rule`/`route` additions by sessions); any future WAN
+experiment must be designed for it: a direct-route exception on the target machine
+(configured by the administrator) or both endpoints remote. Both VPS lines are
+therefore `BLOCKED_ENVIRONMENT` (awaiting a new machine), not awaiting decisions.
 
 1. **Host key change.** `ssh vps-104` now presents ED25519
    `SHA256:ecXqLkw0hzk5SXWZ9WyXRyn0w83dM5XMjgWPVlNEO4`, while the pinned

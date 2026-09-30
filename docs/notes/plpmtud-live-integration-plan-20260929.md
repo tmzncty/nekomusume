@@ -1,7 +1,10 @@
 # R / live PLPMTUD — minimal integration plan (2026-09-29)
 
 Owner: 祀 / Session 75590 (admin direction relayed by Session 85461).
-Status of R before this plan: `BLOCKED_IMPLEMENTATION` — `neko_reliable::Plpmtud`
+Status of R before this plan: `BLOCKED_IMPLEMENTATION` (as of 2026-09-30 the local
+integration is complete and locally validated; the remaining VPS evidence is
+`BLOCKED_ENVIRONMENT`, retired vps-104 + fixed Meta TUN — see
+`plpmtud-vps-run-plan-a82b5d7-20260929.md`) — `neko_reliable::Plpmtud`
 is a socket-free state model that nothing in the carrier or CLI calls.
 
 Inputs read: `docs/spec/m2-plpmtud.md`, `docs/adr/m2-pmtud-semantics.md`, D030/D047,
