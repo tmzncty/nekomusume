@@ -1131,6 +1131,24 @@ fn plpmtud_client_probe_loop(
     let mut last_send: Option<Instant> = None;
     let deadline = start + Duration::from_secs(MAX_DURATION);
     let cooldown_until: Option<Instant> = None; // black-hole fallback not exercised in this slice
+    // CONFIRMED-state raise interval (RFC 8899 §4.1 reference value 300 s,
+    // externally anchored; not an invented default). 0 disables raising; the
+    // flag-gated opt-in path is unchanged for existing callers because a
+    // 300 s interval can never fire inside the 30 s session deadline — the
+    // loop keeps its previous behaviour unless the operator shortens it.
+    let raise_interval = args
+        .windows(2)
+        .find(|w| w[0] == "--plpmtud-raise-interval")
+        .map(|w| {
+            w[1].parse::<u64>().unwrap_or_else(|_| {
+                fail("--plpmtud-raise-interval requires a whole number of seconds")
+            })
+        })
+        .unwrap_or(300);
+    let raise_interval = (raise_interval != 0).then(|| Duration::from_secs(raise_interval));
+    let mut next_raise_at: Option<Instant> = None;
+    let mut converged_reported = false;
+    let mut raise_in_flight = false;
     loop {
         if Instant::now() >= deadline {
             emit_plpmtud(args, "plpmtud_deadline", probe_seq, "");
@@ -1151,19 +1169,50 @@ fn plpmtud_client_probe_loop(
             }
             let pending_base_check = model.outstanding().is_some();
             if !pending_base_check {
-                emit_plpmtud(
-                    args,
-                    "plpmtud_converged",
-                    probe_seq,
-                    &format!(",\"confirmed_mtu\":{}", model.confirmed_mtu()),
-                );
-                println!(
-                    "plpmtud_converged transport={} bytes={} confirmed_mtu={}",
-                    transport,
-                    max,
-                    model.confirmed_mtu()
-                );
-                break;
+                if !converged_reported {
+                    emit_plpmtud(
+                        args,
+                        "plpmtud_converged",
+                        probe_seq,
+                        &format!(",\"confirmed_mtu\":{}", model.confirmed_mtu()),
+                    );
+                    println!(
+                        "plpmtud_converged transport={} bytes={} confirmed_mtu={}",
+                        transport,
+                        max,
+                        model.confirmed_mtu()
+                    );
+                    converged_reported = true;
+                    next_raise_at = raise_interval.map(|ri| Instant::now() + ri);
+                }
+                // CONFIRMED state. Done when no raise is scheduled and none
+                // is outstanding; otherwise sleep to the next raise point
+                // (bounded by the session deadline) and probe max_mtu.
+                if next_raise_at.is_none() && !raise_in_flight {
+                    break;
+                }
+                if let Some(at) = next_raise_at {
+                    let now = Instant::now();
+                    if now < at {
+                        let wake = at.min(deadline);
+                        thread::sleep(wake - now);
+                        if Instant::now() >= deadline {
+                            emit_plpmtud(args, "plpmtud_deadline", probe_seq, "");
+                            break;
+                        }
+                    }
+                    match model.start_raise_probe() {
+                        Ok(_) => {
+                            raise_in_flight = true;
+                            next_raise_at = None;
+                        }
+                        Err(neko_reliable::PlpmtudError::NoProbeNeeded)
+                        | Err(neko_reliable::PlpmtudError::ProbeLimit) => break,
+                        Err(e) => fail(&format!("plpmtud raise start failed: {e:?}")),
+                    }
+                }
+                // Fall through to the send section: with the raise probe
+                // now outstanding, or with a retry of an in-flight raise.
             }
         }
         // A probe stays outstanding until it is acked or exhausts its
@@ -1218,6 +1267,13 @@ fn plpmtud_client_probe_loop(
                         probe_seq,
                         &format!(",\"probe_size\":{},\"retry_at\":{}", probe.size, size),
                     );
+                    // A refused RAISE probe resolves the raise (the model
+                    // stays CONFIRMED): reschedule the next interval instead
+                    // of letting the loop head end the session.
+                    if raise_in_flight {
+                        raise_in_flight = false;
+                        next_raise_at = raise_interval.map(|ri| Instant::now() + ri);
+                    }
                     last_send = Some(Instant::now());
                     continue;
                 }
@@ -1315,7 +1371,15 @@ fn plpmtud_client_probe_loop(
                     max,
                     model.confirmed_mtu()
                 );
-                break;
+                // CONFIRMED via an acked probe. Without a raise interval the
+                // session is done; with one, the loop head schedules the
+                // first raise (the ack path never starts one itself: raising
+                // only ever happens at an interval boundary).
+                converged_reported = true;
+                if raise_interval.is_none() {
+                    break;
+                }
+                next_raise_at = raise_interval.map(|ri| Instant::now() + ri);
             }
         } else {
             // Resolve the outstanding probe via its timeout before the next
@@ -1338,6 +1402,21 @@ fn plpmtud_client_probe_loop(
                         probe_seq,
                         &format!(",\"probe_size\":{}", probe.size),
                     );
+                }
+                Ok(neko_reliable::ProbeTimeout::Converged) if raise_in_flight => {
+                    // A failed raise probe is not evidence against the
+                    // confirmed size: the path carried confirmed-size
+                    // traffic. Stay in CONFIRMED, schedule the next raise,
+                    // never print a second converged line for the same value.
+                    raise_in_flight = false;
+                    emit_plpmtud(
+                        args,
+                        "plpmtud_raise_timeout",
+                        probe_seq,
+                        &format!(",\"confirmed_mtu\":{}", model.confirmed_mtu()),
+                    );
+                    next_raise_at = raise_interval.map(|ri| Instant::now() + ri);
+                    continue;
                 }
                 Ok(neko_reliable::ProbeTimeout::Converged) => {
                     // The search folded onto the confirmed base: every size

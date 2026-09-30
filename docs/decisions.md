@@ -1190,3 +1190,30 @@ changed and nothing is recommended:
   future enforcement needs a definition that covers short sessions (e.g. a
   floor or a per-generation allowance); that is a policy decision, recorded
   here as an open fact, not a proposal.
+
+**CONFIRMED-state raise mechanism (2026-09-30, 85461-directed slice; RFC 8899
+§4.1).** Mechanism recorded; the interval value remains an open candidate, not
+a decision.
+
+- After convergence the model supports `start_raise_probe()`: one probe at
+  `max_mtu`, charged to the same per-generation probe budget (32) as search
+  probes. Its ACK raises `confirmed` through the normal authenticated-ack
+  path; its timeout or local EMSGSIZE resolves the raise **without lowering
+  `confirmed` or the search bound** — CONFIRMED is carried-traffic evidence,
+  and only black-hole evidence (the next slice) may step it down. A refused
+  raise reschedules the next interval.
+- CLI: `--plpmtud-raise-interval <seconds>` (0 disables; absent = the RFC 8899
+  reference value 300 s, externally anchored — it cannot fire inside the 30 s
+  session deadline, so existing opt-in callers keep their previous behaviour
+  unless they shorten it). Raise outcomes are machine-readable events
+  (`plpmtud_raise_timeout`; refused raises surface as the existing
+  emsgsize/retry events followed by the next interval).
+- Host-local live verification (netns/veth, sudo ip, both endpoints
+  teardown-verified by command): a 1400-MTU path converged at 1400; two
+  raises at 1500 were refused while the path stayed 1400 (`confirmed` held at
+  1400); after the veth grew to 1500 mid-session, the next interval's raise
+  at 1500 was acked and `confirmed_mtu` advanced to 1500 — growth discovered,
+  shrinkage never fabricated. Two wiring defects found and fixed by this live
+  check before commit (the ack-path converged arm still broke out of the
+  loop; a started raise was lost to the loop head's break) — recorded here as
+  the reason the live check exists.

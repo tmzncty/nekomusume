@@ -1333,6 +1333,10 @@ pub struct Plpmtud {
     /// that must be verified before a fold-to-base may be reported as
     /// converged (fix 3).
     emsgsize_seen: bool,
+    /// A CONFIRMED-state raise probe (RFC 8899 §4.1) is outstanding: its
+    /// timeout must NOT lower the confirmed size or the search bound — only
+    /// genuine black-hole evidence (the next slice) may step confirmed down.
+    raise_outstanding: bool,
     upper: u16,
     next_probe_id: u64,
     probes_started: u16,
@@ -1402,6 +1406,7 @@ impl Plpmtud {
             generation,
             confirmed: config.base_mtu,
             emsgsize_seen: false,
+            raise_outstanding: false,
             upper: config.max_mtu,
             next_probe_id: 0,
             probes_started: 0,
@@ -1471,6 +1476,7 @@ impl Plpmtud {
         // demonstrably carried a base-sized-or-larger datagram: the base is
         // verified for this generation.
         self.emsgsize_seen = false;
+        self.raise_outstanding = false;
         Ok(self.converged())
     }
     /// Timeout is probe-local loss evidence, never direct path-failure evidence.
@@ -1482,6 +1488,15 @@ impl Plpmtud {
             return Ok(ProbeTimeout::Retry(probe));
         }
         self.outstanding = None;
+        if self.raise_outstanding {
+            // A failed raise probe is NOT path evidence against the confirmed
+            // size: the path carried confirmed-size traffic to get here. It
+            // returns the model to CONFIRMED unchanged; the next interval may
+            // raise again. Only black-hole evidence (the next slice) may
+            // lower confirmed.
+            self.raise_outstanding = false;
+            return Ok(ProbeTimeout::Converged);
+        }
         self.upper = probe.size.saturating_sub(1).max(self.confirmed);
         Ok(if self.converged() {
             ProbeTimeout::Converged
@@ -1522,6 +1537,12 @@ impl Plpmtud {
         // caller must stop rather than loop.
         let ceiling = reported_mtu.unwrap_or_else(|| attempted_packet_size.saturating_sub(1));
         self.emsgsize_seen = true;
+        // An EMSGSIZE resolves an outstanding raise like its timeout would:
+        // the raise is over, the model stays CONFIRMED (the path carried
+        // confirmed-size traffic), and the caller reschedules the next
+        // interval. Without this the stale raise flag would misroute a later
+        // search timeout into the Converged arm.
+        self.raise_outstanding = false;
         self.upper = self.upper.min(ceiling);
         // The refused probe is finished: EMSGSIZE is local, deterministic
         // feedback, so resending the same outstanding size can never succeed.
@@ -1552,6 +1573,7 @@ impl Plpmtud {
         self.probes_started = 0;
         self.base_loss_run = 0;
         self.emsgsize_seen = false;
+        self.raise_outstanding = false;
     }
     /// Fix 3: after an EMSGSIZE-driven fold onto the base, the base itself
     /// has never been transmitted. A `converged` at base under EMSGSIZE
@@ -1563,6 +1585,38 @@ impl Plpmtud {
             && self.confirmed == self.config.base_mtu
             && self.upper <= self.config.base_mtu
     }
+    /// CONFIRMED-state raise probe (RFC 8899 §4.1): after convergence, probe
+    /// `max_mtu` to discover path-MTU growth. Charged to the same
+    /// per-generation probe budget as search probes. Its ACK raises
+    /// `confirmed` through the normal `acknowledge` path; its timeout keeps
+    /// `confirmed` unchanged (CONFIRMED is a carried-traffic fact, not an
+    /// assumption one lost probe may lower).
+    pub fn start_raise_probe(&mut self) -> Result<Probe, PlpmtudError> {
+        if self.outstanding.is_some() {
+            return Err(PlpmtudError::ProbeOutstanding);
+        }
+        if !self.converged() || self.confirmed >= self.config.max_mtu {
+            return Err(PlpmtudError::NoProbeNeeded);
+        }
+        if self.probes_started >= self.config.max_probes {
+            return Err(PlpmtudError::ProbeLimit);
+        }
+        let probe = Probe {
+            id: self.next_probe_id,
+            path_generation: self.generation,
+            size: self.config.max_mtu,
+            attempts_left: self.config.attempts_per_size,
+        };
+        self.next_probe_id = self
+            .next_probe_id
+            .checked_add(1)
+            .ok_or(PlpmtudError::ProbeLimit)?;
+        self.probes_started += 1;
+        self.outstanding = Some(probe);
+        self.raise_outstanding = true;
+        Ok(probe)
+    }
+
     /// Issue the base-verification probe (exactly `base_mtu`, normal attempt
     /// budget). Only valid when `needs_base_verification()`; its EMSGSIZE
     /// maps to `BaseIncompatible` by the existing arms (ceiling below
@@ -1926,6 +1980,138 @@ mod plpmtud_tests {
         }
         assert!(p.converged());
         assert!(!p.needs_base_verification());
+    }
+
+    /// Converge a fresh model at exactly 1400 on a path that acks probes
+    /// at or below 1400 and times out probes above it. Returns probes used.
+    fn converge_at_1400(max_probes: u16) -> (Plpmtud, u16) {
+        let mut c = Plpmtud::new(
+            PlpmtudConfig {
+                base_mtu: 1278,
+                max_mtu: 1500,
+                attempts_per_size: 2,
+                max_probes,
+                blackhole_threshold: 3,
+            },
+            1,
+        )
+        .unwrap();
+        let mut used: u16 = 0;
+        loop {
+            if c.converged() {
+                break;
+            }
+            let q = match c.start_probe() {
+                Ok(q) => q,
+                Err(PlpmtudError::NoProbeNeeded) => break,
+                Err(e) => panic!("{e:?}"),
+            };
+            used += 1;
+            if q.size <= 1400 {
+                c.acknowledge(q.id, q.path_generation, q.size).unwrap();
+            } else {
+                loop {
+                    match c.timeout() {
+                        Ok(ProbeTimeout::Retry(_)) => continue,
+                        Ok(_) => break,
+                        Err(e) => panic!("{e:?}"),
+                    }
+                }
+            }
+        }
+        assert_eq!(c.confirmed_mtu(), 1400);
+        assert!(c.converged());
+        (c, used)
+    }
+
+    #[test]
+    fn raise_probe_discovers_path_mtu_growth() {
+        // 85461-required: after convergence, a grown path is discovered by
+        // the raise probe (RFC 8899 §4.1 CONFIRMED-state raise).
+        let (mut c, _used) = converge_at_1400(32);
+        // The path grows to 1500: the raise probe carries max_mtu and its
+        // ACK raises confirmed through the normal acknowledge path.
+        let r = c.start_raise_probe().unwrap();
+        assert_eq!(r.size, 1500);
+        assert!(c.acknowledge(r.id, r.path_generation, r.size).unwrap());
+        assert_eq!(c.confirmed_mtu(), 1500);
+    }
+
+    #[test]
+    fn raise_probe_timeout_never_lowers_confirmed_or_upper() {
+        // 85461-required: a failed raise is NOT evidence against the
+        // confirmed size; only black-hole evidence (next slice) may lower it.
+        let (mut c, _used) = converge_at_1400(32);
+        let upper_after_converge = c.upper_bound();
+        // The path shrinks: the raise probe times out fully.
+        c.start_raise_probe().unwrap();
+        loop {
+            match c.timeout() {
+                Ok(ProbeTimeout::Retry(_)) => continue,
+                Ok(other) => {
+                    // A raise timeout resolves as Converged (stays CONFIRMED),
+                    // never ReducedUpperBound.
+                    assert!(matches!(other, ProbeTimeout::Converged));
+                    break;
+                }
+                Err(e) => panic!("{e:?}"),
+            }
+        }
+        assert_eq!(c.confirmed_mtu(), 1400, "confirmed must not move");
+        assert_eq!(c.upper_bound(), upper_after_converge);
+        // CONFIRMED is retained: another raise may be attempted next interval.
+        let r2 = c.start_raise_probe();
+        assert!(r2.is_ok());
+    }
+
+    #[test]
+    fn raise_probes_share_the_generation_probe_budget() {
+        // 85461-required: raise probes are charged to the D067 per-generation
+        // budget, so a budget exhausted by the search cannot raise.
+        // Converge at 1400 with exactly the budget the search consumed:
+        // raise probes are charged to the same per-generation budget, so an
+        // exhausted budget refuses to raise.
+        let (_, used) = converge_at_1400(32);
+        // Rebuild with the tight budget to verify exhaustion behaviour.
+        let mut t = Plpmtud::new(
+            PlpmtudConfig {
+                base_mtu: 1278,
+                max_mtu: 1500,
+                attempts_per_size: 2,
+                max_probes: used,
+                blackhole_threshold: 3,
+            },
+            1,
+        )
+        .unwrap();
+        let mut spent: u16 = 0;
+        loop {
+            if t.converged() {
+                break;
+            }
+            let q = match t.start_probe() {
+                Ok(q) => q,
+                Err(PlpmtudError::NoProbeNeeded) => break,
+                Err(e) => panic!("{e:?}"),
+            };
+            spent += 1;
+            if q.size <= 1400 {
+                t.acknowledge(q.id, q.path_generation, q.size).unwrap();
+            } else {
+                loop {
+                    match t.timeout() {
+                        Ok(ProbeTimeout::Retry(_)) => continue,
+                        Ok(_) => break,
+                        Err(e) => panic!("{e:?}"),
+                    }
+                }
+            }
+        }
+        assert_eq!(spent, used);
+        assert!(t.converged());
+        assert_eq!(t.start_raise_probe().unwrap_err(), PlpmtudError::ProbeLimit);
+        // The spare-budget raise case is covered by the growth test above
+        // (budget 32 > used probes: the raise is issued and succeeds).
     }
 
     #[test]
