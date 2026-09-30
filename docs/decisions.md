@@ -1164,3 +1164,29 @@ validation and then panics (`SessionRejected` unwrap at `main.rs:2616`, exit 134
 The server times out (exit 2). Bisected: 1170 succeeds, 1171 fails. The fix is
 either to cap `--bytes` at 1170 or to make the unreliable cap count the frame. That
 choice decides what "base" means, so it is reported rather than chosen here.
+
+**HK real-path survey facts (2026-09-30, run `hk-survey-20260930A`; evidence
+`docs/notes/plpmtud-hk-survey-executed-20260930.md`, gated at `4fdde89`/`ebb8bee`;
+frozen binary `efe5d922`).** Measured observations only — no value below is
+changed and nothing is recommended:
+
+- On both overlay cells that converged exactly (confirmed 1500 == all three
+  oracles), every converged run sent exactly **8 probes** (ladder 1389→1445→
+  1473→1487→1494→1497→1499→1500, one size per step, 8/8 acked, zero retries),
+  after a data exchange of 211–778 ms. A clean path costs 8 probes and fits a
+  2-exchange/8-second short session.
+- On the WAN-loss cell (deadline-bounded in all three runs), 6–7 probes were
+  sent within the 8 s (short) and 20 s (long) budgets: each unacked size burns
+  its retry budget at the negotiated probe-ACK wait, so timeouts — not probe
+  count (32) — are the binding constraint. Max acked size reached 1487 (long
+  run) without ever confirming above the oracle; the search stayed bounded and
+  fail-closed at the deadline.
+- The ≤1%-of-path-bytes cadence candidate was **not enforced** by the
+  admission-only implementation, and as literally written it would have
+  permitted **zero** probes in these sessions: session data was 64 B (short) /
+  256 B (long) while the probe stream was ~11.4 KB (8 probes × ~1.4 KB) —
+  roughly 45–180× the data volume. Under the candidate as written, the
+  observed 8-probe search would require ≥ ~1.1 MB of prior path data. Any
+  future enforcement needs a definition that covers short sessions (e.g. a
+  floor or a per-generation allowance); that is a policy decision, recorded
+  here as an open fact, not a proposal.
