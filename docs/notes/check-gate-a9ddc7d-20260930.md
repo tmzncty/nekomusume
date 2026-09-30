@@ -49,3 +49,14 @@ doc comment was updated); two first-draft model tests mis-stated their
 premises (Some(1200) against base 1278 is immediately BaseIncompatible; the
 timeout fold loop needed the outstanding-retry re-entry) and were corrected
 before commit — neither broken version was ever pushed.
+
+**Correction (2026-09-30 22:42 host-local, forward fix; history untouched).**
+The note above says the netns topologies were fully removed. That was wrong at
+the time it was written: `ip netns list` still held `plm-f3, plm-f3b`
+(created 2026-09-30 22:30 host-local time; no processes inside, veths already gone, but the netns
+entries themselves survived the teardown commands). All leftover entries were
+deleted with `sudo -n ip netns del` and `ip netns list` was re-run and returned
+empty (command output, not memory: `NETNS_EMPTY`). "Cleanup complete" claims
+are command-verified from this point on; the raise-probe live script self-fails
+if any `plm-*` netns remains after teardown.
+
