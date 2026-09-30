@@ -1389,6 +1389,16 @@ pub enum PmtuSendOutcome {
     Sent,
     RetryAt(u16),
     BaseIncompatible,
+    /// Black-hole fallback (ADR m2): authoritative evidence says the real
+    /// path ceiling dropped below the confirmed size but not below the base.
+    /// The model has atomically reset confirmed to the base, set upper to the
+    /// reported ceiling, opened a new generation with a fresh probe budget,
+    /// and cleared all per-generation flags. The caller must surface this as
+    /// an event (never a silent downgrade) and re-search.
+    BlackholeFallback {
+        generation: u64,
+        ceiling: u16,
+    },
 }
 
 impl Plpmtud {
@@ -1423,6 +1433,11 @@ impl Plpmtud {
     pub const fn generation(&self) -> u64 {
         self.generation
     }
+    /// Current path generation (bumped by every black-hole fallback).
+    pub const fn generation_id(&self) -> u64 {
+        self.generation
+    }
+
     pub const fn outstanding(&self) -> Option<Probe> {
         self.outstanding
     }
@@ -1506,19 +1521,32 @@ impl Plpmtud {
     }
     /// Repeated loss at or below the confirmed size invokes a conservative
     /// blackhole fallback. It does not declare the path failed.
-    pub fn observe_confirmed_size_loss(&mut self, packet_size: u16) -> bool {
+    /// Observe the loss of a datagram at or below the confirmed size. After
+    /// `blackhole_threshold` consecutive such losses the model falls back:
+    /// confirmed resets to the base, a fresh generation opens with a fresh
+    /// probe budget, and per-generation flags clear — the same reset the
+    /// authoritative EMSGSIZE fallback performs (on_emsgsize). Unlike
+    /// EMSGSIZE, loss carries no authoritative ceiling, so the search bound
+    /// only rises to the base if it was below. Returns the new generation on
+    /// fallback so the caller can tag subsequent probes; success resets the
+    /// run (observe_progress).
+    pub fn observe_confirmed_size_loss(&mut self, packet_size: u16) -> Option<u64> {
         if packet_size > self.confirmed {
-            return false;
+            return None;
         }
         self.base_loss_run = self.base_loss_run.saturating_add(1);
         if self.base_loss_run < self.config.blackhole_threshold {
-            return false;
+            return None;
         }
         self.confirmed = self.config.base_mtu;
         self.upper = self.upper.max(self.confirmed);
         self.outstanding = None;
         self.base_loss_run = 0;
-        true
+        self.emsgsize_seen = false;
+        self.raise_outstanding = false;
+        self.generation = self.generation.saturating_add(1);
+        self.probes_started = 0;
+        Some(self.generation)
     }
     pub fn on_emsgsize(
         &mut self,
@@ -1538,22 +1566,41 @@ impl Plpmtud {
         let ceiling = reported_mtu.unwrap_or_else(|| attempted_packet_size.saturating_sub(1));
         self.emsgsize_seen = true;
         // An EMSGSIZE resolves an outstanding raise like its timeout would:
-        // the raise is over, the model stays CONFIRMED (the path carried
-        // confirmed-size traffic), and the caller reschedules the next
-        // interval. Without this the stale raise flag would misroute a later
-        // search timeout into the Converged arm.
+        // the raise is over, and unless this EMSGSIZE is itself the fallback
+        // trigger below, the model stays CONFIRMED and the caller reschedules
+        // the next interval.
         self.raise_outstanding = false;
-        self.upper = self.upper.min(ceiling);
         // The refused probe is finished: EMSGSIZE is local, deterministic
         // feedback, so resending the same outstanding size can never succeed.
-        // Clearing the outstanding probe lets the next start_probe() pick a
-        // size from the narrowed interval instead of the caller resending the
-        // refused one in a no-progress loop (the measured C4 shape: 600
-        // resend events in one session with no search movement).
         self.outstanding = None;
-        if ceiling < self.confirmed {
+        if ceiling < self.config.base_mtu {
+            // The path cannot carry the base datagram at all (fix 3).
+            self.upper = self.upper.min(ceiling);
             return PmtuSendOutcome::BaseIncompatible;
         }
+        if ceiling < self.confirmed {
+            // Black-hole fallback (ADR m2): the real ceiling is between the
+            // base and the confirmed size. The confirmed size is stale; the
+            // path demonstrably still carries base-sized traffic. Reset to
+            // the base, bound the new search by the authoritative ceiling,
+            // open a fresh generation, and tell the caller loudly. The
+            // upper<confirmed state this input implies is consumed HERE, in
+            // the same call: it never persists as a standing state.
+            self.confirmed = self.config.base_mtu;
+            // The new search bound is the authoritative ceiling, clamped to
+            // the configured ceiling (belt-and-suspenders: the adapter also
+            // clamps, but the model must hold the invariant itself).
+            self.upper = ceiling.min(self.config.max_mtu);
+            self.generation = self.generation.saturating_add(1);
+            self.probes_started = 0;
+            self.base_loss_run = 0;
+            self.emsgsize_seen = false;
+            return PmtuSendOutcome::BlackholeFallback {
+                generation: self.generation,
+                ceiling,
+            };
+        }
+        self.upper = self.upper.min(ceiling);
         if attempted_packet_size <= self.config.base_mtu {
             PmtuSendOutcome::BaseIncompatible
         } else {
@@ -1595,7 +1642,13 @@ impl Plpmtud {
         if self.outstanding.is_some() {
             return Err(PlpmtudError::ProbeOutstanding);
         }
-        if !self.converged() || self.confirmed >= self.config.max_mtu {
+        // Allowed also when confirmed == max_mtu: that probe is the RFC 8899
+        // CONFIRMED-state verification probe. It discovers shrinkage through
+        // an authoritative local EMSGSIZE (kernel ceiling below confirmed →
+        // black-hole fallback) — without it a confirmed==max path could
+        // never notice its ceiling dropped. Only confirmed > max_mtu (an
+        // impossible standing state) is refused.
+        if !self.converged() || self.confirmed > self.config.max_mtu {
             return Err(PlpmtudError::NoProbeNeeded);
         }
         if self.probes_started >= self.config.max_probes {
@@ -1728,11 +1781,11 @@ mod plpmtud_tests {
     fn blackhole_fallback_is_bounded_and_progress_resets_counter() {
         let mut p = discover(1500);
         assert_eq!(p.confirmed_mtu(), 1500);
-        assert!(!p.observe_confirmed_size_loss(1400));
+        assert_eq!(p.observe_confirmed_size_loss(1400), None);
         p.observe_progress();
-        assert!(!p.observe_confirmed_size_loss(1400));
-        assert!(!p.observe_confirmed_size_loss(1400));
-        assert!(p.observe_confirmed_size_loss(1400));
+        assert_eq!(p.observe_confirmed_size_loss(1400), None);
+        assert_eq!(p.observe_confirmed_size_loss(1400), None);
+        assert!(p.observe_confirmed_size_loss(1400).is_some());
         assert_eq!(p.confirmed_mtu(), 1200);
     }
     #[test]
@@ -1765,8 +1818,8 @@ mod plpmtud_tests {
     fn ack_id_binding_and_loss_run_reset_on_ack() {
         let mut p = Plpmtud::new(config(), 5).unwrap();
         // Build a base-loss run of 2 (threshold 3).
-        assert!(!p.observe_confirmed_size_loss(1200));
-        assert!(!p.observe_confirmed_size_loss(1200));
+        assert_eq!(p.observe_confirmed_size_loss(1200), None);
+        assert_eq!(p.observe_confirmed_size_loss(1200), None);
         let q = p.start_probe().unwrap();
         assert_eq!((q.id, q.size), (0, 1350));
         // Wrong probe id is stale even with matching generation and size.
@@ -1777,24 +1830,24 @@ mod plpmtud_tests {
         assert_eq!(p.outstanding(), Some(q));
         // A valid ACK resets the loss run: two more losses do not trigger.
         assert_eq!(p.acknowledge(q.id, 5, q.size), Ok(false));
-        assert!(!p.observe_confirmed_size_loss(1200));
-        assert!(!p.observe_confirmed_size_loss(1200));
-        assert!(p.observe_confirmed_size_loss(1200));
+        assert_eq!(p.observe_confirmed_size_loss(1200), None);
+        assert_eq!(p.observe_confirmed_size_loss(1200), None);
+        assert!(p.observe_confirmed_size_loss(1200).is_some());
     }
     #[test]
     fn blackhole_counts_at_confirmed_size_and_clears_probe_and_run() {
         let mut p = Plpmtud::new(config(), 1).unwrap();
         // Above confirmed: not counted. Exactly confirmed: counted.
-        assert!(!p.observe_confirmed_size_loss(1201));
+        assert_eq!(p.observe_confirmed_size_loss(1201), None);
         let q = p.start_probe().unwrap();
-        assert!(!p.observe_confirmed_size_loss(1200));
-        assert!(!p.observe_confirmed_size_loss(1200));
+        assert_eq!(p.observe_confirmed_size_loss(1200), None);
+        assert_eq!(p.observe_confirmed_size_loss(1200), None);
         assert_eq!(p.outstanding(), Some(q));
-        assert!(p.observe_confirmed_size_loss(1200));
+        assert!(p.observe_confirmed_size_loss(1200).is_some());
         // Fallback discards the outstanding probe and restarts the run.
         assert_eq!(p.outstanding(), None);
         assert_eq!((p.confirmed_mtu(), p.upper_bound()), (1200, 1500));
-        assert!(!p.observe_confirmed_size_loss(1200));
+        assert_eq!(p.observe_confirmed_size_loss(1200), None);
     }
     #[test]
     fn emsgsize_ceiling_defaults_below_attempt_and_below_base_is_base_incompatible() {
@@ -1891,6 +1944,12 @@ mod plpmtud_tests {
                             saw_base_incompatible = true;
                             break;
                         }
+                        PmtuSendOutcome::BlackholeFallback { .. } => {
+                            // Not exercised by these fixtures: their paths
+                            // never report a below-confirmed kernel ceiling
+                            // while an above-base confirmed stands.
+                            panic!("unexpected black-hole fallback")
+                        }
                         PmtuSendOutcome::Sent => unreachable!(),
                     }
                 }
@@ -1980,6 +2039,189 @@ mod plpmtud_tests {
         }
         assert!(p.converged());
         assert!(!p.needs_base_verification());
+    }
+
+    #[test]
+    fn blackhole_fallback_after_consecutive_confirmed_size_losses() {
+        // 85461-required: reaching the loss threshold in CONFIRMED falls
+        // back — confirmed resets to the base, a fresh generation opens
+        // with a fresh probe budget, and the re-search converges again.
+        let (mut c, used) = converge_at_1400(32);
+        let gen_before = c.generation_id();
+        assert_eq!(c.confirmed_mtu(), 1400);
+        // Two losses: under the threshold, no fallback yet.
+        assert_eq!(c.observe_confirmed_size_loss(1400), None);
+        assert_eq!(c.observe_confirmed_size_loss(1400), None);
+        assert_eq!(c.confirmed_mtu(), 1400);
+        // Third loss: fallback. New generation, fresh budget, base reset.
+        let new_gen = c.observe_confirmed_size_loss(1400).expect("fallback");
+        assert_ne!(new_gen, gen_before);
+        assert_eq!(c.confirmed_mtu(), 1278);
+        // Loss carries no ceiling, so the search bound holds: the model is
+        // PROBING again (usable MPS = base) and must re-search toward it.
+        assert!(
+            !c.converged(),
+            "loss fallback re-enters PROBING, not CONFIRMED"
+        );
+        assert!(c.upper_bound() >= c.confirmed_mtu());
+        // Fresh budget: the re-search can spend `used` probes again.
+        let r = c.start_probe();
+        assert!(
+            r.is_ok(),
+            "fresh generation must have a fresh budget ({r:?})"
+        );
+        // Progress resets the run between losses.
+        let (mut d, _) = converge_at_1400(32);
+        assert_eq!(d.observe_confirmed_size_loss(1400), None);
+        d.observe_progress();
+        assert_eq!(d.observe_confirmed_size_loss(1400), None);
+        assert_eq!(d.observe_confirmed_size_loss(1400), None, "run was reset");
+        assert_eq!(d.confirmed_mtu(), 1400);
+        // Losses above the confirmed size are not black-hole evidence.
+        let (mut e, _) = converge_at_1400(32);
+        for _ in 0..5 {
+            assert_eq!(e.observe_confirmed_size_loss(1500), None);
+        }
+        assert_eq!(e.confirmed_mtu(), 1400);
+        let _ = used;
+    }
+
+    #[test]
+    fn emsgsize_blackhole_fallback_resets_and_bounds_the_research() {
+        // 85461-required: a below-confirmed kernel ceiling on the probe
+        // socket is the authoritative black-hole trigger. The model resets
+        // to the base, bounds the new search by the ceiling, and the
+        // re-search converges below it.
+        let mut c = Plpmtud::new(
+            PlpmtudConfig {
+                base_mtu: 1278,
+                max_mtu: 1500,
+                attempts_per_size: 2,
+                max_probes: 32,
+                blackhole_threshold: 3,
+            },
+            1,
+        )
+        .unwrap();
+        // A 1500-only path: the search converges at the ceiling.
+        loop {
+            if c.converged() {
+                break;
+            }
+            let q = c.start_probe().unwrap();
+            c.acknowledge(q.id, q.path_generation, q.size).unwrap();
+        }
+        assert_eq!(c.confirmed_mtu(), 1500);
+        let gen_before = c.generation_id();
+        // The path shrinks to 1300 and the next raise is refused locally.
+        let outcome = c.on_emsgsize(1500, Some(1300));
+        let PmtuSendOutcome::BlackholeFallback {
+            generation,
+            ceiling,
+        } = outcome
+        else {
+            panic!("expected BlackholeFallback, got {outcome:?}");
+        };
+        assert_eq!(ceiling, 1300);
+        assert_ne!(generation, gen_before);
+        assert_eq!(c.confirmed_mtu(), 1278);
+        // Re-search on the 1300 path: acks <= 1300, EMSGSIZE(1300) above.
+        loop {
+            if c.converged() {
+                break;
+            }
+            let q = match c.start_probe() {
+                Ok(q) => q,
+                Err(_) => break,
+            };
+            if q.size <= 1300 {
+                c.acknowledge(q.id, q.path_generation, q.size).unwrap();
+            } else {
+                let out = c.on_emsgsize(q.size, Some(1300));
+                assert!(
+                    matches!(out, PmtuSendOutcome::RetryAt(_) | PmtuSendOutcome::Sent),
+                    "re-search refusal must not be a second fallback ({out:?})"
+                );
+            }
+        }
+        assert!(
+            c.confirmed_mtu() <= 1300 && c.confirmed_mtu() >= 1278,
+            "re-search must converge inside [base, ceiling], got {}",
+            c.confirmed_mtu()
+        );
+    }
+
+    #[test]
+    fn blackhole_fallback_ceiling_is_clamped_to_max_mtu() {
+        // 85461-required: upper-bound invariant. Two facts pin it:
+        // (1) a reported value at or above the confirmed size is NOT a
+        //     black hole (fallback requires ceiling < confirmed), so a raw
+        //     loopback 65536 can never smuggle itself in as a bound;
+        // (2) after a real fallback the new bound stays <= max_mtu (the
+        //     model clamps; the adapter clamps at entry as belt-and-suspenders).
+        let mut c = Plpmtud::new(
+            PlpmtudConfig {
+                base_mtu: 1278,
+                max_mtu: 1500,
+                attempts_per_size: 2,
+                max_probes: 32,
+                blackhole_threshold: 3,
+            },
+            1,
+        )
+        .unwrap();
+        loop {
+            if c.converged() {
+                break;
+            }
+            let q = c.start_probe().unwrap();
+            c.acknowledge(q.id, q.path_generation, q.size).unwrap();
+        }
+        assert_eq!(c.confirmed_mtu(), 1500);
+        // (1) an over-ceiling raw value at confirmed 1500: not a fallback,
+        // and it cannot lift the bound above max_mtu either.
+        let out = c.on_emsgsize(1500, Some(9000));
+        assert!(
+            matches!(out, PmtuSendOutcome::RetryAt(_) | PmtuSendOutcome::Sent),
+            "over-ceiling raw value is not black-hole evidence ({out:?})"
+        );
+        assert!(c.upper_bound() <= 1500);
+        // (2) a real fallback from a mid confirmed value.
+        let (mut d, _) = converge_at_1400(32);
+        let out = d.on_emsgsize(1400, Some(1300));
+        let PmtuSendOutcome::BlackholeFallback { ceiling, .. } = out else {
+            panic!("expected fallback, got {out:?}");
+        };
+        assert_eq!(ceiling, 1300);
+        assert!(d.upper_bound() <= 1500, "fallback bound respects max_mtu");
+        assert!(d.upper_bound() >= d.confirmed_mtu());
+    }
+
+    #[test]
+    fn verification_raise_is_allowed_at_confirmed_equal_to_max() {
+        // Without a raise at confirmed == max_mtu a shrinkage could never be
+        // discovered (the probe is the only sender above the data path).
+        let mut c = Plpmtud::new(
+            PlpmtudConfig {
+                base_mtu: 1278,
+                max_mtu: 1500,
+                attempts_per_size: 2,
+                max_probes: 32,
+                blackhole_threshold: 3,
+            },
+            1,
+        )
+        .unwrap();
+        loop {
+            if c.converged() {
+                break;
+            }
+            let q = c.start_probe().unwrap();
+            c.acknowledge(q.id, q.path_generation, q.size).unwrap();
+        }
+        assert_eq!(c.confirmed_mtu(), 1500);
+        let r = c.start_raise_probe().expect("verification raise at max");
+        assert_eq!(r.size, 1500);
     }
 
     /// Converge a fresh model at exactly 1400 on a path that acks probes
@@ -2134,6 +2376,9 @@ mod plpmtud_tests {
             match p.on_emsgsize(q.size, None) {
                 PmtuSendOutcome::RetryAt(_) => {}
                 PmtuSendOutcome::BaseIncompatible => panic!("base rejected mid-search"),
+                PmtuSendOutcome::BlackholeFallback { .. } => {
+                    panic!("unexpected black-hole fallback mid-search")
+                }
                 PmtuSendOutcome::Sent => unreachable!(),
             }
             // The invariant under repair: nothing stays outstanding after an
@@ -2153,8 +2398,8 @@ mod plpmtud_tests {
         p.timeout().unwrap();
         assert_eq!(p.upper_bound(), 1349);
         assert_eq!(p.start_probe(), Err(PlpmtudError::ProbeLimit));
-        assert!(!p.observe_confirmed_size_loss(1200));
-        assert!(!p.observe_confirmed_size_loss(1200));
+        assert_eq!(p.observe_confirmed_size_loss(1200), None);
+        assert_eq!(p.observe_confirmed_size_loss(1200), None);
         p.reset_generation(9);
         assert_eq!(
             (p.generation(), p.confirmed_mtu(), p.upper_bound()),
@@ -2162,9 +2407,9 @@ mod plpmtud_tests {
         );
         let q = p.start_probe().unwrap();
         assert_eq!((q.path_generation, q.size), (9, 1350));
-        assert!(!p.observe_confirmed_size_loss(1200));
-        assert!(!p.observe_confirmed_size_loss(1200));
-        assert!(p.observe_confirmed_size_loss(1200));
+        assert_eq!(p.observe_confirmed_size_loss(1200), None);
+        assert_eq!(p.observe_confirmed_size_loss(1200), None);
+        assert!(p.observe_confirmed_size_loss(1200).is_some());
     }
     #[test]
     fn path_limits_require_both_ceilings_and_apply_protocol_ceiling() {

@@ -1217,3 +1217,33 @@ a decision.
   check before commit (the ack-path converged arm still broke out of the
   loop; a started raise was lost to the loop head's break) — recorded here as
   the reason the live check exists.
+
+**Black-hole fallback semantics (2026-10-01, 85461-directed slice; ADR m2
+"State machine and black-hole behavior").** Mechanism recorded.
+
+- Two authoritative triggers reset the model identically: (a) a kernel
+  EMSGSIZE whose reported path-MTU ceiling (clamped to `max_mtu` at the
+  adapter entry and again in the model) sits **below the confirmed size but
+  not below the base**; (b) `blackhole_threshold` (3) consecutive losses of
+  datagrams at or below the confirmed size. Both atomically: confirmed ->
+  base, outstanding cancelled, per-generation flags cleared, fresh generation
+  with a fresh probe budget. The EMSGSIZE path bounds the re-search by the
+  clamped ceiling; the loss path carries no ceiling so the bound only rises
+  to the base if it was below. Never a silent downgrade: the client emits
+  `plpmtud_blackhole_fallback {generation, ceiling}` and the re-search's new
+  converged value prints as a fresh `plpmtud_converged` line (converged lines
+  are value-change-driven, not event-driven).
+- The CONFIRMED-state raise is allowed also at `confirmed == max_mtu`: that
+  probe is the RFC 8899 CONFIRMED verification probe and is the only sender
+  able to discover shrinkage (its local EMSGSIZE is the authoritative
+  trigger). A raise timeout still never lowers anything.
+- `observe_confirmed_size_loss` now returns the new generation on fallback
+  (None below threshold). Losses above the confirmed size are not black-hole
+  evidence; progress resets the run.
+- Host-local live verification (netns/veth, teardown command-verified):
+  1500-MTU path converged at 1500; the veth was dropped to 1300 mid-session;
+  the next verification raise was refused locally with a 1300 ceiling; the
+  model fell back (generation 2, ceiling 1300) and the re-search converged at
+  1300. Shrinkage discovered through authoritative evidence only.
+- The `--plpmtud-raise-interval` opt-in gates all raise/verification probes
+  (unchanged from the raise slice).

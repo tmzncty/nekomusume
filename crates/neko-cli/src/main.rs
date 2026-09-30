@@ -1147,7 +1147,11 @@ fn plpmtud_client_probe_loop(
         .unwrap_or(300);
     let raise_interval = (raise_interval != 0).then(|| Duration::from_secs(raise_interval));
     let mut next_raise_at: Option<Instant> = None;
-    let mut converged_reported = false;
+    // The last confirmed value reported as a converged line. A converged
+    // line is emitted only when the value CHANGES: growth discovered by a
+    // raise, or the new value after a black-hole fallback re-search. A
+    // verification-raise ACK at the same value is silence, not noise.
+    let mut reported_confirmed: Option<u16> = None;
     let mut raise_in_flight = false;
     loop {
         if Instant::now() >= deadline {
@@ -1169,7 +1173,7 @@ fn plpmtud_client_probe_loop(
             }
             let pending_base_check = model.outstanding().is_some();
             if !pending_base_check {
-                if !converged_reported {
+                if reported_confirmed != Some(model.confirmed_mtu()) {
                     emit_plpmtud(
                         args,
                         "plpmtud_converged",
@@ -1182,7 +1186,7 @@ fn plpmtud_client_probe_loop(
                         max,
                         model.confirmed_mtu()
                     );
-                    converged_reported = true;
+                    reported_confirmed = Some(model.confirmed_mtu());
                     next_raise_at = raise_interval.map(|ri| Instant::now() + ri);
                 }
                 // CONFIRMED state. Done when no raise is scheduled and none
@@ -1255,7 +1259,7 @@ fn plpmtud_client_probe_loop(
             // adapter, rustix; EMSGSIZE implies the route is resolvable and
             // the value is populated) so a below-base path is judged in one
             // step instead of folding onto an unverified base.
-            let reported = crate::pmtu_socket::kernel_path_mtu(socket)
+            let reported = crate::pmtu_socket::kernel_path_mtu(socket, u32::from(PLPMTUD_MAX_MTU))
                 .ok()
                 .and_then(|v| u16::try_from(v).ok());
             match model.on_emsgsize(probe.size, reported) {
@@ -1274,6 +1278,30 @@ fn plpmtud_client_probe_loop(
                         raise_in_flight = false;
                         next_raise_at = raise_interval.map(|ri| Instant::now() + ri);
                     }
+                    last_send = Some(Instant::now());
+                    continue;
+                }
+                neko_reliable::PmtuSendOutcome::BlackholeFallback {
+                    generation,
+                    ceiling,
+                } => {
+                    // Authoritative black-hole fallback (ADR m2): the kernel
+                    // says the real ceiling is below the confirmed size but
+                    // not below the base. The model has reset confirmed to
+                    // the base, opened a new generation with a fresh probe
+                    // budget, and bounded the new search by the clamped
+                    // ceiling. Loud by contract, never a silent downgrade:
+                    // the re-search that follows will report the new
+                    // converged value.
+                    emit_plpmtud(
+                        args,
+                        "plpmtud_blackhole_fallback",
+                        probe_seq,
+                        &format!(",\"generation\":{},\"ceiling\":{}", generation, ceiling),
+                    );
+                    raise_in_flight = false;
+                    next_raise_at = None;
+                    reported_confirmed = None;
                     last_send = Some(Instant::now());
                     continue;
                 }
@@ -1359,23 +1387,25 @@ fn plpmtud_client_probe_loop(
                 &format!(",\"probe_size\":{}", probe.size),
             );
             if converged {
-                emit_plpmtud(
-                    args,
-                    "plpmtud_converged",
-                    probe_seq,
-                    &format!(",\"confirmed_mtu\":{}", model.confirmed_mtu()),
-                );
-                println!(
-                    "plpmtud_converged transport={} bytes={} confirmed_mtu={}",
-                    transport,
-                    max,
-                    model.confirmed_mtu()
-                );
+                if reported_confirmed != Some(model.confirmed_mtu()) {
+                    emit_plpmtud(
+                        args,
+                        "plpmtud_converged",
+                        probe_seq,
+                        &format!(",\"confirmed_mtu\":{}", model.confirmed_mtu()),
+                    );
+                    println!(
+                        "plpmtud_converged transport={} bytes={} confirmed_mtu={}",
+                        transport,
+                        max,
+                        model.confirmed_mtu()
+                    );
+                    reported_confirmed = Some(model.confirmed_mtu());
+                }
                 // CONFIRMED via an acked probe. Without a raise interval the
                 // session is done; with one, the loop head schedules the
                 // first raise (the ack path never starts one itself: raising
                 // only ever happens at an interval boundary).
-                converged_reported = true;
                 if raise_interval.is_none() {
                     break;
                 }

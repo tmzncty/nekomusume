@@ -54,19 +54,25 @@ pub(crate) fn set_probe_df(_socket: &UdpSocket) -> io::Result<()> {
 /// model as `reported_mtu` (one-step below-base detection); it is never
 /// used to raise or confirm any size — only an authenticated probe ACK can
 /// do that.
+/// The kernel's path-MTU estimate for the socket's connected route, clamped
+/// at the entry to `ceiling` (the configured search ceiling). The raw kernel
+/// value can exceed the configured ceiling (e.g. 65536 on loopback or
+/// jumbo-frame routes); the model invariant `upper <= max_mtu` is enforced
+/// here at the adapter boundary so no caller can smuggle an out-of-range
+/// ceiling into a black-hole fallback.
 #[cfg(target_os = "linux")]
-pub(crate) fn kernel_path_mtu(socket: &UdpSocket) -> io::Result<u32> {
+pub(crate) fn kernel_path_mtu(socket: &UdpSocket, ceiling: u32) -> io::Result<u32> {
     use rustix::net::sockopt::{ip_mtu, ipv6_mtu};
     let result = if socket.local_addr()?.is_ipv4() {
         ip_mtu(socket)
     } else {
         ipv6_mtu(socket)
     };
-    result.map_err(io::Error::from)
+    result.map_err(io::Error::from).map(|mtu| mtu.min(ceiling))
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn kernel_path_mtu(_socket: &UdpSocket) -> io::Result<u32> {
+pub(crate) fn kernel_path_mtu(_socket: &UdpSocket, _ceiling: u32) -> io::Result<u32> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "kernel path MTU query is only implemented on Linux",
@@ -137,9 +143,20 @@ mod tests {
         let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
         // Unconnected: the kernel has no route to report.
-        assert!(kernel_path_mtu(&socket).is_err());
+        assert!(kernel_path_mtu(&socket, 1500).is_err());
         socket.connect(peer.local_addr().unwrap()).unwrap();
-        let mtu = kernel_path_mtu(&socket).unwrap();
+        let mtu = kernel_path_mtu(&socket, u32::from(u16::MAX)).unwrap();
         assert!(mtu >= 1280, "loopback path MTU {mtu}");
+    }
+
+    #[test]
+    fn kernel_path_mtu_clamps_to_the_configured_ceiling_at_the_entry() {
+        // Loopback reports 65536; the adapter must never let a raw kernel
+        // value above the configured ceiling through (black-hole fallback
+        // consumes this as an authoritative `upper` bound).
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.connect(peer.local_addr().unwrap()).unwrap();
+        assert_eq!(kernel_path_mtu(&socket, 1500).unwrap(), 1500);
     }
 }
