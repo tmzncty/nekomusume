@@ -25,7 +25,7 @@ blackhole candidate.
   uptime 406d. Ports 40080–40100 free. `tracepath` present.
 - HK addresses (aliases only in repo, real values in the local non-repo map):
   `hk-public` (public, reachable from here via a direct exception route on the
-  physical NIC, bypassing the Meta TUN — verified `ip route get`),
+  physical NIC, bypassing the local always-on TUN — verified `ip route get`),
   `hk-ovl-a` (first overlay tunnel peer; inner-link MTU 1500), `hk-ovl-b`
   (second overlay side; inner-link MTU 1500), `hk-ovl-c` (third overlay side,
   reached from here through a small-MTU encrypted link; **local egress MTU
