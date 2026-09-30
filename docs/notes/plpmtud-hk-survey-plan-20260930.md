@@ -25,12 +25,16 @@ blackhole candidate.
   uptime 406d. Ports 40080–40100 free. `tracepath` present.
 - HK addresses (aliases only in repo, real values in the local non-repo map):
   `hk-public` (public, reachable from here via a direct exception route on the
-  physical NIC, bypassing the Meta TUN — verified `ip route get`), `hk-ovl-a`
-  (tun-hk tunnel peer, MTU 1500), `hk-ovl-b` (tun-qd/tun-hk-direct side, MTU
-  1500), `hk-ovl-c` (tun-rafa side; from here routed via wg-hy-102, **MTU 1000**),
-  `hk-ecmp` (eth0 addr; OSPF-equal-cost over tun-hk + tun-hk-direct, per-flow
-  hash).
-- Local egress MTUs: physical 1500; tun-hk/tun-hk-direct 1500; wg-hy-102 1000.
+  physical NIC, bypassing the Meta TUN — verified `ip route get`),
+  `hk-ovl-a` (first overlay tunnel peer; inner-link MTU 1500), `hk-ovl-b`
+  (second overlay side; inner-link MTU 1500), `hk-ovl-c` (third overlay side,
+  reached from here through a small-MTU encrypted link; **local egress MTU
+  1000**), `hk-ecmp` (main-interface address; OSPF-equal-cost over the two
+  overlay tunnels, per-flow hash). Interface names and the real address map
+  are deliberately absent from the repo; they live only in the local
+  non-repo run log.
+- Local egress MTUs: physical 1500; the two overlay tunnels 1500; the
+  small-MTU link 1000. Recorded per cell from `ip route get` at run time.
 - tracepath oracles (prechecked, read-only): ovl-a → 1500 (1 hop); ovl-b → 1500
   (1 hop); **ovl-c → pmtu 1000, 30 hops no reply** (UDP probes die in the small
   tunnel — expected for >1000-byte probes; the cell is still valid for the
@@ -43,9 +47,13 @@ blackhole candidate.
   **EMSGSIZE at send time** — the binary lowers the search bound on
   `plpmtud_probe_emsgsize_retry` and, if the v4 base 1278 exceeds the local
   MTU, exits 2 with `plpmtud_failed reason=base_incompatible` (code-verified
-  branch). Both outcomes are recorded, not retried, and are exactly the
-  "BASE unreachable" behavior 85461 flagged as likely-unhandled — it IS
-  handled (exit 2, fail-closed), and this run exercises it on a real path.
+  branch). Post-plan code reading added a correction: with local egress below
+  the base, the oversize probe stays outstanding and is resent on every
+  EMSGSIZE, so the measured shape may be an EMSGSIZE loop until the probe
+  deadline rather than the exit-2 branch. Both shapes are recorded as
+  measured (`emsgsize_loop_budget_exhausted` / `emsgsize_base_incompatible`),
+  never retried; either exercises the real-path BASE-unreachable boundary
+  fail-closed.
 - `kernel_path_mtu` exists in the library but the client emits no such
   diagnostic; the third oracle is a userspace python probe (connect UDP socket
   to the cell destination, read `IP_MTU`) — no binary change.
@@ -57,7 +65,7 @@ blackhole candidate.
 | C1 hk-public | hk-public:40090 | hk-public:40090 | ~1500 (route+IP_MTU) | clean WAN direct path convergence |
 | C2 hk-ovl-a | hk-ovl-a:40091 | hk-ovl-a:40091 | 1500 | tunnel inner path |
 | C3 hk-ovl-b | hk-ovl-b:40092 | hk-ovl-b:40092 | 1500 | second overlay, different tunnel |
-| C4 hk-ovl-c | hk-ovl-c:40093 | hk-ovl-c:40093 | **1000** | small-MTU real blackhole; BASE-vs-MTU boundary (base 1278 > 1000 → expected fail-closed exit 2, `plpmtud_probe_emsgsize_base_incompatible`) |
+| C4 hk-ovl-c | hk-ovl-c:40093 | hk-ovl-c:40093 | **1000** | small-MTU real blackhole; BASE-vs-MTU boundary — repeated local EMSGSIZE until the probe deadline (budget-exhausted fail-closed) or `base_incompatible`, measured as-is; plus one extra `--bytes 1100` run probing the D067 DF-on data risk |
 | C5 hk-ecmp | hk-ecmp:40094 | hk-ecmp:40094 | 1500 (both members) | per-flow hash path selection; repeated sessions may hash to different tunnels — convergence must hold on both; drift is recorded as ECMP evidence, not failure |
 
 Per cell: 2 client runs (short) + 1 long, matching the local matrix's session
@@ -119,9 +127,12 @@ failed).
 - `converged_exact` — confirmed == oracle PMTU;
 - `converged_lower` — confirmed < oracle but consistent (e.g. tunnel inner
   MTU smaller than route MTU) — compared against all three oracles;
-- `emsgsize_base_incompatible` (exit 2) — C4-expected: base > real path MTU,
-  fail-closed is correct behavior, recorded as the measured BASE-unreachable
-  outcome (RFC 8899 error state; fix, if wanted, is a follow-up slice);
+- `emsgsize_base_incompatible` (exit 2) — base > real path MTU, fail-closed,
+  recorded as the measured BASE-unreachable outcome (RFC 8899 error state;
+  fix, if wanted, is a follow-up slice);
+- `emsgsize_loop_budget_exhausted` — repeated `plpmtud_probe_emsgsize_retry`
+  with no search progress until the probe deadline (the measured C4 shape if
+  the post-plan code reading holds);
 - `deadline_bounded` — search did not finish within the session budget;
 - `handshake_or_exchange_failed` — reachability/filtered (incl. potential
   hk-public firewall block → `BLOCKED_ENVIRONMENT`);
@@ -129,6 +140,34 @@ failed).
   occurrence aborts the remaining cells and is reported immediately.
 - ECMP drift (C5): runs converging to different-but-each-correct values across
   hashed paths are recorded as ECMP evidence, not failure.
+
+## Approved additions (85461, 2026-09-30 — part of the approved plan)
+
+1. **C4 outer-packet egress (record only).** The C4 server address rides an
+   encrypted overlay whose outer packets egress this host on whatever route
+   the read-only outer-peer lookup reports. Recorded into the local run log;
+   the repo note carries the aliased result only.
+2. **C5 per-session egress (record only).** Each C5 client session's actual
+   egress member is resolved via a source-port-scoped read-only route lookup
+   during the run; if not resolvable, the cell records `unconfirmed` — no
+   guessing.
+3. **Health abort condition.** Before and after the window, read-only snapshots
+   of the HK OSPF neighbor table and the WireGuard handshake table: the OSPF
+   Full neighbor count must remain at its pre-run value, and no interface's
+   handshake freshness may degrade beyond its pre-run baseline. Any anomaly
+   aborts the remaining cells immediately — the administrator's network
+   outranks this experiment.
+4. **C4 extra `--bytes 1100` run.** DF is set on the whole Session socket, not
+   only probes. One extra C4 client run with a 1100-byte data payload tests
+   whether the opt-in flag turns a path that fragmentation would carry into
+   an unusable one (data send EMSGSIZE). Recorded as a D067 risk data point;
+   no fix in this run.
+5. **Model-invariant finding (recorded regardless of C4's outcome).**
+   `on_emsgsize` can lower `upper` below `confirmed` yet still return
+   `RetryAt(confirmed)`; the invariant "upper >= confirmed" is violated and
+   the outstanding oversize probe is resent in a no-progress loop. The repair
+   is a separate small slice with tests, sequenced before the raise-probe
+   slice.
 
 ## Evidence & write-back
 
