@@ -200,9 +200,45 @@ jq -e '.failure_stage=="client_exit" and .client_diagnostic==null' "$tmp/no-diag
 # followed by each representative HY2 failure can never produce comparative statistics.
 printf '%s\n' '{"sentinel":"nekomusume.gnu-time.v1","elapsed_seconds":0.125,"cpu_user_seconds":0.01,"cpu_system_seconds":0.02,"rss_kib":64,"exit_code":0}' >"$tmp/pair-neko.time"
 printf '%s\n' '{"application_bytes":1200,"payload_sha256":"'"$hash0"'"}' >"$tmp/pair-neko.out"
-printf '%s\n' '{"experiment_id":"nekomusume-owned-lab-1","implementation":"nekomusume","role":"client","identity":"sha256:neko-rehearsal","cpu":{"user_seconds":0.01,"system_seconds":0.02},"rss":{"max_kib":64},"fd":{"peak_count":4},"exit":{"code":0,"timed_out":false},"sampling":{"scope":"sampler-created process group"},"cleanup":{"process_reaped":true,"process_group_empty":true,"owned_sockets_after_exit":0,"complete":true}}' >"$tmp/pair-neko.resource"
+printf '%s\n' '{"experiment_id":"nekomusume-owned-lab-1","implementation":"nekomusume","role":"client","identity":"sha256:neko-rehearsal","cpu":{"user_seconds":0.01,"system_seconds":0.02},"rss":{"max_kib":64},"fd":{"peak_count":4},"exit":{"code":0,"signal":null,"timed_out":false},"sampling":{"scope":"sampler-created process group"},"cleanup":{"process_reaped":true,"process_group_empty":true,"owned_sockets_after_exit":0,"complete":true}}' >"$tmp/pair-neko.resource"
 python3 "$root/scripts/bench/validate-hy2-owned-lab.py" make-sample --implementation nekomusume --run 1 --return-code 0 --time "$tmp/pair-neko.time" --resource "$tmp/pair-neko.resource" --client-output "$tmp/pair-neko.out" --expected-identity sha256:neko-rehearsal --bytes 1200 --payload-hash "$hash0" >"$tmp/pair-neko.json"
 jq -e '.failures==0 and .application_bytes==1200 and .payload_sha256=="'"$hash0"'" and .client_diagnostic==null' "$tmp/pair-neko.json" >/dev/null
+# The fix must accept the real sampler shape but still reject a signalled
+# client exit (validator exit-record contract).
+sed 's/"exit":{"code":0,"signal":null,"timed_out":false}/"exit":{"code":null,"signal":15,"timed_out":false}/' "$tmp/pair-neko.resource" >"$tmp/pair-signal.resource"
+# make-sample itself only checks code==return_code; the COMPLETE-result
+# validator is the gate for the full exit contract. Exercise it directly:
+python3 - "$root/scripts/bench/validate-hy2-owned-lab.py" "$tmp/pair-signal.resource" <<'PYNEG'
+import json, subprocess, sys, tempfile, pathlib
+validator, resource_path = sys.argv[1], sys.argv[2]
+resource = json.loads(pathlib.Path(resource_path).read_text())
+sample = {"name": "nekomusume-1", "implementation": "nekomusume", "run": 1, "failures": 0,
+          "exit_code": 0, "failure_stage": None, "failures_list": [],
+          "application_bytes": 1200, "payload_sha256": "a"*64,
+          "cpu_user_seconds": 0.01, "cpu_system_seconds": 0.02, "rss_kib": 64,
+          "elapsed_seconds": 0.125, "wire_bytes": None, "client_diagnostic": None}
+resources = [dict(resource, experiment_id="nekomusume-owned-lab-1")] + [
+    dict(resource, implementation="hy2", experiment_id="hy2-owned-lab-1", identity="sha256:"+"b"*64)]
+doc = {"schema": "nekomusume.benchmark-result.v1", "experiment_id": "t", "git_commit": "0"*40,
+       "contract": {"runs_per_implementation": 1, "payload_bytes": 1200, "payload_prepared": True,
+                    "payload_sha256": "a"*64, "nekomusume_binary_sha256": "c"*64, "hy2_binary_sha256": "d"*64,
+                    "client_lifecycle": "fresh transport per timed sample", "client_resource_scope": "sampler-created process group",
+                    "enforced_global_deadline_ms": 600000, "work_deadline_ms": 540000, "cleanup_reserve_ms": 60000,
+                    "whole_lab_deadline_ms": 600000},
+       "samples": [sample, dict(sample, name="hy2-1", implementation="hy2", run=1)],
+       "summary": [], "resources": resources,
+       "cleanup_status": "verified", "cleanup_evidence": {"local_processes_reaped": True, "local_listeners_remaining": 0,
+                    "remote_process_groups_reaped": True, "remote_listeners_remaining": 0, "remote_temp_path_removed": True},
+       "bounds": {"maximum_duration_ms": 600000, "application_bytes_max": 2400}}
+import tempfile, os
+fd, path = tempfile.mkstemp(suffix=".json"); os.close(fd)
+with open(path, "w") as fh: json.dump(doc, fh)
+rc = subprocess.run([sys.executable, validator, "validate-result", path], capture_output=True)
+os.unlink(path)
+if rc.returncode == 0:
+    print("signalled client exit must fail validate-result"); sys.exit(1)
+PYNEG
+[ $? -eq 0 ] || exit 1
 for spec in 'tls:TLS authentication failed' 'auth:authentication failed password=hunter2' 'config:invalid config yaml' 'path:connection refused 10.23.45.67:443 /home/private/key' 'readiness:listener not ready' 'payload:payload exchange truncated: connection closed after 0 of 1200 bytes'; do
   category=${spec%%:*}; message=${spec#*:}; printf '%s\n' "$message" >"$tmp/pair-hy2.err"
   bundle="$tmp/pair-$category-private.json"; records="$tmp/pair-$category.jsonl"; blocked="$tmp/pair-$category-blocked.json"

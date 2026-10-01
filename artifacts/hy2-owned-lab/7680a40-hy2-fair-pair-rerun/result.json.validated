@@ -1,0 +1,1004 @@
+{
+  "schema": "nekomusume.benchmark-result.v1",
+  "experiment_id": "hy2-owned-lab-paired",
+  "git_commit": "689b74cd020336c6f8ba571e0b195bab21e46394",
+  "mode": "controlled-owned-lab",
+  "transport": "deterministic",
+  "scope": "self-owned-client-vps",
+  "bounds": {
+    "maximum_duration_ms": 530000,
+    "application_bytes_max": 12000
+  },
+  "contract": {
+    "endpoint_id": "us-virginia-23",
+    "route_id": "same-client-vps-nearby-interleaved",
+    "mtu": 1500,
+    "security_profile": "authenticated encrypted research configuration",
+    "client_lifecycle": "fresh transport per timed sample",
+    "client_resource_scope": "sampler-created process group",
+    "server_resource_scope": "separately labelled; excluded from client timing",
+    "load_profile": "single-stream exact authenticated echo",
+    "payload_bytes": 1200,
+    "payload_prepared": true,
+    "payload_sha256": "655a3ef0465a9f30fddf25f4dde0c19a05c6f9069b83961800c1944165955273",
+    "runs_per_implementation": 5,
+    "enforced_global_deadline_ms": 530000,
+    "work_deadline_ms": 470000,
+    "cleanup_reserve_ms": 60000,
+    "whole_lab_deadline_ms": 530000,
+    "cleanup_reserve_sec": 60,
+    "nekomusume_binary_sha256": "374a6dafbc92af514a3e1586799201b17610b21c3f0d5ea099dc1c477182cfa0",
+    "hy2_version": "v2.9.3",
+    "hy2_binary_sha256": "66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1",
+    "wire_bytes_nullable": true,
+    "captured_at": "2026-10-01T06:02:06Z"
+  },
+  "samples": [
+    {
+      "application_bytes": 1200,
+      "client_diagnostic": null,
+      "cpu_system_seconds": 0.003042,
+      "cpu_user_seconds": 0.001334,
+      "elapsed_seconds": 2.16,
+      "exit_code": 0,
+      "failure_stage": null,
+      "failures": 0,
+      "fd_count": 5,
+      "implementation": "nekomusume",
+      "name": "nekomusume-1",
+      "payload_sha256": "655a3ef0465a9f30fddf25f4dde0c19a05c6f9069b83961800c1944165955273",
+      "rss_kib": 11436,
+      "run": 1,
+      "wire_bytes": null
+    },
+    {
+      "application_bytes": 1200,
+      "client_diagnostic": null,
+      "cpu_system_seconds": 0.043668,
+      "cpu_user_seconds": 0.077748,
+      "elapsed_seconds": 1.1,
+      "exit_code": 0,
+      "failure_stage": null,
+      "failures": 0,
+      "fd_count": 20,
+      "implementation": "hy2",
+      "name": "hy2-1",
+      "payload_sha256": "655a3ef0465a9f30fddf25f4dde0c19a05c6f9069b83961800c1944165955273",
+      "rss_kib": 42752,
+      "run": 1,
+      "wire_bytes": null
+    },
+    {
+      "application_bytes": 1200,
+      "client_diagnostic": null,
+      "cpu_system_seconds": 0.003636,
+      "cpu_user_seconds": 0.000921,
+      "elapsed_seconds": 2.4,
+      "exit_code": 0,
+      "failure_stage": null,
+      "failures": 0,
+      "fd_count": 5,
+      "implementation": "nekomusume",
+      "name": "nekomusume-2",
+      "payload_sha256": "655a3ef0465a9f30fddf25f4dde0c19a05c6f9069b83961800c1944165955273",
+      "rss_kib": 11516,
+      "run": 2,
+      "wire_bytes": null
+    },
+    {
+      "application_bytes": 1200,
+      "client_diagnostic": null,
+      "cpu_system_seconds": 0.048631,
+      "cpu_user_seconds": 0.088183,
+      "elapsed_seconds": 1.19,
+      "exit_code": 0,
+      "failure_stage": null,
+      "failures": 0,
+      "fd_count": 20,
+      "implementation": "hy2",
+      "name": "hy2-2",
+      "payload_sha256": "655a3ef0465a9f30fddf25f4dde0c19a05c6f9069b83961800c1944165955273",
+      "rss_kib": 45056,
+      "run": 2,
+      "wire_bytes": null
+    },
+    {
+      "application_bytes": 1200,
+      "client_diagnostic": null,
+      "cpu_system_seconds": 0.004844,
+      "cpu_user_seconds": 0.0,
+      "elapsed_seconds": 2.15,
+      "exit_code": 0,
+      "failure_stage": null,
+      "failures": 0,
+      "fd_count": 5,
+      "implementation": "nekomusume",
+      "name": "nekomusume-3",
+      "payload_sha256": "655a3ef0465a9f30fddf25f4dde0c19a05c6f9069b83961800c1944165955273",
+      "rss_kib": 11516,
+      "run": 3,
+      "wire_bytes": null
+    },
+    {
+      "application_bytes": 1200,
+      "client_diagnostic": null,
+      "cpu_system_seconds": 0.045091,
+      "cpu_user_seconds": 0.08444,
+      "elapsed_seconds": 1.07,
+      "exit_code": 0,
+      "failure_stage": null,
+      "failures": 0,
+      "fd_count": 19,
+      "implementation": "hy2",
+      "name": "hy2-3",
+      "payload_sha256": "655a3ef0465a9f30fddf25f4dde0c19a05c6f9069b83961800c1944165955273",
+      "rss_kib": 45312,
+      "run": 3,
+      "wire_bytes": null
+    },
+    {
+      "application_bytes": 1200,
+      "client_diagnostic": null,
+      "cpu_system_seconds": 0.003457,
+      "cpu_user_seconds": 0.001061,
+      "elapsed_seconds": 2.1,
+      "exit_code": 0,
+      "failure_stage": null,
+      "failures": 0,
+      "fd_count": 5,
+      "implementation": "nekomusume",
+      "name": "nekomusume-4",
+      "payload_sha256": "655a3ef0465a9f30fddf25f4dde0c19a05c6f9069b83961800c1944165955273",
+      "rss_kib": 11428,
+      "run": 4,
+      "wire_bytes": null
+    },
+    {
+      "application_bytes": 1200,
+      "client_diagnostic": null,
+      "cpu_system_seconds": 0.044615,
+      "cpu_user_seconds": 0.088153,
+      "elapsed_seconds": 1.11,
+      "exit_code": 0,
+      "failure_stage": null,
+      "failures": 0,
+      "fd_count": 19,
+      "implementation": "hy2",
+      "name": "hy2-4",
+      "payload_sha256": "655a3ef0465a9f30fddf25f4dde0c19a05c6f9069b83961800c1944165955273",
+      "rss_kib": 45184,
+      "run": 4,
+      "wire_bytes": null
+    },
+    {
+      "application_bytes": 1200,
+      "client_diagnostic": null,
+      "cpu_system_seconds": 0.002736,
+      "cpu_user_seconds": 0.001824,
+      "elapsed_seconds": 2.14,
+      "exit_code": 0,
+      "failure_stage": null,
+      "failures": 0,
+      "fd_count": 5,
+      "implementation": "nekomusume",
+      "name": "nekomusume-5",
+      "payload_sha256": "655a3ef0465a9f30fddf25f4dde0c19a05c6f9069b83961800c1944165955273",
+      "rss_kib": 11516,
+      "run": 5,
+      "wire_bytes": null
+    },
+    {
+      "application_bytes": 1200,
+      "client_diagnostic": null,
+      "cpu_system_seconds": 0.04386,
+      "cpu_user_seconds": 0.085578,
+      "elapsed_seconds": 1.06,
+      "exit_code": 0,
+      "failure_stage": null,
+      "failures": 0,
+      "fd_count": 19,
+      "implementation": "hy2",
+      "name": "hy2-5",
+      "payload_sha256": "655a3ef0465a9f30fddf25f4dde0c19a05c6f9069b83961800c1944165955273",
+      "rss_kib": 45056,
+      "run": 5,
+      "wire_bytes": null
+    }
+  ],
+  "summary": [
+    {
+      "implementation": "hy2",
+      "failures": 0,
+      "median_exchange_latency_ms": 1100,
+      "p95_exchange_latency_ms": 1190,
+      "application_bytes": 6000,
+      "wire_bytes": null
+    },
+    {
+      "implementation": "nekomusume",
+      "failures": 0,
+      "median_exchange_latency_ms": 2150,
+      "p95_exchange_latency_ms": 2400,
+      "application_bytes": 6000,
+      "wire_bytes": null
+    }
+  ],
+  "resources": [
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.043668,
+        "user_seconds": 0.077748
+      },
+      "elapsed_seconds": 1.042166,
+      "ended_at": "2026-10-01T06:01:25.577Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "hy2-owned-lab-1",
+      "fd": {
+        "peak_count": 20,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1",
+      "implementation": "hy2",
+      "owned_experimental_sockets": {
+        "peak_count": 1,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "client",
+      "rss": {
+        "max_kib": 42752,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 53,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:24.534Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.048631,
+        "user_seconds": 0.088183
+      },
+      "elapsed_seconds": 1.137506,
+      "ended_at": "2026-10-01T06:01:35.559Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "hy2-owned-lab-2",
+      "fd": {
+        "peak_count": 20,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1",
+      "implementation": "hy2",
+      "owned_experimental_sockets": {
+        "peak_count": 1,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "client",
+      "rss": {
+        "max_kib": 45056,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 47,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:34.422Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.045091,
+        "user_seconds": 0.08444
+      },
+      "elapsed_seconds": 1.025385,
+      "ended_at": "2026-10-01T06:01:44.935Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "hy2-owned-lab-3",
+      "fd": {
+        "peak_count": 19,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1",
+      "implementation": "hy2",
+      "owned_experimental_sockets": {
+        "peak_count": 1,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "client",
+      "rss": {
+        "max_kib": 45312,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 51,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:43.909Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.044615,
+        "user_seconds": 0.088153
+      },
+      "elapsed_seconds": 1.034607,
+      "ended_at": "2026-10-01T06:01:51.362Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "hy2-owned-lab-4",
+      "fd": {
+        "peak_count": 19,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1",
+      "implementation": "hy2",
+      "owned_experimental_sockets": {
+        "peak_count": 1,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "client",
+      "rss": {
+        "max_kib": 45184,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 45,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:50.327Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.04386,
+        "user_seconds": 0.085578
+      },
+      "elapsed_seconds": 1.007739,
+      "ended_at": "2026-10-01T06:02:00.713Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "hy2-owned-lab-5",
+      "fd": {
+        "peak_count": 19,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1",
+      "implementation": "hy2",
+      "owned_experimental_sockets": {
+        "peak_count": 1,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "client",
+      "rss": {
+        "max_kib": 45056,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 51,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:59.705Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.003042,
+        "user_seconds": 0.001334
+      },
+      "elapsed_seconds": 2.10283,
+      "ended_at": "2026-10-01T06:01:24.370Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "nekomusume-owned-lab-1",
+      "fd": {
+        "peak_count": 5,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:374a6dafbc92af514a3e1586799201b17610b21c3f0d5ea099dc1c477182cfa0",
+      "implementation": "nekomusume",
+      "owned_experimental_sockets": {
+        "peak_count": 0,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "client",
+      "rss": {
+        "max_kib": 11436,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 130,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:22.267Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.003636,
+        "user_seconds": 0.000921
+      },
+      "elapsed_seconds": 2.136529,
+      "ended_at": "2026-10-01T06:01:34.281Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "nekomusume-owned-lab-2",
+      "fd": {
+        "peak_count": 5,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:374a6dafbc92af514a3e1586799201b17610b21c3f0d5ea099dc1c477182cfa0",
+      "implementation": "nekomusume",
+      "owned_experimental_sockets": {
+        "peak_count": 0,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "client",
+      "rss": {
+        "max_kib": 11516,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 77,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:32.144Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.004844,
+        "user_seconds": 0.0
+      },
+      "elapsed_seconds": 2.098075,
+      "ended_at": "2026-10-01T06:01:43.766Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "nekomusume-owned-lab-3",
+      "fd": {
+        "peak_count": 5,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:374a6dafbc92af514a3e1586799201b17610b21c3f0d5ea099dc1c477182cfa0",
+      "implementation": "nekomusume",
+      "owned_experimental_sockets": {
+        "peak_count": 0,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "client",
+      "rss": {
+        "max_kib": 11516,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 118,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:41.668Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.003457,
+        "user_seconds": 0.001061
+      },
+      "elapsed_seconds": 2.051958,
+      "ended_at": "2026-10-01T06:01:50.159Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "nekomusume-owned-lab-4",
+      "fd": {
+        "peak_count": 5,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:374a6dafbc92af514a3e1586799201b17610b21c3f0d5ea099dc1c477182cfa0",
+      "implementation": "nekomusume",
+      "owned_experimental_sockets": {
+        "peak_count": 0,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "client",
+      "rss": {
+        "max_kib": 11428,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 125,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:48.107Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.002736,
+        "user_seconds": 0.001824
+      },
+      "elapsed_seconds": 2.089699,
+      "ended_at": "2026-10-01T06:01:59.562Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "nekomusume-owned-lab-5",
+      "fd": {
+        "peak_count": 5,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:374a6dafbc92af514a3e1586799201b17610b21c3f0d5ea099dc1c477182cfa0",
+      "implementation": "nekomusume",
+      "owned_experimental_sockets": {
+        "peak_count": 0,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "client",
+      "rss": {
+        "max_kib": 11516,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 128,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:57.472Z"
+    },
+    {
+      "application_bytes": 6000,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.030318,
+        "user_seconds": 0.048259
+      },
+      "elapsed_seconds": 50.980052,
+      "ended_at": "2026-10-01T06:02:03.763Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "hy2-owned-lab",
+      "fd": {
+        "peak_count": 12,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:66dbdb0608f25f3057b433afe975a9fc1af2ca8e512479e294988b3ef363d6c1",
+      "implementation": "hy2-v2.9.3",
+      "owned_experimental_sockets": {
+        "peak_count": 1,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "server",
+      "rss": {
+        "max_kib": 24956,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 160.0,
+        "sample_count": 2790,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:12.783Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.010675,
+        "user_seconds": 0.002364
+      },
+      "elapsed_seconds": 5.17423,
+      "ended_at": "2026-10-01T06:01:24.247Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "neko-owned-lab-1",
+      "fd": {
+        "peak_count": 5,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:374a6dafbc92af514a3e1586799201b17610b21c3f0d5ea099dc1c477182cfa0",
+      "implementation": "nekomusume",
+      "owned_experimental_sockets": {
+        "peak_count": 1,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "server",
+      "rss": {
+        "max_kib": 10620,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 248,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:19.073Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.005111,
+        "user_seconds": 0.007844
+      },
+      "elapsed_seconds": 5.585269,
+      "ended_at": "2026-10-01T06:01:34.167Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "neko-owned-lab-2",
+      "fd": {
+        "peak_count": 5,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:374a6dafbc92af514a3e1586799201b17610b21c3f0d5ea099dc1c477182cfa0",
+      "implementation": "nekomusume",
+      "owned_experimental_sockets": {
+        "peak_count": 1,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "server",
+      "rss": {
+        "max_kib": 10624,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 274,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:28.582Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.007986,
+        "user_seconds": 0.00492
+      },
+      "elapsed_seconds": 5.114872,
+      "ended_at": "2026-10-01T06:01:43.672Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "neko-owned-lab-3",
+      "fd": {
+        "peak_count": 5,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:374a6dafbc92af514a3e1586799201b17610b21c3f0d5ea099dc1c477182cfa0",
+      "implementation": "nekomusume",
+      "owned_experimental_sockets": {
+        "peak_count": 1,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "server",
+      "rss": {
+        "max_kib": 10628,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 244,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:38.557Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.004253,
+        "user_seconds": 0.0
+      },
+      "elapsed_seconds": 2.153438,
+      "ended_at": "2026-10-01T06:01:50.070Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "neko-owned-lab-4",
+      "fd": {
+        "peak_count": 5,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:374a6dafbc92af514a3e1586799201b17610b21c3f0d5ea099dc1c477182cfa0",
+      "implementation": "nekomusume",
+      "owned_experimental_sockets": {
+        "peak_count": 1,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "server",
+      "rss": {
+        "max_kib": 10632,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 104,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:47.916Z"
+    },
+    {
+      "application_bytes": 1200,
+      "cleanup": {
+        "complete": true,
+        "owned_sockets_after_exit": 0,
+        "process_group_empty": true,
+        "process_reaped": true,
+        "scope": "sampler-created process group"
+      },
+      "cpu": {
+        "source": "wait4 rusage",
+        "system_seconds": 0.004014,
+        "user_seconds": 0.007836
+      },
+      "elapsed_seconds": 5.039303,
+      "ended_at": "2026-10-01T06:01:59.462Z",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timed_out": false
+      },
+      "experiment_id": "neko-owned-lab-5",
+      "fd": {
+        "peak_count": 5,
+        "source": "/proc/<pid>/fd"
+      },
+      "identity": "sha256:374a6dafbc92af514a3e1586799201b17610b21c3f0d5ea099dc1c477182cfa0",
+      "implementation": "nekomusume",
+      "owned_experimental_sockets": {
+        "peak_count": 1,
+        "ports_supplied_count": 1,
+        "source": "/proc/<pid>/fd + /proc/net/{tcp,tcp6,udp,udp6}; caller-owned ports only"
+      },
+      "role": "server",
+      "rss": {
+        "max_kib": 10628,
+        "source": "max(sampled /proc VmRSS, wait4 ru_maxrss); Linux KiB",
+        "unit": "KiB"
+      },
+      "sampling": {
+        "interval_ms": 10,
+        "max_seconds": 30.0,
+        "sample_count": 240,
+        "scope": "sampler-created process group"
+      },
+      "schema_version": "nekomusume.process-resource.v1",
+      "started_at": "2026-10-01T06:01:54.422Z"
+    }
+  ],
+  "cleanup_status": "verified",
+  "cleanup_evidence": {
+    "local_processes_reaped": true,
+    "local_listeners_remaining": 0,
+    "remote_process_groups_reaped": true,
+    "remote_listeners_remaining": 0,
+    "remote_temp_path_removed": true
+  }
+}

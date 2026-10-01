@@ -72,6 +72,35 @@ account for it.
   (no IP/host leaks) and file mode 600 unchanged (covered by existing test
   pins).
 
+## Rerun plan amendment (2026-10-01, 85461-approved; environment per Session 26434)
+
+- **Endpoint**: server = `23.147.120.24` (Virginia, AS54286; the PLPMTUD-run
+  machine, cleanup-verified). Client-side = **HK** (`43.154.97.90`): the
+  workstation's direct route to 23 traverses the Meta TUN, which would
+  invalidate the measurement; HK->23 is the real public path (RTT ~213 ms).
+  The harness therefore runs on HK with `LAB_SSH_TARGET` reaching 23 through
+  the workstation's jump (`ProxyJump tmzn-hk` in the ssh config used there).
+- **Ports** (distinct from the PLPMTUD run's single UDP port): neko TCP
+  `40097`, hysteria UDP `40098`, local TCP forwarding `40099`, remote
+  loopback TCP echo `40100` (loopback-only, not firewalled). The ufw window
+  must cover **40097/tcp and 40098/udp** on 23: two rules
+  (`ufw allow 40097/tcp` + `ufw allow 40098/udp`), comment
+  `neko-hy2-exp-20261001`, opened after the before-snapshot, closed with
+  delete + diff before/after identical, on failure too.
+- **Pinned hysteria artifact**: `/usr/local/bin/hysteria` on the retired
+  vps-104 is gone with the machine. v2.9.3 re-fetched from the upstream
+  release (`apernet/hysteria` `app/v2.9.3`, `hysteria-linux-amd64`) on HK;
+  SHA-256 verified equal to the pin `66dbdb06…` before adoption.
+- **Estimated window**: `RUNS=5`, `BENCH_TIMEOUT_SEC=30` (defaults) ->
+  work ~7 min, whole-lab ~8 min; plus setup/teardown the ufw window is
+  **~15 minutes maximum**, revoked immediately after.
+- **HK runtime**: repo scripts via `git archive` (no .git on HK; the result
+  records `git_commit` from the harness invocation — the source tree is
+  `ba1df72`-equivalent), neko-cli from the gated `7680a40` build
+  (`374a6daf…`), hysteria pinned above. Result + samples land under
+  `~/neko-hy2-lab/artifacts/` on HK and are copied back to the workstation
+  evidence tree.
+
 ## Consequences
 
 - The fair-pair comparison methodology defect is understood: the pair is not

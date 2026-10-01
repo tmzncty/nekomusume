@@ -442,8 +442,18 @@ def validate_result(path):
                         for item in client_resources}
     if observed_clients != expected_clients or len(client_resources) != len(expected_clients):
         raise ValueError("per-sample client transport resource evidence is incomplete")
-    if any(item.get("exit") != {"code": 0, "timed_out": False} for item in client_resources):
-        raise ValueError("complete result contains unsuccessful client resource evidence")
+    for item in client_resources:
+        exit_record = item.get("exit")
+        if not isinstance(exit_record, dict) or set(exit_record) != {"code", "signal", "timed_out"}:
+            raise ValueError("client resource exit record is malformed")
+        # The sampler has emitted {code, signal, timed_out} since its first
+        # revision (b191dd8); a complete-run success is code 0, not signalled,
+        # not timed out. The previous exact-dict match {"code":0,"timed_out":
+        # False} could never hold against the real sampler shape and was only
+        # reachable for the first time by a complete run (2026-10-01, HK->23),
+        # which it then rejected spuriously.
+        if exit_record["code"] != 0 or exit_record["signal"] is not None or exit_record["timed_out"] is not False:
+            raise ValueError("complete result contains unsuccessful client resource evidence")
     pinned = {"nekomusume": "sha256:" + contract.get("nekomusume_binary_sha256", ""), "hy2": "sha256:" + contract.get("hy2_binary_sha256", "")}
     if any(item.get("implementation") in pinned and item.get("identity") != pinned[item["implementation"]] for item in resources if item.get("role") == "client"):
         raise ValueError("client resource identity is not pinned to contract")
