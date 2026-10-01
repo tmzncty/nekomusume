@@ -761,9 +761,25 @@ fn server(args: &[String]) {
                 let binding = negotiation
                     .authenticated_binding()
                     .unwrap_or_else(|_| fail("negotiation binding failed"));
-                let (n, handshake_peer) = u
-                    .recv_from(&mut b)
-                    .unwrap_or_else(|_| fail("handshake timeout"));
+                // The handshake packet follows the client's receipt of
+                // our negotiation response, so it arrives one full RTT
+                // after the hello on a WAN path (213 ms HK->23 measured;
+                // >100 ms breaks the plain read timeout that the poll
+                // window relies on — netns/loopback's ~0 RTT hid this).
+                // Wait bounded by the session deadline instead, so a
+                // high-RTT client can still complete the handshake.
+                let handshake_deadline = start + d;
+                let (n, handshake_peer) =
+                    match recv_udp_until(&u, &mut b, handshake_deadline, &shutdown)
+                        .unwrap_or_else(|_| fail("handshake receive failed"))
+                    {
+                        UdpWait::Datagram(n, peer) => (n, peer),
+                        UdpWait::Shutdown => {
+                            emit_signal_shutdown(&lifecycle);
+                            return;
+                        }
+                        UdpWait::Deadline => fail("handshake timeout"),
+                    };
                 if handshake_peer != peer {
                     fail("handshake peer changed");
                 }
@@ -1191,8 +1207,18 @@ fn plpmtud_client_probe_loop(
                 }
                 // CONFIRMED state. Done when no raise is scheduled and none
                 // is outstanding; otherwise sleep to the next raise point
-                // (bounded by the session deadline) and probe max_mtu.
+                // (bounded by the session deadline) and probe max_mtu. A
+                // raise scheduled past the session deadline can never fire
+                // (e.g. the default 300 s interval in a 30 s session):
+                // sleeping to the deadline would only burn the session
+                // after convergence has already been reported — exit now.
                 if next_raise_at.is_none() && !raise_in_flight {
+                    break;
+                }
+                if let Some(at) = next_raise_at
+                    && at >= deadline
+                {
+                    emit_plpmtud(args, "plpmtud_deadline", probe_seq, "");
                     break;
                 }
                 if let Some(at) = next_raise_at {

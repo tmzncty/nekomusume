@@ -76,6 +76,14 @@ behind the explicit opt-in flag:
   pacing/congestion budget". Charging would need a charge/release path owned outside
   `Recovery`. This is flagged as a decision point.
 
+## Slice 4 amendment — 2026-10-01 (new VPS environment)
+
+`vps-104` is retired (expired; must not be used or connected to). The administrator designated new US lab machines via Session 26434: use `23.147.120.24` (Virginia, AS54286, vm-zuvu6, 1 core / 2 GB / 33 GB free, uptime 35 d); **`209.141.54.194` must not be touched**. 23 is a live proxy box (hy2 443/udp, trojan 8443/tcp, wireguard 51820-51821/udp, 80/443 tcp) — the run uses only the established 40080-40100 experiment ports, changes no firewall/system settings, and command-verifies teardown (no leftover processes, listeners, or temp paths) as usual.
+
+**Path topology (decisive for measurement validity):** the workstation's direct route to 23 traverses the Meta TUN (198.18.0.2), so it cannot measure the real path. The workstation→HK route is physical (enp129s0f1np1). Therefore the measured path is **HK (client) → 23 (server), real public internet**. SSH carries control only; all UDP data goes HK→23 directly.
+
+Host key pin: the workstation had no prior entry for 23. TOFU accepted 2026-10-01 (ED25519) after the administrator's designation and 26434's independent login verification; recorded here as part of the evidence trail.
+
 ## Out of scope
 
 ICMP / PTB parsing, `IP_MTU_DISCOVER` socket options, IPv6 (no environment),
