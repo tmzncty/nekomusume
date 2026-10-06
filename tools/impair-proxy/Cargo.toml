@@ -1,0 +1,16 @@
+[package]
+name = "impair-proxy"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Userland loopback UDP/TCP impairment proxy: loss, Gilbert-Elliott burst loss, delay+jitter, reorder, duplicate, token-bucket rate, MTU blackhole, scheduled blackout, NAT rebinding. Deterministic under --seed. Zero dependencies."
+
+# Standalone crate: deliberately NOT a member of the nekomusume workspace.
+[workspace]
+
+[[bin]]
+name = "impair-proxy"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
