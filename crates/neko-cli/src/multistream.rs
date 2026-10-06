@@ -63,13 +63,13 @@ fn secure_read(s: &mut TcpStream, session: &mut SecureSession) -> ProcessMessage
 }
 fn server_handshake(
     socket: &mut TcpStream,
-    id: LocalIdentity,
-    client_key: Vec<u8>,
+    id: &LocalIdentity,
+    client_key: &[u8],
     admission: &mut crate::preauth::ListenerAdmission,
     ticket: &mut crate::preauth::AdmissionTicket,
-) -> SecureSession {
+) -> Result<SecureSession, &'static str> {
     let mut negotiation = VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
-        .unwrap_or_else(|_| fail("handshake setup failed".into()));
+        .map_err(|_| "handshake setup failed")?;
     let mut reader = crate::framed::FramedReader::new(MAX_FRAME);
     let deadline = Instant::now() + Duration::from_secs(5);
     let hello = crate::preauth::read_staged_frame(
@@ -82,27 +82,27 @@ fn server_handshake(
         64,
         64,
     )
-    .unwrap_or_else(|_| fail("handshake rejected".into()));
+    .map_err(|_| "handshake rejected")?;
     let response = negotiation
         .server_accept_hello(&hello)
-        .unwrap_or_else(|_| fail("handshake rejected".into()));
+        .map_err(|_| "handshake rejected")?;
     let response_permit_1 = admission
         .charge_response(ticket, response.len() + 4)
-        .unwrap_or_else(|_| fail("pre-auth response rejected".into()));
+        .map_err(|_| "pre-auth response rejected")?;
     admission
         .send_tcp_response(socket, &response, response_permit_1)
-        .unwrap_or_else(|_| fail("pre-auth response deadline elapsed".into()));
+        .map_err(|_| "pre-auth response deadline elapsed")?;
     let binding = negotiation
         .authenticated_binding()
-        .unwrap_or_else(|_| fail("handshake rejected".into()));
+        .map_err(|_| "handshake rejected")?;
     let policy = TrustPolicy::new(vec![TrustRecord {
         version: 1,
-        public_key: client_key,
+        public_key: client_key.to_vec(),
         scope: SCOPE.to_vec(),
         status: TrustStatus::Active,
     }]);
-    let hs = ResponderHandshake::new_with_prologue_binding(&id, policy, DOMAIN, binding.as_bytes())
-        .unwrap_or_else(|_| fail("handshake setup failed".into()));
+    let hs = ResponderHandshake::new_with_prologue_binding(id, policy, DOMAIN, binding.as_bytes())
+        .map_err(|_| "handshake setup failed")?;
     let first = crate::preauth::read_staged_frame(
         &mut reader,
         socket,
@@ -113,20 +113,18 @@ fn server_handshake(
         4096,
         4096,
     )
-    .unwrap_or_else(|_| fail("handshake rejected".into()));
+    .map_err(|_| "handshake rejected")?;
     let (response, session) = hs
         .receive_first(&first, context())
-        .unwrap_or_else(|_| fail("handshake rejected".into()));
+        .map_err(|_| "handshake rejected")?;
     let response_permit_2 = admission
         .charge_response(ticket, response.len() + 4)
-        .unwrap_or_else(|_| fail("pre-auth response rejected".into()));
+        .map_err(|_| "pre-auth response rejected")?;
     admission
         .send_tcp_response(socket, &response, response_permit_2)
-        .unwrap_or_else(|_| fail("pre-auth response deadline elapsed".into()));
-    negotiation
-        .admit_data()
-        .unwrap_or_else(|_| fail("handshake rejected".into()));
-    session
+        .map_err(|_| "pre-auth response deadline elapsed")?;
+    negotiation.admit_data().map_err(|_| "handshake rejected")?;
+    Ok(session)
 }
 fn client_handshake(
     socket: &mut TcpStream,
@@ -285,20 +283,43 @@ pub fn run(args: &[String]) {
     let total = streams * records * bytes;
     if mode == "server" {
         let listener = TcpListener::bind(addr).unwrap_or_else(|e| fail(format!("bind: {e}")));
-        let (mut socket, peer) = listener
-            .accept()
-            .unwrap_or_else(|e| fail(format!("accept: {e}")));
-        let mut preauth = crate::preauth::ListenerAdmission::new();
-        let mut admission = preauth
-            .admit_carrier(crate::preauth::CarrierKind::Tcp, peer)
-            .unwrap_or_else(|_| fail("pre-auth admission rejected".into()));
-        let mut secure = server_handshake(
-            &mut socket,
-            identity,
-            peer_key,
-            &mut preauth,
-            &mut admission,
-        );
+        // F1 (review-2026-10-07 lane-a): a pre-auth admission rejection or a
+        // single-connection handshake failure closes THAT connection and the
+        // accept loop continues; an unauthenticated remote must not be able
+        // to exit the multistream server. Only a successful authentication
+        // proceeds to the bounded single-Session data phase.
+        let mut authenticated = None;
+        while authenticated.is_none() {
+            let (mut socket, peer) = match listener.accept() {
+                Ok(accepted) => accepted,
+                Err(e) => fail(format!("accept: {e}")),
+            };
+            let mut preauth = crate::preauth::ListenerAdmission::new();
+            let mut admission = match preauth.admit_carrier(crate::preauth::CarrierKind::Tcp, peer)
+            {
+                Ok(ticket) => ticket,
+                Err(_) => {
+                    eprintln!("neko: pre-auth admission rejected (connection closed)");
+                    drop(socket);
+                    continue;
+                }
+            };
+            match server_handshake(
+                &mut socket,
+                &identity,
+                &peer_key,
+                &mut preauth,
+                &mut admission,
+            ) {
+                Ok(session) => authenticated = Some((socket, preauth, admission, session, peer)),
+                Err(reason) => {
+                    preauth.release(admission);
+                    eprintln!("neko: {reason} (connection closed)");
+                    let _ = socket.shutdown(std::net::Shutdown::Both);
+                }
+            }
+        }
+        let (mut socket, mut preauth, admission, mut secure, peer) = authenticated.unwrap();
         preauth.release(admission);
         let mut runtime = SessionRuntime::new(
             SESSION,

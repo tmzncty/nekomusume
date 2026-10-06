@@ -154,8 +154,12 @@ fn frame_or_fail(
     }
 }
 
-fn bound_setup(stream: &TcpStream, deadline: Instant, message: &str) {
-    bound_stream_to_deadline(stream, deadline, None).unwrap_or_else(|_| fail(message));
+/// Bounded socket setup shared by client and server handshakes. Client-side
+/// callers treat any failure as terminal (a local deadline invariant); the
+/// server handshake propagates it as a pre-auth single-connection rejection
+/// instead, so both shapes share one primitive.
+fn bound_setup(stream: &TcpStream, deadline: Instant, _message: &str) -> Result<(), ()> {
+    bound_stream_to_deadline(stream, deadline, None).map_err(|_| ())
 }
 
 fn handshake_server(
@@ -166,8 +170,9 @@ fn handshake_server(
     policy: TrustPolicy,
     admission: &mut preauth::ListenerAdmission,
     ticket: &mut preauth::AdmissionTicket,
-) -> neko_crypto::SecureSession {
-    bound_setup(stream, deadline, "setup deadline elapsed");
+) -> Result<neko_crypto::SecureSession, &'static str> {
+    bound_setup(stream, deadline, "setup deadline elapsed")
+        .map_err(|_| "setup deadline elapsed")?;
     let mut negotiation =
         VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS).unwrap();
     let hello = crate::preauth::read_staged_frame(
@@ -180,38 +185,40 @@ fn handshake_server(
         64,
         64,
     )
-    .unwrap_or_else(|_| fail("malformed negotiation"));
+    .map_err(|_| "malformed negotiation")?;
     let selection = negotiation
         .server_accept_hello(&hello)
-        .unwrap_or_else(|_| fail("incompatible negotiation"));
-    bound_setup(stream, deadline, "setup deadline elapsed");
+        .map_err(|_| "incompatible negotiation")?;
+    bound_setup(stream, deadline, "setup deadline elapsed")
+        .map_err(|_| "setup deadline elapsed")?;
     let response_permit_1 = admission
         .charge_response(ticket, selection.len() + 4)
-        .unwrap_or_else(|_| fail("pre-auth response rejected"));
+        .map_err(|_| "pre-auth response rejected")?;
     admission
         .send_tcp_response(stream, &selection, response_permit_1)
-        .unwrap_or_else(|_| fail("negotiation response deadline elapsed"));
+        .map_err(|_| "negotiation response deadline elapsed")?;
     let binding = negotiation.authenticated_binding().unwrap();
     let first = crate::preauth::read_staged_frame(
         reader, stream, 1024, deadline, admission, ticket, 64, 4096,
     )
-    .unwrap_or_else(|_| fail("bad handshake"));
+    .map_err(|_| "bad handshake")?;
     let (response, secure) =
         ResponderHandshake::new_with_prologue_binding(id, policy, DOMAIN, binding.as_bytes())
-            .unwrap()
+            .map_err(|_| "handshake setup failed")?
             .receive_first(&first, context(0))
-            .unwrap_or_else(|_| fail("unauthorized handshake"));
-    bound_setup(stream, deadline, "setup deadline elapsed");
+            .map_err(|_| "unauthorized handshake")?;
+    bound_setup(stream, deadline, "setup deadline elapsed")
+        .map_err(|_| "setup deadline elapsed")?;
     let response_permit_2 = admission
         .charge_response(ticket, response.len() + 4)
-        .unwrap_or_else(|_| fail("pre-auth response rejected"));
+        .map_err(|_| "pre-auth response rejected")?;
     admission
         .send_tcp_response(stream, &response, response_permit_2)
-        .unwrap_or_else(|_| fail("handshake response deadline elapsed"));
+        .map_err(|_| "handshake response deadline elapsed")?;
     negotiation
         .admit_data()
-        .unwrap_or_else(|_| fail("data admission denied"));
-    secure
+        .map_err(|_| "data admission denied")?;
+    Ok(secure)
 }
 
 fn handshake_client(
@@ -221,11 +228,13 @@ fn handshake_client(
     id: &LocalIdentity,
     server_key: &[u8],
 ) -> neko_crypto::SecureSession {
-    bound_setup(stream, deadline, "setup deadline elapsed");
+    bound_setup(stream, deadline, "setup deadline elapsed")
+        .unwrap_or_else(|_| fail("setup deadline elapsed"));
     let mut negotiation =
         VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS).unwrap();
     let hello = negotiation.client_hello().unwrap();
-    bound_setup(stream, deadline, "setup deadline elapsed");
+    bound_setup(stream, deadline, "setup deadline elapsed")
+        .unwrap_or_else(|_| fail("setup deadline elapsed"));
     write_frame(stream, &hello).unwrap_or_else(|_| fail("negotiation send failed"));
     let selection = frame_or_fail(
         reader,
@@ -247,7 +256,8 @@ fn handshake_client(
     )
     .unwrap();
     let first = hs.first_message().unwrap();
-    bound_setup(stream, deadline, "setup deadline elapsed");
+    bound_setup(stream, deadline, "setup deadline elapsed")
+        .unwrap_or_else(|_| fail("setup deadline elapsed"));
     write_frame(stream, &first).unwrap_or_else(|_| fail("handshake send failed"));
     let response = frame_or_fail(reader, stream, 1024, deadline, "handshake response failed");
     let secure = hs
@@ -290,23 +300,73 @@ pub(super) fn server(args: &[String]) {
     std::io::stdout().flush().unwrap();
     let start = Instant::now();
     let mut preauth = preauth::ListenerAdmission::new();
-    let mut accepted = None;
-    while start.elapsed() < cfg.duration && !shutdown.load(Ordering::Acquire) {
-        match listener.accept() {
+    // F1 (review-2026-10-07 lane-a): a pre-auth admission rejection or a
+    // single-connection handshake failure closes THAT connection and the
+    // accept loop continues; an unauthenticated remote must not be able to
+    // exit the periodic server before a Session is established. Only a
+    // successful authentication leaves the loop.
+    let mut authenticated = None;
+    while authenticated.is_none()
+        && start.elapsed() < cfg.duration
+        && !shutdown.load(Ordering::Acquire)
+    {
+        let (mut stream, mut admission) = match listener.accept() {
             Ok((stream, peer)) => {
-                let ticket = preauth
-                    .admit_carrier(crate::preauth::CarrierKind::Tcp, peer)
-                    .unwrap_or_else(|_| fail("pre-auth admission rejected"));
-                accepted = Some((stream, ticket));
-                break;
+                match preauth.admit_carrier(crate::preauth::CarrierKind::Tcp, peer) {
+                    Ok(ticket) => (stream, ticket),
+                    Err(_) => {
+                        println!("periodic_server_rejected preauth=admission rejected=1");
+                        std::io::stdout().flush().unwrap();
+                        drop(stream);
+                        continue;
+                    }
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(10))
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
             }
             Err(_) => fail("accept failed"),
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let mut framed = FramedReader::new(PROCESS_FRAME_MAX + 128);
+        let accepted_at = Instant::now();
+        let setup_deadline = (accepted_at + cfg.setup_timeout).min(start + cfg.duration);
+        let setup_delay = args
+            .windows(2)
+            .find(|w| w[0] == "--test-setup-delay-ms")
+            .map(|w| {
+                w[1].parse::<u64>()
+                    .unwrap_or_else(|_| fail("invalid setup delay"))
+            })
+            .unwrap_or(0);
+        if setup_delay > MAX_SETUP_TIMEOUT_MS {
+            fail("setup delay outside 0-10000");
+        }
+        if setup_delay > 0 {
+            std::thread::sleep(Duration::from_millis(setup_delay));
+        }
+        match handshake_server(
+            &mut stream,
+            &mut framed,
+            setup_deadline,
+            &id,
+            policy.clone(),
+            &mut preauth,
+            &mut admission,
+        ) {
+            Ok(secure) => authenticated = Some((stream, framed, admission, secure)),
+            Err(reason) => {
+                preauth.release(admission);
+                println!("periodic_server_rejected preauth=handshake rejected=1 reason={reason}");
+                std::io::stdout().flush().unwrap();
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            }
         }
     }
-    let Some((mut stream, mut admission)) = accepted else {
+    let Some((mut stream, mut framed, admission, mut secure)) = authenticated else {
         println!(
             "periodic_server_summary authenticated=false received=0 confirmed=0 duplicates=0 elapsed_ms={} cleanup=verified",
             start.elapsed().as_millis()
@@ -316,35 +376,6 @@ pub(super) fn server(args: &[String]) {
         }
         fail("duration expired before authenticated Session");
     };
-    stream
-        .set_read_timeout(Some(Duration::from_millis(100)))
-        .unwrap();
-    let mut framed = FramedReader::new(PROCESS_FRAME_MAX + 128);
-    let accepted_at = Instant::now();
-    let setup_deadline = (accepted_at + cfg.setup_timeout).min(start + cfg.duration);
-    let setup_delay = args
-        .windows(2)
-        .find(|w| w[0] == "--test-setup-delay-ms")
-        .map(|w| {
-            w[1].parse::<u64>()
-                .unwrap_or_else(|_| fail("invalid setup delay"))
-        })
-        .unwrap_or(0);
-    if setup_delay > MAX_SETUP_TIMEOUT_MS {
-        fail("setup delay outside 0-10000");
-    }
-    if setup_delay > 0 {
-        std::thread::sleep(Duration::from_millis(setup_delay));
-    }
-    let mut secure = handshake_server(
-        &mut stream,
-        &mut framed,
-        setup_deadline,
-        &id,
-        policy,
-        &mut preauth,
-        &mut admission,
-    );
     preauth.release(admission);
     framed.set_max_frame_len(PROCESS_FRAME_MAX + 128).unwrap();
     println!(

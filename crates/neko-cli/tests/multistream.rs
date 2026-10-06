@@ -445,8 +445,36 @@ fn unauthorized_client_is_rejected_by_allowlist() {
         Duration::from_secs(10),
     );
     assert!(!client.status.success());
+    // P0/F1 (review-2026-10-07 lane-a): the unauthorized handshake must
+    // close only that connection — the server stays alive and still serves
+    // a legitimate client afterwards.
+    let legitimate = bounded_client_output(
+        Command::new(bin).args([
+            "multistream",
+            "--mode",
+            "client",
+            "--addr",
+            &format!("127.0.0.1:{port}"),
+            "--streams",
+            "1",
+            "--records",
+            "1",
+            "--bytes",
+            "1",
+            "--identity",
+            allowed_identity.to_str().unwrap(),
+            "--server-key",
+            &server_key,
+        ]),
+        Duration::from_secs(10),
+    );
+    assert!(
+        legitimate.status.success(),
+        "{}",
+        String::from_utf8_lossy(&legitimate.stderr)
+    );
     let status = bounded_wait_with_output(&mut server, Duration::from_secs(10));
-    assert!(!status.status.success());
+    assert!(status.status.success());
     for path in [server_identity, allowed_identity, unauthorized_identity] {
         let _ = fs::remove_file(path);
     }
@@ -741,7 +769,7 @@ fn executable_rejects_one_byte_different_negotiation_binding_before_session_data
 #[test]
 fn executable_rejects_unsupported_only_negotiation_before_noise_or_data() {
     let bin = env!("CARGO_BIN_EXE_neko-cli");
-    let (server_identity_path, _) = identity(bin, "unsupported-server");
+    let (server_identity_path, server_key) = identity(bin, "unsupported-server");
     let (client_identity_path, client_key) = identity(bin, "unsupported-client-key");
     let reservation = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = reservation.local_addr().unwrap().port();
@@ -784,8 +812,43 @@ fn executable_rejects_unsupported_only_negotiation_before_noise_or_data() {
         Ok(n) => panic!("server emitted {n} byte(s) after unsupported negotiation"),
         Err(error) => panic!("unexpected terminal-close error: {error}"),
     }
+    // P0/F1 (review-2026-10-07 lane-a): the unsupported negotiation closes
+    // only that connection — the server must stay alive. A bounded liveness
+    // observation replaces the old exit-with-code-2 expectation (which was
+    // the defect being fixed): the process is still running now.
+    if let Some(exit) = server.0.try_wait().unwrap() {
+        panic!("server exited {exit} after unsupported negotiation (must survive)");
+    }
+    let _ = socket.shutdown(std::net::Shutdown::Both);
+    // A legitimate client still completes its exchange against the server.
+    // `client_identity_path` is already allowlisted by the server.
+    let legitimate = bounded_client_output(
+        Command::new(bin).args([
+            "multistream",
+            "--mode",
+            "client",
+            "--addr",
+            &format!("127.0.0.1:{port}"),
+            "--streams",
+            "1",
+            "--records",
+            "1",
+            "--bytes",
+            "1",
+            "--identity",
+            client_identity_path.to_str().unwrap(),
+            "--server-key",
+            &server_key,
+        ]),
+        Duration::from_secs(10),
+    );
+    assert!(
+        legitimate.status.success(),
+        "{}",
+        String::from_utf8_lossy(&legitimate.stderr)
+    );
     let output = bounded_wait_with_output(&mut server, Duration::from_secs(10));
-    assert_uniform_handshake_rejection(&output);
+    assert!(output.status.success());
     let _ = fs::remove_file(server_identity_path);
     let _ = fs::remove_file(client_identity_path);
 }

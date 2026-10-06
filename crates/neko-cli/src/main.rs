@@ -642,15 +642,28 @@ fn server(args: &[String]) {
         while start.elapsed() < d && !shutdown.load(Ordering::Acquire) {
             match l.accept() {
                 Ok((mut s, peer)) => {
-                    let mut admission = preauth
-                        .admit_carrier(preauth::CarrierKind::Tcp, peer)
-                        .unwrap_or_else(|_| fail("pre-auth admission rejected"));
+                    // F1 (review-2026-10-07 lane-a): a pre-auth admission
+                    // rejection — or any single-connection failure before the
+                    // first authenticated exchange — closes THAT connection,
+                    // is counted through the classification diagnostic, and
+                    // leaves the listener serving. An unauthenticated remote
+                    // must not be able to exit the server process. The
+                    // reject-and-continue shape mirrors failover_server's
+                    // non-pending UDP path.
+                    let mut admission = match preauth.admit_carrier(preauth::CarrierKind::Tcp, peer)
+                    {
+                        Ok(admission) => admission,
+                        Err(_) => {
+                            emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                            continue;
+                        }
+                    };
                     let mut negotiation =
                         VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
                             .unwrap_or_else(|_| fail("negotiation setup failed"));
                     let mut reader = framed::FramedReader::new(MAX_NEGOTIATION_FRAME);
                     let deadline = start + d;
-                    let hello = preauth::read_staged_frame(
+                    let hello = match preauth::read_staged_frame(
                         &mut reader,
                         &mut s,
                         MAX_NEGOTIATION_FRAME,
@@ -659,24 +672,46 @@ fn server(args: &[String]) {
                         &mut admission,
                         64,
                         64,
-                    )
-                    .unwrap_or_else(|_| fail("malformed negotiation"));
-                    let selection = negotiation
-                        .server_accept_hello(&hello)
-                        .unwrap_or_else(|_| fail("incompatible negotiation"));
-                    let response_permit_1 = preauth
-                        .charge_response(&mut admission, selection.len() + 4)
-                        .unwrap_or_else(|_| fail("pre-auth response rejected"));
-                    preauth
+                    ) {
+                        Ok(hello) => hello,
+                        Err(_) => {
+                            preauth.release(admission);
+                            emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                            continue;
+                        }
+                    };
+                    let selection = match negotiation.server_accept_hello(&hello) {
+                        Ok(selection) => selection,
+                        Err(_) => {
+                            preauth.release(admission);
+                            emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                            continue;
+                        }
+                    };
+                    let response_permit_1 =
+                        match preauth.charge_response(&mut admission, selection.len() + 4) {
+                            Ok(permit) => permit,
+                            Err(_) => {
+                                preauth.release(admission);
+                                emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                                continue;
+                            }
+                        };
+                    if preauth
                         .send_tcp_response(&mut s, &selection, response_permit_1)
-                        .unwrap_or_else(|_| fail("negotiation response deadline elapsed"));
+                        .is_err()
+                    {
+                        preauth.release(admission);
+                        emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                        continue;
+                    }
                     let binding = negotiation
                         .authenticated_binding()
                         .unwrap_or_else(|_| fail("negotiation binding failed"));
                     reader
                         .set_max_frame_len(1024)
                         .unwrap_or_else(|_| fail("partial frame crossed protocol stage"));
-                    let first = preauth::read_staged_frame(
+                    let first = match preauth::read_staged_frame(
                         &mut reader,
                         &mut s,
                         1024,
@@ -685,23 +720,48 @@ fn server(args: &[String]) {
                         &mut admission,
                         64,
                         4096,
-                    )
-                    .unwrap_or_else(|_| fail("bad handshake"));
-                    let (resp, mut ss) = ResponderHandshake::new_with_prologue_binding(
+                    ) {
+                        Ok(first) => first,
+                        Err(_) => {
+                            preauth.release(admission);
+                            emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                            continue;
+                        }
+                    };
+                    let handshake = match ResponderHandshake::new_with_prologue_binding(
                         &id,
                         policy.clone(),
                         DOMAIN,
                         binding.as_bytes(),
-                    )
-                    .unwrap_or_else(|_| fail("handshake setup failed"))
-                    .receive_first(&first, context(0))
-                    .unwrap_or_else(|_| fail("unauthorized handshake"));
-                    let response_permit_2 = preauth
-                        .charge_response(&mut admission, resp.len() + 4)
-                        .unwrap_or_else(|_| fail("pre-auth response rejected"));
-                    preauth
+                    ) {
+                        Ok(handshake) => handshake,
+                        Err(_) => fail("handshake setup failed"),
+                    };
+                    let (resp, mut ss) = match handshake.receive_first(&first, context(0)) {
+                        Ok(completed) => completed,
+                        Err(_) => {
+                            preauth.release(admission);
+                            emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                            continue;
+                        }
+                    };
+                    let response_permit_2 =
+                        match preauth.charge_response(&mut admission, resp.len() + 4) {
+                            Ok(permit) => permit,
+                            Err(_) => {
+                                preauth.release(admission);
+                                emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                                continue;
+                            }
+                        };
+                    if preauth
                         .send_tcp_response(&mut s, &resp, response_permit_2)
-                        .unwrap_or_else(|_| fail("handshake response deadline elapsed"));
+                        .is_err()
+                    {
+                        preauth.release(admission);
+                        emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                        continue;
+                    }
                     negotiation
                         .admit_data()
                         .unwrap_or_else(|_| fail("data admission denied"));
@@ -740,18 +800,32 @@ fn server(args: &[String]) {
         let mut b = [0; 65536];
         while start.elapsed() < d && !shutdown.load(Ordering::Acquire) {
             if let Ok((n, peer)) = u.recv_from(&mut b) {
-                let mut admission = preauth
-                    .admit_carrier(preauth::CarrierKind::Udp, peer)
-                    .unwrap_or_else(|_| fail("pre-auth admission rejected"));
-                preauth
-                    .charge_input(&mut admission, n, 64)
-                    .unwrap_or_else(|_| fail("pre-auth admission rejected"));
+                // F1 (review-2026-10-07 lane-a): admission and input-charge
+                // rejections are per-datagram — release, classify, and keep
+                // serving. Mirrors failover_server's non-pending UDP path.
+                let mut admission = match preauth.admit_carrier(preauth::CarrierKind::Udp, peer) {
+                    Ok(admission) => admission,
+                    Err(_) => {
+                        emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                        continue;
+                    }
+                };
+                if preauth.charge_input(&mut admission, n, 64).is_err() {
+                    preauth.release(admission);
+                    emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                    continue;
+                }
                 let mut negotiation =
                     VersionNegotiator::new(NegotiationRole::Server, SUPPORTED_VERSIONS)
                         .unwrap_or_else(|_| fail("negotiation setup failed"));
-                let selection = negotiation
-                    .server_accept_hello(&b[..n])
-                    .unwrap_or_else(|_| fail("incompatible negotiation"));
+                let selection = match negotiation.server_accept_hello(&b[..n]) {
+                    Ok(selection) => selection,
+                    Err(_) => {
+                        preauth.release(admission);
+                        emit_diagnostic(args, "server", "malformed_or_unadmitted", 0, "");
+                        continue;
+                    }
+                };
                 let response_permit_3 = preauth
                     .charge_response(&mut admission, selection.len())
                     .unwrap_or_else(|_| fail("pre-auth response rejected"));
