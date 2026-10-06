@@ -914,26 +914,35 @@ fn tcp_delay_e2e() {
 #[test]
 fn tcp_kill_rst_e2e() {
     let (echo_port, stop, echo_h) = spawn_tcp_echo();
+    // Wide window: 600..3000 ms proxy-relative. Client elapsed measured
+    // from *before* spawn is always >= proxy elapsed, so polling elapsed
+    // keeps both phases deterministically placed under parallel-suite load:
+    // handshake must finish < 600ms (normally <50ms), the kill probe runs
+    // at >= 800ms with 2.2s of window headroom left.
+    let t_spawn = Instant::now();
     let mut proxy = start_proxy(&[
         "--mode",
         "tcp",
         "--upstream",
         &format!("127.0.0.1:{echo_port}"),
         "--c2s-kill",
-        "400:900:rst",
+        "600:3000:rst",
     ]);
     let mut c = TcpStream::connect(format!("127.0.0.1:{}", proxy.port)).unwrap();
     c.set_nodelay(true).unwrap();
+    c.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
     // before window: works
     c.write_all(b"ok").unwrap();
     let mut buf = [0u8; 2];
     c.read_exact(&mut buf).unwrap();
     assert_eq!(&buf, b"ok");
-    // wait into the kill window
-    std::thread::sleep(Duration::from_millis(500));
-    // next write/read must fail (RST)
+    // advance to >= 800 ms since spawn (inside [600,3000) by construction)
+    while t_spawn.elapsed() < Duration::from_millis(800) {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    // next write/read must fail (RST); retries absorb write buffering
     let mut err = false;
-    for _ in 0..3 {
+    for _ in 0..5 {
         match c.write_all(b"dead") {
             Ok(()) => match c.read_exact(&mut [0u8; 4]) {
                 Ok(()) => {}
