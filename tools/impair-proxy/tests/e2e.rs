@@ -23,6 +23,7 @@ struct Proxy {
 
 impl Drop for Proxy {
     fn drop(&mut self) {
+        // Best-effort cleanup; tests that need stats call stop_proxy first.
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_file(&self.stats);
@@ -455,20 +456,66 @@ fn udp_reorder_e2e() {
     ]);
     let c = UdpSocket::bind("127.0.0.1:0").unwrap();
     c.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
-    // send A then B quickly; with reorder p=1, A is delayed 80ms beyond B's
-    // send, so the echo returns B before A.
-    c.send_to(b"A", format!("127.0.0.1:{}", proxy.port)).unwrap();
-    c.send_to(b"B", format!("127.0.0.1:{}", proxy.port)).unwrap();
+    // p=1.0 delays every packet equally (order preserved), so a strict
+    // "B before A" assertion needs luck. Instead: burst 30 sequenced packets
+    // with p=0.5 reorder delay 80 ms; the delayed half lands after every
+    // undelayed one, guaranteeing sequence inversions at the receiver.
+    let mut proxy = start_proxy(&[
+        "--mode",
+        "udp",
+        "--upstream",
+        &format!("127.0.0.1:{echo_port}"),
+        "--c2s-reorder",
+        "0.5",
+        "--c2s-reorder-delay-ms",
+        "80",
+        "--seed",
+        "7",
+    ]);
+    let c2 = UdpSocket::bind("127.0.0.1:0").unwrap();
+    c2.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+    let _ = c;
+    let n = 30u32;
+    for i in 0..n {
+        c2.send_to(&i.to_be_bytes(), format!("127.0.0.1:{}", proxy.port)).unwrap();
+        // 20 ms spacing: each packet gets a distinct arrival time, so an
+        // 80 ms reorder delay shifts a hit packet ~4 slots later, producing
+        // multiple adjacent inversions instead of a single block boundary.
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let mut seen: Vec<u32> = Vec::new();
     let mut buf = [0u8; 8];
-    let (n, _) = c.recv_from(&mut buf).unwrap();
-    assert_eq!(&buf[..n], b"B", "B must arrive before A");
-    let (n, _) = c.recv_from(&mut buf).unwrap();
-    assert_eq!(&buf[..n], b"A");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while seen.len() < n as usize && Instant::now() < deadline {
+        if let Ok((rn, _)) = c2.recv_from(&mut buf) {
+            assert_eq!(rn, 4);
+            seen.push(u32::from_be_bytes(buf[..4].try_into().unwrap()));
+        }
+    }
+    assert_eq!(seen.len(), n as usize, "all packets must arrive");
+    let inversions = seen
+        .windows(2)
+        .filter(|w| w[0] > w[1])
+        .count();
+    // With ~15 packets jumped 80 ms ahead of ~15 others, no inversions is
+    // essentially impossible (only if the RNG hit exactly a prefix/suffix).
+    assert!(
+        inversions >= 3,
+        "reorder produced only {inversions} inversions in {} arrivals",
+        seen.len()
+    );
+    // and the set is intact (no loss)
+    let mut sorted = seen.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted.len(), n as usize);
     stop_proxy(&mut proxy);
     let st = wait_stats(&proxy);
-    assert_eq!(
-        st.get("c2s").unwrap().get("reorder_hits").unwrap().as_f64(),
-        2.0
+    // p=0.5 over 30 packets: hits should be well within 6..24.
+    let hits = st.get("c2s").unwrap().get("reorder_hits").unwrap().as_f64();
+    assert!(
+        (6.0..=24.0).contains(&hits),
+        "reorder_hits {hits} outside 6..24 for p=0.5 over 30"
     );
     stop.store(true, Ordering::Relaxed);
     echo_h.join().unwrap();
@@ -783,6 +830,27 @@ fn spawn_tcp_echo() -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
 }
 
 fn stop_proxy(p: &mut Proxy) {
+    // Graceful stop first (SIGTERM) so the proxy flushes and writes stats;
+    // escalate to SIGKILL if it ignores that for too long.
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    const SIGTERM: i32 = 15;
+    const SIGKILL: i32 = 9;
+    let pid = p.child.id() as i32;
+    if pid > 0 {
+        unsafe {
+            kill(pid, SIGTERM);
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        match p.child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(_) => break,
+        }
+    }
     let _ = p.child.kill();
     let _ = p.child.wait();
 }
@@ -902,7 +970,7 @@ fn tcp_kill_hold_stalls_then_recovers() {
         "--upstream",
         &format!("127.0.0.1:{echo_port}"),
         "--c2s-kill",
-        "400:900:hold",
+        "500:1200:hold",
     ]);
     let mut c = TcpStream::connect(format!("127.0.0.1:{}", proxy.port)).unwrap();
     c.set_nodelay(true).unwrap();
@@ -911,15 +979,18 @@ fn tcp_kill_hold_stalls_then_recovers() {
     c.set_read_timeout(Some(Duration::from_millis(250))).unwrap();
     c.read_exact(&mut buf).unwrap();
     assert_eq!(&buf, b"pre");
-    // enter stall
-    std::thread::sleep(Duration::from_millis(150));
+    // now ~650ms proxy-relative: inside the hold window. The parked data can
+    // only come back after the window ends (~550 ms away), so the client
+    // needs a read timeout well beyond that.
+    std::thread::sleep(Duration::from_millis(550));
     let t_stall = Instant::now();
     c.write_all(b"stalled").unwrap();
+    c.set_read_timeout(Some(Duration::from_millis(1500))).unwrap();
     let mut b2 = [0u8; 7];
     let r = c.read_exact(&mut b2);
     let waited = t_stall.elapsed();
-    // data written during the hold must be parked: no echo for >= 250ms
-    // (until window ends ~750ms from now), then delivered intact.
+    // data written during the hold must be parked: no echo until the window
+    // ends (>= ~350 ms from now), then delivered intact.
     assert!(r.is_ok(), "post-window echo missing");
     assert_eq!(&b2, b"stalled");
     assert!(

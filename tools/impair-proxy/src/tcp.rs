@@ -239,6 +239,9 @@ fn handle_conn(
                 let mut eng = ArrivalEngine::new(cfg_c.clone(), seed);
                 let mut buf = vec![0u8; CHUNK];
                 let mut client_r = client_r;
+                // Wake up regularly so the kill flag is observed even when
+                // the client is silent (else join deadlocks, no RST, ever).
+                client_r.set_read_timeout(Some(Duration::from_millis(50))).ok();
                 loop {
                     if kill.load(Ordering::Relaxed)
                         || STOP_REQUESTED.load(Ordering::Relaxed)
@@ -304,7 +307,9 @@ fn handle_conn(
                 let mut up_w = up_w;
                 let mut acct = SendAccountant::default();
                 loop {
-                    if kill.load(Ordering::Relaxed) {
+                    // Exit on teardown OR global stop so stats are not lost
+                    // (run_tcp joins this handle before collecting).
+                    if kill.load(Ordering::Relaxed) || STOP_REQUESTED.load(Ordering::Relaxed) {
                         break;
                     }
                     let now = now_ms(&start);
@@ -358,6 +363,7 @@ fn handle_conn(
                 let mut eng = ArrivalEngine::new(cfg_c.clone(), seed);
                 let mut buf = vec![0u8; CHUNK];
                 let mut up_read = up_read;
+                up_read.set_read_timeout(Some(Duration::from_millis(50))).ok();
                 loop {
                     if kill.load(Ordering::Relaxed)
                         || STOP_REQUESTED.load(Ordering::Relaxed)
@@ -415,7 +421,7 @@ fn handle_conn(
             let mut client_w = client_w;
             let mut acct = SendAccountant::default();
             loop {
-                if kill.load(Ordering::Relaxed) {
+                if kill.load(Ordering::Relaxed) || STOP_REQUESTED.load(Ordering::Relaxed) {
                     break;
                 }
                 let now = now_ms(&start);
