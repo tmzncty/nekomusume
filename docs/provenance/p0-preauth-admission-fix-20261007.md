@@ -90,3 +90,9 @@ working-tree change stays uncommitted and untouched.
 - `crates/neko-cli/tests/multistream.rs` (two contract updates)
 - `docs/provenance/p0-preauth-admission-fix-20261007.md` (this file; the exact fixing SHA is recorded in the follow-up gate note)
 - `docs/status.md` (RSEC-001 factual note)
+
+**Gate follow-up (2026-10-07 12:29 +0800, Perlica):** exact-tree `bash
+scripts/check.sh` re-verified green at `d88475d` on the full tree (fmt +
+check + test + clippy + all governance scripts; exit 0) after removing
+stray `__pycache__` artifacts left by earlier local python runs. Log:
+`/tmp/neko-check5.log` (local). Pushed to `origin/main`.
