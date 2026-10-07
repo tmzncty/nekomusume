@@ -373,6 +373,19 @@ pub fn parse_config(argv: &[String]) -> Result<Config, String> {
                     "{name}-nat-change-every-ms is UDP-only (TCP rebind = teardown; use {name}-kill)"
                 ));
             }
+            // TCP is an ordered byte stream: a userland proxy cannot reorder
+            // or duplicate bytes without corrupting every framing/AEAD
+            // boundary above it. These knobs are datagram semantics only.
+            if d.reorder_p > 0.0 {
+                return Err(format!(
+                    "{name}-reorder is UDP-only: TCP is an ordered byte stream; reordering bytes corrupts framing"
+                ));
+            }
+            if d.duplicate_p > 0.0 {
+                return Err(format!(
+                    "{name}-duplicate is UDP-only: duplicating TCP bytes corrupts framing"
+                ));
+            }
         }
     }
 
