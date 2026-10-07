@@ -121,3 +121,13 @@ fail-the-build pin), so a library change that moves a hard limit breaks here.
 - No network behavior added; no governance flags touched; no library
   constants touched (Option B deferred).
 - Loopback-only testing; no VPS/WAN/sudo.
+
+## Gate
+
+`bash scripts/check.sh` **exit 0 on the committed tree at `460b4d5`**
+(2026-10-07 13:3x +0800): fmt + check + test + clippy (-D warnings) + all
+governance/evidence/status/release scripts green. 45 test suites, **773
+tests passed, 0 failed** (log: `/tmp/neko-check-measurement2.log`, local).
+The earlier dirty-tree run failed only at reproducibility-test's
+"release build requires no unstaged tracked changes" guard — expected on an
+uncommitted worktree; the committed-tree rerun is the gate record.
