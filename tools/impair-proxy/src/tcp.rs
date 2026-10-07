@@ -316,8 +316,11 @@ fn handle_conn(
                     let batch = {
                         let mut g = q.q.lock().unwrap();
                         if g.is_empty() {
-                            let _ = q.cv.wait_timeout(g, Duration::from_millis(20)).unwrap();
-                            Vec::new()
+                            // Hold the lock across the wait: no drop-relock
+                            // window, no lost wakeup, and pop immediately on
+                            // wake (stop-and-wait peers pay sub-ms otherwise).
+                            let (mut g, _) = q.cv.wait_timeout(g, Duration::from_millis(20)).unwrap();
+                            g.pop_due(now_ms(&start))
                         } else {
                             let batch = g.pop_due(now);
                             if batch.is_empty() {
@@ -428,8 +431,9 @@ fn handle_conn(
                 let batch = {
                     let mut g = q.q.lock().unwrap();
                     if g.is_empty() {
-                        let _ = q.cv.wait_timeout(g, Duration::from_millis(20)).unwrap();
-                        Vec::new()
+                        // Hold the lock across the wait (see c2s pump note).
+                        let (mut g, _) = q.cv.wait_timeout(g, Duration::from_millis(20)).unwrap();
+                        g.pop_due(now_ms(&start))
                     } else {
                         let batch = g.pop_due(now);
                         if batch.is_empty() {
