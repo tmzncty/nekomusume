@@ -60,11 +60,31 @@ fn config(args: &[String]) -> Result<Config, &'static str> {
     if bytes == 0 || bytes > MAX_BYTES as u64 {
         return Err("bytes outside 1-1200");
     }
-    if count == 0 || count > MAX_COUNT as u64 {
-        return Err("count outside 1-600");
+    if count == 0
+        || count
+            > if crate::measurement::enabled() {
+                crate::measurement::PERIODIC_COUNT_MAX
+            } else {
+                MAX_COUNT as u64
+            }
+    {
+        return Err(if crate::measurement::enabled() {
+            "count outside 1-65530"
+        } else {
+            "count outside 1-600"
+        });
     }
-    if duration == 0 || duration > MAX_WORKLOAD_DURATION {
-        return Err("duration outside 1-600");
+    let duration_max = if crate::measurement::enabled() {
+        crate::measurement::DURATION_MAX
+    } else {
+        MAX_WORKLOAD_DURATION
+    };
+    if duration == 0 || duration > duration_max {
+        return Err(if crate::measurement::enabled() {
+            "duration outside 1-86400"
+        } else {
+            "duration outside 1-600"
+        });
     }
     if !(MIN_INTERVAL_MS..=MAX_INTERVAL_MS).contains(&interval) {
         return Err("interval-ms outside 100-5000");
@@ -78,8 +98,31 @@ fn config(args: &[String]) -> Result<Config, &'static str> {
     let total = bytes
         .checked_mul(count)
         .ok_or("application byte bound overflow")?;
-    if total > MAX_TOTAL_BYTES as u64 {
-        return Err("application bytes exceed 1048576");
+    let total_max = if crate::measurement::enabled() {
+        crate::measurement::PERIODIC_TOTAL_BYTES_MAX
+    } else {
+        MAX_TOTAL_BYTES as u64
+    };
+    if total > total_max {
+        return Err(if crate::measurement::enabled() {
+            "application bytes exceed 33554432"
+        } else {
+            "application bytes exceed 1048576"
+        });
+    }
+    // Measurement-only derived guard: the runtime derives
+    // `max_queue_records = count + 2` and `max_queue_bytes =
+    // bytes * (count + 1)` (see `limits()`), both of which must stay at or
+    // below the neko_session hard limits, and the periodic client queues a
+    // record before awaiting each ack, so `bytes * (count + 1)` is reached
+    // in steady state. Large counts therefore pair with small payloads.
+    if crate::measurement::enabled() {
+        if count + 2 > neko_session::HARD_MAX_RUNTIME_QUEUE_RECORDS as u64 {
+            return Err("count exceeds the runtime queue-record limit");
+        }
+        if bytes * (count + 1) > neko_session::HARD_MAX_RUNTIME_QUEUE_BYTES as u64 {
+            return Err("bytes*(count+1) exceeds the runtime queue-byte limit");
+        }
     }
     if let Some(boundary) = key_update_after
         && (boundary == 0 || boundary >= count as usize)
@@ -270,6 +313,7 @@ fn handshake_client(
 }
 
 pub(super) fn server(args: &[String]) {
+    crate::measurement::emit_marker();
     let cfg = config(args).unwrap_or_else(|e| fail(e));
     let client_key = peer_public_key(&parse(args, "--client-key", None));
     let bind = parse(args, "--bind", Some(&format!("0.0.0.0:{}", cfg.port)))
@@ -501,6 +545,7 @@ pub(super) fn server(args: &[String]) {
 }
 
 pub(super) fn client(args: &[String]) {
+    crate::measurement::emit_marker();
     let cfg = config(args).unwrap_or_else(|e| fail(e));
     let shutdown = install_shutdown();
     let addr = parse(args, "--addr", None)

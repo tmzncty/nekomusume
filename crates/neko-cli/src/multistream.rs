@@ -178,20 +178,57 @@ fn arg(args: &[String], name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 fn bounds(streams: usize, records: usize, bytes: usize) -> Result<(), &'static str> {
-    if !(1..=MAX_STREAMS).contains(&streams) {
-        return Err("streams outside 1-16");
+    let measurement = crate::measurement::enabled();
+    let streams_max = if measurement {
+        crate::measurement::MULTISTREAM_STREAMS_MAX
+    } else {
+        MAX_STREAMS
+    };
+    let records_max = if measurement {
+        crate::measurement::multistream_records_max(streams)
+    } else {
+        MAX_RECORDS
+    };
+    let bytes_max = if measurement {
+        crate::measurement::MULTISTREAM_RECORD_BYTES_MAX
+    } else {
+        MAX_BYTES
+    };
+    let total_max = if measurement {
+        crate::measurement::MULTISTREAM_TOTAL_MAX
+    } else {
+        1 << 20
+    };
+    if !(1..=streams_max).contains(&streams) {
+        return Err(if measurement {
+            "streams outside 1-256"
+        } else {
+            "streams outside 1-16"
+        });
     }
-    if !(1..=MAX_RECORDS).contains(&records) {
-        return Err("records outside 1-64");
+    if !(1..=records_max).contains(&records) {
+        return Err(if measurement {
+            "records exceeds the measurement ceiling for this stream count"
+        } else {
+            "records outside 1-64"
+        });
     }
-    if !(1..=MAX_BYTES).contains(&bytes) {
-        return Err("bytes outside 1-1024");
+    if !(1..=bytes_max).contains(&bytes) {
+        return Err(if measurement {
+            "bytes outside 1-4000"
+        } else {
+            "bytes outside 1-1024"
+        });
     }
     streams
         .checked_mul(records)
         .and_then(|n| n.checked_mul(bytes))
-        .filter(|n| *n <= 1 << 20)
-        .ok_or("total payload outside 1 MiB")?;
+        .filter(|n| *n <= total_max)
+        .ok_or(if measurement {
+            "total payload exceeds the runtime total-byte limit"
+        } else {
+            "total payload outside 1 MiB"
+        })?;
     Ok(())
 }
 fn frame_read(s: &mut TcpStream) -> Result<Vec<u8>, String> {
@@ -248,6 +285,7 @@ fn config(args: &[String]) -> (usize, usize, usize, usize, usize) {
     v
 }
 pub fn run(args: &[String]) {
+    crate::measurement::emit_marker();
     let mode = args
         .windows(2)
         .find(|x| x[0] == "--mode")

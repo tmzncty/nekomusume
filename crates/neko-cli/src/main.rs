@@ -5,6 +5,7 @@ use health_window::{HealthDatagram, HealthObservationWindow, HealthWindowError};
 use lifecycle::ReadinessPrerequisite;
 mod framed;
 mod health_window;
+mod measurement;
 mod multistream;
 mod periodic;
 mod pmtu_socket;
@@ -50,7 +51,8 @@ const USAGE: &str = "Usage: neko <server|client|probe|health-observe|failover|mu
   probe --matrix --target LOOPBACK:PORT --transport tcp|udp --ip-version ipv4|ipv6 [--timeout-ms 1-5000] [--bytes 1-1200] [--json]: local-loopback only
   client|server --transport udp [--plpmtud]: opt-in PLPMTUD probe exchange (D067; both ends must pass the flag; fail-closed; experimental)
   lab --scenario reliable-udp [--rounds 4-64] [--drop-every 0|2-16] [--drop-ack-every 0-16] [--settle-ms 1-20000] [--json]: bounded loopback reliable-UDP fixture (controlled suppression is not natural loss; manager decision only, no TCP socket; not production)
-  --count N: bounded authenticated exchanges (1-64; periodic 1-600)\n  periodic-*: one TCP Session, duration 1-600s, interval 100-5000ms, <=1MiB app data; reconnect unsupported\n  failover --role server|client: canonical bounded failover command\n  failover-server|failover-client: legacy aliases for failover\n  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
+  --count N: bounded authenticated exchanges (1-64; periodic 1-600)\n  periodic-*: one TCP Session, duration 1-600s, interval 100-5000ms, <=1MiB app data; reconnect unsupported\n  failover --role server|client: canonical bounded failover command\n  failover-server|failover-client: legacy aliases for failover\n  NEKO_MEASUREMENT=1 (research-only): relaxes duration/count/periodic-byte/multistream ceilings for limit measurement (see capabilities); default limits always apply otherwise
+  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
 const MAX_PORT: u16 = 40100;
 const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
 /// `--bytes` ceiling for commands whose payload is wrapped in a
@@ -71,6 +73,14 @@ const PLPMTUD_MAX_MTU: u16 = 1500;
 const PLPMTUD_PROBE_SPACING: Duration = Duration::from_millis(50);
 const MAX_DURATION: u64 = 30;
 const MAX_WORKLOAD_DURATION: u64 = 600;
+/// Measurement-mode duration ceiling (24 h); replaces both duration caps
+/// when NEKO_MEASUREMENT=1. Duration is a pure CLI bound — no library
+/// constant participates.
+const MEASUREMENT_DURATION_MAX: u64 = measurement::DURATION_MAX;
+/// Measurement-mode exchange-count ceiling; see `measurement::EXCHANGE_
+/// COUNT_MAX` for the derivation that keeps it inside the library hard
+/// limits for every admissible payload.
+const MEASUREMENT_EXCHANGE_COUNT_MAX: usize = measurement::EXCHANGE_COUNT_MAX as usize;
 const PROCESS_FRAME_MAX: usize = neko_session::PROCESS_FRAME_MAX;
 const DOMAIN: &[u8] = b"nekomusume-vps-probe";
 const SUPPORTED_VERSIONS: &[u16] = &[NEGOTIATION_VERSION];
@@ -86,15 +96,28 @@ fn capabilities(args: &[String]) {
     if args.iter().skip(1).any(|arg| arg != "--json") {
         fail("capabilities accepts only --json");
     }
+    let measurement_mode = measurement::enabled();
+    let (count_max, duration_max, workload_duration_max, total_bytes_max) = if measurement_mode {
+        (
+            MEASUREMENT_EXCHANGE_COUNT_MAX,
+            MEASUREMENT_DURATION_MAX,
+            MEASUREMENT_DURATION_MAX,
+            measurement::PERIODIC_TOTAL_BYTES_MAX,
+        )
+    } else {
+        (64, MAX_DURATION, MAX_WORKLOAD_DURATION, 1 << 20)
+    };
     if json_mode(args) {
         println!(
             concat!(
                 "{{\"schema\":\"nekomusume.capabilities.v1\",",
                 "\"package_version\":\"{}\",\"target_os\":\"{}\",\"target_arch\":\"{}\",",
                 "\"secret_free\":true,",
+                "\"measurement_mode\":{},",
                 "\"defaults\":{{\"bytes\":32,\"count\":1,\"duration_seconds\":10}},",
-                "\"limits\":{{\"bytes_max\":{},\"count_max\":64,\"duration_seconds_max\":{},",
-                "\"workload_duration_seconds_max\":{},\"port_min\":40080,\"port_max\":{}}},",
+                "\"limits\":{{\"bytes_max\":{},\"count_max\":{},\"duration_seconds_max\":{},",
+                "\"workload_duration_seconds_max\":{},\"periodic_total_bytes_max\":{},",
+                "\"port_min\":40080,\"port_max\":{}}},",
                 "\"commands\":[",
                 "{{\"name\":\"client\",\"maturity\":\"research\"}},",
                 "{{\"name\":\"server\",\"maturity\":\"research\"}},",
@@ -117,9 +140,12 @@ fn capabilities(args: &[String]) {
             env!("CARGO_PKG_VERSION"),
             env::consts::OS,
             env::consts::ARCH,
+            measurement_mode,
             MAX_BYTES,
-            MAX_DURATION,
-            MAX_WORKLOAD_DURATION,
+            count_max,
+            duration_max,
+            workload_duration_max,
+            total_bytes_max,
             MAX_PORT
         );
     } else {
@@ -130,10 +156,21 @@ fn capabilities(args: &[String]) {
             env::consts::ARCH
         );
         println!("defaults bytes=32 count=1 duration_seconds=10");
-        println!(
-            "limits bytes=1-{} count=1-64 duration_seconds=1-{} workload_duration_seconds=1-{} ports=40080-{}",
-            MAX_BYTES, MAX_DURATION, MAX_WORKLOAD_DURATION, MAX_PORT
-        );
+        if measurement::enabled() {
+            println!(
+                "limits bytes=1-{} count=1-{} duration_seconds=1-{} workload_duration_seconds=1-{} ports=40080-{} measurement_mode=true relaxed_limits research_only",
+                MAX_BYTES,
+                MEASUREMENT_EXCHANGE_COUNT_MAX,
+                MEASUREMENT_DURATION_MAX,
+                MEASUREMENT_DURATION_MAX,
+                MAX_PORT
+            );
+        } else {
+            println!(
+                "limits bytes=1-{} count=1-64 duration_seconds=1-{} workload_duration_seconds=1-{} ports=40080-{}",
+                MAX_BYTES, MAX_DURATION, MAX_WORKLOAD_DURATION, MAX_PORT
+            );
+        }
         println!(
             "commands research=client,server,probe,periodic-server,periodic-client experimental=health-observe,failover,multistream,endpoint-rebind-server,endpoint-rebind-client fixtures=scheduler-fairness,key-update,lab,workload utilities=keygen,capabilities aliases=failover-server,failover-client"
         );
@@ -478,8 +515,13 @@ fn exchange_count(args: &[String]) -> usize {
     let n = parse(args, "--count", Some("1"))
         .parse::<usize>()
         .unwrap_or_else(|_| fail("invalid count"));
-    if n == 0 || n > 64 {
-        fail("count outside 1-64");
+    let max = if measurement::enabled() {
+        MEASUREMENT_EXCHANGE_COUNT_MAX
+    } else {
+        64
+    };
+    if n == 0 || n > max {
+        fail(&format!("count outside 1-{max}"));
     }
     n
 }
@@ -503,8 +545,13 @@ fn common(args: &[String]) -> (String, u16, usize, Duration) {
     let secs = parse(args, "--duration", Some("10"))
         .parse()
         .unwrap_or_else(|_| fail("invalid duration"));
-    if secs == 0 || secs > MAX_DURATION {
-        fail("duration outside 1-30")
+    let duration_max = if measurement::enabled() {
+        MEASUREMENT_DURATION_MAX
+    } else {
+        MAX_DURATION
+    };
+    if secs == 0 || secs > duration_max {
+        fail(&format!("duration outside 1-{duration_max}"))
     };
     (t, p, bytes, Duration::from_secs(secs))
 }
@@ -591,6 +638,7 @@ fn emit_signal_shutdown(lifecycle: &lifecycle::Lifecycle) {
     emit_lifecycle(lifecycle);
 }
 fn server(args: &[String]) {
+    measurement::emit_marker();
     let lifecycle = lifecycle::Lifecycle::new();
     let shutdown = Arc::new(AtomicBool::new(false));
     flag::register(SIGTERM, Arc::clone(&shutdown)).unwrap_or_else(|_| fail("signal setup failed"));
@@ -1002,6 +1050,7 @@ fn server(args: &[String]) {
     fail("duration expired")
 }
 fn client(args: &[String]) {
+    measurement::emit_marker();
     let (t, _p, max, d) = common(args);
     let count = exchange_count(args);
     let addr = parse(args, "--addr", None);
@@ -1813,6 +1862,7 @@ struct PendingUdpNegotiation {
 
 #[allow(clippy::collapsible_if)]
 fn failover_server(args: &[String]) {
+    measurement::emit_marker();
     let mut diag = HandshakeDiagnostics::new("server");
     let count = exchange_count(args);
     let bytes = parse(args, "--bytes", Some("32"))
@@ -1826,8 +1876,8 @@ fn failover_server(args: &[String]) {
     if bytes == 0 || bytes > MAX_DATA_FRAME_BYTES {
         fail(&format!("bytes outside 1-{MAX_DATA_FRAME_BYTES}"))
     }
-    if duration.is_zero() || duration > Duration::from_secs(MAX_DURATION) {
-        fail("duration outside 1-30")
+    if duration.is_zero() || duration > Duration::from_secs(duration_ceiling()) {
+        fail(&format!("duration outside 1-{}", duration_ceiling()))
     }
     let up = parse(args, "--udp-port", Some("40081"))
         .parse::<u16>()
@@ -3101,6 +3151,7 @@ fn failover_server(args: &[String]) {
     fail("failover timeout")
 }
 fn failover_client(args: &[String]) {
+    measurement::emit_marker();
     let experiment_origin = Instant::now();
     let mut diag = HandshakeDiagnostics::new("client");
     let count = exchange_count(args);
@@ -3113,8 +3164,8 @@ fn failover_client(args: &[String]) {
     if bytes == 0 || bytes > MAX_DATA_FRAME_BYTES {
         fail(&format!("bytes outside 1-{MAX_DATA_FRAME_BYTES}"))
     }
-    if secs == 0 || secs > MAX_DURATION {
-        fail("duration outside 1-30")
+    if secs == 0 || secs > duration_ceiling() {
+        fail(&format!("duration outside 1-{}", duration_ceiling()))
     }
     let addr = parse(args, "--addr", Some("127.0.0.1"));
     let up = parse(args, "--udp-port", Some("40081"))
@@ -4881,6 +4932,7 @@ fn failover_client(args: &[String]) {
     );
 }
 fn endpoint_rebind_server(args: &[String]) {
+    measurement::emit_marker();
     let count = exchange_count(args);
     let bytes = parse(args, "--bytes", Some("16"))
         .parse::<usize>()
@@ -5268,6 +5320,7 @@ fn endpoint_rebind_server(args: &[String]) {
 }
 
 fn endpoint_rebind_client(args: &[String]) {
+    measurement::emit_marker();
     let count = exchange_count(args);
     let bytes = parse(args, "--bytes", Some("16"))
         .parse::<usize>()
@@ -6344,10 +6397,25 @@ fn scheduler_fairness(args: &[String]) {
 
 /// Run independent Session runtimes for a bounded interval. This local fixture exercises queueing, delivery ACKs and cleanup without opening sockets.
 fn workload_duration_valid(duration: u64) -> bool {
-    (1..=MAX_WORKLOAD_DURATION).contains(&duration)
+    let max = if measurement::enabled() {
+        MEASUREMENT_DURATION_MAX
+    } else {
+        MAX_WORKLOAD_DURATION
+    };
+    (1..=max).contains(&duration)
 }
 
+/// The active duration ceiling: MAX_DURATION (30 s) by default, the
+/// 24 h measurement ceiling when NEKO_MEASUREMENT=1.
+fn duration_ceiling() -> u64 {
+    if measurement::enabled() {
+        MEASUREMENT_DURATION_MAX
+    } else {
+        MAX_DURATION
+    }
+}
 fn workload(args: &[String]) {
+    measurement::emit_marker();
     let duration = parse(args, "--duration", Some("5"))
         .parse::<u64>()
         .unwrap_or_else(|_| fail("invalid duration"));
@@ -6361,7 +6429,14 @@ fn workload(args: &[String]) {
         .parse::<usize>()
         .unwrap_or_else(|_| fail("invalid bytes"));
     if !workload_duration_valid(duration) {
-        fail("duration outside 1-600");
+        fail(&format!(
+            "duration outside 1-{}",
+            if measurement::enabled() {
+                MEASUREMENT_DURATION_MAX
+            } else {
+                MAX_WORKLOAD_DURATION
+            }
+        ));
     }
     if !(1..=16).contains(&concurrency) {
         fail("concurrency outside 1-16");
