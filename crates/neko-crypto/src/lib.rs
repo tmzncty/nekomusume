@@ -673,10 +673,14 @@ impl SecureSession {
     }
 
     /// open() with the batch packing-domain budget instead of the
-    /// single-record one. AEAD authentication, context validation and the
-    /// replay-window advance are byte-for-byte the same semantics as
-    /// `open()`; only the pre-auth size bound differs (MAX_BATCH_PLAINTEXT).
-    fn open_batch_inner(&mut self, record: &[u8]) -> Result<Vec<u8>, SessionRejected> {
+    /// single-record one. AEAD authentication and context validation are
+    /// byte-for-byte the same semantics as `open()`; only the pre-auth size
+    /// bound differs (MAX_BATCH_PLAINTEXT). The replay window is NOT advanced
+    /// here — the caller must validate the batch framing first, so a
+    /// single-record frame (or any malformed batch shape) probed through this
+    /// path cannot burn the sequence number the single-record fallback path
+    /// still needs (R2 compat-window fix).
+    fn open_batch_inner(&mut self, record: &[u8]) -> Result<(u64, Vec<u8>), SessionRejected> {
         if record.len() < 24 {
             return Err(SessionRejected);
         }
@@ -689,9 +693,7 @@ impl SecureSession {
         if n < RECORD_CONTEXT_LEN || plain[..RECORD_CONTEXT_LEN] != self.context.encode() {
             return Err(SessionRejected);
         }
-        // Replay state advances only after AEAD authentication and context validation.
-        self.replay.accept(sequence).map_err(|_| SessionRejected)?;
-        Ok(plain[RECORD_CONTEXT_LEN..n].to_vec())
+        Ok((sequence, plain[RECORD_CONTEXT_LEN..n].to_vec()))
     }
 
     /// D069 R2: open a batch sealed by `seal_batch`. One AEAD authentication
@@ -704,7 +706,7 @@ impl SecureSession {
         if record.len() > 8 + RECORD_CONTEXT_LEN + MAX_BATCH_PLAINTEXT + 16 {
             return Err(SessionRejected);
         }
-        let body = self.open_batch_inner(record)?;
+        let (sequence, body) = self.open_batch_inner(record)?;
         if body.len() < 4 {
             return Err(SessionRejected);
         }
@@ -733,6 +735,11 @@ impl SecureSession {
             // trailing bytes: overlap/truncation attack shape
             return Err(SessionRejected);
         }
+        // Replay state advances only after AEAD authentication, context
+        // validation AND complete framing validation. A frame rejected for
+        // batch-shape reasons must not consume the sequence number the
+        // single-record fallback path may still need (R2 compat window).
+        self.replay.accept(sequence).map_err(|_| SessionRejected)?;
         Ok(records)
     }
 
@@ -909,6 +916,28 @@ mod session_tests {
         let single = i.seal_unreliable(&one).unwrap();
         let got = r.open_unreliable(&single).unwrap();
         assert_eq!(got, one);
+    }
+
+    #[test]
+    fn single_record_probed_through_open_batch_falls_back() {
+        // R2 compat-window regression: the receiver tries open_batch FIRST
+        // and falls back to open_unreliable. A genuine single-record frame
+        // authenticates under the batch path's AEAD and context but fails
+        // the batch framing check — that failure must NOT advance the
+        // replay window, or the fallback open_unreliable on the same frame
+        // would be rejected as a duplicate (this exact bug killed the first
+        // cross-border R2 run: bytes identical on both sides, yet rejected).
+        let (mut i, mut r) = pair();
+        let one = batch_payload(1170, 0x77);
+        let single = i.seal_unreliable(&one).unwrap();
+        // batch probe rejects (framing), must not burn the sequence number
+        assert_eq!(r.open_batch(&single), Err(SessionRejected));
+        // fallback succeeds on the very same sealed bytes
+        assert_eq!(r.open_unreliable(&single).unwrap(), one);
+        // and the stream continues cleanly afterwards
+        let two = batch_payload(500, 0x88);
+        let sealed2 = i.seal_unreliable(&two).unwrap();
+        assert_eq!(r.open_unreliable(&sealed2).unwrap(), two);
     }
 
     #[test]

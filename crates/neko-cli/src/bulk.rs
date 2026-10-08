@@ -230,11 +230,10 @@ pub(super) fn server(args: &[String]) {
                 // also a single sealed ProcessMessage).
                 let plains: Vec<Vec<u8>> = match secure.open_batch(&frame) {
                     Ok(records) => records,
-                    Err(_) => vec![
-                        secure
-                            .open_unreliable(&frame)
-                            .unwrap_or_else(|_| fail("unauthenticated bulk data")),
-                    ],
+                    Err(_) => match secure.open_unreliable(&frame) {
+                        Ok(single) => vec![single],
+                        Err(_) => fail("unauthenticated bulk data"),
+                    },
                 };
                 for plain in plains {
                     let ProcessMessage::Data { session, record } = ProcessMessage::decode(&plain)
