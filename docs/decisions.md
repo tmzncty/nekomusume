@@ -1378,4 +1378,100 @@ W1 带宽测量的 512 MiB / 2 GiB 档被库层硬上限挡死：
 
 ---
 
-<!-- D068-end -->
+## 2026-10-08 — D069：bulk 吞吐瓶颈归因（F1 证伪）与批量 AEAD 记录合包路线
+
+**Status: Accepted**
+
+### 问题
+
+bulk 跨境实测 3.7-11.8 Mbps（同路径 HY2 75-206 Mbps）的瓶颈归因，与
+吞吐修复的技术路线选择。
+
+归因证据链（loopback 与实测数字见
+`docs/limits/2026-10-08-bandwidth-remeasure-redacted.md`、
+`docs/limits/2026-10-07-wan-limits-redacted.md`；P0 裁决实验见
+仓库外战役记录 `p0-nodelay-result.md`，A/B 二进制 SHA-256 8ddf7e25/
+134b5b05，NODELAY 修复合入本仓 `b81785e`）：
+
+1. **F1（Nagle×delayed-ACK）对吞吐证伪**：P0 A/B 同窗交错实测，P1
+   （RTT 50ms）B/A = 1.01×，P2（RTT 165ms）B/A = 0.77×（负优化）；
+   环境哨兵全程绿。机制解释（对早期"逐记录 stop-and-wait"归因的更正）：
+   bulk 客户端发送循环（`crates/neko-cli/src/bulk.rs:314-356`，b81785e
+   未改动该循环）是 fire-and-forget 连续发送，循环内无 ACK 等待——
+   连续写满段流上 Nagle 结构性失效，体段从不需要等前段 ACK。历史
+   "3.4×RTT+40ms" 拟合式中的 +40ms 项真实存在但只作用于单交换延迟
+   （stop-and-wait fixture 的服务端回复方向），不是 bulk 吞吐瓶颈；
+   引用该拟合式的历史对照须注明 b81785e 版本分界（其后不再含 +40ms）。
+2. **F2+F3 联合坐实为真实瓶颈**：loopback 147 Mbps = 单核 73%、15.7 万
+   记录/s——每记录固定 CPU 成本。F3 = 记录粒度上限 1170B（根子是 crypto
+   `MAX_UNRELIABLE_DATAGRAM = 1200`，`crates/neko-crypto/src/lib.rs:163`
+   的数据报语义：一个 sealed record = 一个不可分 AEAD 单元）；F2 = 每记录
+   CPU（AEAD + ProcessMessage encode + syscall + 收端对称）。两者不独立：
+   记录变大/合包 k 倍，每字节固定成本摊薄 k 倍，同一杠杆的两面。
+
+### 选项
+
+1. **R1 大记录**：上调 `MAX_UNRELIABLE_DATAGRAM`（或分叉 TCP 专用 seal API）。
+2. **R2 多记录合包**：crypto 新增 `seal_batch`/`open_batch`——N 条 ≤1170B
+   明文记录按长度前缀拼接后一次 AEAD 封装；单条记录语义、尺寸上限、
+   nonce/tag 结构不变。
+3. 窗口化/批量确认优先（v1 草案主菜，batched-ack-design v1，已存档）。
+4. 不动（接受 147 Mbps CPU 墙）。
+
+### 证据
+
+- **R1 在 UDP 是陷阱**：记录 >1464B（1500−28−8）必然 IP 分片或依赖
+  PLPMTUD 探路；28KB 记录 = 24 段分片，在实测 11.67% 丢包路径上整记录
+  存活率 (1−0.1167)^24 ≈ 5.3%。R1 仅在 TCP（字节流无 MTU 语义）可行。
+- **R2 效率与 R1 等价**（一次 tag 验证覆盖 N 条）且不触碰
+  `MAX_UNRELIABLE_DATAGRAM` 公共语义；replay 防护按 sealed batch 序列
+  计，批内记录的 session 去重照常。
+- **R2 是窗口化的基建**：合包点 = reliable 层 frame→packet 打包点
+  （`DEFAULT_MAX_FRAMES_PER_PACKET = 64` 已预留，`crates/neko-reliable/
+  src/lib.rs:9`）——一套基建两个用途。
+- **窗口化降级依据**：TCP 侧 fire-and-forget 无 ACK 往返，窗口化无吞吐
+  收益；UDP 侧收益真实但以 R2（打包基建）与 UDP bulk 路径存在为前提。
+- **收益测算**（机制保证上限，跨境数字待 R2 实测不预填）：loopback
+  CPU 墙 147 → ~770 Mbps（N=8 合包，每记录固定成本 4.65µs 摊到 9360B/batch，
+  线性成本修正 α=0.7 保守值）。跨境收端 CPU 墙各端不同（P1/P2 实测
+  3.2 倍差异），兑现度是待测问题。
+
+### 决定
+
+1. **R2 多记录合包为主线**：`seal_batch`/`open_batch` 长度前缀 framing；
+   默认 batch 上限 8×1200（9.6KB，与现有单记录域同量级），measurement
+   例外（`NEKO_MEASUREMENT=1` bulk 路径，D068 门控先例）放大至
+   D068 例外集内。R2 先行。
+2. **R1 大记录降为懒加载**：TCP-only 分档（若 R2 后仍需）。判据：R2 落地
+   实测后 loopback >500 Mbps 且跨境 >50 Mbps，则 R1 不做。
+3. **窗口化第三优先级保留设计不推进**：v1 草案 §2-3 分层/机制/安全设计
+   有效存档（reliable 层 AckRanges/Recovery/Reno 基建已存在且被 failover
+   验证）；TCP 侧取消，UDP 侧触发条件 = UDP 轴实测启动（W5/W9 或 QoS
+   对照需要）。
+4. **分层铁律**：batch 是 crypto 层封装，**不进 ProcessMessage**
+   （保 `PROCESS_FRAME_MAX = 4096` 语义）；合包点 = reliable 层
+   frame→packet 打包层，与 `MAX_FRAMES_PER_PACKET = 64` 预留对齐。
+   UDP 上 batch 总尺寸 ≤1464B（无分片、无 PLPMTUD 依赖；PLPMTUD
+   confirmed <1464 时自动降 N）。
+5. **b81785e 负优化修正为前置缺陷修复**（头+体合并单 write，消除 4B 头
+   独立成段致包数×2 的退化）——独立于 D069 排期，已另行指派。
+
+### 断言影响
+
+既有断言零修改（batch 为新 API 面，不触碰 `seal_unreliable` 路径与
+ProcessMessage 语义）。新增预估 10-14 条：batch 编解码往返 ×N 边界、
+畸形长度前缀负测（截断/重叠/恶意 N）、N=1 退化等价单记录、合包防重放
+no-op、measurement 例外上限边界+1 拒绝、默认模式 batch 不可达（CLI
+门控集成测）、UDP batch ≤1464 编译期 pin。合包长度前缀域为新增攻击面，
+必须过既有 fuzz-smoke 管线。
+
+### 回滚
+
+- 删除 CLI 对 `seal_batch`/`open_batch` 的调用点即完全回滚（新 API 不进
+  默认路径即无默认面）；数据不清退。
+- 触发（任一）：合包解码 fuzz 出假成功或 panic；measurement 例外逃逸
+  默认模式；UDP batch 在 pmtu <1464 路径未自动降 N 出现分片；内存越
+  D068 防线。
+
+<!-- D069-end -->
+
