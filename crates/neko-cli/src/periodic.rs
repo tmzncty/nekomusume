@@ -282,7 +282,7 @@ pub(super) fn handshake_client(
     let hello = negotiation.client_hello().unwrap();
     bound_setup(stream, deadline, "setup deadline elapsed")
         .unwrap_or_else(|_| fail("setup deadline elapsed"));
-    write_frame(stream, &hello).unwrap_or_else(|_| fail("negotiation send failed"));
+    write_frame_single(stream, &hello).unwrap_or_else(|_| fail("negotiation send failed"));
     let selection = frame_or_fail(
         reader,
         stream,
@@ -305,7 +305,7 @@ pub(super) fn handshake_client(
     let first = hs.first_message().unwrap();
     bound_setup(stream, deadline, "setup deadline elapsed")
         .unwrap_or_else(|_| fail("setup deadline elapsed"));
-    write_frame(stream, &first).unwrap_or_else(|_| fail("handshake send failed"));
+    write_frame_single(stream, &first).unwrap_or_else(|_| fail("handshake send failed"));
     let response = frame_or_fail(reader, stream, 1024, deadline, "handshake response failed");
     let secure = hs
         .finish(&response, context(0))
@@ -506,11 +506,11 @@ pub(super) fn server(args: &[String]) {
                         std::thread::sleep(Duration::from_millis(ack_delay));
                     }
                     let encrypted = secure.seal_unreliable(&ack).unwrap();
-                    write_frame(&mut stream, &encrypted)
+                    write_frame_single(&mut stream, &encrypted)
                         .unwrap_or_else(|_| fail("delivery acknowledgement send failed"));
                     if duplicate_ack {
                         let duplicate = secure.seal_unreliable(&ack).unwrap();
-                        write_frame(&mut stream, &duplicate)
+                        write_frame_single(&mut stream, &duplicate)
                             .unwrap_or_else(|_| fail("duplicate acknowledgement send failed"));
                     }
                     confirmed += 1;
@@ -631,7 +631,7 @@ pub(super) fn client(args: &[String]) {
             .unwrap_or_else(|_| fail("payload too large"));
         attempted += 1;
         let sent_at = Instant::now();
-        write_frame(&mut stream, &encrypted).unwrap_or_else(|_| {
+        write_frame_single(&mut stream, &encrypted).unwrap_or_else(|_| {
             fail("periodic Session disconnected; reconnect/resume unsupported")
         });
         let mut ok = false;

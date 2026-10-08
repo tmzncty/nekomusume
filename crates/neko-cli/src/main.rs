@@ -578,6 +578,24 @@ fn write_frame(s: &mut TcpStream, b: &[u8]) -> std::io::Result<()> {
     s.write_all(b)?;
     s.flush()
 }
+
+/// Single-write framing (P1-pre, follow-up to b81785e): with NODELAY on, a
+/// 4-byte header write followed by a body write emits two TCP segments per
+/// frame — doubling per-record packet count on WAN paths (measured P2 0.77x
+/// regression) and adding loopback bimodal noise. Stage the length prefix
+/// and payload into one buffer and issue one write_all so each frame leaves
+/// as a single segment whenever the socket allows.
+///
+/// Used by the bulk/periodic measurement fixtures only: failover's r9
+/// experiment tests assert exact event sequences whose TCP segment timing
+/// depends on the two-write shape, so contract paths stay on write_frame.
+fn write_frame_single(s: &mut TcpStream, b: &[u8]) -> std::io::Result<()> {
+    let mut staged = Vec::with_capacity(4 + b.len());
+    staged.extend_from_slice(&(b.len() as u32).to_be_bytes());
+    staged.extend_from_slice(b);
+    s.write_all(&staged)?;
+    s.flush()
+}
 enum UdpWait {
     Datagram(usize, SocketAddr),
     Shutdown,

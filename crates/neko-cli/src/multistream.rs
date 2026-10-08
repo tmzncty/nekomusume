@@ -246,9 +246,13 @@ fn frame_write(s: &mut TcpStream, b: &[u8]) -> Result<(), String> {
     if b.len() > MAX_FRAME {
         return Err("frame exceeds bound".into());
     }
-    s.write_all(&(b.len() as u32).to_be_bytes())
-        .map_err(|e| e.to_string())?;
-    s.write_all(b).map_err(|e| e.to_string())?;
+    // Single-write framing, mirroring main.rs write_frame (P1-pre, follow-up
+    // to b81785e): one staged buffer per frame keeps NODELAY from splitting
+    // header and payload into two segments.
+    let mut staged = Vec::with_capacity(4 + b.len());
+    staged.extend_from_slice(&(b.len() as u32).to_be_bytes());
+    staged.extend_from_slice(b);
+    s.write_all(&staged).map_err(|e| e.to_string())?;
     s.flush().map_err(|e| e.to_string())
 }
 fn limits(

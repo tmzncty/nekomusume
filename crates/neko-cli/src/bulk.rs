@@ -130,7 +130,7 @@ fn handshake_server(
     let selection = negotiation
         .server_accept_hello(&hello)
         .map_err(|_| "incompatible negotiation")?;
-    write_frame(stream, &selection).map_err(|_| "negotiation response failed")?;
+    write_frame_single(stream, &selection).map_err(|_| "negotiation response failed")?;
     let binding = negotiation.authenticated_binding().unwrap();
     let first = match reader.read_until(stream, deadline) {
         Ok(FrameRead::Complete(f)) => f,
@@ -141,7 +141,7 @@ fn handshake_server(
             .map_err(|_| "handshake setup failed")?
             .receive_first(&first, context(0))
             .map_err(|_| "unauthorized handshake")?;
-    write_frame(stream, &response).map_err(|_| "handshake response failed")?;
+    write_frame_single(stream, &response).map_err(|_| "handshake response failed")?;
     negotiation
         .admit_data()
         .map_err(|_| "data admission denied")?;
@@ -279,7 +279,7 @@ pub(super) fn server(args: &[String]) {
     let receipt_frame = secure
         .seal_unreliable(&receipt_plain)
         .unwrap_or_else(|_| fail("receipt seal failed"));
-    write_frame(&mut stream, &receipt_frame).unwrap_or_else(|_| fail("receipt send failed"));
+    write_frame_single(&mut stream, &receipt_frame).unwrap_or_else(|_| fail("receipt send failed"));
     let _ = stream.shutdown(Shutdown::Both);
 }
 
@@ -352,7 +352,7 @@ pub(super) fn client(args: &[String]) {
         let encrypted = secure
             .seal_unreliable(&plain)
             .unwrap_or_else(|_| fail("payload too large"));
-        write_frame(&mut stream, &encrypted).unwrap_or_else(|_| fail("bulk send failed"));
+        write_frame_single(&mut stream, &encrypted).unwrap_or_else(|_| fail("bulk send failed"));
         sent += 1;
         sent_bytes += cfg.record_bytes;
         window_bytes += cfg.record_bytes;
@@ -458,6 +458,74 @@ mod tests {
             count(multistream) >= 2,
             "multistream.rs must keep TCP_NODELAY at accept+connect (found {})",
             count(multistream)
+        );
+    }
+
+    /// P1-pre pin (follow-up to b81785e): the measurement fixtures' framing
+    /// must stage the length prefix and payload into ONE buffer and issue
+    /// ONE write_all per frame. The b81785e NODELAY change made the old
+    /// two-write shape emit two TCP segments per record — doubling packet
+    /// count on WAN paths (measured 0.77x on the 165ms path) and adding
+    /// loopback bimodal noise. write_frame itself intentionally keeps the
+    /// two-write shape (failover r9 tests pin segment-timing contracts on
+    /// it); bulk/periodic call write_frame_single and multistream's
+    /// frame_write stages directly. TcpStream's write_all hides syscall
+    /// granularity from behavioral tests, so this pins the source shape.
+    #[test]
+    fn write_frame_issues_single_write_per_frame() {
+        // Strip comment lines before counting: doc comments may legitimately
+        // mention write_all while describing the single-write contract.
+        let strip_comments = |body: &str| -> String {
+            body.lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let main_src = include_str!("main.rs");
+        let wf = main_src
+            .split("fn write_frame_single(")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("write_frame_single body present");
+        let wf = strip_comments(wf);
+        assert!(
+            wf.contains("staged.extend_from_slice"),
+            "write_frame_single must stage header+payload into one buffer"
+        );
+        assert_eq!(
+            wf.matches("write_all").count(),
+            1,
+            "write_frame_single must issue exactly one write_all per frame (found {})",
+            wf.matches("write_all").count()
+        );
+        // And the fixtures actually route through it.
+        let bulk_src = include_str!("bulk.rs");
+        let periodic_src = include_str!("periodic.rs");
+        assert!(
+            bulk_src.matches("write_frame_single(").count() >= 3,
+            "bulk.rs data path must use write_frame_single (found {})",
+            bulk_src.matches("write_frame_single(").count()
+        );
+        assert!(
+            periodic_src.matches("write_frame_single(").count() >= 3,
+            "periodic.rs data path must use write_frame_single (found {})",
+            periodic_src.matches("write_frame_single(").count()
+        );
+        let ms_src = include_str!("multistream.rs");
+        let fw = ms_src
+            .split("fn frame_write(")
+            .nth(1)
+            .and_then(|rest| rest.split("fn limits(").next())
+            .expect("frame_write body present");
+        let fw = strip_comments(fw);
+        assert!(
+            fw.contains("staged.extend_from_slice"),
+            "frame_write must stage header+payload into one buffer"
+        );
+        assert_eq!(
+            fw.matches("write_all").count(),
+            1,
+            "frame_write must issue exactly one write_all per frame"
         );
     }
 }
