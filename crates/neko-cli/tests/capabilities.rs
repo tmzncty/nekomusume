@@ -203,6 +203,8 @@ fn json_capabilities_is_well_formed_and_is_exactly_the_published_line() {
             "{{\"name\":\"key-update\",\"maturity\":\"fixture\"}},",
             "{{\"name\":\"periodic-server\",\"maturity\":\"research\"}},",
             "{{\"name\":\"periodic-client\",\"maturity\":\"research\"}},",
+            "{{\"name\":\"bulk-server\",\"maturity\":\"research\",\"requires\":\"NEKO_MEASUREMENT=1\"}},",
+            "{{\"name\":\"bulk-client\",\"maturity\":\"research\",\"requires\":\"NEKO_MEASUREMENT=1\"}},",
             "{{\"name\":\"lab\",\"maturity\":\"fixture\"}},",
             "{{\"name\":\"workload\",\"maturity\":\"fixture\"}},",
             "{{\"name\":\"endpoint-rebind-server\",\"maturity\":\"experimental\"}},",

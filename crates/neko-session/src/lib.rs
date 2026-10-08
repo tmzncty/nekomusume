@@ -11,6 +11,19 @@ pub const HARD_MAX_RUNTIME_QUEUE_RECORDS: usize = 65_536;
 pub const HARD_MAX_RUNTIME_QUEUE_BYTES: usize = 16 << 20;
 pub const HARD_MAX_RUNTIME_TOTAL_BYTES: usize = 64 << 20;
 pub const HARD_MAX_RUNTIME_RECORD_BYTES: usize = 1 << 20;
+/// D068 measurement-exception ceilings: a closed three-axis set that the
+/// `SessionRuntime::new_measurement` constructor accepts IN ADDITION to
+/// the HARD ceilings above. The default `new` constructor never consults
+/// these constants — exception sizes stay unreachable without the explicit
+/// exception constructor. Rationale (D068 evidence): W1 bulk tiers
+/// (512 MiB / 2 GiB) exceed the library floor itself; bulk is single/few
+/// stream with records within PROCESS_FRAME_MAX, so `max_streams` and
+/// `max_record_bytes` are NOT exempt; windows carry no HARD ceiling
+/// already. Rollback: removing the CLI call sites restores today's
+/// behavior exactly (default paths depend on nothing here).
+pub const MEASUREMENT_MAX_RUNTIME_TOTAL_BYTES: usize = 2 << 30; // 2 GiB
+pub const MEASUREMENT_MAX_RUNTIME_QUEUE_RECORDS: usize = 1 << 22; // 4 Mi
+pub const MEASUREMENT_MAX_RUNTIME_QUEUE_BYTES: usize = 2 << 30; // 2 GiB, lockstep with total
 const MAX_RUNTIME_STREAM_ID: u64 = u64::MAX - 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1402,6 +1415,65 @@ impl SessionRuntime {
             || limits.max_queue_bytes > HARD_MAX_RUNTIME_QUEUE_BYTES
             || limits.max_total_bytes == 0
             || limits.max_total_bytes > HARD_MAX_RUNTIME_TOTAL_BYTES
+            || limits.max_record_bytes == 0
+            || limits.max_record_bytes > HARD_MAX_RUNTIME_RECORD_BYTES
+            || limits.max_session_window == 0
+            || limits.max_stream_window == 0
+            || limits.idle_timeout_ms == 0
+            || limits.close_timeout_ms == 0
+        {
+            return Err(RuntimeError::InvalidLimits);
+        }
+        let mut r = Self {
+            id,
+            limits,
+            state: RuntimeState::Open,
+            streams: BTreeMap::new(),
+            send: VecDeque::new(),
+            recv: VecDeque::new(),
+            received: BTreeMap::new(),
+            confirmed: BTreeMap::new(),
+            sent: BTreeMap::new(),
+            send_inflight: BTreeMap::new(),
+            recv_window_used: BTreeMap::new(),
+            session_send_inflight: 0,
+            session_recv_window_used: 0,
+            queued_bytes: 0,
+            total_bytes: 0,
+            last_activity_ms: now_ms,
+            close_deadline_ms: None,
+            cancelled: false,
+            events: Vec::new(),
+            next_event: 0,
+        };
+        r.event(now_ms, RuntimeEventKind::SessionOpened);
+        Ok(r)
+    }
+    /// D068 measurement-exception constructor: identical to [`Self::new`]
+    /// except that exactly three axes — `max_total_bytes`,
+    /// `max_queue_records`, `max_queue_bytes` — validate against the closed
+    /// `MEASUREMENT_MAX_RUNTIME_*` ceiling set instead of the HARD
+    /// ceilings. Every other axis (streams, record_bytes, both windows,
+    /// nonzero timeouts) keeps the default HARD validation; anything
+    /// beyond the closed set is still `InvalidLimits`. The default `new`
+    /// constructor is byte-for-byte unchanged and never reaches these
+    /// ceilings. The runtime enforcement points compare against
+    /// `self.limits` (never the HARD constants), so an accepted exception
+    /// limit governs the whole lifetime — pinned by the D068 assertion
+    /// list (lifetime true-arrival past 64 MiB, boundary stop at 2 GiB).
+    pub fn new_measurement(
+        id: SessionId,
+        limits: RuntimeLimits,
+        now_ms: u64,
+    ) -> Result<Self, RuntimeError> {
+        if limits.max_streams == 0
+            || limits.max_streams > HARD_MAX_RUNTIME_STREAMS
+            || limits.max_queue_records == 0
+            || limits.max_queue_records > MEASUREMENT_MAX_RUNTIME_QUEUE_RECORDS
+            || limits.max_queue_bytes == 0
+            || limits.max_queue_bytes > MEASUREMENT_MAX_RUNTIME_QUEUE_BYTES
+            || limits.max_total_bytes == 0
+            || limits.max_total_bytes > MEASUREMENT_MAX_RUNTIME_TOTAL_BYTES
             || limits.max_record_bytes == 0
             || limits.max_record_bytes > HARD_MAX_RUNTIME_RECORD_BYTES
             || limits.max_session_window == 0
@@ -3165,6 +3237,212 @@ mod era4_resource_limit_tests {
             Err(RuntimeError::InvalidLimits)
         ));
     }
+}
+
+/// D068: measurement-exception constructor assertions (ADR acceptance
+/// list) plus the two default-path coverage gaps the ADR flagged.
+#[cfg(test)]
+mod d068_measurement_exception_tests {
+    use super::*;
+
+    fn measurement_limits() -> RuntimeLimits {
+        RuntimeLimits {
+            max_total_bytes: MEASUREMENT_MAX_RUNTIME_TOTAL_BYTES,
+            max_queue_records: MEASUREMENT_MAX_RUNTIME_QUEUE_RECORDS,
+            max_queue_bytes: MEASUREMENT_MAX_RUNTIME_QUEUE_BYTES,
+            max_session_window: MEASUREMENT_MAX_RUNTIME_TOTAL_BYTES,
+            max_stream_window: MEASUREMENT_MAX_RUNTIME_TOTAL_BYTES,
+            // records are 4 KiB in the lifetime tests; record_bytes keeps
+            // HARD validation (closed axis) — 8 KiB stays far below it
+            max_record_bytes: 8192,
+            ..RuntimeLimits::default()
+        }
+    }
+
+    // --- D068 gap-fill 1: default-path total HARD+1 rejection ---
+    #[test]
+    fn default_constructor_rejects_total_bytes_above_the_hard_ceiling() {
+        let limits = RuntimeLimits {
+            max_total_bytes: HARD_MAX_RUNTIME_TOTAL_BYTES + 1,
+            ..RuntimeLimits::default()
+        };
+        assert!(matches!(
+            SessionRuntime::new(SessionId(1), limits, 0),
+            Err(RuntimeError::InvalidLimits)
+        ));
+    }
+
+    // --- D068 gap-fill 2: default-path streams HARD+1 rejection ---
+    #[test]
+    fn default_constructor_rejects_streams_above_the_hard_ceiling() {
+        let limits = RuntimeLimits {
+            max_streams: HARD_MAX_RUNTIME_STREAMS + 1,
+            ..RuntimeLimits::default()
+        };
+        assert!(matches!(
+            SessionRuntime::new(SessionId(1), limits, 0),
+            Err(RuntimeError::InvalidLimits)
+        ));
+    }
+
+    // --- D068 assertion 1: cross pin — exception sizes never leak into
+    // the default constructor (each exception axis independently) ---
+    #[test]
+    fn default_constructor_rejects_each_measurement_exception_size() {
+        for limits in [
+            RuntimeLimits {
+                max_total_bytes: MEASUREMENT_MAX_RUNTIME_TOTAL_BYTES,
+                ..RuntimeLimits::default()
+            },
+            RuntimeLimits {
+                max_queue_records: MEASUREMENT_MAX_RUNTIME_QUEUE_RECORDS,
+                ..RuntimeLimits::default()
+            },
+            RuntimeLimits {
+                max_queue_bytes: MEASUREMENT_MAX_RUNTIME_QUEUE_BYTES,
+                ..RuntimeLimits::default()
+            },
+        ] {
+            assert!(
+                matches!(
+                    SessionRuntime::new(SessionId(1), limits, 0),
+                    Err(RuntimeError::InvalidLimits)
+                ),
+                "exception size leaked into the default constructor: {limits:?}"
+            );
+        }
+    }
+
+    // --- D068 assertion 2: the exception constructor accepts exactly the
+    // three exception constants and rejects each axis at +1 ---
+    #[test]
+    fn measurement_constructor_accepts_exact_constants_and_rejects_plus_one() {
+        assert!(SessionRuntime::new_measurement(SessionId(1), measurement_limits(), 0).is_ok());
+        for limits in [
+            RuntimeLimits {
+                max_total_bytes: MEASUREMENT_MAX_RUNTIME_TOTAL_BYTES + 1,
+                ..measurement_limits()
+            },
+            RuntimeLimits {
+                max_queue_records: MEASUREMENT_MAX_RUNTIME_QUEUE_RECORDS + 1,
+                ..measurement_limits()
+            },
+            RuntimeLimits {
+                max_queue_bytes: MEASUREMENT_MAX_RUNTIME_QUEUE_BYTES + 1,
+                ..measurement_limits()
+            },
+        ] {
+            assert!(
+                matches!(
+                    SessionRuntime::new_measurement(SessionId(1), limits, 0),
+                    Err(RuntimeError::InvalidLimits)
+                ),
+                "exception ceiling exceeded: {limits:?}"
+            );
+        }
+    }
+
+    // --- D068 assertion 3: closed set — streams and record_bytes keep
+    // HARD validation on the measurement path ---
+    #[test]
+    fn measurement_constructor_keeps_hard_validation_for_closed_axes() {
+        for limits in [
+            RuntimeLimits {
+                max_streams: HARD_MAX_RUNTIME_STREAMS + 1,
+                ..measurement_limits()
+            },
+            RuntimeLimits {
+                max_record_bytes: HARD_MAX_RUNTIME_RECORD_BYTES + 1,
+                ..measurement_limits()
+            },
+        ] {
+            assert!(
+                matches!(
+                    SessionRuntime::new_measurement(SessionId(1), limits, 0),
+                    Err(RuntimeError::InvalidLimits)
+                ),
+                "closed-axis exemption attempted: {limits:?}"
+            );
+        }
+    }
+
+    // --- D068 assertion 4: lifetime true-arrival — the runtime
+    // enforcement point follows self.limits, not the HARD constants:
+    // >64 MiB of lifetime accumulation must pass under the exception and
+    // the 2 GiB boundary must stop it (send side, queue+drain loop) ---
+    #[test]
+    fn measurement_lifetime_accumulation_passes_64mib_and_stops_at_2gib() {
+        let mut r = SessionRuntime::new_measurement(SessionId(1), measurement_limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        let record = vec![7u8; 4096];
+        // 16,385 x 4 KiB = 64 MiB + 4 KiB > HARD; each record is drained
+        // (pop + delivery ack) so the queue axes never bind — only the
+        // lifetime accumulator governs.
+        let mut offset = 0u64;
+        for i in 0..16_385u64 {
+            r.queue_send(StreamId(1), &record, i).unwrap();
+            let drained = r.pop_send(i).unwrap().unwrap();
+            r.delivery_ack(StreamId(1), offset, drained.data.len(), i)
+                .unwrap();
+            offset += 4096;
+        }
+        assert!(r.total_bytes() > HARD_MAX_RUNTIME_TOTAL_BYTES);
+        // Fill the exact remaining headroom to the 2 GiB boundary
+        // (2 GiB - 64 MiB - 4 KiB is 4 KiB-aligned), then one more record
+        // must hit TotalLimit at the accepted exception ceiling.
+        let headroom = MEASUREMENT_MAX_RUNTIME_TOTAL_BYTES - r.total_bytes();
+        assert_eq!(headroom % 4096, 0, "2 GiB / 4 KiB alignment");
+        for i in 16_385u64..16_385 + (headroom / 4096) as u64 {
+            r.queue_send(StreamId(1), &record, i).unwrap();
+            let drained = r.pop_send(i).unwrap().unwrap();
+            r.delivery_ack(StreamId(1), offset, drained.data.len(), i)
+                .unwrap();
+            offset += 4096;
+        }
+        assert_eq!(r.total_bytes(), MEASUREMENT_MAX_RUNTIME_TOTAL_BYTES);
+        let final_instant = 16_385 + (headroom / 4096) as u64;
+        assert_eq!(
+            r.queue_send(StreamId(1), &record, final_instant),
+            Err(RuntimeError::TotalLimit),
+            "lifetime enforcement must follow the accepted exception limit at the 2 GiB boundary"
+        );
+    }
+
+    // --- D068 assertion 4 (receive side): the receive-path accumulator
+    // follows the same exception limit ---
+    #[test]
+    fn measurement_receive_accumulation_passes_64mib() {
+        let mut r = SessionRuntime::new_measurement(SessionId(2), measurement_limits(), 0).unwrap();
+        r.open_stream(StreamId(1), 0).unwrap();
+        let record = vec![9u8; 4096];
+        let mut offset = 0u64;
+        for i in 0..16_385u64 {
+            r.receive(
+                InboundRecord {
+                    stream: StreamId(1),
+                    offset,
+                    data: record.clone(),
+                },
+                i,
+            )
+            .unwrap();
+            r.pop_receive(i).unwrap();
+            offset += 4096;
+        }
+        assert!(r.total_bytes() > HARD_MAX_RUNTIME_TOTAL_BYTES);
+    }
+
+    // --- D068 assertion 6 (library half): compile-time pin — the
+    // exception ceilings sit strictly above the HARD ceilings and hold
+    // the ADR's documented relationships ---
+    const _: () = {
+        assert!(MEASUREMENT_MAX_RUNTIME_TOTAL_BYTES > HARD_MAX_RUNTIME_TOTAL_BYTES);
+        assert!(MEASUREMENT_MAX_RUNTIME_QUEUE_RECORDS > HARD_MAX_RUNTIME_QUEUE_RECORDS);
+        assert!(MEASUREMENT_MAX_RUNTIME_QUEUE_BYTES > HARD_MAX_RUNTIME_QUEUE_BYTES);
+        assert!(MEASUREMENT_MAX_RUNTIME_QUEUE_BYTES == MEASUREMENT_MAX_RUNTIME_TOTAL_BYTES);
+        // 512 B granularity rationale: 2 GiB / 512 B = 2^22 exactly.
+        assert!(MEASUREMENT_MAX_RUNTIME_QUEUE_RECORDS * 512 == 2 << 30);
+    };
 }
 
 #[cfg(test)]

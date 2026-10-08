@@ -268,7 +268,7 @@ fn handshake_server(
     Ok(secure)
 }
 
-fn handshake_client(
+pub(super) fn handshake_client(
     stream: &mut TcpStream,
     reader: &mut FramedReader,
     deadline: Instant,

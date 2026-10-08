@@ -3,6 +3,7 @@ mod lifecycle;
 
 use health_window::{HealthDatagram, HealthObservationWindow, HealthWindowError};
 use lifecycle::ReadinessPrerequisite;
+mod bulk;
 mod framed;
 mod health_window;
 mod measurement;
@@ -46,7 +47,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-const USAGE: &str = "Usage: neko <server|client|probe|health-observe|failover|multistream|scheduler-fairness|key-update|periodic-server|periodic-client|lab|workload|endpoint-rebind-server|endpoint-rebind-client|keygen|capabilities> [bounded options]
+const USAGE: &str = "Usage: neko <server|client|probe|health-observe|failover|multistream|scheduler-fairness|key-update|periodic-server|periodic-client|bulk-server|bulk-client|lab|workload|endpoint-rebind-server|endpoint-rebind-client|keygen|capabilities> [bounded options]
 
   probe --matrix --target LOOPBACK:PORT --transport tcp|udp --ip-version ipv4|ipv6 [--timeout-ms 1-5000] [--bytes 1-1200] [--json]: local-loopback only
   client|server --transport udp [--plpmtud]: opt-in PLPMTUD probe exchange (D067; both ends must pass the flag; fail-closed; experimental)
@@ -129,6 +130,8 @@ fn capabilities(args: &[String]) {
                 "{{\"name\":\"key-update\",\"maturity\":\"fixture\"}},",
                 "{{\"name\":\"periodic-server\",\"maturity\":\"research\"}},",
                 "{{\"name\":\"periodic-client\",\"maturity\":\"research\"}},",
+                "{{\"name\":\"bulk-server\",\"maturity\":\"research\",\"requires\":\"NEKO_MEASUREMENT=1\"}},",
+                "{{\"name\":\"bulk-client\",\"maturity\":\"research\",\"requires\":\"NEKO_MEASUREMENT=1\"}},",
                 "{{\"name\":\"lab\",\"maturity\":\"fixture\"}},",
                 "{{\"name\":\"workload\",\"maturity\":\"fixture\"}},",
                 "{{\"name\":\"endpoint-rebind-server\",\"maturity\":\"experimental\"}},",
@@ -6763,6 +6766,8 @@ fn main() {
         Some("workload") => workload(&a),
         Some("periodic-server") => periodic::server(&a),
         Some("periodic-client") => periodic::client(&a),
+        Some("bulk-server") => bulk::server(&a),
+        Some("bulk-client") => bulk::client(&a),
         Some("scheduler-fairness") => scheduler_fairness(&a),
         Some("key-update") => key_update_fixture(&a),
         Some("health-observe") => health_observe(&a),
