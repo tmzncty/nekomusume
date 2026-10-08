@@ -1247,3 +1247,135 @@ a decision.
   1300. Shrinkage discovered through authoritative evidence only.
 - The `--plpmtud-raise-interval` opt-in gates all raise/verification probes
   (unchanged from the raise slice).
+
+---
+
+## 2026-10-08 — D068：库层会话硬上限的 measurement 例外构造器
+
+**Status: Provisional（设计已定；实现、断言与 gate 验证未落地，落地后转 Accepted）**
+
+### 问题
+
+W1 带宽测量的 512 MiB / 2 GiB 档被库层硬上限挡死：
+`neko-session` 的 `SessionRuntime::new`（`crates/neko-session/src/lib.rs:1396-1412`）
+拒绝任何超出 `HARD_MAX_RUNTIME_TOTAL_BYTES = 64 MiB`（`lib.rs:12`）或
+`HARD_MAX_RUNTIME_QUEUE_RECORDS = 65,536`（`lib.rs:10`）的
+`RuntimeLimits`。这些硬顶是安全防线，由 460 条断言（neko-session 内
+`assert` 总数）与 CLI 侧 measurement pin（`crates/neko-cli/src/measurement.rs`
+的 `const _` 编译期 pin 与 `tests/measurement_mode.rs` 集成测）共同锁定，
+**默认构造器与全部既有断言必须原样保留，不允许默认放宽**。
+
+现有 measurement 模式（D051 框架内，`NEKO_MEASUREMENT=1`）的哲学是
+"研究顶 = 库层地板"——每个放宽值都被推导成恰好贴住某个 HARD 常量
+（`measurement.rs` 文档头）。该哲学对 24h 时长、65,530 计数等维度够用，
+但对 W1 的 512 MiB / 2 GiB 档结构性不够：库层地板本身低于测量目标。
+这是第一次需要突破库层硬顶本身的例外，因此必须是一个显式、封闭、
+自标记的库层构造器，而不是 CLI 侧数值调整。
+
+### 选项
+
+1. **全局上调 HARD 常量**（64 MiB → 2 GiB）。拒绝：默认防线即测量上限，
+   安全语义与测量需求耦合，回滚面大，违背"安全上限不是性能参数"原则。
+2. **`RuntimeLimits` 加 `measurement: bool` 标志**。拒绝：污染所有调用点的
+   结构体字面量；默认路径的每处构造都多一个可写错的开关。
+3. **新增独立例外构造器**（`SessionRuntime::new_measurement` 或等价命名的
+   `pub fn`），接受一个封闭的例外上限集合。采纳：例外必须显式命名才能
+   到达；默认 `new` 的校验逻辑一字不改；调用点可被 grep 审计。
+
+### 证据
+
+- 硬上限与校验点：`crates/neko-session/src/lib.rs:9-13`（五个 HARD 常量）、
+  `:1396-1412`（构造器拒绝路径）。
+- `max_total_bytes` 是生命周期累加器、只增不减：`crates/neko-cli/src/measurement.rs`
+  文档头（periodic 例外值的推导依据，同一语义）。
+- 例外集只需三轴：`max_total_bytes`、`max_queue_records`、以及派生的
+  `max_queue_bytes`（HARD=16 MiB，`lib.rs:11`）。**`max_streams`（HARD=4,096）
+  与 `max_record_bytes`（HARD=1 MiB）不入例外集**——bulk 负载是单/少 stream、
+  记录 ≤ `PROCESS_FRAME_MAX`=4,096B（multistream 先例 `MULTISTREAM_RECORD_BYTES_MAX`=4,000）。
+  **`max_session_window`/`max_stream_window` 无既有 HARD 硬顶**（构造器只查
+  非零，`lib.rs:1407-1408`），bulk CLI 直接声明大窗口即可，无需库层例外。
+- W1 定义（真实负载表）：512 MiB / 2 GiB 档；bulk 语义为 sink+分块校验+终末
+  SHA-256（非回显），单向累计 = 数据量。
+- 例外值推导：
+  - `MEASUREMENT_MAX_TOTAL_BYTES = 2 GiB (2^31)`：W1 最大档，sink 语义下单向
+    累计恰好覆盖。若未来 bulk 改回显语义（累计≈2×数据量），须先修订本 ADR
+    将例外升至 4 GiB，不允许实现侧自行取巧。
+  - `MEASUREMENT_MAX_QUEUE_RECORDS = 4 Mi (2^22 = 4,194,304)`：以 512 B 为
+    最小可测记录粒度，2 GiB ÷ 512 B = 2^22，使记录轴在整个例外区间内不先于
+    字节轴成为约束（现实 1,176 B 数据帧下 2 GiB ≈ 1.83M 条记录，字节轴先绑）。
+  - `MEASUREMENT_MAX_QUEUE_BYTES = 2 GiB`：与 total 同值锁步——已发送未确认
+    的在途窗口字节不可能超过生命周期总量。
+- CLI measurement 先例（env 门控、编译期 pin、`measurement_mode=true`
+  marker 行、capabilities 自报告）：`crates/neko-cli/src/measurement.rs`、
+  `main.rs` capabilities 段。
+
+### 决定
+
+1. `neko-session` 新增例外构造器（建议名 `SessionRuntime::new_measurement`），
+   仅放行封闭三轴 `{total_bytes ≤ 2 GiB, queue_records ≤ 4 Mi, queue_bytes ≤ 2 GiB}`；
+   其余各轴（streams、record_bytes、windows、timeout 非零）沿用默认校验，
+   越界仍 `InvalidLimits`。例外常量以 `pub const MEASUREMENT_MAX_RUNTIME_*`
+   形式从 neko-session 导出，供 CLI 编译期 pin。
+2. 默认构造器 `SessionRuntime::new` 行为逐字节不变；全部既有断言原样保留。
+3. 例外路径的唯一合法调用点是 CLI 的 bulk/测量命令，且仅当
+   `NEKO_MEASUREMENT=1`（复用 `measurement::enabled()`）；release 构建产物
+   语义不变——例外构造器在默认 env 下不可达（CLI 侧集成测锁定）。
+4. 自标记（observable 要求）：
+   - CLI stdout 沿用既有 `measurement_mode=true relaxed_limits` marker
+     （`measurement.rs emit_marker`），bulk 命令额外输出
+     `measurement_limits_exceptions=total_bytes,queue_records,queue_bytes` 行；
+   - capabilities JSON 在 measurement 模式报告例外字段；
+   - **库层不新增 `RuntimeEventKind` 变体**——Era-4 observability v1 事件名
+     为 append-only 契约（`docs/era4-observability-contract.md` §1.5），
+     例外属于构造边界不属于事件语义，走 CLI 层自标记即可。
+5. 断言影响（实现必须同步落地，详单见下）：现有 460 条断言零修改；
+   新增约 10-14 条（默认路径补 2 条既有缺口 + 例外路径 8-12 条）。
+
+### 断言影响清单（交实现的验收单）
+
+保持不变（抽样点名，非穷举）：
+
+- `crates/neko-session/src/lib.rs:3146` `hostile_runtime_limits_are_rejected_
+  before_allocation`（queue_bytes / record_bytes HARD+1 拒绝）；
+- `lib.rs:3281` `runtime_limits_reject_zero_and_above_hard_ceiling`
+  （streams=0、queue_records=0/HARD+1、queue_bytes HARD+1、record_bytes=0、
+  idle=0 拒绝）；
+- CLI `measurement.rs` `const _` 七条编译期 pin、三条单测；
+  `tests/measurement_mode.rs` 八条集成测（默认模式旧边缘仍拒绝）。
+
+既有缺口，随本 ADR 顺手补（默认路径，各 1 条）：
+
+- `max_total_bytes = HARD_MAX_RUNTIME_TOTAL_BYTES + 1` 的拒绝用例**目前不存在**
+  ——本例外恰好落在此轴上，必须补上；
+- `max_streams = HARD_MAX_RUNTIME_STREAMS + 1` 的拒绝用例同样不存在，补齐
+  对称性。
+
+例外路径新增（必须全绿才算落地）：
+
+1. 交叉 pin：默认 `SessionRuntime::new` 拒绝例外尺寸（total=2 GiB /
+   queue_records=4 Mi / queue_bytes=2 GiB 各自 `InvalidLimits`）——例外值
+   不得渗入默认语义；
+2. `new_measurement` 接受恰好等于三个例外常量的值，拒绝任一轴例外值+1；
+3. 例外集封闭性：measurement 路径下 streams HARD+1、record_bytes HARD+1
+   仍被拒绝；
+4. 生命周期真到达：>64 MiB 累计（如 4 KiB × 16,385）不被 `TotalLimit`
+   拦截、2 GiB 边界处拦截——证明运行期执行点引用 `self.limits` 而非
+   HARD 常量（构造器校验与运行期执行是两处代码，此断言锁住后者）；
+5. CLI 集成（`measurement_mode.rs` 风格，真二进制子进程）：
+   `NEKO_MEASUREMENT` 未设时 bulk 不可用例外路径（拒绝或降级默认上限）；
+   设 1 时 marker 与例外自标记行出现；
+6. 编译期 pin（`measurement.rs const _` 先例）：CLI 例外常量 ≤
+   `MEASUREMENT_MAX_RUNTIME_*` 且 > 默认 HARD 常量。
+
+### 回滚
+
+- 触发即回滚（任一）：① 例外尺寸逃逸进默认模式（测试 1 或 5 失败）；
+  ② 运行期执行点被发现引用 HARD 常量而非 `self.limits`（测试 4 失败）；
+  ③ bulk 例外路径实测出现无界内存增长/OOM。
+- 回滚动作：删除 CLI 对 `new_measurement` 的调用点即完全回到现状
+  （默认路径无任何依赖）；库层构造器可保留为 dead code 一版后移除。
+- 回滚不要求清退已产生的测量数据——数据本身不依赖例外常量的存续。
+
+---
+
+<!-- D068-end -->
