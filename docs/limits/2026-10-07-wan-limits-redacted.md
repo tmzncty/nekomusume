@@ -9,7 +9,7 @@
 
 1. **TCP fixture 的 WAN 极限完全由 RTT 决定**：交换率 ≈ 1000/(3.4×RTT+40ms)。50ms→6.9 ex/s、163ms→1.8-1.9、215ms→1.4。丢包（11.67%）对节奏无可测影响——TCP 重传完全吸收。
 2. **HY2 与 neko fixture 的吞吐差是三个数量级**：P1 路径 100.6Mbps vs 27.7KiB/s（×4000）；这不是协议库的上限，是 CLI fixture 的 stop-and-wait 语义（每记录一次 ACK 往返 + delayed-ACK 门控）。
-3. **UDP probe 在公网不可用（#6）**：HK→bjlh 实测 client 发起后双端捕获 0 包（hello 不达），同源 nc 同端口可达；client 以 "echo timeout"（ICMP 错误形态）终止。根因未定性，候选三个（见 §5）。
+3. **UDP probe "公网不可用"（#6）——已解决，判定更正**：非协议缺陷。根因为 WAN harness 的 server 调用漏传 `--count`（默认 1），server 首次交换后正常退出，client 随后交换收到 ICMP port-unreachable 并以 "echo timeout" 快速终止（socket 有 read_timeout，非 hang）。修正 harness 后真实 client 完整跑通：HK→bjlh 公网 UDP probe 20 交换 885ms（probe_ok，双端抓包 42 包证据）。原"双端 0 捕获"为 tcpdump -w 缓冲不 flush 的采集假象。辨析：#1（loopback probe 无超时 hang）仍是独立真实缺陷。证据：私有档 udpdiag-fix-b6/。
 4. **时段效应是最大的环境变量**：163 跨洋路径丢包 0%（凌晨勘测）↔ 11.67%（00:0x 深夜实测）↔ HY2 满速（03:5x 拥塞消退）。单次快照无代表性。
 5. P1 soak（250ms interval）24h 窗口内 count=13980 先触顶（约 58min 完成），节奏/延迟/RSS 全程稳定——与 local-limits 的 count-先于-bytes-触顶结论一致。
 
