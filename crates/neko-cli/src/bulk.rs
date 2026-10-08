@@ -213,9 +213,19 @@ pub(super) fn server(args: &[String]) {
     };
     framed.set_max_frame_len(frame_bound).unwrap();
     println!("bulk_server_authenticated session=7301 stream=1");
-    let mut runtime =
-        neko_session::SessionRuntime::new_measurement(SESSION, limits(&cfg), 0).unwrap();
-    runtime.open_stream(STREAM, 0).unwrap();
+    // Anchor the runtime clock at creation (post-auth), not at process
+    // start: on WAN paths the client may connect minutes after the server
+    // starts, and a zero-anchored last_activity_ms would trip the 30s idle
+    // timeout on the very first record.
+    let mut runtime = neko_session::SessionRuntime::new_measurement(
+        SESSION,
+        limits(&cfg),
+        start.elapsed().as_millis() as u64,
+    )
+    .unwrap();
+    runtime
+        .open_stream(STREAM, start.elapsed().as_millis() as u64)
+        .unwrap();
     let total_records = cfg.bytes_total / cfg.record_bytes;
     let mut hasher = Sha256::new();
     let mut received = 0usize;
@@ -333,9 +343,19 @@ pub(super) fn client(args: &[String]) {
     );
     framed.set_max_frame_len(PROCESS_FRAME_MAX + 128).unwrap();
     println!("bulk_client_authenticated session=7301 stream=1");
-    let mut runtime =
-        neko_session::SessionRuntime::new_measurement(SESSION, limits(&cfg), 0).unwrap();
-    runtime.open_stream(STREAM, 0).unwrap();
+    // Anchor the runtime clock at creation (post-auth), not at process
+    // start: on WAN paths the client may connect minutes after the server
+    // starts, and a zero-anchored last_activity_ms would trip the 30s idle
+    // timeout on the very first record.
+    let mut runtime = neko_session::SessionRuntime::new_measurement(
+        SESSION,
+        limits(&cfg),
+        start.elapsed().as_millis() as u64,
+    )
+    .unwrap();
+    runtime
+        .open_stream(STREAM, start.elapsed().as_millis() as u64)
+        .unwrap();
     let total_records = cfg.bytes_total / cfg.record_bytes;
     let deadline = start + cfg.duration;
     let mut sent = 0usize;
