@@ -203,7 +203,15 @@ pub(super) fn server(args: &[String]) {
     let Some((mut stream, mut secure)) = authenticated else {
         fail("duration expired before authenticated Session");
     };
-    framed.set_max_frame_len(PROCESS_FRAME_MAX + 128).unwrap();
+    // D069 R2: in measurement mode the server must admit sealed batch
+    // frames (up to MAX_BATCH_PLAINTEXT + record overhead + TCP frame
+    // header). Default mode keeps the single-record bound.
+    let frame_bound = if crate::measurement::enabled() {
+        neko_crypto::MAX_BATCH_PLAINTEXT + neko_crypto::RECORD_SEAL_OVERHEAD + 128
+    } else {
+        PROCESS_FRAME_MAX + 128
+    };
+    framed.set_max_frame_len(frame_bound).unwrap();
     println!("bulk_server_authenticated session=7301 stream=1");
     let mut runtime =
         neko_session::SessionRuntime::new_measurement(SESSION, limits(&cfg), 0).unwrap();
@@ -216,36 +224,47 @@ pub(super) fn server(args: &[String]) {
     while received < total_records && Instant::now() < deadline {
         match framed.read_until(&mut stream, deadline) {
             Ok(FrameRead::Complete(frame)) => {
-                let plain = secure
-                    .open_unreliable(&frame)
-                    .unwrap_or_else(|_| fail("unauthenticated bulk data"));
-                let ProcessMessage::Data { session, record } =
-                    ProcessMessage::decode(&plain).unwrap_or_else(|_| fail("malformed bulk data"))
-                else {
-                    fail("expected bulk data");
+                // D069 R2: try batch first, fall back to the single-record
+                // path (compat window — both shapes may arrive during the
+                // rollout; the receipt frame from client-side batching is
+                // also a single sealed ProcessMessage).
+                let plains: Vec<Vec<u8>> = match secure.open_batch(&frame) {
+                    Ok(records) => records,
+                    Err(_) => vec![
+                        secure
+                            .open_unreliable(&frame)
+                            .unwrap_or_else(|_| fail("unauthenticated bulk data")),
+                    ],
                 };
-                if session != SESSION || record.stream != STREAM {
-                    fail("bulk record outside contract");
+                for plain in plains {
+                    let ProcessMessage::Data { session, record } = ProcessMessage::decode(&plain)
+                        .unwrap_or_else(|_| fail("malformed bulk data"))
+                    else {
+                        fail("expected bulk data");
+                    };
+                    if session != SESSION || record.stream != STREAM {
+                        fail("bulk record outside contract");
+                    }
+                    let expected =
+                        payload_block(record.offset / cfg.record_bytes as u64, cfg.record_bytes);
+                    if record.data != expected {
+                        fail("bulk payload checksum mismatch");
+                    }
+                    runtime
+                        .receive(
+                            InboundRecord {
+                                stream: record.stream,
+                                offset: record.offset,
+                                data: record.data.clone(),
+                            },
+                            start.elapsed().as_millis() as u64,
+                        )
+                        .unwrap_or_else(|_| fail("bulk record rejected by runtime"));
+                    let _ = runtime.pop_receive(start.elapsed().as_millis() as u64);
+                    hasher.update(&record.data);
+                    received += 1;
+                    received_bytes += record.data.len();
                 }
-                let expected =
-                    payload_block(record.offset / cfg.record_bytes as u64, cfg.record_bytes);
-                if record.data != expected {
-                    fail("bulk payload checksum mismatch");
-                }
-                runtime
-                    .receive(
-                        InboundRecord {
-                            stream: record.stream,
-                            offset: record.offset,
-                            data: record.data.clone(),
-                        },
-                        start.elapsed().as_millis() as u64,
-                    )
-                    .unwrap_or_else(|_| fail("bulk record rejected by runtime"));
-                let _ = runtime.pop_receive(start.elapsed().as_millis() as u64);
-                hasher.update(&record.data);
-                received += 1;
-                received_bytes += record.data.len();
             }
             Ok(FrameRead::Deadline)
             | Ok(FrameRead::CleanEof)
@@ -324,6 +343,40 @@ pub(super) fn client(args: &[String]) {
     let mut sent_bytes = 0usize;
     let mut window_bytes = 0usize;
     let mut window_start = Instant::now();
+    // D069 R2: batch packing. `--batch-n` (1-64, default 8) records per
+    // sealed batch; measurement-gated (default mode never batches — the
+    // plain single-record path stays the default surface). Each batch is
+    // ONE write_frame_single (94b0eb4 base), so per-batch framing and
+    // syscalls amortize across N records.
+    let batch_n = if crate::measurement::enabled() {
+        parse(args, "--batch-n", Some("8"))
+            .parse::<usize>()
+            .unwrap_or_else(|_| fail("--batch-n must be an integer 1-64"))
+    } else {
+        1
+    };
+    if !(1..=64).contains(&batch_n) {
+        fail("--batch-n must be within 1-64");
+    }
+    // Transport-budget auto-N (D069): the staged batch body must stay
+    // within MAX_BATCH_PLAINTEXT (snow MAXMSGLEN-bound). Flush by BYTE
+    // budget at flush time so a large --batch-n clamps itself to what the
+    // actual encoded record size fits (--batch-n 64 with 1170B records
+    // runs at effective N≈54) instead of failing.
+    let mut pending: Vec<Vec<u8>> = Vec::with_capacity(batch_n);
+    let flush_batch = |pending: &mut Vec<Vec<u8>>,
+                       stream: &mut TcpStream,
+                       secure: &mut neko_crypto::SecureSession| {
+        if pending.is_empty() {
+            return;
+        }
+        let refs: Vec<&[u8]> = pending.iter().map(|v| v.as_slice()).collect();
+        let encrypted = secure
+            .seal_batch(&refs)
+            .unwrap_or_else(|_| fail("batch seal failed"));
+        write_frame_single(stream, &encrypted).unwrap_or_else(|_| fail("bulk batch send failed"));
+        pending.clear();
+    };
     while sent < total_records && Instant::now() < deadline && !shutdown.load(Ordering::Acquire) {
         if let Some(rate) = cfg.rate_limit
             && window_bytes >= rate
@@ -349,14 +402,32 @@ pub(super) fn client(args: &[String]) {
         }
         .encode()
         .unwrap();
-        let encrypted = secure
-            .seal_unreliable(&plain)
-            .unwrap_or_else(|_| fail("payload too large"));
-        write_frame_single(&mut stream, &encrypted).unwrap_or_else(|_| fail("bulk send failed"));
+        if batch_n > 1 {
+            // Budget check BEFORE pushing: if adding this record would push
+            // the staged body over the transport budget, flush the current
+            // batch first so no seal_batch call ever sees an over-budget body.
+            let incoming = 4 + plain.len();
+            let staged_after = 4 + pending.iter().map(|p| 4 + p.len()).sum::<usize>() + incoming;
+            if staged_after > neko_crypto::MAX_BATCH_PLAINTEXT.saturating_sub(64) {
+                flush_batch(&mut pending, &mut stream, &mut secure);
+            }
+            pending.push(plain);
+            if pending.len() >= batch_n {
+                flush_batch(&mut pending, &mut stream, &mut secure);
+            }
+        } else {
+            let encrypted = secure
+                .seal_unreliable(&plain)
+                .unwrap_or_else(|_| fail("payload too large"));
+            write_frame_single(&mut stream, &encrypted)
+                .unwrap_or_else(|_| fail("bulk send failed"));
+        }
         sent += 1;
         sent_bytes += cfg.record_bytes;
         window_bytes += cfg.record_bytes;
     }
+    // flush any trailing partial batch before half-close
+    flush_batch(&mut pending, &mut stream, &mut secure);
     // half-close and await the server's final summary line (bounded)
     let _ = stream.shutdown(Shutdown::Write);
     let receipt: Option<String> =

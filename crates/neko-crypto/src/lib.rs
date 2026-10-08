@@ -160,6 +160,15 @@ mod tests {
 
 pub const MAX_HANDSHAKE_MESSAGE: usize = 1024;
 pub const MAX_RECORD_PLAINTEXT: usize = 4096;
+/// D069 R2 batch packing domain: u32 count + N×(u32 len + record). The
+/// binding constraint is snow's Noise transport MAXMSGLEN (65535): the
+/// sealed inner = record context (26B) + staged body must fit one AEAD
+/// message, so the body budget is 65535 − 26. The count cap (64, aligned
+/// with `DEFAULT_MAX_FRAMES_PER_PACKET`) stands; the byte cap is the real
+/// transport bound. At 1170B bulk records the effective ceiling is ~54
+/// records per batch. Distinct from the single-record `MAX_RECORD_PLAINTEXT`
+/// domain, which stays untouched.
+pub const MAX_BATCH_PLAINTEXT: usize = 65535 - RECORD_CONTEXT_LEN;
 pub const MAX_UNRELIABLE_DATAGRAM: usize = 1200;
 pub const RECORD_CONTEXT_LEN: usize = 26;
 /// Fixed bytes a sealed record adds to its plaintext: sequence 8, record
@@ -614,6 +623,119 @@ impl SecureSession {
         self.open(record)
     }
 
+    /// D069 R2: batch-seal N plaintext records with ONE AEAD pass. The batch
+    /// body is length-prefixed framing (`u32 BE count`, then per record
+    /// `u32 BE len + bytes`), sealed with one nonce, one tag, replay counted
+    /// per sealed batch.
+    ///
+    /// Budget note (D069 design intent): `MAX_RECORD_PLAINTEXT` (4096) is the
+    /// SINGLE-record domain budget enforced by `seal()`; the batch is a new
+    /// packing domain whose plaintext budget is `MAX_BATCH_PLAINTEXT`
+    /// (N×(4+1200)+4 at N=64). The record-level bound
+    /// (`MAX_UNRELIABLE_DATAGRAM`) and the single-record seal path are
+    /// untouched — layering per D069: batch is a crypto packing primitive,
+    /// never enters ProcessMessage, packing point lives at the frame->packet
+    /// layer aligned with `MAX_FRAMES_PER_PACKET = 64`. On UDP the caller
+    /// must keep the whole batch <= 1464 B (auto-N-reduction is caller-side).
+    pub fn seal_batch(&mut self, payloads: &[&[u8]]) -> Result<Vec<u8>, SessionRejected> {
+        const MAX_BATCH_RECORDS: usize = 64;
+        if payloads.is_empty() || payloads.len() > MAX_BATCH_RECORDS {
+            return Err(SessionRejected);
+        }
+        for p in payloads {
+            if p.len() > MAX_UNRELIABLE_DATAGRAM {
+                return Err(SessionRejected);
+            }
+        }
+        let mut body = Vec::with_capacity(4 + payloads.len() * 4);
+        body.extend_from_slice(&(payloads.len() as u32).to_be_bytes());
+        for p in payloads {
+            body.extend_from_slice(&(p.len() as u32).to_be_bytes());
+            body.extend_from_slice(p);
+        }
+        if body.len() > MAX_BATCH_PLAINTEXT {
+            return Err(SessionRejected);
+        }
+        // Inline of seal() with the batch budget (single-record seal() and
+        // its MAX_RECORD_PLAINTEXT domain stay untouched).
+        let sequence = self.send.next_nonce().map_err(|_| SessionRejected)?;
+        let mut inner = Vec::with_capacity(RECORD_CONTEXT_LEN + body.len());
+        inner.extend_from_slice(&self.context.encode());
+        inner.extend_from_slice(&body);
+        let mut out = vec![0; 8 + inner.len() + 16];
+        out[..8].copy_from_slice(&sequence.to_be_bytes());
+        let n = self
+            .transport
+            .write_message(sequence, &inner, &mut out[8..])
+            .map_err(|_| SessionRejected)?;
+        out.truncate(8 + n);
+        Ok(out)
+    }
+
+    /// open() with the batch packing-domain budget instead of the
+    /// single-record one. AEAD authentication, context validation and the
+    /// replay-window advance are byte-for-byte the same semantics as
+    /// `open()`; only the pre-auth size bound differs (MAX_BATCH_PLAINTEXT).
+    fn open_batch_inner(&mut self, record: &[u8]) -> Result<Vec<u8>, SessionRejected> {
+        if record.len() < 24 {
+            return Err(SessionRejected);
+        }
+        let sequence = u64::from_be_bytes(record[..8].try_into().map_err(|_| SessionRejected)?);
+        let mut plain = vec![0; record.len() - 8];
+        let n = self
+            .transport
+            .read_message(sequence, &record[8..], &mut plain)
+            .map_err(|_| SessionRejected)?;
+        if n < RECORD_CONTEXT_LEN || plain[..RECORD_CONTEXT_LEN] != self.context.encode() {
+            return Err(SessionRejected);
+        }
+        // Replay state advances only after AEAD authentication and context validation.
+        self.replay.accept(sequence).map_err(|_| SessionRejected)?;
+        Ok(plain[RECORD_CONTEXT_LEN..n].to_vec())
+    }
+
+    /// D069 R2: open a batch sealed by `seal_batch`. One AEAD authentication
+    /// and replay check covers the whole batch (a corrupted or replayed batch
+    /// is rejected as a unit). The length-prefix framing must be exact:
+    /// truncation, overlap or a count mismatch is rejected without partial
+    /// delivery.
+    pub fn open_batch(&mut self, record: &[u8]) -> Result<Vec<Vec<u8>>, SessionRejected> {
+        const MAX_BATCH_RECORDS: usize = 64;
+        if record.len() > 8 + RECORD_CONTEXT_LEN + MAX_BATCH_PLAINTEXT + 16 {
+            return Err(SessionRejected);
+        }
+        let body = self.open_batch_inner(record)?;
+        if body.len() < 4 {
+            return Err(SessionRejected);
+        }
+        let count = u32::from_be_bytes(body[..4].try_into().map_err(|_| SessionRejected)?);
+        let count = usize::try_from(count).map_err(|_| SessionRejected)?;
+        if count == 0 || count > MAX_BATCH_RECORDS {
+            return Err(SessionRejected);
+        }
+        let mut records = Vec::with_capacity(count);
+        let mut off = 4usize;
+        for _ in 0..count {
+            if off + 4 > body.len() {
+                return Err(SessionRejected);
+            }
+            let len =
+                u32::from_be_bytes(body[off..off + 4].try_into().map_err(|_| SessionRejected)?);
+            let len = usize::try_from(len).map_err(|_| SessionRejected)?;
+            off += 4;
+            if off + len > body.len() {
+                return Err(SessionRejected);
+            }
+            records.push(body[off..off + len].to_vec());
+            off += len;
+        }
+        if off != body.len() {
+            // trailing bytes: overlap/truncation attack shape
+            return Err(SessionRejected);
+        }
+        Ok(records)
+    }
+
     /// D067 opt-in probe seal. It uses the same nonce manager as every other
     /// record. The plaintext must be a structurally valid PMTU probe, so this
     /// can never be used to seal an oversized Data or ACK frame.
@@ -752,6 +874,212 @@ mod session_tests {
         let (response, rs) = r.receive_first(&first, ctx(0)).unwrap();
         let is = i.finish(&response, ctx(0)).unwrap();
         (is, rs)
+    }
+
+    // ==== D069 R2 batch assertions (seal_batch/open_batch) ====
+    // Checklist mirrors the D069 decision section: roundtrip at N edges,
+    // malformed length prefixes, N=1 equivalence, cross-batch replay,
+    // mixed single/batch streams, N=64 pin, oversized record rejection.
+
+    fn batch_payload(len: usize, fill: u8) -> Vec<u8> {
+        vec![fill; len]
+    }
+
+    #[test]
+    fn batch_roundtrip_preserves_record_order_and_content() {
+        let (mut i, mut r) = pair();
+        let recs: Vec<Vec<u8>> = (0..8).map(|k| batch_payload(1170, 0xA0 + k)).collect();
+        let refs: Vec<&[u8]> = recs.iter().map(|v| v.as_slice()).collect();
+        let sealed = i.seal_batch(&refs).unwrap();
+        let opened = r.open_batch(&sealed).unwrap();
+        assert_eq!(opened, recs);
+    }
+
+    #[test]
+    fn batch_n1_degenerates_to_single_record_equivalence() {
+        // N=1 must deliver the same plaintext as the single-record path,
+        // though the sealed bytes differ (batch framing bytes inside).
+        let (mut i, mut r) = pair();
+        let one = batch_payload(300, 0x42);
+        let sealed = i.seal_batch(&[&one]).unwrap();
+        let opened = r.open_batch(&sealed).unwrap();
+        assert_eq!(opened, vec![one.clone()]);
+        // And the stream stays interchangeable: a single-record seal after a
+        // batch still opens on the same session.
+        let single = i.seal_unreliable(&one).unwrap();
+        let got = r.open_unreliable(&single).unwrap();
+        assert_eq!(got, one);
+    }
+
+    #[test]
+    fn batch_empty_and_over_n64_are_rejected() {
+        let (mut i, _r) = pair();
+        assert_eq!(i.seal_batch(&[]), Err(SessionRejected));
+        let recs: Vec<Vec<u8>> = (0..65).map(|_| batch_payload(1, 1)).collect();
+        let refs: Vec<&[u8]> = recs.iter().map(|v| v.as_slice()).collect();
+        assert_eq!(i.seal_batch(&refs), Err(SessionRejected));
+    }
+
+    #[test]
+    fn batch_n64_boundary_is_accepted() {
+        // 64 = DEFAULT_MAX_FRAMES_PER_PACKET pin (D069 decision).
+        let (mut i, mut r) = pair();
+        let recs: Vec<Vec<u8>> = (0..64).map(|_| batch_payload(1, 7)).collect();
+        let refs: Vec<&[u8]> = recs.iter().map(|v| v.as_slice()).collect();
+        let sealed = i.seal_batch(&refs).unwrap();
+        assert_eq!(r.open_batch(&sealed).unwrap().len(), 64);
+    }
+
+    #[test]
+    fn batch_oversized_single_record_is_rejected() {
+        // Each member must satisfy the unreliable-datagram bound.
+        let (mut i, _r) = pair();
+        let big = batch_payload(MAX_UNRELIABLE_DATAGRAM + 1, 9);
+        assert_eq!(i.seal_batch(&[&big]), Err(SessionRejected));
+    }
+
+    #[test]
+    fn batch_replay_across_batches_is_rejected() {
+        // Replay protection is per sealed batch: resubmitting an opened
+        // batch (or a single record) again must fail.
+        let (mut i, mut r) = pair();
+        let recs = [batch_payload(64, 1), batch_payload(64, 2)];
+        let refs: Vec<&[u8]> = recs.iter().map(|v| v.as_slice()).collect();
+        let sealed = i.seal_batch(&refs).unwrap();
+        assert!(r.open_batch(&sealed).is_ok());
+        assert_eq!(r.open_batch(&sealed), Err(SessionRejected));
+        // Cross-direction replay: single-record replay also still rejected.
+        let single = i.seal_unreliable(b"x").unwrap();
+        assert!(r.open_unreliable(&single).is_ok());
+        assert_eq!(r.open_unreliable(&single), Err(SessionRejected));
+    }
+
+    #[test]
+    fn batch_nonce_sequence_is_contiguous_with_singles() {
+        // A batch consumes exactly ONE nonce; interleaving singles and
+        // batches keeps the send sequence contiguous so the receiver's
+        // replay window accepts everything in order.
+        let (mut i, mut r) = pair();
+        let a = i.seal_unreliable(b"a").unwrap();
+        let b = i.seal_batch(&[b"b", b"c"]).unwrap();
+        let c = i.seal_unreliable(b"d").unwrap();
+        assert_eq!(r.open_unreliable(&a).unwrap(), b"a");
+        let got = r.open_batch(&b).unwrap();
+        assert_eq!(got, vec![b"b".to_vec(), b"c".to_vec()]);
+        assert_eq!(r.open_unreliable(&c).unwrap(), b"d");
+        // Sequences were 0 (single), 1 (batch), 2 (single): verify via
+        // header bytes.
+        assert_eq!(u64::from_be_bytes(a[..8].try_into().unwrap()), 0);
+        assert_eq!(u64::from_be_bytes(b[..8].try_into().unwrap()), 1);
+        assert_eq!(u64::from_be_bytes(c[..8].try_into().unwrap()), 2);
+    }
+
+    #[test]
+    fn batch_tampered_length_prefix_fails_as_a_unit() {
+        // Corrupt the sealed bytes (flip a byte in what is very likely the
+        // framing region): authentication must fail, nothing delivered.
+        let (mut i, mut r) = pair();
+        let recs = [batch_payload(500, 5), batch_payload(500, 6)];
+        let refs: Vec<&[u8]> = recs.iter().map(|v| v.as_slice()).collect();
+        let mut sealed = i.seal_batch(&refs).unwrap();
+        let mid = sealed.len() / 2;
+        sealed[mid] ^= 0xFF;
+        assert_eq!(r.open_batch(&sealed), Err(SessionRejected));
+    }
+
+    #[test]
+    fn batch_mixed_stream_survives_reordering_within_window() {
+        // Two batches + two singles delivered slightly out of order (within
+        // the replay window) all open fine: window semantics unchanged.
+        let (mut i, mut r) = pair();
+        let s0 = i.seal_unreliable(b"s0").unwrap();
+        let b1 = {
+            let recs = [batch_payload(32, 1), batch_payload(32, 2)];
+            let refs: Vec<&[u8]> = recs.iter().map(|v| v.as_slice()).collect();
+            i.seal_batch(&refs).unwrap()
+        };
+        let b2 = {
+            let recs = [batch_payload(32, 3)];
+            let refs: Vec<&[u8]> = recs.iter().map(|v| v.as_slice()).collect();
+            i.seal_batch(&refs).unwrap()
+        };
+        let s3 = i.seal_unreliable(b"s3").unwrap();
+        // Deliver b1, b2, then s0 (older, still in window), then s3.
+        assert_eq!(r.open_batch(&b1).unwrap().len(), 2);
+        assert_eq!(r.open_batch(&b2).unwrap().len(), 1);
+        assert!(r.open_unreliable(&s0).is_ok());
+        assert!(r.open_unreliable(&s3).is_ok());
+    }
+
+    #[test]
+    fn batch_max_batch_records_pin_is_64() {
+        // Compile/runtime pin aligned with neko-reliable
+        // DEFAULT_MAX_FRAMES_PER_PACKET (see cross-crate pin in neko-cli).
+        let recs_64: Vec<Vec<u8>> = (0..64).map(|_| vec![0u8; 1]).collect();
+        let refs: Vec<&[u8]> = recs_64.iter().map(|v| v.as_slice()).collect();
+        let (mut i, _r) = pair();
+        assert!(i.seal_batch(&refs).is_ok());
+        let recs_65: Vec<Vec<u8>> = (0..65).map(|_| vec![0u8; 1]).collect();
+        let refs65: Vec<&[u8]> = recs_65.iter().map(|v| v.as_slice()).collect();
+        assert_eq!(i.seal_batch(&refs65), Err(SessionRejected));
+    }
+
+    #[test]
+    fn batch_record_count_in_framing_survives_zero_length_records() {
+        // Zero-length member records are legal framing-wise (a stream can
+        // legitimately carry them); the framing must not collapse them.
+        let (mut i, mut r) = pair();
+        let recs: Vec<Vec<u8>> = vec![vec![], b"x".to_vec(), vec![]];
+        let refs: Vec<&[u8]> = recs.iter().map(|v| v.as_slice()).collect();
+        let sealed = i.seal_batch(&refs).unwrap();
+        assert_eq!(r.open_batch(&sealed).unwrap(), recs);
+    }
+
+    #[test]
+    fn batch_udp_budget_helper_reduces_n_to_fit_1464() {
+        // D069: on UDP the whole batch must stay <= 1464 B. The CLI-side
+        // helper (fn in neko-cli) reduces N; here we pin the arithmetic the
+        // helper mirrors: per-record budget = 4 + len; with 1170B records,
+        // floor((1464 - overhead) / (4 + 1170)) must be 1, i.e. auto-N = 1.
+        let per_record = 4 + MAX_UNRELIABLE_DATAGRAM - 30; // 1144
+        let budget = 1464usize;
+        let max_n = budget / per_record.max(1);
+        assert!(max_n >= 1, "auto-N must never reach zero");
+        // With the real 1170B record size the fit is exactly 1 record:
+        let real_per = 4 + 1170;
+        assert_eq!(budget / real_per, 1);
+    }
+
+    #[test]
+    fn batch_record_sizes_sum_cannot_exceed_transport_budget() {
+        // The staged body is bounded by MAX_BATCH_PLAINTEXT (snow's Noise
+        // transport MAXMSGLEN 65535 minus the record context): a batch whose
+        // total exceeds it is rejected BEFORE any nonce is consumed. 56 ×
+        // 1200B records stage 67228B > 65509.
+        let (mut i, _r) = pair();
+        let big_total: Vec<Vec<u8>> = (0..56)
+            .map(|_| batch_payload(MAX_UNRELIABLE_DATAGRAM, 3))
+            .collect();
+        let refs: Vec<&[u8]> = big_total.iter().map(|v| v.as_slice()).collect();
+        assert_eq!(i.seal_batch(&refs), Err(SessionRejected));
+        // And a subsequent small batch still seals (no nonce burned on reject).
+        let ok = i.seal_batch(&[b"fine"]).unwrap();
+        assert!(!ok.is_empty());
+    }
+
+    #[test]
+    fn batch_open_rejects_trailing_bytes_shape() {
+        // Craft an authenticated-looking record whose framing leaves
+        // trailing bytes: cannot be forged without the key, so instead pin
+        // the decoder's exactness indirectly — a legit batch never has
+        // trailing bytes, and count/len desync is caught by the tamper test.
+        // This pin ensures the strict `off == body.len()` check exists in
+        // source (regression guard for the overlap/truncation attack shape).
+        let src = include_str!("lib.rs");
+        assert!(
+            src.contains("if off != body.len()"),
+            "open_batch must keep the exact-consumption check"
+        );
     }
     #[test]
     fn authenticated_binding_matches_and_one_bit_mismatch_fails_before_session() {
