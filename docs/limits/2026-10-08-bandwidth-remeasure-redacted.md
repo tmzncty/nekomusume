@@ -46,3 +46,19 @@
 ## 六、清理
 
 us-209 测试 ufw 规则已删、测试进程清零；bj-lh-relay/HK 测试进程清理完毕，生产 hysteria（server/client）确认未受影响。流量入 ledger，远低于战役预算。
+
+## 七、R2 多记录合包（D069 主线）实测 — 2026-10-08 追加
+
+实现：`seal_batch`/`open_batch`（commit 9de0e5e，N≤64 单 AEAD 长度前缀合包）+ replay 兼容窗口修正（0868859：单条帧经 open_batch 试解失败不得烧序列号，否则单条回退被误判重放——该 bug 仅 WAN 首帧暴露，loopback 全绿掩盖）+ **WAN 时钟锚定修复（ea9e609）**：bulk runtime 原以 now_ms=0 创建而循环喂 start.elapsed()，WAN client 晚于 server 启动几分钟连入即触发 30s idle_timeout 误杀首帧——loopback 永不触发，跨境实测才抓到。**batch 路径需 ≥ea9e609（含 0868859）**，`NEKO_MEASUREMENT=1` 门控，`--batch-n=8`。
+
+| 场景 | 结果 | 对照 |
+|---|---|---|
+| loopback 256MiB/1170B/batch=8 | **276.9 Mbps**（969ms） | 147 哨兵不回归，+88%（r2-3 阶段 N=8=278.8 一致） |
+| bjlh→us-209 256MiB/batch=8 | **130.8 Mbps**（16.4s，229432 records） | R2 前同路径逐记录 3.7~11.8 Mbps → **11~35 倍** |
+| 同路径 TCP 参照（nc+dd 256MiB） | 16.1 Mbps（132.8s） | 猫娘协议反超 **8.1×**——2C2G 腾讯国际出口单流 TCP 天花板 |
+
+完整性：全部 SHA-256 端到端一致（跨境 b9487c16…，与 loopback 同哈希）。时段：2026-10-08T06:25–06:27Z（北京 14:25，工作日下午）。
+
+iperf3 说明：两台机（bj-lh-relay、us-209）当时均未装 iperf3（us-209 旧实例未监听、bj-lh-relay 无二进制），TCP 参照改用 nc+dd 等效单流基线；如需 iperf3 口径待后续极限测试窗口补装复测。
+
+D069 判据回填：loopback 276.9 < 500 → **R1（大记录）跳过条件不成立，保持懒加载**；跨境 130.8 > 50 → R1 跨境判据满足，但主线判据未过，维持不动作待裁决。窗口化维持第三优先级不动。

@@ -1390,7 +1390,7 @@ bulk 跨境实测 3.7-11.8 Mbps（同路径 HY2 75-206 Mbps）的瓶颈归因，
 归因证据链（loopback 与实测数字见
 `docs/limits/2026-10-08-bandwidth-remeasure-redacted.md`、
 `docs/limits/2026-10-07-wan-limits-redacted.md`；P0 裁决实验见
-仓库外战役记录 `p0-nodelay-result.md`，A/B 二进制 SHA-256 8ddf7e25/
+`docs/limits/2026-10-08-p0-nodelay-redacted.md`，A/B 二进制 SHA-256 8ddf7e25/
 134b5b05，NODELAY 修复合入本仓 `b81785e`）：
 
 1. **F1（Nagle×delayed-ACK）对吞吐证伪**：P0 A/B 同窗交错实测，P1
