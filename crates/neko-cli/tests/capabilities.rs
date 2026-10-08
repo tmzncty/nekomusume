@@ -189,7 +189,7 @@ fn json_capabilities_is_well_formed_and_is_exactly_the_published_line() {
             "\"secret_free\":true,",
             "\"measurement_mode\":false,",
             "\"defaults\":{{\"bytes\":32,\"count\":1,\"duration_seconds\":10}},",
-            "\"limits\":{{\"bytes_max\":1200,\"count_max\":64,\"duration_seconds_max\":30,",
+            "\"limits\":{{\"bytes_max\":1200,\"periodic_bytes_max\":1170,\"count_max\":64,\"duration_seconds_max\":30,",
             "\"workload_duration_seconds_max\":600,\"periodic_total_bytes_max\":1048576,",
             "\"port_min\":40080,\"port_max\":40100}},",
             "\"commands\":[",
@@ -233,7 +233,7 @@ fn human_capabilities_state_the_limits_and_the_secret_free_property() {
         "{s}"
     );
     assert!(
-        s.contains("limits bytes=1-1200 count=1-64 duration_seconds=1-30 workload_duration_seconds=1-600 ports=40080-40100"),
+        s.contains("limits bytes=1-1200 periodic_bytes=1-1170 count=1-64 duration_seconds=1-30 workload_duration_seconds=1-600 ports=40080-40100"),
         "{s}"
     );
     // The WHOLE grouped command line. Only `research=` and `aliases=` were

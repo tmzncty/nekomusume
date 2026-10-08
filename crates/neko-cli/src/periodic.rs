@@ -57,8 +57,12 @@ fn config(args: &[String]) -> Result<Config, &'static str> {
     if !(40080..=MAX_PORT as u64).contains(&port) {
         return Err("port outside 40080-40100");
     }
-    if bytes == 0 || bytes > MAX_BYTES as u64 {
-        return Err("bytes outside 1-1200");
+    // #3 fix: validate against the true sealed-frame ceiling (1170), not
+    // the raw datagram ceiling (1200). bytes above 1170 pass the raw bound
+    // but abort at the first seal unwrap; reject them here instead, with
+    // the real number in the message (fail(), never a panic).
+    if bytes == 0 || bytes > crate::PERIODIC_BYTES_MAX as u64 {
+        return Err("bytes outside 1-1170");
     }
     if count == 0
         || count
@@ -617,7 +621,12 @@ pub(super) fn client(args: &[String]) {
         }
         .encode()
         .unwrap();
-        let encrypted = secure.seal_unreliable(&plain).unwrap();
+        // #3: the CLI config layer rejects bytes above PERIODIC_BYTES_MAX,
+        // so this seal cannot exceed the frame bound — but keep the failure
+        // a classified exit instead of a panic for any future drift.
+        let encrypted = secure
+            .seal_unreliable(&plain)
+            .unwrap_or_else(|_| fail("payload too large"));
         attempted += 1;
         let sent_at = Instant::now();
         write_frame(&mut stream, &encrypted).unwrap_or_else(|_| {
@@ -790,7 +799,7 @@ mod tests {
             config(&args(&[
                 "periodic-client",
                 "--bytes",
-                "1200",
+                "1170",
                 "--count",
                 "600"
             ]))
@@ -800,15 +809,17 @@ mod tests {
     #[test]
     fn config_bounds_are_inclusive_at_both_edges() {
         // Every numeric bound is an inclusive window; the rejecting values sit
-        // exactly one past each edge.
+        // exactly one past each edge. Post-#3 the payload edge is the sealed
+        // frame ceiling 1170 (= 1200 - PROCESS_DATA_HEADER_LEN), not the raw
+        // datagram bound the config layer used to claim.
         assert!(config(&args(&["periodic-client", "--port", "40080"])).is_ok());
         assert!(config(&args(&["periodic-client", "--port", "40100"])).is_ok());
         assert!(config(&args(&["periodic-client", "--port", "40079"])).is_err());
         assert!(config(&args(&["periodic-client", "--port", "40101"])).is_err());
         assert!(config(&args(&["periodic-client", "--bytes", "1"])).is_ok());
         assert!(config(&args(&["periodic-client", "--bytes", "0"])).is_err());
-        assert!(config(&args(&["periodic-client", "--bytes", "1200"])).is_ok());
-        assert!(config(&args(&["periodic-client", "--bytes", "1201"])).is_err());
+        assert!(config(&args(&["periodic-client", "--bytes", "1170"])).is_ok());
+        assert!(config(&args(&["periodic-client", "--bytes", "1171"])).is_err());
         assert!(config(&args(&["periodic-client", "--count", "1"])).is_ok());
         assert!(config(&args(&["periodic-client", "--count", "0"])).is_err());
         assert!(config(&args(&["periodic-client", "--count", "600"])).is_ok());

@@ -244,42 +244,36 @@ fn measurement_mode_relaxes_periodic_ceilings_up_to_the_library_limits() {
         "{stdout}"
     );
     assert!(!stderr.contains("exceed"), "{stderr}");
-    // ...and beyond it is rejected by the relaxed window itself.
+    // ...and beyond it is rejected: the payload window itself (post-#3 the
+    // periodic payload ceiling is the sealed-frame bound 1170, not 1200)...
     let (_, _, stderr) = run_measurement(&argv(&[
         "periodic-client",
         "--bytes",
-        "1200",
+        "1171",
         "--count",
-        "13981",
+        "2",
         "--addr",
         "127.0.0.1:40080",
     ]));
-    // 1200*13981 = 32 MiB + 1200: above the 32 MiB application ceiling
-    // (checked first), so the rejection names the application bound.
+    assert!(
+        stderr.contains("bytes outside 1-1170"),
+        "payload above the sealed-frame ceiling must be rejected by name: {stderr}"
+    );
+    // ...and the 32 MiB application ceiling is still enforced with legal
+    // payload sizes: 1170 * 28681 > 33_554_432 while 1170 * 28680 fits.
+    let (_, _, stderr) = run_measurement(&argv(&[
+        "periodic-client",
+        "--bytes",
+        "1170",
+        "--count",
+        "28681",
+        "--addr",
+        "127.0.0.1:40080",
+    ]));
     assert!(
         stderr.contains("application bytes exceed 33554432")
             || stderr.contains("exceeds the runtime queue-byte limit"),
-        "{stderr}"
-    );
-    // Large counts pair with small payloads only: the derived
-    // bytes*(count+1) guard fires while the application total is still in
-    // range (32 B * 65_531 would fit the total, but the count ceiling hits
-    // first; use a payload that overflows the derived queue-byte ceiling
-    // while both count and total are legal: 1200 * 13981 pairs).
-    let (_, _, stderr) = run_measurement(&argv(&[
-        "periodic-client",
-        "--bytes",
-        "1200",
-        "--count",
-        "13981",
-        "--addr",
-        "127.0.0.1:40080",
-        "--duration",
-        "86400",
-    ]));
-    assert!(
-        stderr.contains("exceed") || stderr.contains("outside"),
-        "derived guard must reject the incompatible pairing: {stderr}"
+        "the 32 MiB application ceiling must still reject: {stderr}"
     );
 }
 

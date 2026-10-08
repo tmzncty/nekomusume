@@ -115,7 +115,7 @@ fn capabilities(args: &[String]) {
                 "\"secret_free\":true,",
                 "\"measurement_mode\":{},",
                 "\"defaults\":{{\"bytes\":32,\"count\":1,\"duration_seconds\":10}},",
-                "\"limits\":{{\"bytes_max\":{},\"count_max\":{},\"duration_seconds_max\":{},",
+                "\"limits\":{{\"bytes_max\":{},\"periodic_bytes_max\":{},\"count_max\":{},\"duration_seconds_max\":{},",
                 "\"workload_duration_seconds_max\":{},\"periodic_total_bytes_max\":{},",
                 "\"port_min\":40080,\"port_max\":{}}},",
                 "\"commands\":[",
@@ -142,6 +142,7 @@ fn capabilities(args: &[String]) {
             env::consts::ARCH,
             measurement_mode,
             MAX_BYTES,
+            PERIODIC_BYTES_MAX,
             count_max,
             duration_max,
             workload_duration_max,
@@ -158,7 +159,7 @@ fn capabilities(args: &[String]) {
         println!("defaults bytes=32 count=1 duration_seconds=10");
         if measurement::enabled() {
             println!(
-                "limits bytes=1-{} count=1-{} duration_seconds=1-{} workload_duration_seconds=1-{} ports=40080-{} measurement_mode=true relaxed_limits research_only",
+                "limits bytes=1-{} periodic_bytes=1-1170 count=1-{} duration_seconds=1-{} workload_duration_seconds=1-{} ports=40080-{} measurement_mode=true relaxed_limits research_only",
                 MAX_BYTES,
                 MEASUREMENT_EXCHANGE_COUNT_MAX,
                 MEASUREMENT_DURATION_MAX,
@@ -167,7 +168,7 @@ fn capabilities(args: &[String]) {
             );
         } else {
             println!(
-                "limits bytes=1-{} count=1-64 duration_seconds=1-{} workload_duration_seconds=1-{} ports=40080-{}",
+                "limits bytes=1-{} periodic_bytes=1-1170 count=1-64 duration_seconds=1-{} workload_duration_seconds=1-{} ports=40080-{}",
                 MAX_BYTES, MAX_DURATION, MAX_WORKLOAD_DURATION, MAX_PORT
             );
         }
@@ -1049,6 +1050,18 @@ fn server(args: &[String]) {
     lifecycle.failed();
     fail("duration expired")
 }
+/// #3 fix: the true per-payload ceiling for periodic records. The CLI
+/// historically validated --bytes against the raw datagram ceiling
+/// (MAX_UNRELIABLE_DATAGRAM = 1200), but a periodic payload is wrapped in a
+/// `ProcessMessage::Data` frame before sealing, so the enforceable payload
+/// bound is the datagram ceiling minus the exact frame header
+/// (neko_session::PROCESS_DATA_HEADER_LEN = 30): 1170. bytes=1171..1200
+/// passed validation and then core-dumped at the first seal unwrap
+/// (2026-10-08 limit-campaign defect #3; boundary measured 1170 green /
+/// 1171 abort on the identical pair).
+pub(crate) const PERIODIC_BYTES_MAX: usize =
+    neko_crypto::MAX_UNRELIABLE_DATAGRAM - neko_session::PROCESS_DATA_HEADER_LEN;
+const _: () = assert!(PERIODIC_BYTES_MAX == 1170);
 fn client(args: &[String]) {
     measurement::emit_marker();
     let (t, _p, max, d) = common(args);
@@ -1113,9 +1126,37 @@ fn client(args: &[String]) {
             IpAddr::V6(_) => SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), 0),
         };
         let u = UdpSocket::bind(local).unwrap_or_else(|_| fail("UDP socket family unavailable"));
-        u.set_read_timeout(Some(d)).unwrap();
+        // #1 fix: every wait on this socket is bounded by the session
+        // deadline with a 100ms poll granularity (the established pattern
+        // elsewhere in this file), so a lost response surfaces the
+        // documented failure classification at the deadline instead of
+        // parking once for the whole duration inside a single recv whose
+        // socket timeout equals --duration.
+        u.set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
         u.connect(target)
             .unwrap_or_else(|_| fail("UDP connect failed"));
+        // #1 helper: bounded datagram wait — 100ms polls up to a per-wait
+        // cap of 3s (the failover command's `secs.min(3)` recovery-wait
+        // convention) clamped by the session deadline start+d. A lost
+        // response surfaces its failure classification within seconds,
+        // never by parking for the whole --duration inside one recv.
+        let recv_bounded = |u: &UdpSocket, b: &mut [u8]| -> usize {
+            let cap = Instant::now() + Duration::from_secs(3);
+            let deadline = (start + d).min(cap);
+            loop {
+                if Instant::now() >= deadline {
+                    fail("deadline elapsed before response");
+                }
+                match u.recv(b) {
+                    Ok(n) => return n,
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::WouldBlock
+                            || e.kind() == std::io::ErrorKind::TimedOut => {}
+                    Err(_) => fail("socket error while awaiting response"),
+                }
+            }
+        };
         let mut negotiation = VersionNegotiator::new(NegotiationRole::Client, SUPPORTED_VERSIONS)
             .unwrap_or_else(|_| fail("negotiation setup failed"));
         let hello = negotiation
@@ -1124,9 +1165,7 @@ fn client(args: &[String]) {
         u.send(&hello)
             .unwrap_or_else(|_| fail("negotiation send failed"));
         let mut b = [0; 65536];
-        let n = u
-            .recv(&mut b)
-            .unwrap_or_else(|_| fail("negotiation response failed"));
+        let n = recv_bounded(&u, &mut b);
         negotiation
             .client_accept_response(&b[..n])
             .unwrap_or_else(|_| fail("incompatible negotiation"));
@@ -1146,9 +1185,7 @@ fn client(args: &[String]) {
             .unwrap_or_else(|_| fail("handshake failed"));
         u.send(&first)
             .unwrap_or_else(|_| fail("handshake send failed"));
-        let n = u
-            .recv(&mut b)
-            .unwrap_or_else(|_| fail("handshake response failed"));
+        let n = recv_bounded(&u, &mut b);
         let mut ss = hs
             .finish(&b[..n], context(0))
             .unwrap_or_else(|_| fail("handshake finish failed"));
@@ -1184,7 +1221,9 @@ fn client(args: &[String]) {
                 .seal_unreliable(&payload)
                 .unwrap_or_else(|_| fail("payload too large"));
             u.send(&rec).unwrap();
-            let n = u.recv(&mut b).unwrap_or_else(|_| fail("echo timeout"));
+            // #1 fix: bounded echo wait (100ms polls, 3s per-wait cap,
+            // session deadline as the outer bound) — see recv_bounded.
+            let n = recv_bounded(&u, &mut b);
             if ss
                 .open_unreliable(&b[..n])
                 .unwrap_or_else(|_| fail("echo auth failed"))
