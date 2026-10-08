@@ -360,6 +360,7 @@ pub(super) fn server(args: &[String]) {
     {
         let (mut stream, mut admission) = match listener.accept() {
             Ok((stream, peer)) => {
+                crate::bulk::apply_f1_nodelay(&stream);
                 match preauth.admit_carrier(crate::preauth::CarrierKind::Tcp, peer) {
                     Ok(ticket) => (stream, ticket),
                     Err(_) => {
@@ -568,6 +569,7 @@ pub(super) fn client(args: &[String]) {
     let start = Instant::now();
     let mut stream = TcpStream::connect_timeout(&addr, cfg.setup_timeout)
         .unwrap_or_else(|_| fail("connect failed; reconnect/resume unsupported"));
+    crate::bulk::apply_f1_nodelay(&stream);
     stream
         .set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap();

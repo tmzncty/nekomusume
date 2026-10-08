@@ -181,6 +181,7 @@ pub(super) fn server(args: &[String]) {
     {
         match listener.accept() {
             Ok((mut stream, _peer)) => {
+                apply_f1_nodelay(&stream);
                 stream
                     .set_read_timeout(Some(Duration::from_millis(100)))
                     .unwrap();
@@ -300,6 +301,7 @@ pub(super) fn client(args: &[String]) {
     let start = Instant::now();
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))
         .unwrap_or_else(|_| fail("connect failed"));
+    apply_f1_nodelay(&stream);
     stream
         .set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap();
@@ -383,4 +385,79 @@ pub(super) fn client(args: &[String]) {
         elapsed.as_millis(),
         receipt.unwrap_or_else(|| "unverified".to_string())
     );
+}
+
+use std::net::TcpStream;
+
+/// F1 (review-2026-10-08, Yvonne ADR §0): per-record stop-and-wait writes a
+/// 4-byte header then a ~1170-byte body. With Nagle enabled the body write
+/// can be held until the header segment is ACKed, and the receiver's
+/// delayed-ACK holds that ACK ~40ms — on real-RTT paths this folds into
+/// every exchange. Loopback never exposes it (ACKs are local), which is why
+/// the loopback ceiling is CPU-paced. Every TCP socket these measurement
+/// fixtures put on the wire must disable Nagle at connect/accept time.
+pub fn apply_f1_nodelay(stream: &TcpStream) {
+    if let Err(e) = stream.set_nodelay(true) {
+        // Non-fatal: NODELAY is a performance hint; measurement validity on
+        // loopback is unaffected and WAN runs record the failure in-band.
+        eprintln!("neko: set_nodelay failed ({e}); continuing with Nagle");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! F1 hypothesis pin (review-2026-10-08, Yvonne ADR §0): per-record
+    //! stop-and-wait sends a small write and immediately blocks on read. With
+    //! Nagle on, that write can wait on the previous ACK, folding the
+    //! delayed-ACK timer into every exchange on real-RTT paths. Loopback
+    //! never exposes it (ACKs are local), which is why the loopback ceiling
+    //! is CPU-paced. Two pins: the helper actually flips the socket flag, and
+    //! every fixture file still carries its call sites.
+    use std::net::{TcpListener, TcpStream};
+
+    #[test]
+    fn f1_nodelay_helper_flips_socket_flag() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        assert!(
+            !client.nodelay().unwrap(),
+            "fresh sockets start with Nagle on"
+        );
+        super::apply_f1_nodelay(&client);
+        super::apply_f1_nodelay(&server);
+        assert!(
+            client.nodelay().unwrap(),
+            "client socket must have TCP_NODELAY"
+        );
+        assert!(
+            server.nodelay().unwrap(),
+            "server socket must have TCP_NODELAY"
+        );
+    }
+
+    #[test]
+    fn f1_nodelay_call_sites_present_in_every_tcp_fixture() {
+        // bulk.rs: definition + server accept + client connect = 3+;
+        // periodic.rs / multistream.rs: accept + connect each = 2+.
+        let bulk = include_str!("bulk.rs");
+        let periodic = include_str!("periodic.rs");
+        let multistream = include_str!("multistream.rs");
+        let count = |s: &str| s.matches("apply_f1_nodelay").count();
+        assert!(
+            count(bulk) >= 3,
+            "bulk.rs must keep TCP_NODELAY at accept+connect (found {})",
+            count(bulk)
+        );
+        assert!(
+            count(periodic) >= 2,
+            "periodic.rs must keep TCP_NODELAY at accept+connect (found {})",
+            count(periodic)
+        );
+        assert!(
+            count(multistream) >= 2,
+            "multistream.rs must keep TCP_NODELAY at accept+connect (found {})",
+            count(multistream)
+        );
+    }
 }

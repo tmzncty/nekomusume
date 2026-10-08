@@ -332,6 +332,7 @@ pub fn run(args: &[String]) {
                 Ok(accepted) => accepted,
                 Err(e) => fail(format!("accept: {e}")),
             };
+            crate::bulk::apply_f1_nodelay(&socket);
             let mut preauth = crate::preauth::ListenerAdmission::new();
             let mut admission = match preauth.admit_carrier(crate::preauth::CarrierKind::Tcp, peer)
             {
@@ -406,6 +407,7 @@ pub fn run(args: &[String]) {
         println!("{json}");
     } else {
         let mut socket = TcpStream::connect(addr).unwrap_or_else(|e| fail(format!("connect: {e}")));
+        crate::bulk::apply_f1_nodelay(&socket);
         let mut secure = client_handshake(&mut socket, identity, peer_key);
         let mut runtime = SessionRuntime::new(
             SESSION,
