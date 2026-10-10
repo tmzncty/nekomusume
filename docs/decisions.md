@@ -1475,3 +1475,107 @@ no-op、measurement 例外上限边界+1 拒绝、默认模式 batch 不可达�
 
 <!-- D069-end -->
 
+---
+
+## 2026-10-10 — D070：UDP 发送窗口（Reno AIMD + SACK）与 replay 窗口耦合
+
+**Status: Accepted**
+
+### 问题
+
+UDP bulk 路径不存在（bulk 命令 TCP-only）；UDP 侧现有命令全是停等形态
+（probe 单包、failover 逐 DeliveryAck）。mesh 实测（2026-10-10，NET酱）：
+78ms RTT 停等 79.0ms/exchange、单向 4.7 Mbps（= 同路径 TCP bulk 15.6 的
+30%）、**count=2000/13980 全死**（无重传，单包丢失即 client 放弃，3s
+per-wait cap）。D069 R2 合包杠杆在 UDP 上结构性不存在（sealed record
+wire = 1200+50 = 1250B，2×1250 > 1464 MTU 预算 → batch N=1 封顶）——
+**窗口化是 UDP 轴唯一吞吐/可靠性杠杆**。W5（码率流）/W9（failover 背景
+流量）启动判据已满足（#6 已修、弹药在手、管理员授权「需要测」）。
+
+**基线自洽注记**：4.7 Mbps ÷ (1250B×8/79ms ≈ 126.6 kbps/W) ≈ 有效并发
+37——mesh 实测形态是"每流停等 × ~37 路隐式并发"的产物。窗口化的本质
+是把隐式并发变成显式窗口 + 重传 + 拥塞控制：吞吐不靠路径时序运气，靠
+机制；可靠性从 count>2000 全死变成有界重传全 confirm。**主价值是可靠
+性与可控性；0% 丢路径吞吐收益上限 ≈ +30%**（W=48@78ms ≈ 6.1 Mbps vs
+基线 4.7）。
+
+### 选项
+
+1. 固定窗口 W + Go-Back-N 全量重传。
+2. Reno AIMD + SACK 选择性重传（复用 neko-reliable 全套）。
+3. BBR-lite 带宽探测。
+
+### 证据
+
+- **基建零新造**：`Reno`（cwnd/ssthresh/bytes_in_flight/pacing，
+  `crates/neko-reliable/src/lib.rs:477-529`）、`Recovery`（on_ack/on_pto/
+  abandon_sent/frame_outstanding，`:215-475`）、`RttEstimator`、
+  `AckRanges`（SACK 结构）全部已存在且被 failover 路径验证（CLI 已接线
+  `apply_ack`，H-R9-025 typed outcome）。wire ACK 帧（`RecordType::Ack` +
+  `encode_ack`，≤32 ranges + ack_delay_us，`neko-wire/src/lib.rs:858-899`）
+  已冻结。
+- **拒绝固定窗口**：高丢包无收缩 → 重传风暴（安全面）；低丢包不涨 →
+  吞吐浪费。**拒绝 BBR**：主动带宽探测是测速风暴攻击面 + 算法量级大；
+  √p 高丢包缺口（p=11.67% 实测路径稳态 ≤1.72 Mbps）属 BBR 类独立 ADR。
+- **replay 窗口耦合推导**：crypto `MAX_REPLAY_WINDOW = 64`
+  （`crates/neko-crypto/src/lib.rs:13`）是接收端滑窗宽度；in-flight 数据
+  record 达 64 时乱序到达会让重传滑出窗口被误判 replay。**cwnd ≤ 48**
+  （64 − 16 余量，覆盖 ACK 帧与乱序抖动），编译期 pin。
+- **吞吐模型**（mesh 78ms、1250B wire record）：W=8/16/32/48 →
+  0.86/2.03/4.05/6.08 Mbps（0% 丢，窗口受限）；p=11.67% 时全档被
+  Reno √p 稳态（MSS/(RTT×√p)）压至 ≤1.72 Mbps。追平 TCP bulk 15.6 需
+  多 stream 复用（现成机制，独立 Recovery 实例）或 BBR/记录粒度——均非
+  本设计范围。
+- **PLPMTUD 交互**：数据 record 1250+28 = 1278B < 1464 ✓；路径
+  confirmed MTU < 1300 时 1278B 包超路径容量 → IP 分片风险。运行中自
+  适应降粒度会引入伪造小 PMTU 的降级攻击面；fail-closed 拒绝启动是
+  正确语义（D067 fail-closed 先例）。
+
+### 决定
+
+1. **Reno AIMD + SACK 选择性重传**，全部复用 neko-reliable 既有 API 与
+   wire ACK 帧，零新协议面、零新算法。窗口档位 `--window {8,16,32,48}`
+   默认 32。
+2. **cwnd ≤ 48 编译期 pin**（replay 耦合推导）。注记：若 mesh 实测出现
+   replay 误杀（回滚触发器一），先降 W 再查余量，**不许临时放宽 pin**。
+3. **既有行为变更（显式声明）**：重传-重复 record 到达接收端时，若原
+   record 已被接受 → **静默 no-op（不 fail 会话）**——TCP 语义本身如此
+   （重复段 no-op），杀会话等于把丢包升级成 DoS；replay 防线职责是拒绝
+   未认证重放，已接受的认证重复是幂等良性。现状 bulk server 的
+   `fail("unauthenticated bulk data")` 行为在 UDP 窗口化路径改为跳过
+   继续。nonce 序不因重传消耗（重传不调 seal，无新 nonce）；0868859
+   「试解失败不烧序列号」语义沿用。**断言④⑤（no-op 不死会话、nonce
+   不因重传消耗）为硬门。**
+4. **接收端资源硬顶**：排序缓冲 ≤ 窗口内 records = 48×1250B = 60KB/
+   会话；ACK 编码缓冲 ≤32 ranges——远低于 D068 例外集与 64MiB 默认
+   防线，**不需要新例外**。放大系数 pin：ACK 字节 < 数据字节 × 0.25。
+5. **PLPMTUD confirmed < 1300 → fail-closed 拒绝启动**（UDP bulk 路径）。
+6. UDP bulk 走 `NEKO_MEASUREMENT=1` 门控（D068/D069 先例）；默认模式
+   UDP bulk 不可达。
+7. W5/W9 启动判据满足（#6 已修、mesh 弹药、管理员「需要测」）——P4
+   立项成立，优先级：可靠性全 confirm > W9 载体 > 吞吐。
+
+### 断言影响
+
+既有断言零修改（窗口化是新命令分支，不触碰 TCP 路径与 failover 现状）。
+新增预估 12-16 条：① cwnd≤48 编译期 pin；② 窗口门控（cwnd 满拒绝）；
+③ SACK 乱序结算；④ **重传到达已接受 record → no-op 不死会话（硬门）**；
+⑤ **nonce 不因重传消耗（硬门）**；⑥ PACKET_THRESHOLD=3 快速重传；⑦
+LOSS_TIME 判丢；⑧ PTO backoff + persistent congestion cwnd 重置；⑨ ACK
+≤32 ranges 截断保序；⑩ 排序缓冲 ≤60KB；⑪ 放大系数 <0.25；⑫ PLPMTUD
+<1300 fail-closed；⑬ 非 measurement 模式 UDP bulk 不可达；⑭ **netns
+注入丢包下 count=2000/13980 全 confirm（对「全死」的直接回归）**；⑮
+窗口耗尽超时的可观测终态事件；⑯ 多 stream 独立 cwnd 不互染。
+
+### 回滚
+
+- 删 `--transport udp` 分支即完全回滚（TCP 路径零依赖）；neko-reliable/
+  wire ACK 均为既有面不动。
+- 触发（任一）：① replay 误杀会话（先降 W 再查余量，不许放宽 pin）；
+  ② netns 矩阵假成功；③ 放大系数超标；④ 排序缓冲越顶；⑤ count>2000
+  回归失败。
+- 数据不清退；mesh 实测标注实现世代（停等 vs W 窗口）。
+
+<!-- D070-end -->
+
+
