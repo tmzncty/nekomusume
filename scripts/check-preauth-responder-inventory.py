@@ -128,6 +128,7 @@ expected = {
     "failover_udp_cached",
     "failover_tcp",
     "endpoint_rebind_udp",
+    "socks_tcp",
 }
 if seen != expected:
     raise SystemExit(f"preauth responder inventory: expected {sorted(expected)}, got {sorted(seen)}")
@@ -138,7 +139,7 @@ for path in source:
     text = path.read_text(encoding="utf-8")
     if path.name != "preauth.rs":
         admits += text.count(".admit(peer)") + text.count(".admit_carrier(")
-if admits != 7:
-    raise SystemExit(f"preauth responder inventory: admission surface count changed: {admits} != 7")
+if admits != 8:
+    raise SystemExit(f"preauth responder inventory: admission surface count changed: {admits} != 8")
 
 print(f"preauth responder inventory passed: {len(seen)} surfaces, {admits} admission sites")

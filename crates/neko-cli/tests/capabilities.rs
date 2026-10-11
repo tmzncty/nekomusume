@@ -205,6 +205,8 @@ fn json_capabilities_is_well_formed_and_is_exactly_the_published_line() {
             "{{\"name\":\"periodic-client\",\"maturity\":\"research\"}},",
             "{{\"name\":\"bulk-server\",\"maturity\":\"research\",\"requires\":\"NEKO_MEASUREMENT=1\"}},",
             "{{\"name\":\"bulk-client\",\"maturity\":\"research\",\"requires\":\"NEKO_MEASUREMENT=1\"}},",
+            "{{\"name\":\"socks-server\",\"maturity\":\"research\",\"requires\":\"NEKO_MEASUREMENT=1\"}},",
+            "{{\"name\":\"socks-client\",\"maturity\":\"research\",\"requires\":\"NEKO_MEASUREMENT=1\"}},",
             "{{\"name\":\"lab\",\"maturity\":\"fixture\"}},",
             "{{\"name\":\"workload\",\"maturity\":\"fixture\"}},",
             "{{\"name\":\"endpoint-rebind-server\",\"maturity\":\"experimental\"}},",
@@ -249,7 +251,7 @@ fn human_capabilities_state_the_limits_and_the_secret_free_property() {
         s.contains(concat!(
             "commands research=client,server,probe,periodic-server,periodic-client ",
             "experimental=health-observe,failover,multistream,",
-            "endpoint-rebind-server,endpoint-rebind-client ",
+            "endpoint-rebind-server,endpoint-rebind-client,socks-server,socks-client(measurement-gated) ",
             "fixtures=scheduler-fairness,key-update,lab,workload ",
             "utilities=keygen,capabilities ",
             "aliases=failover-server,failover-client"
@@ -303,7 +305,7 @@ fn usage_text_describes_the_bounded_scope() {
         "{s}"
     );
     assert!(
-        s.contains("Bounded authenticated research probe only; no proxy/tunnel behavior."),
+        s.contains("Bounded authenticated research probe only; research-scope SOCKS5 entry (socks-server/socks-client, measurement-gated) per D071."),
         "{s}"
     );
     assert_rejected(&argv(&["not-a-command"]), "unknown command");

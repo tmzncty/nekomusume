@@ -13,6 +13,7 @@ mod periodic;
 mod pmtu_socket;
 mod preauth;
 mod reachability;
+mod socks;
 
 use neko_carrier::{
     ActiveCarrier, CarrierHealthEvidence, CarrierManager, CarrierSwitchReason, DataId,
@@ -48,13 +49,13 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-const USAGE: &str = "Usage: neko <server|client|probe|health-observe|failover|multistream|scheduler-fairness|key-update|periodic-server|periodic-client|bulk-server|bulk-client|lab|workload|endpoint-rebind-server|endpoint-rebind-client|keygen|capabilities> [bounded options]
+const USAGE: &str = "Usage: neko <server|client|probe|health-observe|failover|multistream|scheduler-fairness|key-update|periodic-server|periodic-client|bulk-server|bulk-client|socks-server|socks-client|lab|workload|endpoint-rebind-server|endpoint-rebind-client|keygen|capabilities> [bounded options]
 
   probe --matrix --target LOOPBACK:PORT --transport tcp|udp --ip-version ipv4|ipv6 [--timeout-ms 1-5000] [--bytes 1-1200] [--json]: local-loopback only
   client|server --transport udp [--plpmtud]: opt-in PLPMTUD probe exchange (D067; both ends must pass the flag; fail-closed; experimental)
   lab --scenario reliable-udp [--rounds 4-64] [--drop-every 0|2-16] [--drop-ack-every 0-16] [--settle-ms 1-20000] [--json]: bounded loopback reliable-UDP fixture (controlled suppression is not natural loss; manager decision only, no TCP socket; not production)
   --count N: bounded authenticated exchanges (1-64; periodic 1-600)\n  periodic-*: one TCP Session, duration 1-600s, interval 100-5000ms, <=1MiB app data; reconnect unsupported\n  failover --role server|client: canonical bounded failover command\n  failover-server|failover-client: legacy aliases for failover\n  NEKO_MEASUREMENT=1 (research-only): relaxes duration/count/periodic-byte/multistream ceilings for limit measurement (see capabilities); default limits always apply otherwise
-  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; no proxy/tunnel behavior.\n";
+  capabilities [--json]: secret-free build, command, default, and limit report\n\nBounded authenticated research probe only; research-scope SOCKS5 entry (socks-server/socks-client, measurement-gated) per D071.\n";
 const MAX_PORT: u16 = 40100;
 const MAX_BYTES: usize = neko_crypto::MAX_UNRELIABLE_DATAGRAM;
 /// `--bytes` ceiling for commands whose payload is wrapped in a
@@ -133,6 +134,8 @@ fn capabilities(args: &[String]) {
                 "{{\"name\":\"periodic-client\",\"maturity\":\"research\"}},",
                 "{{\"name\":\"bulk-server\",\"maturity\":\"research\",\"requires\":\"NEKO_MEASUREMENT=1\"}},",
                 "{{\"name\":\"bulk-client\",\"maturity\":\"research\",\"requires\":\"NEKO_MEASUREMENT=1\"}},",
+                "{{\"name\":\"socks-server\",\"maturity\":\"research\",\"requires\":\"NEKO_MEASUREMENT=1\"}},",
+                "{{\"name\":\"socks-client\",\"maturity\":\"research\",\"requires\":\"NEKO_MEASUREMENT=1\"}},",
                 "{{\"name\":\"lab\",\"maturity\":\"fixture\"}},",
                 "{{\"name\":\"workload\",\"maturity\":\"fixture\"}},",
                 "{{\"name\":\"endpoint-rebind-server\",\"maturity\":\"experimental\"}},",
@@ -177,7 +180,7 @@ fn capabilities(args: &[String]) {
             );
         }
         println!(
-            "commands research=client,server,probe,periodic-server,periodic-client experimental=health-observe,failover,multistream,endpoint-rebind-server,endpoint-rebind-client fixtures=scheduler-fairness,key-update,lab,workload utilities=keygen,capabilities aliases=failover-server,failover-client"
+            "commands research=client,server,probe,periodic-server,periodic-client experimental=health-observe,failover,multistream,endpoint-rebind-server,endpoint-rebind-client,socks-server,socks-client(measurement-gated) fixtures=scheduler-fairness,key-update,lab,workload utilities=keygen,capabilities aliases=failover-server,failover-client"
         );
         println!(
             "fixture_scenarios command=lab scenario=reliable-udp maturity=fixture scope=bounded-loopback-controlled-suppression-manager-decision-only-no-tcp-socket"
@@ -6813,6 +6816,8 @@ fn main() {
         Some("health-observe") => health_observe(&a),
         Some("capabilities") => capabilities(&a),
         Some("multistream") => multistream::run(&a),
+        Some("socks-server") => socks::server(&a),
+        Some("socks-client") => socks::client(&a),
         Some("failover") | Some("failover-server") | Some("failover-client") => failover_gate(&a),
         Some("endpoint-rebind-server") => endpoint_rebind_server(&a),
         Some("endpoint-rebind-client") => endpoint_rebind_client(&a),
