@@ -219,7 +219,7 @@
       "id": "socks_tcp",
       "file": "crates/neko-cli/src/socks.rs",
       "begin": "let mut admission = match preauth.admit_carrier(crate::preauth::CarrierKind::Tcp, peer)",
-      "end": "let _ = serve_connection(socket, session, &whitelist, &allowed, &denied);",
+      "end": "let outcome = serve_connection(socket, session, &whitelist, &allowed, &denied);",
       "carrier": "tcp",
       "pending_owner": false,
       "ordered": [

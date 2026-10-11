@@ -550,13 +550,13 @@ fn read_inbound(reader: &mut TcpStream, shared: &Arc<Mutex<Shared>>) -> Result<I
                 .pop_receive(now)
                 .map_err(|_| "receive release failed".to_string())?
                 .ok_or("receive starved")?;
+            // The application tag byte stays in the payload; every consumer
+            // (connect-phase both sides, pump downloader) parses it itself.
             let fin = !inbound.data.is_empty() && inbound.data[0] == TAG_FIN;
-            let data = if fin {
-                Vec::new()
-            } else {
-                inbound.data[1..].to_vec()
-            };
-            Ok(Inbound::Payload { data, fin })
+            Ok(Inbound::Payload {
+                data: inbound.data,
+                fin,
+            })
         }
         ProcessMessage::DeliveryAck { offset, len, .. } => Ok(Inbound::Ack { offset, len }),
         _ => Err("unexpected process message".into()),
@@ -640,7 +640,9 @@ fn pump(
         runtime,
         now_ms: 0,
     };
-    shared_core.open_stream()?;
+    // The connect-phase owner already opened STREAM before handing the
+    // session to the pump; re-opening would be an InvalidTransition.
+    let _ = &mut shared_core;
     let shared = Arc::new(Mutex::new(shared_core));
 
     let mut reader = shared
@@ -671,8 +673,11 @@ fn pump(
                         // Propagate the remote half-close; the local side
                         // may still send (half-close never kills the pump).
                         let _ = local_down.shutdown(Shutdown::Write);
-                    } else if let Err(e) = local_down.write_all(&data) {
-                        break Err(format!("local write: {e}"));
+                    } else if data.len() > 1 {
+                        // data[0] is TAG_DATA; the payload follows.
+                        if let Err(e) = local_down.write_all(&data[1..]) {
+                            break Err(format!("local write: {e}"));
+                        }
                     }
                 }
                 Ok(Inbound::Ack { offset, len }) => {
@@ -833,7 +838,10 @@ pub fn server(args: &[String]) {
                     }
                 };
             preauth.release(admission);
-            let _ = serve_connection(socket, session, &whitelist, &allowed, &denied);
+            let outcome = serve_connection(socket, session, &whitelist, &allowed, &denied);
+            if let Err(reason) = &outcome {
+                eprintln!("neko: socks serve error: {reason}");
+            }
             let mut guard = live.0.lock().unwrap();
             *guard -= 1;
             live.1.notify_all();
@@ -849,7 +857,11 @@ fn serve_connection(
     denied: &AtomicU64,
 ) -> Result<(), String> {
     let runtime =
-        SessionRuntime::new(SESSION, limits(), 0).map_err(|_| "runtime rejected".to_string())?;
+        // D068 exception constructor: the 2 GiB total ceiling is legal only
+        // inside the measurement axis (NEKO_MEASUREMENT=1 gates this whole
+        // command).
+        SessionRuntime::new_measurement(SESSION, limits(), 0)
+            .map_err(|_| "runtime rejected".to_string())?;
     let mut shared = Shared {
         neko,
         session,
@@ -1064,7 +1076,11 @@ fn client_connection(
     crate::bulk::apply_f1_nodelay(&neko);
     let session = client_handshake(&mut neko, id, server_key)?;
     let runtime =
-        SessionRuntime::new(SESSION, limits(), 0).map_err(|_| "runtime rejected".to_string())?;
+        // D068 exception constructor: the 2 GiB total ceiling is legal only
+        // inside the measurement axis (NEKO_MEASUREMENT=1 gates this whole
+        // command).
+        SessionRuntime::new_measurement(SESSION, limits(), 0)
+            .map_err(|_| "runtime rejected".to_string())?;
     let mut shared = Shared {
         neko,
         session,
