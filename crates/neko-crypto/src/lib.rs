@@ -647,6 +647,41 @@ impl SecureSession {
                 return Err(SessionRejected);
             }
         }
+        self.seal_batch_inner(payloads)
+    }
+
+    /// R1 (D074): seal ONE large payload (≤ 28 KiB) as an N=1 batch frame.
+    /// Wire shape is exactly a seal_batch frame with count=1 — the batch
+    /// framing/decode/replay path (already fuzzed under D069) carries it
+    /// unchanged; only the per-element ceiling widens from 1200 to 28672
+    /// for this entry point. MAX_BATCH_PLAINTEXT (65509) bounds the body,
+    /// so no wire-level constant moves.
+    pub fn seal_large(&mut self, payload: &[u8]) -> Result<Vec<u8>, SessionRejected> {
+        const MAX_LARGE_RECORD: usize = 28_672;
+        if payload.is_empty() || payload.len() > MAX_LARGE_RECORD {
+            return Err(SessionRejected);
+        }
+        self.seal_batch_inner(&[payload])
+    }
+
+    /// R1 (D074): open a large-record frame sealed by `seal_large`. Wire
+    /// shape is a batch frame with count=1; the element may be up to
+    /// 28 KiB. Every batch framing invariant (count bounds, length
+    /// consistency, no trailing bytes, replay-after-auth) is enforced by
+    /// the shared batch decode path.
+    pub fn open_large(&mut self, record: &[u8]) -> Result<Vec<u8>, SessionRejected> {
+        const MAX_LARGE_RECORD: usize = 28_672;
+        let records = self.open_batch(record)?;
+        match records.as_slice() {
+            [one] if one.len() <= MAX_LARGE_RECORD => Ok(one.clone()),
+            _ => Err(SessionRejected),
+        }
+    }
+
+    /// Shared batch sealer: `payloads` is pre-validated by the callers
+    /// (count and per-element ceilings differ per entry point; the body
+    /// budget is the common invariant).
+    fn seal_batch_inner(&mut self, payloads: &[&[u8]]) -> Result<Vec<u8>, SessionRejected> {
         let mut body = Vec::with_capacity(4 + payloads.len() * 4);
         body.extend_from_slice(&(payloads.len() as u32).to_be_bytes());
         for p in payloads {
@@ -1635,6 +1670,88 @@ mod session_tests {
         let first = i.first_message().unwrap();
         let r = ResponderHandshake::new(&responder, policy, b"b").unwrap();
         assert!(r.receive_first(&first, ctx(0)).is_err());
+    }
+    mod r1_large {
+        use super::*;
+
+        /// R1 round-trip: seal_large at every tier edge and the exact
+        /// ceiling, decoded back through open_large (assertion ④).
+        #[test]
+        fn large_round_trip_all_tiers() {
+            let (mut a, mut b) = pair();
+            for len in [1_usize, 1170, 4096, 14_336, 28_672] {
+                let payload: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+                let sealed = a.seal_large(&payload).unwrap();
+                let opened = b.open_large(&sealed).unwrap();
+                assert_eq!(opened, payload, "tier {len}");
+            }
+        }
+
+        /// Element > 28672 is refused (assertion ⑤).
+        #[test]
+        fn large_over_ceiling_is_refused() {
+            let (mut a, _b) = pair();
+            let oversize = vec![0u8; 28_673];
+            assert_eq!(a.seal_large(&oversize), Err(SessionRejected));
+            assert_eq!(a.seal_large(&[]), Err(SessionRejected));
+        }
+
+        /// N=1 degradation: a seal_large frame decodes as a 1-element
+        /// open_batch — the wire shape is shared (assertion ⑥). The
+        /// reverse (seal_batch → open_large) only exists for elements
+        /// inside BOTH domains (≤1200, seal_batch's per-element ceiling).
+        #[test]
+        fn large_is_n1_batch_on_the_wire() {
+            let (mut a, mut b) = pair();
+            let payload: Vec<u8> = (0..4096).map(|i| (i % 241) as u8).collect();
+            let sealed = a.seal_large(&payload).unwrap();
+            let as_batch = b.open_batch(&sealed).unwrap();
+            assert_eq!(as_batch.len(), 1);
+            assert_eq!(as_batch[0], payload);
+            let small = vec![3u8; 1200];
+            let sealed2 = a.seal_batch(&[&small]).unwrap();
+            let as_large = b.open_large(&sealed2).unwrap();
+            assert_eq!(as_large, small);
+        }
+
+        /// open_large refuses multi-element frames even when each element
+        /// is small (shape, not size, is the gate).
+        #[test]
+        fn large_refuses_multi_element_shapes() {
+            let (mut a, mut b) = pair();
+            let p = vec![7u8; 100];
+            let sealed = a.seal_batch(&[&p, &p]).unwrap();
+            assert_eq!(b.open_large(&sealed), Err(SessionRejected));
+        }
+
+        /// Replay: a duplicated large frame is rejected exactly like a
+        /// duplicated batch frame (replay-after-auth invariant, shared path).
+        #[test]
+        fn large_replay_is_rejected() {
+            let (mut a, mut b) = pair();
+            let payload = vec![9u8; 28_672];
+            let sealed = a.seal_large(&payload).unwrap();
+            assert!(b.open_large(&sealed).is_ok());
+            assert_eq!(b.open_large(&sealed), Err(SessionRejected));
+        }
+
+        /// Corruption at the head, middle, and tail of the tag/body is
+        /// rejected (AEAD invariant over the widened domain).
+        #[test]
+        fn large_corruption_is_rejected() {
+            let (mut a, mut b) = pair();
+            let payload = vec![5u8; 14_336];
+            let sealed = a.seal_large(&payload).unwrap();
+            for pos in [8_usize, sealed.len() / 2, sealed.len() - 1] {
+                let mut broken = sealed.clone();
+                broken[pos] ^= 0x40;
+                assert_eq!(
+                    b.open_large(&broken),
+                    Err(SessionRejected),
+                    "corrupt at {pos}"
+                );
+            }
+        }
     }
 }
 

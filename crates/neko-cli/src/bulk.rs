@@ -43,15 +43,32 @@ fn config(args: &[String]) -> Result<BulkConfig, &'static str> {
         return Err("port outside 40080-40100");
     }
     let record_bytes = num("--record-bytes", &DEFAULT_RECORD_BYTES.to_string())? as usize;
-    if record_bytes == 0 || record_bytes > crate::PERIODIC_BYTES_MAX {
-        return Err("record-bytes outside 1-1170");
+    // R1 (D074): three TCP tiers {4096, 14336, 28672}. Tier semantics: the
+    // SEALED ELEMENT size — the minimal app header (18B: stream 8 + offset
+    // 8 + len 2) rides inside the seal_large payload, so data per record is
+    // tier-18. Design §2.1: the 18B header is amortized inside the
+    // large-record semantics. Measurement-gated; default mode keeps the
+    // 1-1170 single-record domain byte-for-byte.
+    if crate::measurement::enabled() && [4096_usize, 14_336, 28_672].contains(&record_bytes) {
+        // large-record mode (tier set validated). Tier semantics: the
+        // SEALED ELEMENT budget (design §2.1: 18B header amortized INSIDE
+        // the large-record budget) — data per record is tier-18.
+    } else if record_bytes == 0 || record_bytes > crate::PERIODIC_BYTES_MAX {
+        return Err("record-bytes outside 1-1170 (large tiers need NEKO_MEASUREMENT=1)");
     }
     let bytes_total = num("--bytes-total", &DEFAULT_BYTES_TOTAL.to_string())? as usize;
-    if bytes_total == 0
-        || !bytes_total.is_multiple_of(record_bytes)
-        || bytes_total > MAX_BYTES_TOTAL
-    {
-        return Err("bytes-total must be a positive multiple of record-bytes, <= 2147483648");
+    // R1 (D074): in large mode the data stride per sealed element is
+    // tier-18, so bytes-total counts DATA bytes and must divide by it.
+    let stride =
+        if crate::measurement::enabled() && [4096_usize, 14_336, 28_672].contains(&record_bytes) {
+            record_bytes - 18
+        } else {
+            record_bytes
+        };
+    if bytes_total == 0 || !bytes_total.is_multiple_of(stride) || bytes_total > MAX_BYTES_TOTAL {
+        return Err(
+            "bytes-total must be a positive multiple of (record-bytes[-18]), <= 2147483648",
+        );
     }
     let rate_limit = match value(args, "--rate-limit") {
         Some(v) => Some(
@@ -226,7 +243,12 @@ pub(super) fn server(args: &[String]) {
     runtime
         .open_stream(STREAM, start.elapsed().as_millis() as u64)
         .unwrap();
-    let total_records = cfg.bytes_total / cfg.record_bytes;
+    let large_mode = [4096_usize, 14_336, 28_672].contains(&cfg.record_bytes);
+    let total_records = if large_mode {
+        cfg.bytes_total / (cfg.record_bytes - 18)
+    } else {
+        cfg.bytes_total / cfg.record_bytes
+    };
     let mut hasher = Sha256::new();
     let mut received = 0usize;
     let mut received_bytes = 0usize;
@@ -234,6 +256,36 @@ pub(super) fn server(args: &[String]) {
     while received < total_records && Instant::now() < deadline {
         match framed.read_until(&mut stream, deadline) {
             Ok(FrameRead::Complete(frame)) => {
+                // R1 (D074): try the large-record decode first — an N=1
+                // batch frame whose single element carries the minimal
+                // app header. Falls through to the D069 batch/single paths
+                // unchanged for default tiers (a real seal_batch frame with
+                // count=1 and a ≤1200B element would also parse as large,
+                // but its element then fails the 18B header shape — the
+                // ProcessMessage decode rejects it, preserving the
+                // original behavior for that compat shape).
+                let large_data_len = cfg.record_bytes - 18;
+                if let Ok(body) = secure.open_large(&frame)
+                    && body.len() >= 18
+                {
+                    let stream_id = u64::from_be_bytes(body[..8].try_into().unwrap());
+                    let offset = u64::from_be_bytes(body[8..16].try_into().unwrap());
+                    let len = u16::from_be_bytes(body[16..18].try_into().unwrap()) as usize;
+                    if stream_id == STREAM.0
+                        && body.len() == 18 + len
+                        && offset == (received as u64) * large_data_len as u64
+                        && len == large_data_len
+                    {
+                        let expected = payload_block(offset / large_data_len as u64, len);
+                        if body[18..] != expected[..] {
+                            fail("bulk payload checksum mismatch");
+                        }
+                        hasher.update(&body[18..]);
+                        received += 1;
+                        received_bytes += len;
+                        continue;
+                    }
+                }
                 // D069 R2: try batch first, fall back to the single-record
                 // path (compat window — both shapes may arrive during the
                 // rollout; the receipt frame from client-side batching is
@@ -356,7 +408,13 @@ pub(super) fn client(args: &[String]) {
     runtime
         .open_stream(STREAM, start.elapsed().as_millis() as u64)
         .unwrap();
-    let total_records = cfg.bytes_total / cfg.record_bytes;
+    let large_tier = [4096_usize, 14_336, 28_672].contains(&cfg.record_bytes);
+    let data_len = if large_tier {
+        cfg.record_bytes - 18
+    } else {
+        cfg.record_bytes
+    };
+    let total_records = cfg.bytes_total / data_len;
     let deadline = start + cfg.duration;
     let mut sent = 0usize;
     let mut sent_bytes = 0usize;
@@ -407,7 +465,29 @@ pub(super) fn client(args: &[String]) {
             window_bytes = 0;
             window_start = Instant::now();
         }
-        let payload = payload_block(sent as u64, cfg.record_bytes);
+        let payload = payload_block(sent as u64, data_len);
+        if large_tier {
+            // R1 (D074): large-record mode bypasses ProcessMessage and the
+            // session queue entirely — the minimal app header (stream 8B +
+            // offset 8B + len 2B) rides inside the seal_large payload and
+            // the server decodes it after open_large. One seal per record,
+            // one write_frame_single per record. Element = tier + 18B.
+            let mut body = Vec::with_capacity(18 + payload.len());
+            body.extend_from_slice(&STREAM.0.to_be_bytes());
+            body.extend_from_slice(&((sent as u64) * data_len as u64).to_be_bytes());
+            body.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+            body.extend_from_slice(&payload);
+            debug_assert_eq!(body.len(), cfg.record_bytes);
+            let sealed = secure
+                .seal_large(&body)
+                .unwrap_or_else(|_| fail("large seal failed"));
+            write_frame_single(&mut stream, &sealed)
+                .unwrap_or_else(|_| fail("bulk large send failed"));
+            sent += 1;
+            sent_bytes += data_len;
+            window_bytes += data_len;
+            continue;
+        }
         runtime
             .queue_send(STREAM, &payload, start.elapsed().as_millis() as u64)
             .unwrap_or_else(|_| fail("bulk queue rejected"));
