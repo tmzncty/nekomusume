@@ -1580,4 +1580,153 @@ LOSS_TIME 判丢；⑧ PTO backoff + persistent congestion cwnd 重置；⑨ ACK
 
 <!-- D070-end -->
 
+---
+
+## 2026-10-11 — D071：research-scope SOCKS5 代理入口（supersede D051 no-proxy 条款）
+
+**Status: Accepted**
+
+### 问题
+
+W 表真实应用对比（W2 网页多对象/W4 混合流量/W7 多客户端）需要「同一
+应用经隧道」入口；bulk 命令测的是协议层 goodput，不是应用经隧道。
+D051（2026-08-29）明文 "no proxy/tunnel behavior"（本文件 :789-801；
+`crates/neko-cli/src/main.rs:57` USAGE 尾行同款），与代理入口**直接冲突**
+——需要显式修订而非默认蔓延。设计源：代理入口研究报告 v2（仓库外
+战役目录 `proxy-entry-research.md`，迷迭香主笔、佩丽卡评审通过；生态
+对照/落点分析/安全边界全文见该报告）。
+
+### 选项
+
+1. 显式代理 SOCKS5 本地入口（CLI 子命令族，TCP-only）。
+2. 透明代理/TUN/链式/CDN 中转（生态四档）。
+3. 端口转发（无 CONNECT 协议面）。
+
+### 证据
+
+- 生态对照（报告 §1.1）：显式代理最适配（不动路由/系统、白名单可控、
+  curl --socks5 即测）；透明代理/TUN 违反实验约束 5（不碰生产路由）且
+  TUN 已拒绝（D069 v1 裁决）；链式/CDN 当前无场景。
+- 落点裁决（报告 §2.1）：CLI 应用层（socks 子命令族）零协议面变更——
+  wire/帧/记录格式全不动，replay/放大防线零影响；carrier 层插拔
+  （ProxyCarrier）语义不兼容（carrier 搬运 sealed 记录、代理转发发生在
+  明文应用层）且 D064 warm-path 契约要全量重推——拒绝。
+- TCP 载体吞吐已达标（130.8 Mbps 跨境实测，bandwidth-remeasure §七）；
+  UDP 载体窗口化 1.3-1.7 Mbps < W5 最低档 2 Mbps——UDP 入口 defer
+  （D073）。
+- 契约对照（报告 §3.5）：D068-D070 逐条零冲突；socks 复用
+  measurement 门控属"测量命令"家族自然延伸，需本 ADR 显式点名。
+
+### 决定
+
+1. **supersede D051 的 "no proxy/tunnel behavior" 条款**：显式代理入口
+   （SOCKS5 CONNECT 子集，TCP-only，RFC 1928 no-auth 段——认证由猫娘
+   Noise 握手前置完成）纳入 research 边界。D051 其余边界（端口段
+   40080-40100、单交换 probe 语义、production 不可用）**不变**。
+2. 形态：`neko socks-server` / `neko socks-client` 子命令族；客户端
+   127.0.0.1-only 监听，每 SOCKS CONNECT 映射为 1 个 Session stream，
+   双向泵；服务端白名单出站（见下）。
+3. **安全红线（报告 §4 全量）**：server 侧出站**默认 deny 白名单
+   fail-closed**（`--allow IP:port` 显式列表，无参数拒启，D067 fail-closed
+   先例；域名形态 defer 避免 DNS 依赖面）+ 内网段显式 deny 双保险；
+   客户端 127.0.0.1-only；**CONNECT 目标地址不落日志**（只记 allow/deny
+   计数）；SOCKS5 解析器过 fuzz-smoke 管线（帧上限 512B）。
+4. 门控：`NEKO_MEASUREMENT=1`（D068 先例链）；capabilities JSON 自报告
+   `requires` 字段；**不扩 D068 例外集**（socks 初版挂 measurement 门 +
+   bytes-total 硬顶 2GiB，W1 档够用；无上限长连接属 release 语义本阶段
+   不做）。
+5. 同步修订：USAGE 尾行、m5 门注记（release 语义不动——代理入口只在
+   research scope）；库层不加 RuntimeEventKind（era4 append-only，D068
+   同款处理）；failover r9 契约零触碰（泵活在 session 层之上；断言
+   含"迁移期 pump 不误杀会话"）。
+6. MVP 出界清单（报告 §5.1）：UDP ASSOCIATE、域名白名单、BIND、多跳、
+   透明代理、TUN、CDN 中转、feature gate 物理隔离——全不做。
+
+### 断言影响
+
+新增（MVP 断言套件，报告 §5.1）：SOCKS5 解析 fuzz-smoke、半关闭传播
+（HY2 half-close 坑先例）、白名单 fail-closed（无 --allow 拒启）、内网段
+deny、迁移期 pump 不误杀、并发上限拒绝、pump 缓冲上限、measurement
+门控不可达（默认模式）。既有断言零修改。
+
+### 回滚
+
+- 删 socks 子命令族即完全回滚——协议面零残留，D051 原语义随之恢复。
+- 触发（任一）：白名单语义被绕过（fuzz/审计发现）；解析器 panic/
+  假成功；measurement 例外逃逸默认模式；目标地址泄露进日志。
+
+<!-- D071-end -->
+
+---
+
+## 2026-10-11 — D072：socks-server 多连接生命周期（preauth 语义不变、持有方式变）
+
+**Status: Accepted**
+
+### 问题
+
+server 单连接即退是 lane-b U5 识别的功能面缺失（`main.rs:710-727`
+server 单交换即 return、`periodic.rs:361` 认证即 break、`bulk.rs:178-207`
+认证一个出循环），与 W2（6 并发流）/W7（多客户端）结构性矛盾。SOCKS5
+入口（D071）每 CONNECT 一 stream、多连接是常态，需要多连接生命周期。
+
+### 选项
+
+1. 改造既有 server/periodic/bulk 循环为 accept 循环 + 并发记账。
+2. socks-server 独立命令自带多连接，既有命令零改动。
+
+### 证据
+
+- preauth admission 本就是逐连接记账（`preauth.rs admit_carrier`，
+  per-connection 预算，D019 契约）——多连接只需持有方式从单个
+  ticket 变 `HashMap<ConnId, Ticket>`，语义无变。
+- 选项 1 会把 R9/r9 时序断言面全部拖入变更（failover/periodic 的
+  单连接行为是被既有测试冻结的）；选项 2 冲突面最小。
+
+### 决定
+
+1. **socks-server 独立实现多连接生命周期**（选项 2）：accept 循环 +
+   每连接 preauth ticket 并存 + 全局并发上限 **16**（multistream
+   MAX_STREAMS=16 先例）+ 每连接 pump 缓冲上限 **64KiB 双向**
+   （framed.rs 既有量级）。既有 server/periodic/bulk 命令**零改动**。
+2. preauth admission 语义（D019 per-connection 预算、reject-and-continue
+   形态）**不变**——D019 全量断言为准入硬门。
+3. W6/W7 全档压测另立授权（W 表防 DDoS 约束：建连 ≤50/s）——本 ADR
+   的并发 16 是 W7 的第一步，不是全档许可。
+
+### 断言影响
+
+新增：并发上限 16 拒绝、每连接 ticket 独立结算、全局预算跨连接聚合、
+socks 连接关闭的 ticket 释放、preauth 语义回归（D019 既有断言全绿）。
+既有断言零修改（socks-server 是新命令，不触碰既有循环）。
+
+### 回滚
+
+- 删 socks-server 即回滚；既有命令从未被改，无残留。
+- 触发：preauth 记账回归（D019 断言红）；并发/资源上限被击穿。
+
+<!-- D072-end -->
+
+---
+
+## 2026-10-11 — D073：UDP 载体代理入口 defer 记录
+
+**Status: Research（deferred）**
+
+UDP 代理入口（SOCKS5 UDP ASSOCIATE 或 QUIC 式载体复用）**显式 defer**，
+理由一行入档防止未来重复论证：
+
+1. UDP 窗口化吞吐 1.3-1.7 Mbps（p4d 实测，w=32/w=48 档）低于 W5 最低档
+   2 Mbps——载体本身承载不起码率流。
+2. replay 窗口是 per-session 单实例 64 宽（`neko-crypto lib.rs:13,607`）
+   ——多 stream 共享同一滑窗，每 stream 有效 in-flight 窗口被摊薄，
+   D070 的 cwnd≤48 pin（64−16 余量）在多流下进一步收紧，吞吐更差。
+
+**重启条件**（任一满足再议）：D070 后续演进（多流复用/BBR/记录粒度）
+使 UDP 载体吞吐 ≥ W5 最低档；或 replay 窗口语义演进为 per-stream。
+TCP 载体入口（D071/D072）不受本 defer 影响。
+
+<!-- D073-end -->
+
+
 
