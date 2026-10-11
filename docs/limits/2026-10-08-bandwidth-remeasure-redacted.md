@@ -7,10 +7,10 @@
 
 | 项 | 结果 |
 |---|---|
-| TCP bulk 阶梯 | 64MiB=122.7Mbps / 512MiB=144.3Mbps / 2GiB=146.8Mbps（饱和，14.6s） |
-| TCP rate-limit 档 | 50/100/200MB/s 全部 ~143Mbps 不降 → 瓶颈是 CPU/处理节奏（server 单核 73%）非窗口 |
-| UDP probe (stop-and-wait echo) | 13980×1150B：run1=155.5Mbps、run2=181.6Mbps，均值 ~168Mbps（往返 ~50µs/次） |
-| 结论 | 协议本体在 loopback 上限 ~147Mbps（TCP）/ ~168Mbps（UDP），本机不是瓶颈 |
+| TCP bulk 阶梯 | 64MiB=122.7MB/s / 512MiB=144.3MB/s / 2GiB=146.8MB/s（饱和，14.6s）（勘误 2026-10-11：原标 Mbps 有误，×8≈982/1154/1174 Mbps；2GiB/14.6s=146.8MB/s 为自洽铁证） |
+| TCP rate-limit 档 | 50/100/200MB/s 全部 ~143MB/s 不降（勘误 2026-10-11：原标 Mbps，同为 MB/s 口径） → 瓶颈是 CPU/处理节奏（server 单核 73%）非窗口 |
+| UDP probe (stop-and-wait echo) | 13980×1150B：run1=155.5Mbps、run2=181.6Mbps，均值 ~168Mbps（往返 ~50µs/次；Mbps 口径正确：20k 次/s×1150B×8≈184Mbps 自洽） |
+| 结论 | 协议本体在 loopback 上限 ~147MB/s（TCP；勘误：原标 Mbps，×8≈1176Mbps）/ ~168Mbps（UDP，口径正确），本机不是瓶颈 |
 
 ## 二、真实路径 bulk 512MiB（neko-cli）
 
@@ -30,7 +30,7 @@
 
 ## 四、人话结论
 
-1. **协议本体上限**：loopback TCP ~147Mbps / UDP ~168Mbps（CPU 节奏封顶）。
+1. **协议本体上限**：loopback TCP ~147MB/s（勘误 2026-10-11：原标 Mbps，×8≈1176Mbps）/ UDP ~168Mbps（口径正确；CPU 节奏封顶）。
 2. **真实线路**：猫娘协议跨境实测 3.7~11.8Mbps（逐记录确认语义）；同路径 HY2 75~206Mbps。差距 7~20 倍，主因是 stop-and-wait 逐记录确认吃不满 BDP，不是加密开销。
 3. **今日异常**：跨境 UDP 大流量 QoS（HY2 20kbps/握手失败），TCP 不受影响；UDP 侧优化上线前需重测。
 4. 若要提升真实吞吐：优先做批量确认/窗口化（预期收益最大）；调 record-bytes/加密参数是次要量级。
@@ -53,7 +53,7 @@ us-209 测试 ufw 规则已删、测试进程清零；bj-lh-relay/HK 测试进�
 
 | 场景 | 结果 | 对照 |
 |---|---|---|
-| loopback 256MiB/1170B/batch=8 | **276.9 Mbps**（969ms） | 147 哨兵不回归，+88%（r2-3 阶段 N=8=278.8 一致） |
+| loopback 256MiB/1170B/batch=8 | **276.9 MB/s**（969ms）（勘误 2026-10-11：原标 Mbps；256MiB/969ms=276.9MB/s，×8≈2215Mbps） | 147 哨兵不回归，+88%（比值为无量纲，两代同 MB/s 口径自洽；r2-3 阶段 N=8=278.8 一致） |
 | bjlh→us-209 256MiB/batch=8 | **130.8 Mbps**（16.4s，229432 records） | R2 前同路径逐记录 3.7~11.8 Mbps → **11~35 倍** |
 | 同路径 TCP 参照（nc+dd 256MiB） | 16.1 Mbps（132.8s） | 猫娘协议反超 **8.1×**——2C2G 腾讯国际出口单流 TCP 天花板 |
 
@@ -61,6 +61,6 @@ us-209 测试 ufw 规则已删、测试进程清零；bj-lh-relay/HK 测试进�
 
 iperf3 说明：两台机（bj-lh-relay、us-209）当时均未装 iperf3（us-209 旧实例未监听、bj-lh-relay 无二进制），TCP 参照改用 nc+dd 等效单流基线；如需 iperf3 口径待后续极限测试窗口补装复测。
 
-D069 判据回填：loopback 276.9 < 500 → **R1（大记录）跳过条件不成立，保持懒加载**；跨境 130.8 > 50 → R1 跨境判据满足，但主线判据未过，维持不动作待裁决。窗口化维持第三优先级不动。
+D069 判据回填：loopback 276.9 < 500 → **R1（大记录）跳过条件不成立，保持懒加载**；跨境 130.8 > 50 → R1 跨境判据满足，但主线判据未过，维持不动作待裁决。窗口化维持第三优先级不动。（勘误 2026-10-11：276.9 实为 MB/s≈2215Mbps——判据读数翻转，修正口径下两平台 loopback 与跨境三项均过线；本行为当时裁决原文保留，重裁交 D071。）
 
 后续（2026-10-10）：XJ 双机平台补充了同二进制 loopback 568 Mbps / LAN 617-653 Mbps（发送端单线程 CPU 墙）与三平台 SHA 铁证、mesh UDP 停等弹药、直连层安全组结构性结论与选路终局——见 `2026-10-10-xj-limits-redacted.md`；D070 已依 mesh 弹药立项（UDP 发送窗口）。

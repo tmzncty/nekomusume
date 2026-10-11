@@ -41,12 +41,12 @@ crypto 记录语义。
 | 平台 | loopback bulk（256MiB/batch=8） | 说明 |
 |---|---|---|
 | XJ（Broadwell 2.4GHz/Win/mingw） | **568 Mbps** | 单线程 seal/encode 墙 |
-| tmzn-server（EPYC 7F72/Linux） | **276.9 Mbps**（bandwidth-remeasure §七） | 同二进制同参数 |
+| tmzn-server（EPYC 7F72/Linux） | **276.9 MB/s**（×8≈2215Mbps；勘误 2026-10-11：bandwidth-remeasure §七原标 Mbps 有误，256MiB/969ms 自洽铁证） | 同二进制同参数 |
 
-意外结果：2.4GHz Broadwell 反超 EPYC ~2×——归因于平台间调度/内存
-子系统与工具链差异（未做单因子归因，标注为开放问题；对吞吐结论
-无影响，两平台都在 CPU 墙域而非路径域）。**教训：loopback CPU 墙
-是平台函数，跨平台比较必须带平台标注。**
+意外结果勘误（2026-10-11）：EPYC 276.9 实为 MB/s（≈2215Mbps）——比较
+方向翻转，**EPYC 反超 XJ ~3.9×**（2215 vs 568Mbps），原「Broadwell
+反超 2×」结论作废（系 MB/s 被当 Mbps 误比）；平台排序 EPYC>XJ。教训
+本身成立且加强：loopback CPU 墙是平台函数，跨平台比较必须统一单位。
 
 ### 层 3 — mesh：TCP 15.6 / UDP 停等 4.7 + count>2000 全死
 
@@ -127,7 +127,9 @@ crypto 记录语义。
 ## 五、对决策链的输入
 
 - **D069 判据回填**：R1 判据（loopback>500 且跨境>50）现在有了 XJ 侧
-  数据——XJ loopback 568 > 500 满足，EPYC 276.9 不满足；维持
+  数据——XJ loopback 568 > 500 满足，EPYC 276.9 不满足（勘误 2026-10-11：
+  EPYC 276.9 实为 MB/s≈2215Mbps，判据读数翻转——两平台均过线；本行为
+  当时裁决原文保留，重裁交 D071）；维持
   懒加载，XJ 弹药归档备 P3 复测用。
 - **D070 弹药闭合**：层 3 即 D070 问题段的 mesh 数字来源；count>2000
   全死是断言⑭（全 confirm 回归）的对照基线。
