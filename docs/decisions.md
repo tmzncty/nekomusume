@@ -1728,5 +1728,88 @@ TCP 载体入口（D071/D072）不受本 defer 影响。
 
 <!-- D073-end -->
 
+---
+
+## 2026-10-12 — D074：bulk UDP 事件循环重构收链 + R1 大记录/多流复用排期裁决
+
+**Status: Accepted**
+
+### 问题
+
+D070 窗口化落地后 mesh 单流 1.30 Mbps（w=32，13980 全 confirm）距 cwnd
+数学上限 4.05 有 3× 缺口；D069 R1 懒加载判据勘误后三项全过线（loopback
+2215 / XJ 568 > 500，跨境 130.8 > 50），大记录解锁待排期。吞吐归因链
+经历一次证伪-反转：Phase 0 曾推断 PTO `max_ack_delay=0` 与 ACK 攒批
+40ms 失配，赛希三重证据复核反转——实现是即时逐包 ACK（`bulk_udp.rs`
+flush_ack 逐包调用 :406/:460/:529/:538、take_ack(0) :240，
+PacketAckTracker 无定时器），参数正确零代码变更。**错误根源是设计-实现
+分叉**：D070 决定段「64 记录/40ms 先到」攒批表述从未按 40ms 实现，设计
+文本被当成了实现事实。
+
+### 决定
+
+1. **Phase 0' 事件循环重构（已实施收链）**：真限制因子为客户端
+   「send-burst→recv-drain」轮次结构（c443fa3 钉死：turns=698，
+   窗口级停等形态；idle-break 证伪）。流水线片（c2408e9）把准入循环
+   提升为 admit_records() 并从 ACK 分支再调用——每个 retire 帧滑窗后
+   替补帧在 drain 内发出，溶解停等。**loopback 13980：34.3s→0.84s
+   （41×）、PTO 416→5、丢包矩阵 7/7 绿（269s→104s）、SHA 链不变**；
+   **mesh 78ms：1.30→1.32 Mbps（+1.5%）**、retransmits 0、稳态
+   telemetry infl=16/unsent=0/bif=20000（窗口打满、ACK 时钟连续）。
+   读数：轮次结构是本地路径主导限制（41×），78ms 路径上不是（+1.5%）
+   ——**次级因子浮现**。
+2. **次级因子分离**：per-record ~227ms（32 outstanding ÷ 141 rec/s，
+   远超 78ms 空闲 RTT）→ mesh 隧道路径排队或 ACK 节拍；1.32 vs 4.05
+   剩余差距归此。cwnd 数学域在现有记录尺寸下不可达。
+3. **R1 大记录（TCP-only，3-4 人日）**：`seal_large/open_large`，N=1
+   batch 帧装 ≤28,672B 单元素，复用 batch framing/decode/replay 路径；
+   bulk TCP `--record-bytes` 三档 {4096, 14336, 28672}，28KB 档
+   NEKO_MEASUREMENT=1 门控；ProcessMessage 旁路（batch 层 18B 头）；
+   **PROCESS_FRAME_MAX=4096 与 MAX_RECORD_PLAINTEXT 常量不动**（大记录
+   是 batch 域例外）；r9 契约不触碰。**排期论据**：per-record ~227ms
+   是「每记录税」，R1 摊薄税基 24.5×（杠杆作用于因子本身），强于多流
+   的并行复制；XJ 大文件需求紧迫则 R1 先行。
+4. **多流复用（W5 需求驱动时启动，2-3 人日）**：socket-per-stream
+   （`--streams {1,2,4,8}`），每流独立 socket/Recovery/Reno/
+   SecureSession；**零 wire 改动**；接收端资源 = D070 清单 ×N。
+   收益按 **1.32 基线** ×N 重算：N=4 线性 5.28 / 共享排队打折保守
+   ×50% ≈ 3——**W5 最低档 2 Mbps 过线保底档为 N=4**。共享资源风险
+   （mesh 隧道路径排队/网关 PPS/server 事件循环汇入）实施时逐项观测；
+   **N=2 单点先测打折系数（≥70% 线性再扩矩阵）**。
+5. **互补声明**：R1 救 TCP/CPU 墙并摊薄 per-record 税基、多流救 UDP/
+   吞吐靠并行复制，作用域不相交，两线并行不互斥；UDP 轴不做 R1
+   （分片陷阱，D069 已证 24 段@11.67%→5.3% 存活）。
+6. **判据回填**：D069 R1 懒加载判据维持原文，落库注记「2026-10-11
+   勘误后重读：全过线，R1 解锁」。
+7. **socks 泵停等同根（另立 D075 建议）**：W2/W4 2-7KB/s 与 bulk 同
+   结构停等已证同根。建议另立 D075 而非并入本 ADR（载体/组件/断言面
+   不同；D074 Phase 0' 的 ACK 驱动准入经验作设计输入——「读到即泵」
+   形态同构；保持 ADR 单一主题）。
+
+### 教训（入档）
+
+Phase 0 的证伪-反转全链值得留痕：**设计文本与实现的分叉是复审陷阱
+——文本引用只配做线索，一致性必须用代码验证**。D070「64 记录/40ms
+先到」的攒批表述与即时逐包 ACK 实现分叉，导致 Phase 0 原推断（PTO
+参数缺陷）方向性错误；赛希以三重证据（代码路径/PTO 归因/数字自洽
+~437 轮拆法 vs 实测 698 turns 勘正为 144ms/turn）反转结论。416 次 PTO
+实为轮次间隙伴生（探针被 pre-open 重复门吸收，duplicates_skipped
+416 = PTO 416 自洽）。
+
+### 断言
+
+Phase 0' 已达成（实测记录）：turn_count 进 NEKO_UDP_DEBUG 心跳；零丢包
+PTO 416→5；loopback 41×。R1/多流断言清单与回滚触发（28KB fuzz 假成功/
+panic、大记录渗入 ProcessMessage、N 流 ACK 串扰、资源×N 越顶、多流低于
+线性×70% 停线归因）见设计文档（收链版 v3）与实现 PR 描述。
+
+### 回滚
+
+- Phase 0'：重构分支删除即回滚（主循环回到轮次结构，基线 1.30 可复现）。
+- R1：删 `--record-bytes` 大档分支即回滚；seal_large 不进默认路径。
+- 多流：删 `--streams` 分支即回滚（单流 = 现状默认）。
+
+<!-- D074-end -->
+
 
 
