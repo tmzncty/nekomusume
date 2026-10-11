@@ -7618,9 +7618,16 @@ impl PacketAckTracker {
     pub fn new(path_generation: u64) -> Self {
         Self {
             path_generation,
-            // Bound the ACK range set to the wire's hard cap so an encoded
-            // AckPayload always fits the canonical grammar.
-            ranges: neko_reliable::AckRanges::new(32).expect("valid cap"),
+            // D070 §3.3: ACK STATE vs wire EXPRESSION are layered. The
+            // tracker keeps accepted-packet history in a wide (but still
+            // hard-bounded) range set so a lossy window of fragmented holes
+            // never saturates the duplicate gate; the WIRE payload keeps
+            // only the newest neko_wire::MAX_ACK_RANGES ranges (conservative
+            // direction: dropping the oldest fragments means a lost ACK is
+            // recovered by the next, larger cumulative coverage — never a
+            // silent hole in fresh evidence).
+            ranges: neko_reliable::AckRanges::new(neko_reliable::HARD_MAX_ACK_RANGES)
+                .expect("valid hard cap"),
             largest_observed: None,
             pending_ack: false,
         }
@@ -7674,12 +7681,17 @@ impl PacketAckTracker {
 
     fn current_ack_payload(&self, ack_delay_us: u64) -> Option<neko_wire::AckPayload> {
         let largest = self.largest_observed?;
+        let all = self.ranges.ranges();
+        // Wire expression bound: keep the NEWEST neko_wire::MAX_ACK_RANGES
+        // ranges (D070 §3.3 truncation). Fresh deliveries (and the fresh
+        // packet numbers of retransmitted frontier-hole copies) land in the
+        // newest ranges, so loss recovery flows; older fragments reappear
+        // once the frontier advances past them.
+        let keep = all.len().saturating_sub(neko_wire::MAX_ACK_RANGES);
         Some(neko_wire::AckPayload {
             largest_observed: largest,
             ack_delay_us,
-            ranges: self
-                .ranges
-                .ranges()
+            ranges: all[keep..]
                 .iter()
                 .map(|r| neko_wire::AckRangeWire {
                     start: r.start,
@@ -7797,6 +7809,35 @@ impl ReliableUdpRuntime {
             torn_down: false,
             pmtu: None,
         })
+    }
+
+    /// D070 UDP bulk: same runtime shape as `new` but with a caller-supplied
+    /// retransmit-plaintext budget. The windowed bulk transfer retains up to
+    /// `retransmit_frames` outstanding frame plaintexts of `retransmit_bytes`
+    /// total bytes (D070 decision 4 pins 64 frames / 61440 bytes for the
+    /// ≤48-packet window); the default `new` budget (64/8192) fits the
+    /// failover fixture's small records only. Invalid budgets reject.
+    pub fn new_with_retransmit_budget(
+        path_generation: u64,
+        mss: u64,
+        retransmit_frames: usize,
+        retransmit_bytes: usize,
+    ) -> Result<Self, PathRecoveryError> {
+        let mut rt = Self::new(path_generation, mss)?;
+        rt.retransmit = RetransmitBuffer::new(retransmit_frames, retransmit_bytes)
+            .map_err(|_| PathRecoveryError::GenerationMismatch)?;
+        Ok(rt)
+    }
+
+    /// D070 UDP bulk: monotonic PTO read-only deadline in the runtime's own
+    /// recovery clock (`now_us` from the caller's epoch, same clock passed to
+    /// `on_packet_sent`/`apply_ack`). `None` when nothing is in flight — the
+    /// caller drives probing by comparing `now_us` to this deadline, exactly
+    /// like failover's `due_pto_probe` owner (H-R9-055).
+    pub fn next_pto_deadline_us(&self, granularity_us: u64, max_ack_delay_us: u64) -> Option<u64> {
+        self.recovery
+            .recovery()
+            .next_pto_deadline_us(granularity_us, max_ack_delay_us)
     }
 
     /// Opt in to PLPMTUD for this runtime's path generation. The model is bound
@@ -8748,32 +8789,55 @@ mod path_recovery_tests {
 
     #[test]
     fn ack_tracker_range_cap_is_the_wire_hard_cap_and_overflow_is_atomic() {
-        // The tracker bounds its range set to the wire's hard cap (32), so an
-        // encoded payload always fits the canonical grammar. Nothing asserted
-        // the cap, so it could have been lowered silently.
+        // D070 §3.3 layers ACK STATE from wire EXPRESSION: the tracker keeps
+        // accepted-packet history up to the reliable-layer HARD cap (4096)
+        // so a lossy window of fragmented holes never saturates the
+        // duplicate gate, while the wire payload carries only the newest
+        // MAX_ACK_RANGES (32) ranges. Overflow past the HARD state cap is
+        // still reported and atomic.
         let mut t = PacketAckTracker::new(7);
         assert!(!t.has_observations());
-        // 32 disjoint single-point ranges fill the set exactly.
+        // 32 disjoint single-point ranges: state holds all, wire carries all.
         for n in 0..32u64 {
             t.observe_packet(7, n * 2, true).unwrap();
         }
         assert!(t.has_observations());
         let full = t.build_ack(0).unwrap();
-        assert_eq!(full.ranges.len(), 32, "the cap is exactly 32 ranges");
+        assert_eq!(full.ranges.len(), 32, "wire carries 32 ranges exactly");
         assert_eq!(full.largest_observed, 62);
+        // Beyond the wire cap the state keeps accepting while the wire
+        // truncates to the NEWEST 32 ranges (fresh evidence survives).
+        for n in 32..64u64 {
+            t.observe_packet(7, n * 2, true).unwrap();
+        }
+        let truncated = t.build_ack(0).unwrap();
+        assert_eq!(
+            truncated.ranges.len(),
+            neko_wire::MAX_ACK_RANGES,
+            "wire truncates to the newest 32 ranges"
+        );
+        assert_eq!(truncated.ranges.last().unwrap().end, 126);
+        assert_eq!(truncated.largest_observed, 126);
+        // Fill the state to its HARD cap: the next disjoint range reports
+        // RangeLimit, and the rejection is atomic.
+        let mut t2 = PacketAckTracker::new(7);
+        for n in 0..neko_reliable::HARD_MAX_ACK_RANGES as u64 {
+            t2.observe_packet(7, n * 2, true).unwrap();
+        }
+        let over = neko_reliable::HARD_MAX_ACK_RANGES as u64 * 2;
         // Consume the pending obligation so the next assertion can tell whether
         // a rejected observation created a new one.
-        assert!(t.take_ack(0).is_some());
-        assert!(!t.pending_ack());
-        // The 33rd disjoint range is reported, not silently dropped.
+        assert!(t2.take_ack(0).is_some());
+        assert!(!t2.pending_ack());
+        // The (HARD+1)-th disjoint range is reported, not silently dropped.
         assert_eq!(
-            t.observe_packet(7, 64, true),
+            t2.observe_packet(7, over, true),
             Err(AckTrackerError::RangeLimit)
         );
         // And the rejection is atomic: neither the largest observation nor the
-        // pending obligation moved.
-        assert_eq!(t.build_ack(0).unwrap().largest_observed, 62);
-        assert!(!t.pending_ack());
+        // pending obligation moved (t2's own largest, not the rejected pn).
+        assert_eq!(t2.build_ack(0).unwrap().largest_observed, over - 2);
+        assert!(!t2.pending_ack());
     }
 
     #[test]

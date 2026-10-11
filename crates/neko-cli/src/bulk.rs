@@ -93,7 +93,7 @@ fn limits(_cfg: &BulkConfig) -> neko_session::RuntimeLimits {
 
 /// Deterministic non-uniform payload (counter-seeded blocks): real data for
 /// compression/structure, verifiable per-block without echoing.
-fn payload_block(index: u64, len: usize) -> Vec<u8> {
+pub(super) fn payload_block(index: u64, len: usize) -> Vec<u8> {
     let mut block = Vec::with_capacity(len);
     let mut seed = index.wrapping_mul(0x9E3779B97F4A7C15).max(1);
     while block.len() < len {
@@ -106,7 +106,7 @@ fn payload_block(index: u64, len: usize) -> Vec<u8> {
     block
 }
 
-fn install_shutdown() -> Arc<AtomicBool> {
+pub(super) fn install_shutdown() -> Arc<AtomicBool> {
     let shutdown = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(SIGTERM, Arc::clone(&shutdown)).unwrap();
     signal_hook::flag::register(SIGINT, Arc::clone(&shutdown)).unwrap();

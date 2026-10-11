@@ -4,6 +4,7 @@ mod lifecycle;
 use health_window::{HealthDatagram, HealthObservationWindow, HealthWindowError};
 use lifecycle::ReadinessPrerequisite;
 mod bulk;
+mod bulk_udp;
 mod framed;
 mod health_window;
 mod measurement;
@@ -378,7 +379,16 @@ fn health_observe(args: &[String]) {
 
 fn fail(msg: &str) -> ! {
     eprintln!("neko: {msg}");
-    std::process::exit(2)
+    std::process::exit(2);
+}
+
+/// D070 P4: `--transport udp` on the bulk fixture selects the windowed
+/// reliable-UDP path (Reno AIMD + SACK). Any other value — or none — keeps
+/// the TCP bulk fixture exactly as D068/D069 froze it (zero dependency:
+/// rollback = removing this branch).
+fn transport_udp(args: &[String]) -> bool {
+    args.windows(2)
+        .any(|w| w[0] == "--transport" && w[1] == "udp")
 }
 #[derive(Clone, Copy)]
 struct HandshakeDiagnostics {
@@ -6784,8 +6794,20 @@ fn main() {
         Some("workload") => workload(&a),
         Some("periodic-server") => periodic::server(&a),
         Some("periodic-client") => periodic::client(&a),
-        Some("bulk-server") => bulk::server(&a),
-        Some("bulk-client") => bulk::client(&a),
+        Some("bulk-server") => {
+            if transport_udp(&a) {
+                bulk_udp::server_udp(&a)
+            } else {
+                bulk::server(&a)
+            }
+        }
+        Some("bulk-client") => {
+            if transport_udp(&a) {
+                bulk_udp::client_udp(&a)
+            } else {
+                bulk::client(&a)
+            }
+        }
         Some("scheduler-fairness") => scheduler_fairness(&a),
         Some("key-update") => key_update_fixture(&a),
         Some("health-observe") => health_observe(&a),
