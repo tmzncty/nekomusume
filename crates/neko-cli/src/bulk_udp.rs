@@ -758,6 +758,11 @@ pub(super) fn client_udp(args: &[String]) {
     let mut acked_records: u64 = 0;
     let mut retransmits: u64 = 0;
     let mut pto_probes: u64 = 0;
+    // Phase 0' observation ①: outer turn counter — how many send→drain
+    // round trips the transfer took (regression observable; with
+    // ACK-driven admission the per-turn record count should rise, not the
+    // turn count).
+    let mut turn_count: u64 = 0;
     let mut end_sent = false;
     let mut end_acked = false;
     let mut last_pto_fire: Option<u64> = None;
@@ -951,7 +956,7 @@ pub(super) fn client_udp(args: &[String]) {
         {
             last_hb_dbg = now_us(&epoch);
             eprintln!(
-                "[hb] t={}ms acked={} next={} infl={} rtxq={} unsent={} pto_dl={:?} pto_cnt={} bif={}",
+                "[hb] t={}ms acked={} next={} infl={} rtxq={} unsent={} pto_dl={:?} pto_cnt={} bif={} turns={}",
                 now_us(&epoch) / 1000,
                 acked_records,
                 next_record,
@@ -960,7 +965,8 @@ pub(super) fn client_udp(args: &[String]) {
                 unsent_wire.len(),
                 rt.next_pto_deadline_us(1_000, 0),
                 pto_probes,
-                rt.in_flight() as u64 * RECORD_WIRE_BYTES
+                rt.in_flight() as u64 * RECORD_WIRE_BYTES,
+                turn_count
             );
         }
         // 4. PTO: fire probes over the oldest outstanding frames when the
@@ -1147,6 +1153,7 @@ pub(super) fn client_udp(args: &[String]) {
         //    never idles a full read-timeout while the path has capacity.
         let mut idle = 0u32;
         let mut progressed = false;
+        turn_count += 1;
         loop {
             match sock.recv_from(&mut buf) {
                 Ok((n, p)) if p == addr => {
@@ -1284,8 +1291,19 @@ pub(super) fn client_udp(args: &[String]) {
                         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                     ) =>
                 {
+                    // Phase 0' (D074): the receive drain must never idle a
+                    // full read-timeout after work exists — an ACK that
+                    // freed window space (`progressed`) returns to the send
+                    // phase IMMEDIATELY (idle >= 1), and an idle path parks
+                    // for at most one timeout before the outer loop's
+                    // liveness machinery (PTO / stall rebuild) takes its
+                    // turn. The old `idle >= 2` branch burned 50ms per
+                    // round-trip on quiescent-but-open windows, capping the
+                    // single-stream goodput at the turn cadence instead of
+                    // the cwnd math (observed 1.30 Mbps vs ~4.05 model on
+                    // the 78ms mesh path).
                     idle += 1;
-                    if idle >= 2 || (progressed && idle >= 1) {
+                    if idle >= 2 || progressed {
                         break;
                     }
                 }
