@@ -591,6 +591,151 @@ fn retire_frame(
     }
 }
 
+/// Phase 0' pipeline slice (D074): admission-gated fresh sends. Called from
+/// BOTH the outer loop's send phase and — the whole point — the ACK branch
+/// of the receive drain, so every retired frame immediately slides the
+/// window and admits its replacement instead of waiting out the turn. The
+/// loop bodies are verbatim the old phase-1a/1b pair; cwnd semantics
+/// (window ceiling, on_packet_sent gating, offset-integrity caching) are
+/// untouched.
+#[allow(clippy::too_many_arguments)]
+fn admit_records(
+    sock: &UdpSocket,
+    addr: SocketAddr,
+    runtime: &mut neko_session::SessionRuntime,
+    start: &Instant,
+    epoch: &Instant,
+    secure: &mut neko_crypto::SecureSession,
+    rt: &mut neko_carrier::ReliableUdpRuntime,
+    unsent_wire: &mut VecDeque<(u64, Vec<u8>)>,
+    next_record: &mut u64,
+    sent_wire: &mut BTreeMap<u64, Vec<u8>>,
+    pn_owner: &mut BTreeMap<u64, u64>,
+    max_engine_pn: &mut u64,
+    total_records: usize,
+    window_ceiling: u64,
+    cfg: &UdpBulkConfig,
+) {
+    let now_us = |e: &Instant| e.elapsed().as_micros() as u64;
+    // 1a. Cached wires first (D070 offset-integrity rule: a popped record's
+    // stream offset is burned at queue_send time; a rejected send must
+    // retry the SAME wire, never re-queue the payload).
+    let mut outstanding = rt.in_flight() + sent_wire.len();
+    while !unsent_wire.is_empty()
+        && (outstanding as u64) < window_ceiling
+        && rt.can_send(RECORD_WIRE_BYTES)
+    {
+        let (idx, wire) = unsent_wire.front().unwrap().clone();
+        match send_fresh_record(
+            sock,
+            addr,
+            &wire,
+            idx,
+            epoch,
+            secure,
+            rt,
+            sent_wire,
+            pn_owner,
+            max_engine_pn,
+        ) {
+            Ok(()) => {
+                unsent_wire.pop_front();
+                debug_assert_eq!(idx, *next_record);
+                *next_record += 1;
+                outstanding = rt.in_flight() + sent_wire.len();
+            }
+            Err("recovery on_packet_sent rejected") => break,
+            Err(e) => fail(e),
+        }
+    }
+    // 1b. Fresh records straight off the session queue.
+    while (*next_record as usize) < total_records
+        && unsent_wire.is_empty()
+        && ((rt.in_flight() + sent_wire.len()) as u64) < window_ceiling
+        && rt.can_send(RECORD_WIRE_BYTES)
+    {
+        let idx = *next_record;
+        let payload = payload_block(idx, cfg.record_bytes);
+        runtime
+            .queue_send(STREAM, &payload, start.elapsed().as_millis() as u64)
+            .unwrap_or_else(|_| fail("bulk queue rejected"));
+        let record = runtime
+            .pop_send(start.elapsed().as_millis() as u64)
+            .unwrap()
+            .unwrap_or_else(|| fail("bulk queue starved"));
+        debug_assert_eq!(record.offset, idx * cfg.record_bytes as u64);
+        debug_assert_eq!(record.data, payload);
+        let wire = ProcessMessage::Data {
+            session: SESSION,
+            record,
+        }
+        .encode()
+        .unwrap();
+        match send_fresh_record(
+            sock,
+            addr,
+            &wire,
+            idx,
+            epoch,
+            secure,
+            rt,
+            sent_wire,
+            pn_owner,
+            max_engine_pn,
+        ) {
+            Ok(()) => *next_record += 1,
+            Err("recovery on_packet_sent rejected") => {
+                unsent_wire.push_back((idx, wire));
+                break;
+            }
+            Err(e) => fail(e),
+        }
+    }
+    let _ = now_us;
+}
+
+/// The old `send_fresh` closure, lifted to a free function verbatim: seal
+/// under a fresh nonce, register with the recovery engine, send, record
+/// ownership.
+#[allow(clippy::too_many_arguments)]
+fn send_fresh_record(
+    sock: &UdpSocket,
+    addr: SocketAddr,
+    wire: &[u8],
+    idx: u64,
+    epoch: &Instant,
+    secure: &mut neko_crypto::SecureSession,
+    rt: &mut neko_carrier::ReliableUdpRuntime,
+    sent_wire: &mut BTreeMap<u64, Vec<u8>>,
+    pn_owner: &mut BTreeMap<u64, u64>,
+    max_engine_pn: &mut u64,
+) -> Result<(), &'static str> {
+    let sealed = secure
+        .seal_unreliable(wire)
+        .map_err(|_| "bulk seal failed")?;
+    let pn = u64::from_be_bytes(sealed[..8].try_into().unwrap());
+    rt.on_packet_sent(
+        pn,
+        epoch.elapsed().as_micros() as u64,
+        sealed.len() as u64,
+        neko_reliable::FrameId(idx),
+        wire,
+    )
+    .map_err(|_| "recovery on_packet_sent rejected")?;
+    match sock.send_to(&sealed, addr) {
+        Ok(_) => {
+            sent_wire.insert(idx, wire.to_vec());
+            pn_owner.insert(pn, idx);
+            *max_engine_pn = (*max_engine_pn).max(pn);
+            Ok(())
+        }
+        Err(_) => {
+            rt.abandon_sent(pn);
+            Err("bulk send failed")
+        }
+    }
+}
+
 pub(super) fn client_udp(args: &[String]) {
     crate::measurement::emit_marker();
     println!("measurement_limits_exceptions=total_bytes,queue_records,queue_bytes");
@@ -776,128 +921,31 @@ pub(super) fn client_udp(args: &[String]) {
     let mut max_engine_pn: u64 = 0;
     let mut receipt: Option<String> = None;
 
-    // Sealed-send helpers: seal under a FRESH nonce every time (originals
-    // exactly once; retransmissions always fresh) and record ownership.
-    let send_fresh = |idx: u64,
-                      wire: &[u8],
-                      secure: &mut neko_crypto::SecureSession,
-                      rt: &mut neko_carrier::ReliableUdpRuntime,
-                      sent_wire: &mut BTreeMap<u64, Vec<u8>>,
-                      pn_owner: &mut BTreeMap<u64, u64>,
-                      max_engine_pn: &mut u64|
-     -> Result<(), &'static str> {
-        let sealed = secure
-            .seal_unreliable(wire)
-            .map_err(|_| "bulk seal failed")?;
-        let pn = u64::from_be_bytes(sealed[..8].try_into().unwrap());
-        rt.on_packet_sent(
-            pn,
-            now_us(&epoch),
-            sealed.len() as u64,
-            neko_reliable::FrameId(idx),
-            wire,
-        )
-        .map_err(|_| "recovery on_packet_sent rejected")?;
-        match sock.send_to(&sealed, addr) {
-            Ok(_) => {
-                sent_wire.insert(idx, wire.to_vec());
-                pn_owner.insert(pn, idx);
-                *max_engine_pn = (*max_engine_pn).max(pn);
-                Ok(())
-            }
-            Err(_) => {
-                rt.abandon_sent(pn);
-                Err("bulk send failed")
-            }
-        }
-    };
-
     while Instant::now() < deadline && !shutdown.load(Ordering::Acquire) {
         if end_acked {
             break;
         }
-        // 1. Admission-gated fresh sends while the pinned window has room.
-        // D070 offset-integrity rule: a record popped from the session
-        // queue has its stream offset BURNED at queue_send time. If the
-        // recovery engine then rejects the send (CongestionWindowFull /
-        // retransmit budget saturated), the wire must be CACHED and retried
-        // verbatim — re-queueing the same payload would allocate a NEW
-        // offset (next_send never rewinds), sending "offset=N+1 carrying
-        // record N" and desynchronizing the receiver's checksum map (the
-        // off-by-one corruption seen at the ~2MB retransmit-budget
-        // saturation point).
-        // Honest outstanding: after a stalled-engine rebuild the engine's
-        // in_flight resets to 0 while sent_wire still holds unacknowledged
-        // records — counting only the engine would admit unbounded fresh
-        // records past an unfilled hole (observed 1088 ahead). sent_wire
-        // may double-count probe-registered copies — conservative, safe.
-        let outstanding = rt.in_flight() + sent_wire.len();
-        while !unsent_wire.is_empty()
-            && (outstanding as u64) < window_ceiling
-            && rt.can_send(RECORD_WIRE_BYTES)
-        {
-            let (idx, wire) = unsent_wire.front().unwrap().clone();
-            match send_fresh(
-                idx,
-                &wire,
-                &mut secure,
-                &mut rt,
-                &mut sent_wire,
-                &mut pn_owner,
-                &mut max_engine_pn,
-            ) {
-                Ok(()) => {
-                    unsent_wire.pop_front();
-                    debug_assert_eq!(idx, next_record);
-                    next_record += 1;
-                }
-                // Park: budget saturated — the ACK drain frees it.
-                Err("recovery on_packet_sent rejected") => break,
-                Err(e) => fail(e),
-            }
-        }
-        while (next_record as usize) < total_records
-            && unsent_wire.is_empty()
-            && (outstanding as u64) < window_ceiling
-            && rt.can_send(RECORD_WIRE_BYTES)
-        {
-            let idx = next_record;
-            let payload = payload_block(idx, cfg.record_bytes);
-            runtime
-                .queue_send(STREAM, &payload, start.elapsed().as_millis() as u64)
-                .unwrap_or_else(|_| fail("bulk queue rejected"));
-            let record = runtime
-                .pop_send(start.elapsed().as_millis() as u64)
-                .unwrap()
-                .unwrap_or_else(|| fail("bulk queue starved"));
-            debug_assert_eq!(record.offset, idx * cfg.record_bytes as u64);
-            debug_assert_eq!(record.data, payload);
-            let wire = ProcessMessage::Data {
-                session: SESSION,
-                record,
-            }
-            .encode()
-            .unwrap();
-            match send_fresh(
-                idx,
-                &wire,
-                &mut secure,
-                &mut rt,
-                &mut sent_wire,
-                &mut pn_owner,
-                &mut max_engine_pn,
-            ) {
-                Ok(()) => next_record += 1,
-                // CongestionWindowFull is the caller-side park signal.
-                // The popped wire is cached — exactly one queue/pop per
-                // record, offsets never double-allocate.
-                Err("recovery on_packet_sent rejected") => {
-                    unsent_wire.push_back((idx, wire));
-                    break;
-                }
-                Err(e) => fail(e),
-            }
-        }
+        // 1. Admission-gated fresh sends (Phase 0' pipeline slice): the
+        // old phase-1a/1b loops live in admit_records(); the SAME call now
+        // also fires from the ACK branch of the receive drain, so a retired
+        // frame immediately slides the window and admits its replacement.
+        admit_records(
+            &sock,
+            addr,
+            &mut runtime,
+            &start,
+            &epoch,
+            &mut secure,
+            &mut rt,
+            &mut unsent_wire,
+            &mut next_record,
+            &mut sent_wire,
+            &mut pn_owner,
+            &mut max_engine_pn,
+            total_records,
+            window_ceiling,
+            &cfg,
+        );
         // 2. Retransmit loss-scheduled frames (fresh nonce per copy). Loss
         //    recovery is not cwnd-gated: the frozen on_retransmit_sent
         //    never cwnd-checks (only on_packet_sent does), Reno's lost()
@@ -939,9 +987,12 @@ pub(super) fn client_udp(args: &[String]) {
             && !end_sent
         {
             let wire = wire_end(total_records as u64);
-            send_fresh(
-                u64::MAX,
+            send_fresh_record(
+                &sock,
+                addr,
                 &wire,
+                u64::MAX,
+                &epoch,
                 &mut secure,
                 &mut rt,
                 &mut sent_wire,
@@ -1276,6 +1327,32 @@ pub(super) fn client_udp(args: &[String]) {
                                     }
                                     c += 1;
                                 }
+                            }
+                            // Phase 0' pipeline slice (D074): the ACK branch
+                            // itself re-runs admission — every retired frame
+                            // slides the window and its replacement goes out
+                            // NOW, inside the drain, instead of waiting for
+                            // the turn boundary. This is what dissolves the
+                            // per-window stop-and-wait (observed 698 turns ×
+                            // 144ms on the 78ms mesh path).
+                            if !end_acked {
+                                admit_records(
+                                    &sock,
+                                    addr,
+                                    &mut runtime,
+                                    &start,
+                                    &epoch,
+                                    &mut secure,
+                                    &mut rt,
+                                    &mut unsent_wire,
+                                    &mut next_record,
+                                    &mut sent_wire,
+                                    &mut pn_owner,
+                                    &mut max_engine_pn,
+                                    total_records,
+                                    window_ceiling,
+                                    &cfg,
+                                );
                             }
                         }
                         ClientInbound::Receipt(data) => {
