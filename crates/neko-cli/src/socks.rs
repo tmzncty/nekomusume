@@ -33,7 +33,7 @@ use neko_session::{
     InboundRecord, ProcessMessage, RuntimeLimits, SessionId, SessionRuntime, StreamId,
 };
 use neko_wire::{NEGOTIATION_VERSION, NegotiationRole, VersionNegotiator};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{
     IpAddr, Ipv6Addr, Shutdown, SocketAddr, SocketAddrV4, SocketAddrV6, TcpListener, TcpStream,
@@ -565,6 +565,9 @@ fn read_inbound(reader: &mut TcpStream, shared: &Arc<Mutex<Shared>>) -> Result<I
 
 /// Acks flow downloader→uploader through a condvar; `dead` latches fatal
 /// downloader conditions so a parked uploader unblocks immediately.
+/// D075: the gate became an ack *queue* — the uploader tracks a window of
+/// in-flight records instead of one; each ack retires the head and wakes
+/// the pump.
 struct AckGate {
     state: Mutex<AckState>,
     signal: Condvar,
@@ -572,7 +575,7 @@ struct AckGate {
 
 #[derive(Default)]
 struct AckState {
-    acked: Option<(u64, usize)>,
+    acked: Vec<(u64, usize)>,
     dead: bool,
 }
 
@@ -586,7 +589,7 @@ impl AckGate {
 
     fn notify_ack(&self, offset: u64, len: usize) {
         let mut st = self.state.lock().unwrap();
-        st.acked = Some((offset, len));
+        st.acked.push((offset, len));
         self.signal.notify_all();
     }
 
@@ -596,12 +599,24 @@ impl AckGate {
         self.signal.notify_all();
     }
 
-    fn wait_ack(&self, offset: u64, len: usize, deadline: Instant) -> bool {
+    /// D075: wait until `n` acks have arrived (any identities), returning
+    /// them for ledger release. The old per-record exact-match wait is the
+    /// stop-and-wait shape the pipeline replaces; acks arrive in order on
+    /// this carrier, so counting is the retirement signal.
+    /// Non-blocking drain of every pending ack.
+    fn try_drain(&self) -> Vec<(u64, usize)> {
         let mut st = self.state.lock().unwrap();
-        while !st.dead && st.acked.is_none_or(|(a, l)| a != offset || l != len) {
+        std::mem::take(&mut st.acked)
+    }
+
+    /// Block until at least one ack arrives, the gate dies, or the
+    /// deadline passes. Returns the full drained batch on wake.
+    fn wait_one(&self, deadline: Instant) -> Option<Vec<(u64, usize)>> {
+        let mut st = self.state.lock().unwrap();
+        while !st.dead && st.acked.is_empty() {
             let now = Instant::now();
             if now >= deadline {
-                return false;
+                return None;
             }
             let (guard, _) = self
                 .signal
@@ -609,11 +624,12 @@ impl AckGate {
                 .unwrap();
             st = guard;
         }
-        !st.dead
+        if st.dead && st.acked.is_empty() {
+            return None;
+        }
+        Some(std::mem::take(&mut st.acked))
     }
 
-    /// Park until death (peer EOF/fatal) — used by an uploader whose local
-    /// side half-closed while the reverse direction still lives.
     fn park_until_dead(&self) {
         let mut st = self.state.lock().unwrap();
         while !st.dead {
@@ -623,6 +639,46 @@ impl AckGate {
                 .unwrap();
             st = guard;
         }
+    }
+}
+
+/// D075 pump observability: bounded, non-address-bearing counters on the
+/// existing research surface (socks is NEKO_MEASUREMENT-gated already).
+/// Printed once per pump teardown; never carries a target address.
+#[derive(Default)]
+struct PumpCounters {
+    records_admitted: AtomicU64,
+    records_retired: AtomicU64,
+    max_in_flight: AtomicU64,
+    pump_wakes: AtomicU64,
+    app_up_bytes: AtomicU64,
+    app_down_bytes: AtomicU64,
+    half_close_events: AtomicU64,
+    backpressure_events: AtomicU64,
+}
+
+impl PumpCounters {
+    fn observe_in_flight(&self, current: u64) {
+        self.max_in_flight
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |m| {
+                (current > m).then_some(current)
+            })
+            .ok();
+    }
+
+    fn emit(&self, elapsed: Duration) {
+        println!(
+            "{{\"pump_summary\":\"d075\",\"records_admitted\":{},\"records_retired\":{},\"max_in_flight\":{},\"pump_wakes\":{},\"app_up_bytes\":{},\"app_down_bytes\":{},\"half_close_events\":{},\"backpressure_events\":{},\"elapsed_ms\":{}}}",
+            self.records_admitted.load(Ordering::Relaxed),
+            self.records_retired.load(Ordering::Relaxed),
+            self.max_in_flight.load(Ordering::Relaxed),
+            self.pump_wakes.load(Ordering::Relaxed),
+            self.app_up_bytes.load(Ordering::Relaxed),
+            self.app_down_bytes.load(Ordering::Relaxed),
+            self.half_close_events.load(Ordering::Relaxed),
+            self.backpressure_events.load(Ordering::Relaxed),
+            elapsed.as_millis(),
+        );
     }
 }
 
@@ -660,6 +716,9 @@ fn pump(
     let gate = AckGate::new();
     let gate_up = Arc::clone(&gate);
     let shared_up = Arc::clone(&shared);
+    let counters = Arc::new(PumpCounters::default());
+    let counters_down = Arc::clone(&counters);
+    let pump_started = Instant::now();
 
     // Downloader: neko → local. Owns the reader clone; never holds the
     // shared lock across a blocking read.
@@ -670,11 +729,17 @@ fn pump(
                 Ok(Inbound::Payload { data, fin }) => {
                     last_activity = Instant::now();
                     if fin {
+                        counters_down
+                            .half_close_events
+                            .fetch_add(1, Ordering::Relaxed);
                         // Propagate the remote half-close; the local side
                         // may still send (half-close never kills the pump).
                         let _ = local_down.shutdown(Shutdown::Write);
                     } else if data.len() > 1 {
                         // data[0] is TAG_DATA; the payload follows.
+                        counters_down
+                            .app_down_bytes
+                            .fetch_add((data.len() - 1) as u64, Ordering::Relaxed);
                         if let Err(e) = local_down.write_all(&data[1..]) {
                             break Err(format!("local write: {e}"));
                         }
@@ -702,55 +767,123 @@ fn pump(
         result
     });
 
-    // Uploader: local → neko. Stop-and-wait: one record in flight, its ack
-    // arrives via the gate before the next read.
+    // Uploader: local → neko. D075: bounded ACK-driven window — fill the
+    // in-flight budget from the local socket, retire head records as
+    // their acks arrive (acks arrive in order on this carrier). Budget
+    // W=6 keeps the shared ledger within the declared max_queue_records=8
+    // (6 send + 1 transient recv + margin) without touching any ceiling.
+    const W: usize = 6;
     let mut buf = [0_u8; PUMP_CHUNK];
-    let mut pending: Option<(u64, usize)> = None;
+    let mut inflight: VecDeque<(u64, usize)> = VecDeque::new();
     let mut fin_sent = false;
     let up: Result<(), String> = loop {
-        if let Some((offset, len)) = pending {
-            if !gate_up.wait_ack(offset, len, Instant::now() + EXCHANGE_DEADLINE) {
-                break Err("ack deadline elapsed".into());
-            }
+        counters.pump_wakes.fetch_add(1, Ordering::Relaxed);
+        // Retire everything that already landed (non-blocking).
+        let mut retire_err: Option<String> = None;
+        for (offset, len) in gate_up.try_drain() {
             let mut g = shared_up.lock().unwrap();
             if let Err(e) = g.release(offset, len) {
-                break Err(e);
+                retire_err = Some(e);
+                drop(g);
+                break;
             }
-            pending = None;
-            if fin_sent {
-                // Local EOF delivered and acknowledged. The reverse
-                // direction may still be streaming: park until it resolves.
-                gate_up.park_until_dead();
-                break Ok(());
+            drop(g);
+            inflight.pop_front();
+            counters.records_retired.fetch_add(1, Ordering::Relaxed);
+        }
+        if let Some(e) = retire_err {
+            break Err(e);
+        }
+        if fin_sent && inflight.is_empty() {
+            // Local EOF delivered and acknowledged. The reverse direction
+            // may still be streaming: park until it resolves.
+            gate_up.park_until_dead();
+            break Ok(());
+        }
+        // Fill the window.
+        let mut fill_err: Option<String> = None;
+        'fill: while !fin_sent && inflight.len() < W {
+            let chunk = match local_up.read(&mut buf) {
+                Ok(0) => vec![TAG_FIN],
+                Ok(n) => {
+                    let mut frame = Vec::with_capacity(1 + n);
+                    frame.push(TAG_DATA);
+                    frame.extend_from_slice(&buf[..n]);
+                    frame
+                }
+                Err(e) if is_transient(&e) => continue,
+                Err(e) => {
+                    fill_err = Some(format!("local read: {e}"));
+                    break 'fill;
+                }
+            };
+            let fin = chunk[0] == TAG_FIN && chunk.len() == 1;
+            if !fin {
+                counters
+                    .app_up_bytes
+                    .fetch_add((chunk.len() - 1) as u64, Ordering::Relaxed);
+            }
+            let mut g = shared_up.lock().unwrap();
+            let sent = match g.send_record(&chunk) {
+                Ok(v) => v,
+                Err(e) => {
+                    fill_err = Some(e);
+                    break 'fill;
+                }
+            };
+            drop(g);
+            if fin {
+                counters.half_close_events.fetch_add(1, Ordering::Relaxed);
+                fin_sent = true;
+            }
+            counters.records_admitted.fetch_add(1, Ordering::Relaxed);
+            inflight.push_back(sent);
+            counters.observe_in_flight(inflight.len() as u64);
+        }
+        if let Some(e) = fill_err {
+            break Err(e);
+        }
+        if inflight.len() >= W {
+            counters.backpressure_events.fetch_add(1, Ordering::Relaxed);
+        }
+        // Park for the next ack batch (or death) with a deadline. An idle
+        // window (local EOF pending acks, or remote still streaming after
+        // our FIN) waits on the gate; a deadline expiry with an empty gate
+        // and no reverse traffic is fatal.
+        let deadline = Instant::now() + EXCHANGE_DEADLINE;
+        match gate_up.wait_one(deadline) {
+            Some(acks) => {
+                let mut retire_err: Option<String> = None;
+                let mut g = shared_up.lock().unwrap();
+                for (offset, len) in acks {
+                    if let Err(e) = g.release(offset, len) {
+                        retire_err = Some(e);
+                        break;
+                    }
+                    inflight.pop_front();
+                    counters.records_retired.fetch_add(1, Ordering::Relaxed);
+                }
+                drop(g);
+                if let Some(e) = retire_err {
+                    break Err(e);
+                }
+            }
+            None if fin_sent && !inflight.is_empty() => {
+                break Err("ack deadline elapsed after fin".into());
+            }
+            None if !inflight.is_empty() => {
+                break Err("ack deadline elapsed".into());
+            }
+            None => {
+                // Nothing in flight and no ack: either both directions are
+                // done (downloader closes the gate) or the peer stalled —
+                // the gate-death path above handles teardown.
+                continue;
             }
         }
-        let chunk = match local_up.read(&mut buf) {
-            Ok(0) => {
-                let frame = vec![TAG_FIN];
-                frame
-            }
-            Ok(n) => {
-                let mut frame = Vec::with_capacity(1 + n);
-                frame.push(TAG_DATA);
-                frame.extend_from_slice(&buf[..n]);
-                frame
-            }
-            Err(e) if is_transient(&e) => continue,
-            Err(e) => break Err(format!("local read: {e}")),
-        };
-        let fin = chunk[0] == TAG_FIN && chunk.len() == 1;
-        let mut g = shared_up.lock().unwrap();
-        let sent = match g.send_record(&chunk) {
-            Ok(v) => v,
-            Err(e) => break Err(e),
-        };
-        drop(g);
-        if fin {
-            fin_sent = true;
-        }
-        pending = Some(sent);
     };
     let _ = up;
+    counters.emit(pump_started.elapsed());
     down.join().map_err(|_| "downloader panicked".to_string())?
 }
 
