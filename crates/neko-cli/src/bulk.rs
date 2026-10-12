@@ -264,8 +264,14 @@ pub(super) fn server(args: &[String]) {
                 // but its element then fails the 18B header shape — the
                 // ProcessMessage decode rejects it, preserving the
                 // original behavior for that compat shape).
+                // FIX (regression found by anchor re-run): open_large
+                // consumes the receive counter on crypto success even when
+                // the header shape below rejects — a small-tier batch frame
+                // then fails its real open_batch as a replay. Gate the
+                // attempt on large_mode so default tiers never pay it.
                 let large_data_len = cfg.record_bytes - 18;
-                if let Ok(body) = secure.open_large(&frame)
+                if large_mode
+                    && let Ok(body) = secure.open_large(&frame)
                     && body.len() >= 18
                 {
                     let stream_id = u64::from_be_bytes(body[..8].try_into().unwrap());
