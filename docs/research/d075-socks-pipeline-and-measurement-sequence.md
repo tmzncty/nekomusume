@@ -15,6 +15,15 @@ The current SOCKS5 research entry still has a deliberately simple per-record sto
 
 This note fixes the order and acceptance questions for that work.
 
+## Review reconciliation (2026-10-12)
+
+Team review against the Oct-11/12 field data adds two constraints to the original proposal:
+
+1. **R1 is no longer an open "does a per-record tax exist?" experiment.** The D074 errata at `5308426` already records substantial field evidence: the residual per-record tax is about 10-15%, with large-record gains observed across the retained loopback/LAN/mesh evidence. PR 2 is therefore narrowed to the still-missing observability needed to characterize that residual cost, not to repeat the already-answered throughput question.
+2. **The N=2 ~70% scheduling threshold is not trustworthy without a path re-anchor.** A path clamp near ~1.9 Mbps can make an N=2 result look ~72% linear and therefore falsely green. Before an N=2 result is interpreted, the same environment must pass a dual-anchor re-check against the retained TCP bulk 15.6 anchor and UDP windowed 1.32 anchor (or explicitly record that the anchors no longer reproduce and stop the multistream interpretation).
+
+These are governance refinements, not scope expansion.
+
 ---
 
 ## PR 1 — D075: replace SOCKS per-record stop-and-wait with a bounded ACK-driven pipeline
@@ -91,11 +100,13 @@ If the pipeline implementation reaches the same throughput region as the old pum
 
 ---
 
-## PR 2 — R1 large-record measurement closeout
+## PR 2 — R1 large-record observability closeout
 
 ### Question
 
-Does increasing record size actually amortize a fixed per-record cost, and where does the benefit stop?
+What is the shape and cost of the already-observed residual per-record tax after the Oct-11 R1 field run?
+
+The core throughput question has already been substantially answered by retained D074 errata evidence (`5308426`): large records produced measurable gains and the remaining per-record component is estimated at roughly 10-15% of the residual. This PR must **not** repeat a broad 1170/4096/14336/28672 throughput campaign merely to rediscover that conclusion.
 
 The implementation already exposes the measurement-gated record tiers:
 
@@ -104,28 +115,27 @@ The implementation already exposes the measurement-gated record tiers:
 - 14336 bytes;
 - 28672 bytes.
 
-This PR should prefer measurement and evidence capture over new transport behavior.
+Use only the minimum reruns needed to collect missing observables under comparable conditions.
 
-### Minimum matrix
+### Missing observables to close
 
-For each tier, under the same host pair / route / payload total / build:
+Where reproducibly and cheaply available, collect:
 
-- application throughput;
-- wall-clock duration;
-- records per second;
-- CPU time or CPU utilization when reproducibly available;
-- send/receive syscall counts when reproducibly available;
-- encryption/seal/open calls per transferred MiB when cheaply observable;
-- p50/p95 record completion latency if the existing instrumentation can expose it without perturbing the test materially.
+- CPU time or CPU utilization;
+- send/receive syscall counts;
+- encryption `seal`/`open` calls per transferred MiB;
+- p50/p95 record completion latency.
+
+Application throughput, wall-clock duration, and records/s may be retained as control fields for comparability, but they are **controls**, not the primary question of this PR.
 
 ### Interpretation rule
 
-The result must distinguish at least these cases:
+The result should characterize the residual cost rather than re-adjudicate whether the per-record tax exists:
 
-- **throughput scales roughly with record size:** strong evidence for a per-record tax;
-- **CPU drops but throughput does not rise:** path or pacing dominates;
-- **neither CPU nor throughput changes materially:** the hypothesized record tax is not the active limiter;
-- **large tiers regress or destabilize:** keep the optimization research-only and investigate framing/buffering effects before any wider use.
+- **CPU/syscall/encryption-call cost falls with larger records:** supports fixed per-record work as part of the residual;
+- **latency distribution dominates while CPU/syscall cost is flat:** points away from local fixed work and toward path/scheduling effects;
+- **observability materially perturbs the workload:** record a typed inconclusive result rather than treating the instrumented run as equivalent to the field baseline;
+- **large tiers regress or destabilize during the control rerun:** stop and investigate framing/buffering behavior; do not widen use.
 
 Do not promote a large tier into a default path from this PR.
 
@@ -176,6 +186,17 @@ A successful PR narrows the unexplained latency to one or two stages strongly en
 
 Is the remaining UDP bottleneck per-flow/per-socket enough that one additional independent stream yields useful parallelism, or is the path dominated by a shared queue/resource?
 
+### Mandatory precondition — dual-anchor re-anchor
+
+Do **not** interpret an N=2 result until the test environment has first reproduced the retained path anchors with the same relevant route/topology class and no code change intended to affect them:
+
+- TCP bulk control: approximately **15.6** retained anchor;
+- UDP windowed single-stream control: approximately **1.32** retained anchor.
+
+The purpose is not to require exact floating-point equality. It is to detect a materially different path regime before applying the multistream scheduling threshold.
+
+If either control is materially displaced, classify the N=2 test as **path-confounded** and stop. Re-anchor or explain the path change first. A result such as ~1.9 Mbps total that happens to compute to ~72% of ideal linear gain is not sufficient evidence by itself; the D074 errata demonstrates that a shared path clamp can create that false green.
+
 ### Scope
 
 Implement only the smallest useful probe:
@@ -188,12 +209,13 @@ Each stream must retain independent state where D074 requires it, including its 
 
 ### Decision rule
 
-Use the single-stream controlled baseline from the same build and path.
+Only after the dual-anchor precondition passes, use the single-stream controlled baseline from the same build and path.
 
-- If N=2 delivers at least ~70% of ideal linear gain under the controlled probe, a later PR may justify the N=4/8 matrix.
+- If N=2 delivers at least ~70% of ideal linear gain **and** neither anchor indicates a path clamp/regime change, a later PR may justify the N=4/8 matrix.
 - If N=2 is heavily discounted, stop. First identify the shared limiter (path queue, gateway PPS, server loop, CPU, or another shared resource).
+- If N=2 numerically clears ~70% but the dual anchors fail, the result is **not green**; it is path-confounded.
 
-The ~70% value is a scheduling threshold for whether a larger matrix is worth engineering effort, not a protocol performance promise.
+The ~70% value is only a scheduling threshold for whether a larger matrix is worth engineering effort, not a protocol performance promise and not a substitute for path validation.
 
 ---
 
@@ -214,9 +236,9 @@ Those are separate questions. The immediate goal is to make the existing TCP/UDP
 ## Recommended execution order
 
 1. D075 SOCKS bounded ACK-driven pipeline;
-2. R1 large-record measurement closeout;
+2. R1 missing-observables closeout only;
 3. UDP secondary-limiter timing isolation;
-4. UDP N=2 multistream probe;
+4. dual-anchor re-anchor, then UDP N=2 multistream probe if the path controls pass;
 5. only then decide whether N=4/8, further ACK/pacing work, or another path-specific change is justified.
 
 This ordering is intentionally evidence-driven: each PR should either improve one known bottleneck or falsify the hypothesis that motivated it.
