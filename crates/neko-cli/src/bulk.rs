@@ -20,6 +20,7 @@ const DEFAULT_BYTES_TOTAL: usize = 64 << 20; // 64 MiB
 const MAX_BYTES_TOTAL: usize = neko_session::MEASUREMENT_MAX_RUNTIME_TOTAL_BYTES;
 const RATE_WINDOW: Duration = Duration::from_millis(100);
 
+#[derive(Clone)]
 struct BulkConfig {
     port: u16,
     bytes_total: usize,
@@ -27,6 +28,10 @@ struct BulkConfig {
     /// None = unthrottled; Some(bytes/sec)
     rate_limit: Option<usize>,
     duration: Duration,
+    /// W5 (D077): fixed stream count for socket-per-stream multi-stream
+    /// bulk. Default 1 keeps the anchor command line byte-compatible with
+    /// the single-stream legacy path; multi-stream must be explicit.
+    streams: u32,
 }
 
 fn config(args: &[String]) -> Result<BulkConfig, &'static str> {
@@ -82,12 +87,23 @@ fn config(args: &[String]) -> Result<BulkConfig, &'static str> {
     if duration == 0 || duration > crate::MEASUREMENT_DURATION_MAX {
         return Err("duration outside 1-86400");
     }
+    // W5 (D077): fixed stream count, socket-per-stream, no adaptive
+    // selection (the N=2->N=4 jump mechanism is recorded as an open
+    // question for a possible phase 2). Default 1 = legacy single path.
+    let streams = num("--streams", "1")? as u32;
+    if !matches!(streams, 1 | 2 | 4 | 8) {
+        return Err("streams must be one of 1, 2, 4, 8");
+    }
+    if bytes_total / stride < streams as usize {
+        return Err("bytes-total too small for --streams (fewer records than streams)");
+    }
     Ok(BulkConfig {
         port,
         bytes_total,
         record_bytes,
         rate_limit,
         duration: Duration::from_secs(duration),
+        streams,
     })
 }
 
@@ -169,6 +185,10 @@ pub(super) fn server(args: &[String]) {
     crate::measurement::emit_marker();
     println!("measurement_limits_exceptions=total_bytes,queue_records,queue_bytes");
     let cfg = config(args).unwrap_or_else(|e| fail(e));
+    if cfg.streams > 1 {
+        server_multi(&cfg, args);
+        return;
+    }
     let client_key = peer_public_key(&parse(args, "--client-key", None));
     let bind = parse(args, "--bind", Some(&format!("0.0.0.0:{}", cfg.port)))
         .parse::<SocketAddr>()
@@ -373,6 +393,10 @@ pub(super) fn client(args: &[String]) {
     crate::measurement::emit_marker();
     println!("measurement_limits_exceptions=total_bytes,queue_records,queue_bytes");
     let cfg = config(args).unwrap_or_else(|e| fail(e));
+    if cfg.streams > 1 {
+        client_multi(&cfg, args);
+        return;
+    }
     let addr = parse(args, "--addr", None)
         .parse::<SocketAddr>()
         .unwrap_or_else(|_| fail("bad address"));
@@ -563,6 +587,486 @@ pub(super) fn client(args: &[String]) {
     );
 }
 
+/// W5 (D077) shard split: deterministic global-record split for stream k
+/// of N. Both sides derive the same split from (total_records, streams)
+/// alone — no negotiation on the wire. Remainder spreads across the first
+/// `rem` streams so chunks differ by at most one record.
+pub(super) fn shard(total_records: usize, streams: u32, k: u32) -> (usize, usize) {
+    let n = streams as usize;
+    debug_assert!(n > 0 && (k as usize) < n && total_records >= n);
+    let base = total_records / n;
+    let rem = total_records % n;
+    let count = base + usize::from((k as usize) < rem);
+    let start = k as usize * base + (k as usize).min(rem);
+    (start, count)
+}
+
+/// W5 (D077): socket-per-stream multi-stream server. N authenticated
+/// connections are accepted in arrival order; the k-th connection owns
+/// shard k of the deterministic global split. Wire offsets stay LOCAL
+/// (0-based per connection — the SessionRuntime contract is untouched);
+/// the global record identity rides in the deterministic payload
+/// (`payload_block(global_index)`), validated here by shifting the
+/// expectation by the shard's base. Each thread emits its own sealed
+/// per-stream receipt (legacy single-connection mechanism unchanged);
+/// the aggregate line is the conjunction — any stream death fails the
+/// process (fail-closed, same discipline as the single path).
+fn server_multi(cfg: &BulkConfig, args: &[String]) {
+    let client_key = peer_public_key(&parse(args, "--client-key", None));
+    let bind = parse(args, "--bind", Some(&format!("0.0.0.0:{}", cfg.port)))
+        .parse::<SocketAddr>()
+        .unwrap_or_else(|_| fail("bad bind address"));
+    let shutdown = install_shutdown();
+    let id = load_or_generate(&PathBuf::from(parse(
+        args,
+        "--identity",
+        Some("neko-server.identity"),
+    )));
+    println!("server_public_key={}", hex(id.public_key()));
+    let policy = TrustPolicy::new(vec![TrustRecord {
+        version: 1,
+        public_key: client_key,
+        scope: b"probe".to_vec(),
+        status: TrustStatus::Active,
+    }]);
+    let listener = TcpListener::bind(bind).unwrap_or_else(|_| fail("bind failed"));
+    listener.set_nonblocking(true).unwrap();
+    println!(
+        "bulk_server_ready transport=tcp port={} streams={}",
+        cfg.port, cfg.streams
+    );
+    let start = Instant::now();
+    let deadline = start + cfg.duration;
+    let large_mode = [4096_usize, 14_336, 28_672].contains(&cfg.record_bytes);
+    let stride = if large_mode {
+        cfg.record_bytes - 18
+    } else {
+        cfg.record_bytes
+    };
+    let total_records = cfg.bytes_total / stride;
+    let frame_bound = neko_crypto::MAX_BATCH_PLAINTEXT + neko_crypto::RECORD_SEAL_OVERHEAD + 128;
+    // Accept + authenticate N connections in arrival order; the k-th
+    // authenticated connection becomes shard k (the client connects
+    // sequentially in stream order, so arrival order == stream index).
+    let mut authed: Vec<(TcpStream, neko_crypto::SecureSession, FramedReader)> = Vec::new();
+    while (authed.len() as u32) < cfg.streams
+        && Instant::now() < deadline
+        && !shutdown.load(Ordering::Acquire)
+    {
+        match listener.accept() {
+            Ok((mut stream, _peer)) => {
+                apply_f1_nodelay(&stream);
+                stream
+                    .set_read_timeout(Some(Duration::from_millis(100)))
+                    .unwrap();
+                let mut framed = FramedReader::new(PROCESS_FRAME_MAX + 128);
+                match handshake_server(&mut stream, &mut framed, deadline, &id, policy.clone()) {
+                    Ok(secure) => {
+                        framed.set_max_frame_len(frame_bound).unwrap();
+                        println!(
+                            "bulk_server_authenticated_stream k={} session=7301 stream=1",
+                            authed.len()
+                        );
+                        authed.push((stream, secure, framed));
+                    }
+                    Err(reason) => {
+                        println!("bulk_server_rejected reason={reason}");
+                        let _ = stream.shutdown(Shutdown::Both);
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => fail("accept failed"),
+        }
+    }
+    if (authed.len() as u32) < cfg.streams {
+        fail("duration expired before all streams authenticated");
+    }
+    let shutdown_threads = shutdown.clone();
+    let mut handles = Vec::new();
+    for (k, (mut stream, mut secure, mut framed)) in authed.into_iter().enumerate() {
+        let (base_k, count_k) = shard(total_records, cfg.streams, k as u32);
+        let cfg_t = cfg.clone();
+        let shutdown_t = shutdown_threads.clone();
+        handles.push(std::thread::spawn(move || {
+            let thread_anchor = Instant::now();
+            let mut runtime = neko_session::SessionRuntime::new_measurement(
+                SESSION,
+                limits(&cfg_t),
+                thread_anchor.elapsed().as_millis() as u64,
+            )
+            .unwrap();
+            runtime
+                .open_stream(STREAM, thread_anchor.elapsed().as_millis() as u64)
+                .unwrap();
+            let large_data_len = cfg_t.record_bytes - 18;
+            let mut hasher = Sha256::new();
+            let mut received = 0usize;
+            let mut received_bytes = 0usize;
+            while received < count_k && Instant::now() < deadline && !shutdown_t.load(Ordering::Acquire)
+            {
+                match framed.read_until(&mut stream, deadline) {
+                    Ok(FrameRead::Complete(frame)) => {
+                        // Large tier: wire offset is the connection-LOCAL
+                        // record index; the expected payload is the GLOBAL
+                        // index's deterministic block (shard base shift).
+                        if large_mode
+                            && let Ok(body) = secure.open_large(&frame)
+                            && body.len() >= 18
+                        {
+                            let stream_id =
+                                u64::from_be_bytes(body[..8].try_into().unwrap());
+                            let offset =
+                                u64::from_be_bytes(body[8..16].try_into().unwrap());
+                            let len =
+                                u16::from_be_bytes(body[16..18].try_into().unwrap()) as usize;
+                            if stream_id == STREAM.0
+                                && body.len() == 18 + len
+                                && offset == (received as u64) * large_data_len as u64
+                                && len == large_data_len
+                            {
+                                let expected = payload_block(
+                                    (base_k + received) as u64,
+                                    len,
+                                );
+                                if body[18..] != expected[..] {
+                                    fail("bulk payload checksum mismatch");
+                                }
+                                hasher.update(&body[18..]);
+                                received += 1;
+                                received_bytes += len;
+                                continue;
+                            }
+                        }
+                        let plains: Vec<Vec<u8>> = match secure.open_batch(&frame) {
+                            Ok(records) => records,
+                            Err(_) => match secure.open_unreliable(&frame) {
+                                Ok(single) => vec![single],
+                                Err(_) => fail("unauthenticated bulk data"),
+                            },
+                        };
+                        for plain in plains {
+                            let ProcessMessage::Data { session, record } =
+                                ProcessMessage::decode(&plain)
+                                    .unwrap_or_else(|_| fail("malformed bulk data"))
+                            else {
+                                fail("expected bulk data");
+                            };
+                            if session != SESSION || record.stream != STREAM {
+                                fail("bulk record outside contract");
+                            }
+                            // Global identity from the LOCAL wire offset
+                            // shifted by this shard's base — payload must
+                            // match the deterministic global block.
+                            let global_index = base_k as u64
+                                + record.offset / cfg_t.record_bytes as u64;
+                            let expected =
+                                payload_block(global_index, cfg_t.record_bytes);
+                            if record.data != expected {
+                                fail("bulk payload checksum mismatch");
+                            }
+                            runtime
+                                .receive(
+                                    InboundRecord {
+                                        stream: record.stream,
+                                        offset: record.offset,
+                                        data: record.data.clone(),
+                                    },
+                                    thread_anchor.elapsed().as_millis() as u64,
+                                )
+                                .unwrap_or_else(|_| fail("bulk record rejected by runtime"));
+                            let _ = runtime.pop_receive(thread_anchor.elapsed().as_millis() as u64);
+                            hasher.update(&record.data);
+                            received += 1;
+                            received_bytes += record.data.len();
+                        }
+                    }
+                    Ok(FrameRead::Deadline) => continue,
+                    Ok(FrameRead::CleanEof) | Ok(FrameRead::Truncated) | Err(_) => break,
+                }
+            }
+            if received < count_k {
+                fail(&format!(
+                    "stream {k} truncated: {received}/{count_k} records"
+                ));
+            }
+            let digest = hex(&hasher.finalize()[..]);
+            println!(
+                "bulk_server_stream k={k} records={received} bytes={received_bytes} sha256={digest}"
+            );
+            // Per-stream receipt: same sealed ProcessMessage frame the
+            // single path sends (client thread verifies counts+digest).
+            let receipt = format!(
+                "{{\"ok\":true,\"role\":\"bulk-server\",\"stream\":{k},\"records\":{received},\"bytes\":{received_bytes},\"sha256\":\"{digest}\"}}"
+            );
+            let receipt_record = neko_session::OutboundRecord {
+                stream: STREAM,
+                offset: 0,
+                data: receipt.into_bytes(),
+            };
+            let receipt_plain = ProcessMessage::Data {
+                session: SESSION,
+                record: receipt_record,
+            }
+            .encode()
+            .unwrap();
+            let receipt_frame = secure
+                .seal_unreliable(&receipt_plain)
+                .unwrap_or_else(|_| fail("receipt seal failed"));
+            write_frame_single(&mut stream, &receipt_frame)
+                .unwrap_or_else(|_| fail("receipt send failed"));
+            let _ = stream.shutdown(Shutdown::Both);
+            (k, received, received_bytes, digest)
+        }));
+    }
+    let mut per_stream = Vec::new();
+    let mut records_sum = 0usize;
+    let mut bytes_sum = 0usize;
+    for h in handles {
+        let (k, r, b, d) = h
+            .join()
+            .unwrap_or_else(|_| fail("receiver thread panicked"));
+        per_stream.push(format!(
+            "{{\"k\":{k},\"records\":{r},\"bytes\":{b},\"sha256\":\"{d}\"}}"
+        ));
+        records_sum += r;
+        bytes_sum += b;
+    }
+    let aggregate = format!(
+        "{{\"ok\":true,\"role\":\"bulk-server\",\"streams\":{},\"records\":{},\"bytes\":{},\"per_stream\":[{}]}}",
+        cfg.streams,
+        records_sum,
+        bytes_sum,
+        per_stream.join(",")
+    );
+    println!("bulk_server_summary {aggregate}");
+}
+
+/// W5 (D077): client half of socket-per-stream bulk. Connections are made
+/// sequentially in stream order (arrival order on the server == shard k);
+/// each worker thread then sends its shard and verifies the server's
+/// per-stream receipt. The aggregate line is printed after all threads
+/// join; `all_confirmed=true` requires every per-stream receipt ok.
+/// rate-limit is PER-STREAM (documented; no auto-split in phase 1).
+fn client_multi(cfg: &BulkConfig, args: &[String]) {
+    let addr = parse(args, "--addr", None)
+        .parse::<SocketAddr>()
+        .unwrap_or_else(|_| fail("bad address"));
+    let server_key = peer_public_key(&parse(args, "--server-key", None));
+    let shutdown = install_shutdown();
+    let id = load_or_generate(&PathBuf::from(parse(
+        args,
+        "--identity",
+        Some("neko-client.identity"),
+    )));
+    println!("client_public_key={}", hex(id.public_key()));
+    let start = Instant::now();
+    let deadline = start + cfg.duration;
+    let large_tier = [4096_usize, 14_336, 28_672].contains(&cfg.record_bytes);
+    let data_len = if large_tier {
+        cfg.record_bytes - 18
+    } else {
+        cfg.record_bytes
+    };
+    let total_records = cfg.bytes_total / data_len;
+    // Sequential connect+handshake in stream order: shard k on the server
+    // is exactly the k-th connection made here.
+    let mut workers: Vec<(TcpStream, neko_crypto::SecureSession, FramedReader)> = Vec::new();
+    for k in 0..cfg.streams {
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))
+            .unwrap_or_else(|_| fail("connect failed"));
+        apply_f1_nodelay(&stream);
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let mut framed = FramedReader::new(PROCESS_FRAME_MAX + 128);
+        let secure = crate::periodic::handshake_client(
+            &mut stream,
+            &mut framed,
+            start + Duration::from_secs(10),
+            &id,
+            &server_key,
+        );
+        framed.set_max_frame_len(PROCESS_FRAME_MAX + 128).unwrap();
+        println!("bulk_client_authenticated_stream k={k} session=7301 stream=1");
+        workers.push((stream, secure, framed));
+    }
+    println!(
+        "bulk_client_authenticated streams={} session=7301 stream=1",
+        cfg.streams
+    );
+    let batch_n = parse(args, "--batch-n", Some("8"))
+        .parse::<usize>()
+        .unwrap_or_else(|_| fail("--batch-n must be an integer 1-64"));
+    if !(1..=64).contains(&batch_n) {
+        fail("--batch-n must be within 1-64");
+    }
+    let mut handles = Vec::new();
+    for (k, (mut stream, mut secure, mut framed)) in workers.into_iter().enumerate() {
+        let (base_k, count_k) = shard(total_records, cfg.streams, k as u32);
+        let cfg_t = cfg.clone();
+        let shutdown_t = shutdown.clone();
+        handles.push(std::thread::spawn(move || {
+            let thread_anchor = Instant::now();
+            let mut runtime = neko_session::SessionRuntime::new_measurement(
+                SESSION,
+                limits(&cfg_t),
+                thread_anchor.elapsed().as_millis() as u64,
+            )
+            .unwrap();
+            runtime
+                .open_stream(STREAM, thread_anchor.elapsed().as_millis() as u64)
+                .unwrap();
+            let mut sent = 0usize;
+            let mut sent_bytes = 0usize;
+            let mut window_bytes = 0usize;
+            let mut window_start = Instant::now();
+            let mut pending: Vec<Vec<u8>> = Vec::with_capacity(batch_n);
+            let flush_batch =
+                |pending: &mut Vec<Vec<u8>>,
+                 stream: &mut TcpStream,
+                 secure: &mut neko_crypto::SecureSession| {
+                    if pending.is_empty() {
+                        return;
+                    }
+                    let refs: Vec<&[u8]> = pending.iter().map(|v| v.as_slice()).collect();
+                    let encrypted = secure
+                        .seal_batch(&refs)
+                        .unwrap_or_else(|_| fail("batch seal failed"));
+                    write_frame_single(stream, &encrypted)
+                        .unwrap_or_else(|_| fail("bulk batch send failed"));
+                    pending.clear();
+                };
+            while sent < count_k && Instant::now() < deadline && !shutdown_t.load(Ordering::Acquire)
+            {
+                if let Some(rate) = cfg_t.rate_limit
+                    && window_bytes >= rate
+                {
+                    let elapsed = window_start.elapsed();
+                    if elapsed < RATE_WINDOW {
+                        std::thread::sleep(RATE_WINDOW - elapsed);
+                    }
+                    window_bytes = 0;
+                    window_start = Instant::now();
+                }
+                // Global record identity drives the deterministic payload;
+                // the wire offset stays LOCAL (runtime-assigned).
+                let global_index = (base_k + sent) as u64;
+                let payload = payload_block(global_index, data_len);
+                if large_tier {
+                    let mut body = Vec::with_capacity(18 + payload.len());
+                    body.extend_from_slice(&STREAM.0.to_be_bytes());
+                    body.extend_from_slice(&((sent as u64) * data_len as u64).to_be_bytes());
+                    body.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+                    body.extend_from_slice(&payload);
+                    debug_assert_eq!(body.len(), cfg_t.record_bytes);
+                    let sealed = secure
+                        .seal_large(&body)
+                        .unwrap_or_else(|_| fail("large seal failed"));
+                    write_frame_single(&mut stream, &sealed)
+                        .unwrap_or_else(|_| fail("bulk large send failed"));
+                    sent += 1;
+                    sent_bytes += data_len;
+                    window_bytes += data_len;
+                    continue;
+                }
+                runtime
+                    .queue_send(STREAM, &payload, thread_anchor.elapsed().as_millis() as u64)
+                    .unwrap_or_else(|_| fail("bulk queue rejected"));
+                let record = runtime
+                    .pop_send(thread_anchor.elapsed().as_millis() as u64)
+                    .unwrap()
+                    .unwrap();
+                let plain = ProcessMessage::Data {
+                    session: SESSION,
+                    record,
+                }
+                .encode()
+                .unwrap();
+                if batch_n > 1 {
+                    let incoming = 4 + plain.len();
+                    let staged_after =
+                        4 + pending.iter().map(|p| 4 + p.len()).sum::<usize>() + incoming;
+                    if staged_after > neko_crypto::MAX_BATCH_PLAINTEXT.saturating_sub(64) {
+                        flush_batch(&mut pending, &mut stream, &mut secure);
+                    }
+                    pending.push(plain);
+                    if pending.len() >= batch_n {
+                        flush_batch(&mut pending, &mut stream, &mut secure);
+                    }
+                } else {
+                    let encrypted = secure
+                        .seal_unreliable(&plain)
+                        .unwrap_or_else(|_| fail("payload too large"));
+                    write_frame_single(&mut stream, &encrypted)
+                        .unwrap_or_else(|_| fail("bulk send failed"));
+                }
+                sent += 1;
+                sent_bytes += cfg_t.record_bytes;
+                window_bytes += cfg_t.record_bytes;
+            }
+            if sent < count_k {
+                fail(&format!(
+                    "stream {k} truncated before shard completion: {sent}/{count_k}"
+                ));
+            }
+            flush_batch(&mut pending, &mut stream, &mut secure);
+            let _ = stream.shutdown(Shutdown::Write);
+            let receipt: Option<String> = match framed
+                .read_until(&mut stream, Instant::now() + Duration::from_secs(10))
+            {
+                Ok(FrameRead::Complete(frame)) => secure
+                    .open_unreliable(&frame)
+                    .ok()
+                    .and_then(|plain| ProcessMessage::decode(&plain).ok())
+                    .and_then(|msg| match msg {
+                        ProcessMessage::Data { record, .. } => String::from_utf8(record.data).ok(),
+                        _ => None,
+                    }),
+                _ => None,
+            };
+            (k, sent, sent_bytes, receipt)
+        }));
+    }
+    let mut results = Vec::new();
+    for h in handles {
+        let r = h.join().unwrap_or_else(|_| fail("sender thread panicked"));
+        results.push(r);
+    }
+    let sent_total: usize = results.iter().map(|r| r.1).sum();
+    let bytes_total_sent: usize = results.iter().map(|r| r.2).sum();
+    let all_confirmed = results
+        .iter()
+        .all(|r| r.3.as_deref().is_some_and(|s| s.contains("\"ok\":true")));
+    let per_stream: Vec<String> = results
+        .iter()
+        .map(|(k, s, b, rcpt)| {
+            format!(
+                "{{\"k\":{k},\"records\":{s},\"bytes\":{b},\"receipt\":{}}}",
+                rcpt.as_deref().unwrap_or("\"unverified\"")
+            )
+        })
+        .collect();
+    let elapsed = start.elapsed();
+    let goodput_bps = if elapsed.as_secs_f64() > 0.0 {
+        (bytes_total_sent as f64 / elapsed.as_secs_f64()) as u64
+    } else {
+        0
+    };
+    println!(
+        "bulk_client_summary streams={} sent_records={} sent_bytes={} goodput_bps={} elapsed_ms={} all_confirmed={} per_stream=[{}]",
+        cfg.streams,
+        sent_total,
+        bytes_total_sent,
+        goodput_bps,
+        elapsed.as_millis(),
+        all_confirmed,
+        per_stream.join(",")
+    );
+}
+
 use std::net::TcpStream;
 
 /// F1 (review-2026-10-08, Yvonne ADR §0): per-record stop-and-wait writes a
@@ -590,6 +1094,36 @@ mod tests {
     //! is CPU-paced. Two pins: the helper actually flips the socket flag, and
     //! every fixture file still carries its call sites.
     use std::net::{TcpListener, TcpStream};
+
+    /// W5 (D077): the deterministic shard split covers the record space
+    /// exactly once across all streams — disjoint, ordered, and stable for
+    /// both sides to derive independently from (total, streams) alone.
+    #[test]
+    fn shard_split_covers_exactly_once() {
+        for (total, n) in [
+            (40_usize, 4_u32),
+            (41, 4),
+            (10, 2),
+            (8, 8),
+            (3, 2),
+            (100, 8),
+        ] {
+            let mut covered = std::collections::BTreeSet::new();
+            for k in 0..n {
+                let (start, count) = super::shard(total, n, k);
+                for i in start..start + count {
+                    assert!(
+                        covered.insert(i),
+                        "overlap at {i} (total={total} n={n} k={k})"
+                    );
+                }
+            }
+            assert_eq!(covered.len(), total, "full cover (total={total} n={n})");
+            assert_eq!(*covered.last().unwrap(), total - 1);
+        }
+        // legacy single-stream shape
+        assert_eq!(super::shard(40, 1, 0), (0, 40));
+    }
 
     #[test]
     fn f1_nodelay_helper_flips_socket_flag() {
