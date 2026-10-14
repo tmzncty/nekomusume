@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::time::Duration;
 
 static PORT_LOCK: Mutex<()> = Mutex::new(());
 
@@ -206,12 +207,31 @@ fn multistream_transfer_completes_on_loopback() {
         "every per-stream receipt must confirm: {cstdout}"
     );
 
-    // drain server stdout after kill: per-stream lines + aggregate line
-    drop(server);
+    // drain server stdout: per-stream lines + aggregate line. The client
+    // exits once it holds all per-stream receipts — on a slow runner the
+    // server main thread may not have joined and printed the summary yet,
+    // so killing first races the print (CI-only failure). Read through a
+    // channel with a deadline and only kill after the aggregate line (or
+    // timeout, which then fails the assertion with evidence).
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for l in lines.by_ref().flatten() {
+            if tx.send(l).is_err() {
+                break;
+            }
+        }
+    });
     let mut srv_lines = Vec::new();
-    for l in lines.by_ref().flatten() {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while let Ok(l) = rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+    {
+        let done = l.starts_with("bulk_server_summary");
         srv_lines.push(l);
+        if done {
+            break;
+        }
     }
+    drop(server);
     let stream_shas: Vec<String> = srv_lines
         .iter()
         .filter_map(|l| l.strip_prefix("bulk_server_stream"))

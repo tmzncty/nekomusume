@@ -10,6 +10,21 @@ fi
 
 cargo fmt --all -- --check
 cargo check --workspace --locked
+# socks_d075 acceptance tests bind a NON-internal target address for the
+# whitelist/dialer contract (the dev box carries 198.18.0.1 on its TUN;
+# RFC 2544 range is deliberately outside the internal-refusal list). CI
+# runners have neither the TUN nor any other bindable non-internal
+# address (Azure 10.x/172.x are all refused), so alias it onto lo with
+# the passwordless sudo the hosted runners provide. Idempotent; skipped
+# silently when the address already exists or sudo is unavailable.
+if ! ip -4 addr list 2>/dev/null | grep -q '198\.18\.0\.1/' && [ "${NEKO_SKIP_TEST_ALIAS:-0}" != "1" ]; then
+    sudo -n ip addr add 198.18.0.1/32 dev lo 2>/dev/null || true
+fi
+# tools/impair-proxy is a standalone crate (deliberately NOT a workspace
+# member); the bulk_d070_udp loss tests hard-require its release binary at
+# tools/impair-proxy/target/release/. Build it here so local and CI runs
+# share one preparation point.
+cargo build --release --locked --manifest-path tools/impair-proxy/Cargo.toml
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 

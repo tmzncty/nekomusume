@@ -577,7 +577,7 @@ pub(super) fn client(args: &[String]) {
     // after the W5 N=4 evidence run cross-checked it against a NIC counter
     // (408 Mbit/s wire vs 30.9M field value on the same transfer). Mbps =
     // value * 8 / 1e6.
-    let goodput_Bps = if elapsed.as_secs_f64() > 0.0 {
+    let goodput_bps = if elapsed.as_secs_f64() > 0.0 {
         (sent_bytes as f64 / elapsed.as_secs_f64()) as u64
     } else {
         0
@@ -586,7 +586,7 @@ pub(super) fn client(args: &[String]) {
         "bulk_client_summary sent_records={} sent_bytes={} goodput_Bps={} elapsed_ms={} server_receipt={}",
         sent,
         sent_bytes,
-        goodput_Bps,
+        goodput_bps,
         elapsed.as_millis(),
         receipt.unwrap_or_else(|| "unverified".to_string())
     );
@@ -1056,7 +1056,7 @@ fn client_multi(cfg: &BulkConfig, args: &[String]) {
         .collect();
     let elapsed = start.elapsed();
     // bytes/second (see single-path note above — same formula, same fix)
-    let goodput_Bps = if elapsed.as_secs_f64() > 0.0 {
+    let goodput_bps = if elapsed.as_secs_f64() > 0.0 {
         (bytes_total_sent as f64 / elapsed.as_secs_f64()) as u64
     } else {
         0
@@ -1066,7 +1066,7 @@ fn client_multi(cfg: &BulkConfig, args: &[String]) {
         cfg.streams,
         sent_total,
         bytes_total_sent,
-        goodput_Bps,
+        goodput_bps,
         elapsed.as_millis(),
         all_confirmed,
         per_stream.join(",")

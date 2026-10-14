@@ -2097,9 +2097,24 @@ impl ProcessPreauthAdmission {
         {
             return Err(SessionRejected);
         }
-        let controller_id = NEXT_PREAUTH_CONTROLLER_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .map_err(|_| SessionRejected)?;
+        // fetch_update was renamed try_update on newer stable toolchains
+        // (2026-10) and the rename is deprecated-as-error under -D warnings;
+        // a plain CAS loop compiles on every version and needs no cfg gate.
+        let mut current = NEXT_PREAUTH_CONTROLLER_ID.load(Ordering::Relaxed);
+        let controller_id = loop {
+            let Some(next) = current.checked_add(1) else {
+                return Err(SessionRejected);
+            };
+            match NEXT_PREAUTH_CONTROLLER_ID.compare_exchange(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break current,
+                Err(observed) => current = observed,
+            }
+        };
         Ok(Self {
             limits,
             controller_id,
