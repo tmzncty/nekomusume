@@ -1891,5 +1891,49 @@ panic、大记录渗入 ProcessMessage、N 流 ACK 串扰、资源×N 越顶、�
 
 <!-- D076-end -->
 
+---
+
+## 2026-10-14 — D077：W5 多流 bulk 实现与验收（D076 门控后的开工定案）
+
+**Status: Accepted**
+
+### 问题
+
+D076 通过 W5 重启门控（双锚恢复 + per-connection 收益场景明确）。开工范围收紧：固定流数、防过度设计；N=2→N=4 跳变机制（流数阈值 vs 拥塞协同）留二期。
+
+### 决定（设计三决定 + 默认值裁定）
+
+1. **socket-per-stream**：每流独立 TCP 连接/handshake/SecureSession/SessionRuntime，零 wire 改动。每流在外部看就是现有单流 bulk。
+2. **全局顺序分片**（非 round-robin）：流 i 拿不相交区间 [i·chunk,(i+1)·chunk)，两侧从 (total,streams) 独立确定性推导，无协商。**wire offset 保持连接本地 0 基**（SessionRuntime 契约零改动），全局记录身份由确定性 payload（`payload_block(global_index)`）承载，服务端按 shard 基数平移校验。客户端按流号顺序 connect+握手 → 到达序=流号=shard 号。
+3. **聚合 receipt = 合取**：每流独立 SHA-256 receipt（现有机制不动），任一流死/超时→ok=false 且进程退出（fail-closed 同单流纪律）。
+4. **`--streams {1,2,4,8}` 默认 1**（佩丽卡裁定）：锚命令行无参=单流 byte-compatible，多流必须显式——协议变化看得见。rate-limit 语义 per-stream（文档标注，一期不自动分摊）。
+
+### 证据（2026-10-13/14 实测）
+
+- **实现**：commit 66fc70c（bulk.rs multi 路径 + w5_multistream.rs 集成测试）。loopback 五测全绿（flag 域 / N=4 全 confirm + 4 SHA 各异 / streams=1 legacy 形态 / 多流对 legacy server fail-closed）+ shard exact-cover 单测。
+- **锚回归**：bjlh→us-209 1170/256MiB = 121.8 Mbps 真值（字段值 14.86，基线 -2.4%，±10% 内），SHA b9487c16 与前日完全一致（确定性分片交叉验证）。
+- **N=1 无劣化**：无参路径与 streams=1 输出逐字段等价（测试断言+实跑双验）。
+- **fail-closed 实战**：掐断 client 后 server 报 `stream 1 truncated: 20664/100000` 退出。
+- **强主证（晨窗，10-14 07:55–08:05）**：us-209→bjlh neko N=4 468MB——两轮全 `all_confirmed=true`（400000 records，4×SHA confirm），**247.3 / 311.4 Mbps 真值位率**（12.0–15.2s 完成）；同窗 iperf3 N=4 参照 314 Mbps（R2 达 98.8%）。NIC 计数器独立验证：8s 窗口 eth0 实收 408.9MB = 408 Mbps。判定 PASS（≥150 ✓；≥75% 参照 ✓）。
+
+### 单位勘误（随 D077 落库）
+
+`goodput_bps` 字段自 D068 起公式即 bytes/elapsed（值=字节/秒），字段名误标 bps，TCP 三载体同病。本 D077 主证期以 NIC 计数器实证并改名 `goodput_Bps`（bulk.rs ×2 + bulk_udp.rs）。历史 TCP 锚数字勘误：15.22→121.8、16.59→132.7、17.87→143.0 Mbps（×8）；全部比值判定不变。UDP 历史档当时已 ×8 换算，不受影响。详见 limits/2026-10-13-international-matrix-redacted.md §3 勘误注。
+
+### 时间窗发现（D076 附录）
+
+US→CN 入向多流聚合晨开午关（10-13 10:55 = 199 → 12:45 = 1.47 → 10-14 07:53 = 314 Mbps，同命令同路径）——与 XJ 窗口性恢复同族。D076 per-connection 判读补窗口性标注：N=4≈200 是晨窗数字非全天候保证；入向吞吐结论须带时间戳。详见 limits 同文件 §3.3。
+
+### 断言
+
+- 分片确定性：双侧独立推导同一分片（单测 exact-cover + 两日 SHA 一致实战）。
+- 判定域：US→CN 公网 TCP、腾讯北京目标类、晨窗时段（07:00–11:00 实测有效窗口待扩样）。
+
+### 回滚
+
+删 `--streams` 分支与 multi 函数即回滚单流（=现状默认路径，streams=1 不经过 multi 代码）。
+
+<!-- D077-end -->
+
 
 
