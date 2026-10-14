@@ -1,6 +1,6 @@
 # D076-C — causal correction: multi-flow recovery observed; mechanism unresolved
 
-**Status: Accepted correction candidate**
+**Status: Accepted correction**
 
 This note supersedes only the **causal wording** of D076. It does not invalidate the measured samples or the W5 phase-1 implementation.
 
@@ -25,8 +25,9 @@ Reasons:
 
 1. `N=2 -> N=4` is a discontinuous ~55x jump, unlike a simple fixed per-flow ceiling.
 2. The tests were monotonic in stream count, so stream count and elapsed time were not separated.
-3. A separate XJ control recovered from 0.04–1.93 Mbps to ~180 Mbps single-flow in the same overnight window, proving that time-varying path/operator state existed.
-4. Multiple 5-tuples can also sample different ECMP/LAG/middlebox paths or classifier buckets; aggregate SUM alone cannot distinguish that from a true concurrency threshold.
+3. A separate XJ control recovered from 0.04–1.93 Mbps to ~180 Mbps single-flow in the same overnight window, showing that observed network service was nonstationary over time.
+4. D077 later recorded the same endpoint pair and command configuration at 199 Mbps, 1.47 Mbps, and 314 Mbps across different times. That strengthens the temporal-nonstationarity observation, but does not prove that time itself is causal or that every run used an identical network path.
+5. Multiple 5-tuples can also sample different ECMP/LAG/middlebox paths or classifier buckets; aggregate SUM alone cannot distinguish that from a true concurrency threshold.
 
 ## What remains valid from D076
 
@@ -42,6 +43,7 @@ Until the causal recheck is complete, do not claim any of the following as estab
 - a fixed per-connection policer is the mechanism;
 - four simultaneous streams are a protocol-level magic threshold;
 - N=4 causes the recovery rather than coinciding with recovery;
+- a time window by itself has been established as the causal mechanism;
 - adaptive phase 2 should always increase to four streams.
 
 ## Required recheck
