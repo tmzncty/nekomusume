@@ -1411,14 +1411,14 @@ pub(super) fn client_udp(args: &[String]) {
     let elapsed = start.elapsed();
     // bytes/second, NOT bits (same historical mislabel as the TCP paths;
     // fixed 2026-10-14 with the NIC-counter cross-check).
-    let goodput_Bps = (cfg.bytes_total as f64 / elapsed.as_secs_f64().max(1e-9)) as u64;
+    let goodput_bps = (cfg.bytes_total as f64 / elapsed.as_secs_f64().max(1e-9)) as u64;
     println!(
         "bulk_udp_client_summary sent_records={} acked_records={} retransmits={} pto_probes={} goodput_Bps={} elapsed_ms={} end_acknowledged={} server_receipt={}",
         total_records,
         acked_records,
         retransmits,
         pto_probes,
-        goodput_Bps,
+        goodput_bps,
         elapsed.as_millis(),
         end_acked,
         receipt.as_deref().unwrap_or("unverified")

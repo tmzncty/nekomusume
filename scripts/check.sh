@@ -10,6 +10,11 @@ fi
 
 cargo fmt --all -- --check
 cargo check --workspace --locked
+# tools/impair-proxy is a standalone crate (deliberately NOT a workspace
+# member); the bulk_d070_udp loss tests hard-require its release binary at
+# tools/impair-proxy/target/release/. Build it here so local and CI runs
+# share one preparation point.
+cargo build --release --locked --manifest-path tools/impair-proxy/Cargo.toml
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 
