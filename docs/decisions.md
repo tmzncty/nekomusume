@@ -1891,6 +1891,12 @@ panic、大记录渗入 ProcessMessage、N 流 ACK 串扰、资源×N 越顶、�
 
 <!-- D076-end -->
 
+> **因果措辞更正（2026-10-13，D076-C）**：本条「坐实」级因果表述已被
+> docs/decisions/d076-causal-correction.md 降级——可辩护结论为「多流恢复
+> 已观察，因果机制未解决」（时间窗/路径熵混杂未分离，复检协议见
+> docs/experiments/d076-causal-recheck.md）。测量数据与 W5 一期实现不受
+> 影响。
+
 ---
 
 ## 2026-10-14 — D077：W5 多流 bulk 实现与验收（D076 门控后的开工定案）
