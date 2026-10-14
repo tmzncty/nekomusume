@@ -166,6 +166,48 @@ fail: 喵呜呜呜呜…
 - [x] concurrent UDP + TCP gate closed（明确禁用；无受控收益证据）
 - [x] heterogeneous multipath aggregation gate closed（明确禁用；DSN/重排/拥塞耦合未闭合）
 
+> **Gate 语义修正（2026-10-14 教义 v2）**：「gate 关闭的是无证据启用，不是不许研究」。研究可以并行，默认启用必须过 gate。closed gate 只约束「未经证据进入默认/启用路径」，不约束研究、实验与 candidate 实现。
+
+## 并行战役群结构（2026-10-14 教义 v2 起）
+
+工程组织从单线队列改为并行战役群。八线各设独立目标与证据链，**并行的是问题，不是乱改同一层状态机**（贡献边界 contract 见 AGENTS.md §1.1）。
+
+### 生存主线（Survival Mainline）
+
+M0-M5 主链：Session/Crypto/Carrier 核心语义、failover exactly-once、wire format 稳定性。一切战役的地基——其他线的新 primitive 最终都要通过这条线的 gate 进入启用路径。
+
+### Carrier 探索（Carrier Recon）
+
+穷举 IP 通信原语（Track A reachability matrix 的持续延伸）：ICMP/SCTP/DCCP/GRE/ESP/raw 253/254、封装类候选。每候选产出 reachability/RTT/loss/payload/双向存活性档案，供 Carrier Manager 评估接管。**gate 语义修正适用**：任何 primitive 的研究立即开工，启用必须过证据 gate。
+
+「猫娘存在的原因就是要知道：当网络开始一层一层杀死通信方式时，到底还剩什么？」
+
+### D076 · W6 — Adaptive Survivability Fabric
+
+W6 更名为 **Adaptive Survivability Fabric**。「它关心的不是"哪条路最快"，而是：现在还有什么能活？哪个 Carrier 已经死了？哪个只是暂时差？有没有新 primitive 可以接管？Session 能不能不死？」
+
+D076 因果复检（H1-H4 分离协议已入档 docs/experiments/d076-causal-recheck.md）为本线输入；phase-2 流数自适应设计等生产路径实测（interleave/downshift/port-sweep），模拟结果不直接许可设计选择。
+
+### 真实使用（Real-World Use）
+
+XJ/WAN 真实路径上的可用性验证线：XJ 病理档案、时间窗规律、多流形态在生产负载下的行为。产出=部署判据（何时 V6/何时多流/何时排晨窗）。
+
+### 网络性能（Network Performance）
+
+吞吐链（R1 大记录/W5 多流/socks 泵）的持续优化与回归锚维护。锚纪律：任何性能改动跑双锚回归（bjlh↔us-209 1170/256MiB ±10%）。
+
+### 异构聚合研究（Heterogeneous Aggregation Research）
+
+UDP+TCP 条带化、multipath 聚合的 reopened 研究线（gate 仍关闭启用，但研究并行——见 gate 语义修正）。DSN/重排/拥塞耦合三大未闭合问题的独立攻关。
+
+### 后期能力（Later Capabilities）
+
+Track C 清单的持续区：0-RTT/FEC/datagram API 的证据积累与启用评估。
+
+### 证据发布（Evidence Release）
+
+证据链工程化：limits 文档、decisions 索引、release evidence、可复现 fixture。本线的产出质量直接决定其他线的 gate 判定可信度。
+
 ## 当前第一轮研究问题
 
 1. Cargo workspace 应如何拆：`wire` / `session` / `carrier-*` / `crypto` / `probe` 是否足够？
