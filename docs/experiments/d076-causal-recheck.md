@@ -1,6 +1,6 @@
 # D076 causal recheck: distinguish stream-count effect from time-window and path-hash effects
 
-Status: proposed experiment protocol (updated 2026-10-14: time-window effect is now **observed**, not merely hypothesized — see below)
+Status: proposed experiment protocol (updated 2026-10-14: strong temporal nonstationarity is **observed**; its causal mechanism remains unresolved — see below)
 
 ## Why this exists
 
@@ -20,11 +20,11 @@ Two facts make causal re-check mandatory:
 1. `N=2 -> N=4` is a discontinuous ~55x jump, not the shape expected from a simple fixed per-flow rate cap.
 2. In the same overnight window, the XJ downlink control recovered from 0.04–1.93 Mbps to ~180 Mbps on a single flow. Time-varying path/operator state therefore existed during the measurement window.
 
-**Update 2026-10-14 (D077 evidence window):** the time-window effect itself is now directly observed on the same command, same path, same node pair (us-209→bjlh:40200, iperf3 -P 4): morning 10-13 10:55 = 199 Mbps, midday 12:45 = 1.47 Mbps, next morning 10-14 07:53 = 314 Mbps (limits doc §3.3, D077). So:
+**Update 2026-10-14 (D077 evidence window):** strong time-associated throughput variation is directly observed for the same endpoint pair and command configuration (us-209→bjlh:40200, iperf3 -P 4): morning 10-13 10:55 = 199 Mbps, midday 12:45 = 1.47 Mbps, next morning 10-14 07:53 = 314 Mbps (limits doc §3.3, D077). This establishes temporal nonstationarity of the observed service, but it does **not** establish time itself as the causal mechanism or prove that all runs traversed an identical network path. So:
 
-- **H1 (time-window) is no longer a hypothesis about whether windows exist — they demonstrably do.** What remains open is whether H1 explains the original N=1/2/4/8 sequence, i.e. whether the morning measurements of N=4/N=8 and the earlier N=1/N=2 happened to straddle window edges. The A/B/A/B/A interleave (Experiment 1) is now the decisive test.
-- H2 (5-tuple/path entropy) remains fully open and untested.
-- Note on the W5/D077 multi-stream evidence (neko N=4 = 247.3/311.4 Mbps, NIC-counter verified): it was taken inside one morning window with the iperf3 gate precheck at 314 Mbps — it validates the multi-stream *escape mechanism* at that window, not a causal claim about stream count.
+- **H1 (time-varying path/operator state) is supported as a live explanation, not confirmed as the cause.** What remains open is whether H1 explains the original N=1/2/4/8 sequence, i.e. whether the N=4/N=8 measurements and the earlier N=1/N=2 samples happened to straddle a changing network state. The A/B/A/B/A interleave (Experiment 1) is the decisive test for separating a stream-count effect from temporal drift.
+- H2 (5-tuple/path entropy) remains fully open and untested; because per-run flow identity/path selection was not held constant, it can still contribute to the cross-time variation.
+- Note on the W5/D077 multi-stream evidence (neko N=4 = 247.3/311.4 Mbps, NIC-counter verified): it was taken inside one high-capacity measurement window with the iperf3 gate precheck at 314 Mbps — it validates the multi-stream *escape mechanism* in that observed condition, not a causal claim about stream count or time.
 
 (Units errata applied 2026-10-14: historical neko TCP anchor "15.22/16.59/17.87 Mbps" field values were bytes/s mislabeled as bps; true bit-rates are 121.8/132.7/143.0 Mbps — ratios unchanged. Any future cross-reference to R1 throughput should use the ×8 values. iperf3 numbers in this document are true bit-rates and unaffected.)
 
@@ -34,7 +34,7 @@ The safe statement today is:
 
 This document defines experiments that separate four candidate mechanisms:
 
-- H1: time-window/path-state recovery (stream count is incidental);
+- H1: time-varying network/path/operator state (stream count is incidental);
 - H2: 5-tuple/ECMP/LAG path selection (some flow hashes land on a good path);
 - H3: genuine per-flow policer / loss interaction;
 - H4: shared middlebox/classifier state with a connection-count threshold.
@@ -62,7 +62,7 @@ Record per-stream, not only SUM:
 Interpretation:
 
 - `0.5, 200, 0.5, 200, 0.5`: strong stream-count effect;
-- `0.5, 200, 180, 200, 190`: time-window recovery likely explains original jump;
+- `0.5, 200, 180, 200, 190`: time-varying network state likely explains the original jump;
 - N=4 aggregate ~200 with one stream ~190 and the rest ~0.5–3: path-hash/ECMP candidate;
 - N=4 aggregate ~200 with all four near ~50 and N=1 repeatedly slow: shared classifier/policer threshold becomes more plausible.
 
@@ -115,7 +115,7 @@ Until Experiment 1 plus either Experiment 2 or 3 is complete, use:
 
 > multi-flow recovery observed; causal mechanism unresolved.
 
-Only restore the per-connection-clamp wording if repeated interleaving excludes time-window recovery and the per-stream evidence matches a per-flow limiting mechanism.
+Only restore the per-connection-clamp wording if repeated interleaving excludes temporal drift/nonstationarity and the per-stream evidence matches a per-flow limiting mechanism.
 
 If port sweep shows stable fast/slow flow identities, prefer language such as:
 
