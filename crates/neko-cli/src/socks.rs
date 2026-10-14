@@ -659,11 +659,9 @@ struct PumpCounters {
 
 impl PumpCounters {
     fn observe_in_flight(&self, current: u64) {
-        self.max_in_flight
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |m| {
-                (current > m).then_some(current)
-            })
-            .ok();
+        // fetch_max is the direct monotone equivalent; fetch_update was
+        // renamed try_update on 2026-10 stable and deprecates to error.
+        self.max_in_flight.fetch_max(current, Ordering::Relaxed);
     }
 
     fn emit(&self, elapsed: Duration) {
