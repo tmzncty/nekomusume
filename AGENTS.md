@@ -4,7 +4,7 @@
 
 ## Mission（2026-10-14 教义 v2，管理员原话）
 
-「只要底层还剩一种可用 IP 通信原语，就尽量让同一个逻辑 Session、同一条隧道继续活着。UDP 能走就 UDP，UDP 死了 TCP 接；将来 ICMP/SCTP/某种封装甚至别的原语能活，Carrier Manager 就应该找到它、验证它、接管 Session。」
+「它真正的使命不是做一个更好的 HY2，而是：只要底层还剩下一种可用的 IP 通信原语，就尽量让同一个逻辑 Session、同一条隧道继续活着。UDP 能走就 UDP，UDP 死了 TCP 接；将来如果常规 TCP/UDP 都被掐了，而 ICMP、SCTP、某种封装甚至别的原语还能活，那 Carrier Manager 就应该有机会找到它、验证它、接管 Session。」
 
 ## 0. 开工前必须阅读
 

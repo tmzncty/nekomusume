@@ -166,7 +166,7 @@ fail: 喵呜呜呜呜…
 - [x] concurrent UDP + TCP gate closed（明确禁用；无受控收益证据）
 - [x] heterogeneous multipath aggregation gate closed（明确禁用；DSN/重排/拥塞耦合未闭合）
 
-> **Gate 语义修正（2026-10-14 教义 v2）**：「gate 关闭的是无证据启用，不是不许研究」。研究并行进行，启用过 gate——closed gate 只约束「未经证据进入默认/启用路径」，不约束研究、实验与 candidate 实现。
+> **Gate 语义修正（2026-10-14 教义 v2）**：「gate 关闭的是无证据启用，不是不许研究」。研究可以并行，默认启用必须过 gate。closed gate 只约束「未经证据进入默认/启用路径」，不约束研究、实验与 candidate 实现。
 
 ## 并行战役群结构（2026-10-14 教义 v2 起）
 
@@ -180,15 +180,11 @@ M0-M5 主链：Session/Crypto/Carrier 核心语义、failover exactly-once、wir
 
 穷举 IP 通信原语（Track A reachability matrix 的持续延伸）：ICMP/SCTP/DCCP/GRE/ESP/raw 253/254、封装类候选。每候选产出 reachability/RTT/loss/payload/双向存活性档案，供 Carrier Manager 评估接管。**gate 语义修正适用**：任何 primitive 的研究立即开工，启用必须过证据 gate。
 
+「猫娘存在的原因就是要知道：当网络开始一层一层杀死通信方式时，到底还剩什么？」
+
 ### D076 · W6 — Adaptive Survivability Fabric
 
-W6 更名为 **Adaptive Survivability Fabric**。核心五问：
-
-1. 现在还有什么能活？
-2. 哪个死了？
-3. 哪个暂时差？
-4. 有没有新 primitive 能接管？
-5. Session 能不能不死？
+W6 更名为 **Adaptive Survivability Fabric**。「它关心的不是"哪条路最快"，而是：现在还有什么能活？哪个 Carrier 已经死了？哪个只是暂时差？有没有新 primitive 可以接管？Session 能不能不死？」
 
 D076 因果复检（H1-H4 分离协议已入档 docs/experiments/d076-causal-recheck.md）为本线输入；phase-2 流数自适应设计等生产路径实测（interleave/downshift/port-sweep），模拟结果不直接许可设计选择。
 
