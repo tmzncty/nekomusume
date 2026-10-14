@@ -572,16 +572,21 @@ pub(super) fn client(args: &[String]) {
             _ => None,
         };
     let elapsed = start.elapsed();
-    let goodput_bps = if elapsed.as_secs_f64() > 0.0 {
+    // bytes/second, NOT bits: the field name carried "bps" since D068 but
+    // the formula has always divided bytes by seconds. Renamed 2026-10-14
+    // after the W5 N=4 evidence run cross-checked it against a NIC counter
+    // (408 Mbit/s wire vs 30.9M field value on the same transfer). Mbps =
+    // value * 8 / 1e6.
+    let goodput_Bps = if elapsed.as_secs_f64() > 0.0 {
         (sent_bytes as f64 / elapsed.as_secs_f64()) as u64
     } else {
         0
     };
     println!(
-        "bulk_client_summary sent_records={} sent_bytes={} goodput_bps={} elapsed_ms={} server_receipt={}",
+        "bulk_client_summary sent_records={} sent_bytes={} goodput_Bps={} elapsed_ms={} server_receipt={}",
         sent,
         sent_bytes,
-        goodput_bps,
+        goodput_Bps,
         elapsed.as_millis(),
         receipt.unwrap_or_else(|| "unverified".to_string())
     );
@@ -1050,17 +1055,18 @@ fn client_multi(cfg: &BulkConfig, args: &[String]) {
         })
         .collect();
     let elapsed = start.elapsed();
-    let goodput_bps = if elapsed.as_secs_f64() > 0.0 {
+    // bytes/second (see single-path note above — same formula, same fix)
+    let goodput_Bps = if elapsed.as_secs_f64() > 0.0 {
         (bytes_total_sent as f64 / elapsed.as_secs_f64()) as u64
     } else {
         0
     };
     println!(
-        "bulk_client_summary streams={} sent_records={} sent_bytes={} goodput_bps={} elapsed_ms={} all_confirmed={} per_stream=[{}]",
+        "bulk_client_summary streams={} sent_records={} sent_bytes={} goodput_Bps={} elapsed_ms={} all_confirmed={} per_stream=[{}]",
         cfg.streams,
         sent_total,
         bytes_total_sent,
-        goodput_bps,
+        goodput_Bps,
         elapsed.as_millis(),
         all_confirmed,
         per_stream.join(",")
