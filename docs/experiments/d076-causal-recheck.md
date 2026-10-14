@@ -107,7 +107,7 @@ Repeat permutations of `{1,2,4,8}` rather than always increasing stream count. M
 
 This prevents monotonic time drift from masquerading as a stream-count curve.
 
-Use at least three repetitions per cell before calling a mechanism "confirmed".
+Use at least three repetitions per cell before calling a mechanism "supported".
 
 ## Decision rule for D076 wording
 
@@ -115,11 +115,11 @@ Until Experiment 1 plus either Experiment 2 or 3 is complete, use:
 
 > multi-flow recovery observed; causal mechanism unresolved.
 
-Only restore "per-connection clamp confirmed" if repeated interleaving excludes time-window recovery and the per-stream evidence matches a per-flow limiting mechanism.
+Only restore the per-connection-clamp wording if repeated interleaving excludes time-window recovery and the per-stream evidence matches a per-flow limiting mechanism.
 
 If port sweep shows stable fast/slow flow identities, prefer language such as:
 
-> flow-identity/path-selection sensitivity confirmed; multi-flow increases path entropy and escape probability.
+> flow-identity/path-selection sensitivity supported; multi-flow increases path entropy and escape probability.
 
 ## Design consequence for W5
 
@@ -131,3 +131,5 @@ Keep fixed-stream W5 phase 1 because it is a useful operational mechanism regard
 2. **flow reselection / path entropy** — rapidly probe candidate 5-tuples, retain a good carrier, and retire poor candidates when flow identity dominates.
 
 These strategies have different resource and failure semantics and should not be conflated.
+
+**Simulation boundary (red-line note):** the deterministic toy simulator (`tools/d076_causal_sim.py`) and the netns lab (`tools/d076_netns_lab.sh`) demonstrate hypothesis *consistency* — that a candidate mechanism *can* reproduce the observed aggregate curve — and nothing more. They are not network emulators and their parameters are not fitted to the real path. A sim/lab outcome therefore does **not** license phase-2 stream-count design choices directly: phase 2 must wait for the field experiments above (interleave/downshift/port-sweep) on the production path, where real middlebox, policing, and congestion behavior applies.

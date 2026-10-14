@@ -3,16 +3,18 @@
 
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
+import sys
 import unittest
+from pathlib import Path
 
-
-MODULE_PATH = Path(__file__).with_name("d076_causal_sim.py")
-SPEC = importlib.util.spec_from_file_location("d076_causal_sim", MODULE_PATH)
-assert SPEC is not None and SPEC.loader is not None
-sim = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(sim)
+# Import as a proper module (sys.path insertion) instead of
+# importlib.util.spec_from_file_location: the loader path chokes on
+# dataclass processing when the module defines `from __future__ import
+# annotations` (the class-dict lookup for KW_ONLY lands on None under
+# the frozen bootstrap on 3.12). A plain import keeps the module in
+# sys.modules where dataclasses can resolve everything.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import d076_causal_sim as sim  # noqa: E402
 
 
 class D076CausalSimTests(unittest.TestCase):
