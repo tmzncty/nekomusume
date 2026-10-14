@@ -1,6 +1,6 @@
 # D076 causal recheck: distinguish stream-count effect from time-window and path-hash effects
 
-Status: proposed experiment protocol
+Status: proposed experiment protocol (updated 2026-10-14: time-window effect is now **observed**, not merely hypothesized — see below)
 
 ## Why this exists
 
@@ -19,6 +19,14 @@ Two facts make causal re-check mandatory:
 
 1. `N=2 -> N=4` is a discontinuous ~55x jump, not the shape expected from a simple fixed per-flow rate cap.
 2. In the same overnight window, the XJ downlink control recovered from 0.04–1.93 Mbps to ~180 Mbps on a single flow. Time-varying path/operator state therefore existed during the measurement window.
+
+**Update 2026-10-14 (D077 evidence window):** the time-window effect itself is now directly observed on the same command, same path, same node pair (us-209→bjlh:40200, iperf3 -P 4): morning 10-13 10:55 = 199 Mbps, midday 12:45 = 1.47 Mbps, next morning 10-14 07:53 = 314 Mbps (limits doc §3.3, D077). So:
+
+- **H1 (time-window) is no longer a hypothesis about whether windows exist — they demonstrably do.** What remains open is whether H1 explains the original N=1/2/4/8 sequence, i.e. whether the morning measurements of N=4/N=8 and the earlier N=1/N=2 happened to straddle window edges. The A/B/A/B/A interleave (Experiment 1) is now the decisive test.
+- H2 (5-tuple/path entropy) remains fully open and untested.
+- Note on the W5/D077 multi-stream evidence (neko N=4 = 247.3/311.4 Mbps, NIC-counter verified): it was taken inside one morning window with the iperf3 gate precheck at 314 Mbps — it validates the multi-stream *escape mechanism* at that window, not a causal claim about stream count.
+
+(Units errata applied 2026-10-14: historical neko TCP anchor "15.22/16.59/17.87 Mbps" field values were bytes/s mislabeled as bps; true bit-rates are 121.8/132.7/143.0 Mbps — ratios unchanged. Any future cross-reference to R1 throughput should use the ×8 values. iperf3 numbers in this document are true bit-rates and unaffected.)
 
 The safe statement today is:
 
