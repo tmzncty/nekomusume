@@ -10965,3 +10965,317 @@ mod fault_inject_boundary_tests {
         assert_eq!(drain(&b), vec![vec![0], vec![3], vec![4]]);
     }
 }
+
+// ----------------------------------------------------------------------------
+// CarrierAdmission — the typed seam that feeds new primitives into the
+// generic CarrierState (line-1 first slice, issue #10).
+//
+// The state machine itself is carrier-agnostic; what was missing is the
+// admission contract for NEW primitives (ICMP/SCTP/encapsulations from the
+// line-2 reachability matrix). This module consumes a versioned
+// ReachabilityDossier and drives only the existing events
+// (PathAdded / ChallengeSent / ChallengeValidated). It NEVER issues
+// Activate: admission != enablement. An admitted+validated path remains a
+// Candidate; entering the active/default path still passes the existing
+// Activate gates (validation + k_successes + dwell hysteresis) — the
+// doctrine red line ("研究可以并行，默认启用必须过 gate") in code form.
+// ----------------------------------------------------------------------------
+
+/// Dossier shape version this build understands. The line-2 capability
+/// matrix will evolve; admission fail-closes on any version it does not
+/// know instead of guessing at the layout.
+pub const DOSSIER_VERSION: u32 = 1;
+
+/// Consumable form of a line-2 reachability record. `descriptor` is
+/// deliberately opaque: the Manager stores it, the primitive interprets it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReachabilityDossier {
+    pub version: u32,
+    pub carrier: CarrierKind,
+    pub path: PathId,
+    pub generation: PathGeneration,
+    /// Non-empty opaque path descriptor (kind + address family + endpoint
+    /// handle description). The Manager never parses this.
+    pub descriptor: Vec<u8>,
+    pub bidirectional_viable: bool,
+    pub rtt_ms: Option<u64>,
+    /// Fraction in [0, 1]; None when the primitive cannot measure loss.
+    pub loss: Option<f32>,
+    /// Sustained bidirectional viability evidence in seconds. Admission
+    /// requires Some(n) with n > 0 — a single-ping dossier is not enough.
+    pub sustained_seconds: Option<u64>,
+}
+
+/// Primitive-supplied validation evidence. The bytes are opaque; `kind`
+/// labels the evidence shape (e.g. ICMP echo id/seq match) so the caller —
+/// not this module — decides what a correct round-trip looks like.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValidationEvidence {
+    ChallengeRoundTrip { kind: u16, proof: Vec<u8> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AdmissionError {
+    UnsupportedDossierVersion(u32),
+    MissingDescriptor,
+    NotBidirectionallyViable,
+    InsufficientSustainedEvidence,
+    UnmeasurableLossOutOfRange,
+    InvalidEvidence,
+    /// The underlying state machine rejected the event (path exists,
+    /// generation mismatch, invalid transition, resource limit).
+    State(PathError),
+}
+
+impl From<PathError> for AdmissionError {
+    fn from(e: PathError) -> Self {
+        AdmissionError::State(e)
+    }
+}
+
+/// Admission only registers and validates; activation stays behind the
+/// existing Activate hysteresis gates.
+#[derive(Debug, Default)]
+pub struct CarrierAdmission;
+
+impl CarrierAdmission {
+    /// 找到它: consume a dossier and register the path as a Candidate.
+    /// Fail-closed on unknown version, missing descriptor, missing
+    /// bidirectional viability, or absent sustained evidence.
+    pub fn register(
+        state: &mut CarrierState,
+        dossier: &ReachabilityDossier,
+    ) -> Result<PathId, AdmissionError> {
+        if dossier.version != DOSSIER_VERSION {
+            return Err(AdmissionError::UnsupportedDossierVersion(dossier.version));
+        }
+        if dossier.descriptor.is_empty() {
+            return Err(AdmissionError::MissingDescriptor);
+        }
+        if !dossier.bidirectional_viable {
+            return Err(AdmissionError::NotBidirectionallyViable);
+        }
+        match dossier.sustained_seconds {
+            Some(secs) if secs > 0 => {}
+            _ => return Err(AdmissionError::InsufficientSustainedEvidence),
+        }
+        if let Some(loss) = dossier.loss
+            && !(0.0..=1.0).contains(&loss)
+        {
+            return Err(AdmissionError::UnmeasurableLossOutOfRange);
+        }
+        state.apply(CarrierEvent::PathAdded {
+            path: dossier.path,
+            carrier: dossier.carrier,
+            generation: dossier.generation,
+        })?;
+        Ok(dossier.path)
+    }
+
+    /// 验证它: drive ChallengeSent -> ChallengeValidated with the
+    /// primitive's round-trip evidence. Empty proof or an unknown kind tag
+    /// is rejected before any state transition.
+    pub fn validate(
+        state: &mut CarrierState,
+        path: PathId,
+        generation: PathGeneration,
+        evidence: &ValidationEvidence,
+    ) -> Result<(), AdmissionError> {
+        match evidence {
+            ValidationEvidence::ChallengeRoundTrip { kind: _, proof } if !proof.is_empty() => {}
+            _ => return Err(AdmissionError::InvalidEvidence),
+        }
+        state.apply(CarrierEvent::ChallengeSent { path, generation })?;
+        state.apply(CarrierEvent::ChallengeValidated(PathValidated {
+            path,
+            generation,
+        }))?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod carrier_admission_tests {
+    use super::*;
+
+    fn state() -> CarrierState {
+        CarrierState::new(Limits {
+            max_paths: 4,
+            hysteresis: Hysteresis {
+                min_dwell_events: 2,
+                k_successes: 2,
+            },
+        })
+    }
+    fn dossier() -> ReachabilityDossier {
+        ReachabilityDossier {
+            version: DOSSIER_VERSION,
+            carrier: CarrierKind::Other(253),
+            path: PathId(7),
+            generation: PathGeneration(1),
+            descriptor: b"raw253/v4/198.18.0.9".to_vec(),
+            bidirectional_viable: true,
+            rtt_ms: Some(145),
+            loss: Some(0.01),
+            sustained_seconds: Some(60),
+        }
+    }
+    fn evidence() -> ValidationEvidence {
+        ValidationEvidence::ChallengeRoundTrip {
+            kind: 1,
+            proof: vec![0xde, 0xad],
+        }
+    }
+
+    #[test]
+    fn register_produces_candidate_path() {
+        let mut s = state();
+        let id = CarrierAdmission::register(&mut s, &dossier()).unwrap();
+        assert_eq!(id, PathId(7));
+        let p = s.path(id).unwrap();
+        assert_eq!(p.validation, PathValidationState::Candidate);
+        assert_eq!(p.state, PathState::Candidate);
+        assert!(s.active().is_none(), "admission must not activate");
+    }
+
+    #[test]
+    fn unsupported_version_is_rejected_fail_closed() {
+        let mut s = state();
+        let mut d = dossier();
+        d.version = DOSSIER_VERSION + 1;
+        assert_eq!(
+            CarrierAdmission::register(&mut s, &d),
+            Err(AdmissionError::UnsupportedDossierVersion(
+                DOSSIER_VERSION + 1
+            ))
+        );
+        assert!(
+            s.path(PathId(7)).is_none(),
+            "rejected dossier must leave no path"
+        );
+    }
+
+    #[test]
+    fn missing_descriptor_is_rejected() {
+        let mut s = state();
+        let mut d = dossier();
+        d.descriptor = Vec::new();
+        assert_eq!(
+            CarrierAdmission::register(&mut s, &d),
+            Err(AdmissionError::MissingDescriptor)
+        );
+    }
+
+    #[test]
+    fn unidirectional_probe_is_rejected() {
+        let mut s = state();
+        let mut d = dossier();
+        d.bidirectional_viable = false;
+        assert_eq!(
+            CarrierAdmission::register(&mut s, &d),
+            Err(AdmissionError::NotBidirectionallyViable)
+        );
+    }
+
+    #[test]
+    fn zero_sustained_evidence_is_rejected() {
+        let mut s = state();
+        let mut d = dossier();
+        d.sustained_seconds = Some(0);
+        assert_eq!(
+            CarrierAdmission::register(&mut s, &d),
+            Err(AdmissionError::InsufficientSustainedEvidence)
+        );
+        let mut d = dossier();
+        d.sustained_seconds = None;
+        assert_eq!(
+            CarrierAdmission::register(&mut s, &d),
+            Err(AdmissionError::InsufficientSustainedEvidence)
+        );
+    }
+
+    #[test]
+    fn out_of_range_loss_is_rejected() {
+        let mut s = state();
+        let mut d = dossier();
+        d.loss = Some(1.5);
+        assert_eq!(
+            CarrierAdmission::register(&mut s, &d),
+            Err(AdmissionError::UnmeasurableLossOutOfRange)
+        );
+    }
+
+    #[test]
+    fn validate_moves_candidate_to_validated_but_not_active() {
+        let mut s = state();
+        CarrierAdmission::register(&mut s, &dossier()).unwrap();
+        CarrierAdmission::validate(&mut s, PathId(7), PathGeneration(1), &evidence()).unwrap();
+        let p = s.path(PathId(7)).unwrap();
+        assert_eq!(p.validation, PathValidationState::Validated);
+        assert_eq!(p.state, PathState::Candidate, "validated != activated");
+        assert!(s.active().is_none());
+    }
+
+    #[test]
+    fn empty_evidence_proof_is_rejected_before_any_transition() {
+        let mut s = state();
+        CarrierAdmission::register(&mut s, &dossier()).unwrap();
+        assert_eq!(
+            CarrierAdmission::validate(
+                &mut s,
+                PathId(7),
+                PathGeneration(1),
+                &ValidationEvidence::ChallengeRoundTrip {
+                    kind: 1,
+                    proof: Vec::new()
+                }
+            ),
+            Err(AdmissionError::InvalidEvidence)
+        );
+        // no ChallengeSent side effect: the path is still a plain Candidate
+        assert_eq!(
+            s.path(PathId(7)).unwrap().validation,
+            PathValidationState::Candidate
+        );
+    }
+
+    #[test]
+    fn wrong_generation_validation_hits_the_generation_check() {
+        let mut s = state();
+        CarrierAdmission::register(&mut s, &dossier()).unwrap();
+        // sending with a NEWER generation must surface the state machine's
+        // GenerationMismatch, not an admission-specific error
+        assert_eq!(
+            CarrierAdmission::validate(&mut s, PathId(7), PathGeneration(2), &evidence()),
+            Err(AdmissionError::State(PathError::GenerationMismatch))
+        );
+    }
+
+    #[test]
+    fn admission_then_existing_activate_gates_still_apply() {
+        // integration with the pre-existing activation path: a freshly
+        // admitted+validated path has zero successes and must be held by
+        // the hysteresis gate, exactly like a hand-rolled path.
+        let mut s = state();
+        CarrierAdmission::register(&mut s, &dossier()).unwrap();
+        CarrierAdmission::validate(&mut s, PathId(7), PathGeneration(1), &evidence()).unwrap();
+        assert_eq!(
+            s.apply(CarrierEvent::Activate {
+                path: PathId(7),
+                generation: PathGeneration(1)
+            }),
+            Err(PathError::HysteresisGate),
+            "admission must not bypass the activation hysteresis gate"
+        );
+    }
+
+    #[test]
+    fn duplicate_registration_surfaces_path_exists() {
+        let mut s = state();
+        CarrierAdmission::register(&mut s, &dossier()).unwrap();
+        assert_eq!(
+            CarrierAdmission::register(&mut s, &dossier()),
+            Err(AdmissionError::State(PathError::PathExists))
+        );
+    }
+}
